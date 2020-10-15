@@ -1,8 +1,9 @@
 CC=gcc
-CFLAGS=
+CFLAGS=-fexceptions -Wall -Werror -Wpedantic -Wextra
 
 FC=gfortran
-FFLAGS=
+FFLAGS=-fcheck=all -Waliasing -Wampersand -Wconversion -Wsurprising -Wintrinsics-std -Wno-tabs -Wintrinsic-shadow -Wline-truncation -Wreal-q-constant -Wuninitialized  -fbacktrace -ffpe-trap=zero,overflow,underflow -finit-real=nan
+
 
 ORG_SOURCE_FILES=qmckl_context.org
 OBJECT_FILES=$(patsubst %.org,%.o,$(ORG_SOURCE_FILES))
