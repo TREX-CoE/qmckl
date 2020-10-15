@@ -4,9 +4,12 @@ CFLAGS=
 FC=gfortran
 FFLAGS=
 
-SOURCE_FILES=$(wildcard *.org)
+ORG_SOURCE_FILES=qmckl_context.org
+OBJECT_FILES=$(patsubst %.org,%.o,$(ORG_SOURCE_FILES))
 
 .PHONY: clean
+
+all: $(OBJECT_FILES)
 
 %.c %.h: %.org
 	emacs --quick --no-init-file --batch --eval "(require 'org)" --eval '(org-babel-tangle-file "$^")'
@@ -14,7 +17,7 @@ SOURCE_FILES=$(wildcard *.org)
 %.c %.h %_f.f90: %.org
 	emacs --quick --no-init-file --batch --eval "(require 'org)" --eval '(org-babel-tangle-file "$^")'
 
-%.o: %.c 
+%.o: %.c
 	$(CC) $(CFLAGS) -c $*.c -o $*.o
 
 %.o: %.f90
