@@ -16,6 +16,6 @@ to read the documentation.
 
 ------------------------------
 
-[[https://trex-coe.eu/sites/default/files/inline-images/euflag.jpg]]
+![European flag](https://trex-coe.eu/sites/default/files/inline-images/euflag.jpg)
 [TREX: Targeting Real Chemical Accuracy at the Exascale](https://trex-coe.eu) project has received funding from the European Union’s Horizon 2020 - Research and Innovation program - under grant agreement no. 952165. The content of this document does not represent the opinion of the European Union, and the European Union is not responsible for any use that might be made of such content.
  
