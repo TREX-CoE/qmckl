@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-fPIC -fexceptions -Wall -Werror -Wpedantic -Wextra
+CFLAGS=-fPIC -fexceptions -Wall -Werror -Wpedantic -Wextra -g 
 
 FC=gfortran
 FFLAGS=-fcheck=all -Waliasing -Wampersand -Wconversion -Wsurprising -Wintrinsics-std -Wno-tabs -Wintrinsic-shadow -Wline-truncation -Wreal-q-constant -Wuninitialized  -fbacktrace -ffpe-trap=zero,overflow,underflow -finit-real=nan

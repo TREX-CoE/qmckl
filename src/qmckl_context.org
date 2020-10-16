@@ -51,27 +51,50 @@ typedef long long int qmckl_context ;
     #+BEGIN_SRC C :tangle qmckl_context.c
 typedef struct qmckl_context_struct {
   struct qmckl_context_struct * prev;
+  unsigned int tag;
   int precision;
   int range;
 } qmckl_context_struct;
+
+#define VALID_TAG   0xBEEFFACE
+#define INVALID_TAG 0xDEADBEEF
     #+END_SRC
-  
+    
+  The tag is used internally to check if the memory domain pointed by
+  a pointer is a valid context.
+
 *** Test
     We declare here the variables used in the tests.
     #+BEGIN_SRC C :tangle test_qmckl_context.c
   qmckl_context  context;
   qmckl_context  new_context;
-
-/* This needs to be repeated in the tests because we don't want to
-   expose it in the  headers.
-*/
-typedef struct qmckl_context_struct {
-  struct qmckl_context_struct * prev;
-  int precision;
-  int range;
-} qmckl_context_struct;
     #+END_SRC
 
+    
+** =qmckl_context_check=
+   
+   Checks if the domain pointed by the pointer is a valid context.
+   Returns the input =qmckl_context= if the context is valid, 0 otherwise.
+
+*** Header
+    #+BEGIN_SRC C :tangle qmckl_context.h
+qmckl_context qmckl_context_check(qmckl_context context) ;
+    #+END_SRC
+  
+*** Source
+    #+BEGIN_SRC C :tangle qmckl_context.c
+qmckl_context qmckl_context_check(qmckl_context context) {
+  qmckl_context_struct * ctx;
+
+  if (context == (qmckl_context) 0) return (qmckl_context) 0;
+
+  ctx = (qmckl_context_struct*) context;
+  if (ctx->tag != VALID_TAG) return (qmckl_context) 0;
+
+  return context; 
+}
+    #+END_SRC
+  
 ** =qmckl_context_create=
 
    To create a new context, use =qmckl_context_create()=.
@@ -97,6 +120,7 @@ qmckl_context qmckl_context_create() {
   context->prev      = NULL;
   context->precision = QMCKL_DEFAULT_PRECISION;
   context->range     = QMCKL_DEFAULT_RANGE;
+  context->tag       = VALID_TAG;
 
   return (qmckl_context) context;
 }
@@ -109,15 +133,14 @@ qmckl_context qmckl_context_create() {
     fprintf(stderr,"qmckl_context_create\n");
     rc = QMCKL_FAILURE;
   }
-  if ( ((qmckl_context_struct*) new_context)->precision != QMCKL_DEFAULT_PRECISION ) {
-    fprintf(stderr,"qmckl_context_copy: No access to data\n");
+  if ( qmckl_context_check(context) != context) {
+    fprintf(stderr,"qmckl_context_create: Invalid context\n");
     rc = QMCKL_FAILURE;
   }
     #+END_SRC
 
 ** =qmckl_context_copy=
 
-   
    This function makes a shallow copy of the current context.
    - Copying the 0-valued context returns 0
    - On success, returns a pointer to the new context using the =qmckl_context= type
@@ -135,8 +158,11 @@ qmckl_context qmckl_context_copy(const qmckl_context context) {
 
   qmckl_context_struct* old_context;
   qmckl_context_struct* new_context;
+  qmckl_context checked_context;
 
-  if (context == (qmckl_context) 0) {
+  checked_context = qmckl_context_check(context);
+
+  if (checked_context == (qmckl_context) 0) {
     return (qmckl_context) 0;
   }
 
@@ -145,14 +171,16 @@ qmckl_context qmckl_context_copy(const qmckl_context context) {
     return (qmckl_context) 0;
   }
 
-  old_context = (qmckl_context_struct*) context;
+  old_context = (qmckl_context_struct*) checked_context;
 
   new_context->prev      = old_context;
   new_context->precision = old_context->precision;
   new_context->range     = old_context->range;
+  new_context->tag       = VALID_TAG;
 
   return (qmckl_context) new_context;
 }
+
    #+END_SRC
 
 *** Test
@@ -166,10 +194,11 @@ qmckl_context qmckl_context_copy(const qmckl_context context) {
     fprintf(stderr,"qmckl_context_copy: Same pointer\n");
     rc = QMCKL_FAILURE;
   }
-  if ( ((qmckl_context_struct*) new_context)->precision != QMCKL_DEFAULT_PRECISION ) {
+  if ( qmckl_context_check(new_context) != new_context) {
     fprintf(stderr,"qmckl_context_copy: No access to data\n");
     rc = QMCKL_FAILURE;
   }
+
     #+END_SRC
 
 ** =qmckl_context_previous=
@@ -188,33 +217,35 @@ qmckl_context qmckl_context_previous(const qmckl_context context);
    #+BEGIN_SRC C :tangle qmckl_context.c
 qmckl_context qmckl_context_previous(const qmckl_context context) {
 
+  qmckl_context checked_context;
   qmckl_context_struct* ctx;
 
-  if (context == (qmckl_context) 0) {
+  checked_context = qmckl_context_check(context);
+  if (checked_context == (qmckl_context) 0) {
     return (qmckl_context) 0;
   }
 
-  ctx = (qmckl_context_struct*) context;
-  return (qmckl_context) ctx->prev;
+  ctx = (qmckl_context_struct*) checked_context;
+  return qmckl_context_check((qmckl_context) ctx->prev);
 }
    #+END_SRC
 
 *** Test
     #+BEGIN_SRC C :tangle test_qmckl_context.c
   if (qmckl_context_previous(new_context) == (qmckl_context) 0) {
-    fprintf(stderr,"qmckl_context_copy: Null pointer\n");
+    fprintf(stderr,"qmckl_context_previous: Null pointer\n");
     rc = QMCKL_FAILURE;
   }
   if (qmckl_context_previous(new_context) != context) {
-    fprintf(stderr,"qmckl_context_copy: Wrong pointer\n");
+    fprintf(stderr,"qmckl_context_previous: Wrong pointer\n");
     rc = QMCKL_FAILURE;
   }
   if (qmckl_context_previous(context) != (qmckl_context) 0) {
-    fprintf(stderr,"qmckl_context_copy: Expected null pointer (1)\n");
+    fprintf(stderr,"qmckl_context_previous: Expected null pointer (1)\n");
     rc = QMCKL_FAILURE;
   }
   if (qmckl_context_previous((qmckl_context) 0) != (qmckl_context) 0) {
-    fprintf(stderr,"qmckl_context_copy: Expected null pointer (2)\n");
+    fprintf(stderr,"qmckl_context_previous: Expected null pointer (2)\n");
     rc = QMCKL_FAILURE;
   }
     #+END_SRC
@@ -224,45 +255,52 @@ qmckl_context qmckl_context_previous(const qmckl_context context) {
    Destroys the current context, leaving the ancestors untouched.
    - Succeeds if the current context is properly destroyed
    - Fails otherwise
-   - Fails is the 0-valued context is given in argument
+   - Fails if the 0-valued context is given in argument
+   - Fails if the the pointer is not a valid context
      
-   The context given in parameter is overwritten by the 0-valued
-   context, so a pointer is passed to the function.
-
 *** Header
    #+BEGIN_SRC C :tangle qmckl_context.h
-qmckl_exit_code qmckl_context_destroy(qmckl_context * context);
+qmckl_exit_code qmckl_context_destroy(qmckl_context context);
    #+END_SRC
 
 *** Source
    #+BEGIN_SRC C :tangle qmckl_context.c
-qmckl_exit_code qmckl_context_destroy(qmckl_context *context) {
+qmckl_exit_code qmckl_context_destroy(qmckl_context context) {
 
   qmckl_context_struct* ctx;
+  qmckl_context checked_context;
+  
+  checked_context = qmckl_context_check(context);
+  if (checked_context == (qmckl_context) 0) return QMCKL_FAILURE;
 
-  ctx = (qmckl_context_struct*) *context;
+  ctx = (qmckl_context_struct*) context;
+  if (ctx == NULL) return QMCKL_FAILURE;
 
-  if (ctx == NULL) {
-    return QMCKL_FAILURE;
-  }
-
+  ctx->tag = INVALID_TAG;
   free(ctx);
-  *context = (qmckl_context) 0;
   return QMCKL_SUCCESS;
 }
    #+END_SRC
 
 *** Test
     #+BEGIN_SRC C :tangle test_qmckl_context.c
+  if (qmckl_context_check(new_context) != new_context) {
+    fprintf(stderr,"qmckl_context_destroy: new_context is invalid\n");
+    rc = QMCKL_FAILURE;
+  }
   if (new_context == (qmckl_context) 0) {
     fprintf(stderr,"qmckl_context_destroy: new_context is NULL\n");
     rc = QMCKL_FAILURE;
   }
-  if (qmckl_context_destroy(&new_context) == QMCKL_FAILURE) {
+  if (qmckl_context_destroy(new_context) == QMCKL_FAILURE) {
     fprintf(stderr,"qmckl_context_destroy: Unable to destroy the new_context\n");
     rc = QMCKL_FAILURE;
   }
-  if (new_context != (qmckl_context) 0) {
+  if (qmckl_context_check(new_context) == new_context) {
+    fprintf(stderr,"qmckl_context_destroy: new_context is valid\n");
+    rc = QMCKL_FAILURE;
+  }
+  if (qmckl_context_check(new_context) != (qmckl_context) 0) {
     fprintf(stderr,"qmckl_context_destroy: new_context should be NULL\n");
     rc = QMCKL_FAILURE;
   }
@@ -272,7 +310,7 @@ qmckl_exit_code qmckl_context_destroy(qmckl_context *context) {
   }
     #+END_SRC
 
-
+    
 * Precision
 
   The following functions set and get the expected required precision
