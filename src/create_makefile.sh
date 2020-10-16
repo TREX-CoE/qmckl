@@ -67,6 +67,7 @@ test_%: test_%.c
         -I../munit/ ../munit/munit.c test_\$*.c -lqmckl -o test_\$*
 
 test: libqmckl.so \$(TESTS)
+	for i in \$(TESTS) ; do ./\$\$i ; done
 
 .PHONY: test
 EOF
