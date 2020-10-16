@@ -5,7 +5,7 @@
 The domain of quantum chemistry needs a library in which the main
 kernels of Quantum Monte Carlo (QMC) methods are implemented. In the
 library proposed in this project, we expose the main algorithms in a
-language and provide a standard API and tests to enable the
+simple language and provide a standard API and tests to enable the
 development of high-performance QMCkl implementations taking
 advantage of modern hardware.
 
