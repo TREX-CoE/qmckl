@@ -20,7 +20,7 @@ test: Makefile.generated
 	$(MAKE) -f Makefile.generated test
 
 clean:
-	rm -f qmckl.h test_qmckl_*.c test_qmckl_*.f90 qmckl_*.f90 qmckl_*.c qmckl_*.o qmckl_*.h Makefile.generated libqmckl.so
+	rm -f qmckl.h test_qmckl_* qmckl_*.f90 qmckl_*.c qmckl_*.o qmckl_*.h Makefile.generated libqmckl.so
 
 Makefile.generated: $(ORG_SOURCE_FILES) Makefile create_makefile.sh
 	./create_makefile.sh $(ORG_SOURCE_FILES)
