@@ -35,6 +35,12 @@ for i in $(ls qmckl_*.f90) ; do
     OBJECTS="${OBJECTS} ${FILE}.o"
 done >> $OUTPUT
 
+TESTS=""
+for i in $(ls test_*.c) ; do
+    FILE=${i%.c}
+    TESTS="${TESTS} ${FILE}"
+done >> $OUTPUT
+
 
 # Write the Makefile
 
@@ -45,6 +51,7 @@ CFLAGS=$CFLAGS
 FC=$FC
 FFLAGS=$FFLAGS
 OBJECT_FILES=$OBJECTS
+TESTS=$TESTS
 
 libqmckl.so: \$(OBJECT_FILES)
 	\$(CC) -shared \$(OBJECT_FILES) -o libqmckl.so
@@ -55,6 +62,13 @@ libqmckl.so: \$(OBJECT_FILES)
 %.o: %.f90 
 	\$(FC) \$(FFLAGS) -c \$*.f90 -o \$*.o
 
+test_%: test_%.c 
+	\$(CC) \$(CFLAGS) -Wl,-rpath,$PWD -L. \
+        -I../munit/ ../munit/munit.c test_\$*.c -lqmckl -o test_\$*
+
+test: libqmckl.so \$(TESTS)
+
+.PHONY: test
 EOF
 
 for i in $(ls qmckl_*.c) ; do
@@ -66,4 +80,5 @@ for i in $(ls qmckl_*.f90) ; do
     FILE=${i%.f90}
     echo "${FILE}.o: ${FILE}.f90"
 done >> $OUTPUT
+
 

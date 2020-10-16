@@ -13,9 +13,16 @@ See the [source code](https://github.com/TREX-CoE/qmckl/tree/main/src)
 to read the documentation.
 
 
+To clone the repository, use:
+```
+git clone --recursive https://github.com/TREX-CoE/qmckl.git
+```
+to dowload also the [munit](https://github.com/nemequ/munit) unit testing
+framework.
+
 
 ------------------------------
 
 ![European flag](https://trex-coe.eu/sites/default/files/inline-images/euflag.jpg)
 [TREX: Targeting Real Chemical Accuracy at the Exascale](https://trex-coe.eu) project has received funding from the European Union’s Horizon 2020 - Research and Innovation program - under grant agreement no. 952165. The content of this document does not represent the opinion of the European Union, and the European Union is not responsible for any use that might be made of such content.
- 
+

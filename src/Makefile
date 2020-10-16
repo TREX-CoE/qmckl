@@ -16,6 +16,9 @@ OBJECT_FILES=$(filter-out $(EXCLUDED_OBJECTS), $(patsubst %.org,%.o,$(ORG_SOURCE
 libqmckl.so: Makefile.generated
 	$(MAKE) -f Makefile.generated
 
+test: Makefile.generated 
+	$(MAKE) -f Makefile.generated test
+
 clean:
 	rm -f qmckl.h test_qmckl_*.c test_qmckl_*.f90 qmckl_*.f90 qmckl_*.c qmckl_*.o qmckl_*.h Makefile.generated libqmckl.so
 
