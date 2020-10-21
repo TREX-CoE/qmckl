@@ -4,8 +4,10 @@ CFLAGS=-fPIC -fexceptions -Wall -Werror -Wpedantic -Wextra -g
 FC=gfortran
 FFLAGS=-fcheck=all -Waliasing -Wampersand -Wconversion -Wsurprising -Wintrinsics-std -Wno-tabs -Wintrinsic-shadow -Wline-truncation -Wreal-q-constant -Wuninitialized  -fbacktrace -ffpe-trap=zero,overflow,underflow -finit-real=nan
 
+LIBS=-lgfortran -lm
 
-export CC CFLAGS FC FFLAGS
+
+export CC CFLAGS FC FFLAGS LIBS
 
 ORG_SOURCE_FILES=$(wildcard qmckl*.org) test_qmckl.org
 OBJECT_FILES=$(filter-out $(EXCLUDED_OBJECTS), $(patsubst %.org,%.o,$(ORG_SOURCE_FILES)))

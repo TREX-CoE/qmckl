@@ -53,6 +53,8 @@ FFLAGS=$FFLAGS
 OBJECT_FILES=$OBJECTS
 TESTS=$TESTS
 
+LIBS=$LIBS
+
 libqmckl.so: \$(OBJECT_FILES)
 	\$(CC) -shared \$(OBJECT_FILES) -o libqmckl.so
 
@@ -65,7 +67,7 @@ libqmckl.so: \$(OBJECT_FILES)
 test_qmckl: test_qmckl.c libqmckl.so \$(TESTS)
 	echo \$(TESTS)
 	\$(CC) \$(CFLAGS) -Wl,-rpath,$PWD -L. \
-	../munit/munit.c \$(TESTS) -lqmckl test_qmckl.c -o test_qmckl
+	../munit/munit.c \$(TESTS) -lqmckl \$(LIBS) test_qmckl.c -o test_qmckl
 
 test: test_qmckl
 	./test_qmckl
