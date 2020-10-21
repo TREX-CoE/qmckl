@@ -36,8 +36,8 @@ for i in $(ls qmckl_*.f90) ; do
 done >> $OUTPUT
 
 TESTS=""
-for i in $(ls test_*.c) ; do
-    FILE=${i%.c}
+for i in $(ls test_qmckl_*.c) ; do
+    FILE=${i}
     TESTS="${TESTS} ${FILE}"
 done >> $OUTPUT
 
@@ -46,7 +46,7 @@ done >> $OUTPUT
 
 cat << EOF > $OUTPUT
 CC=$CC
-CFLAGS=$CFLAGS
+CFLAGS=$CFLAGS -I../munit/ 
 
 FC=$FC
 FFLAGS=$FFLAGS
@@ -62,12 +62,13 @@ libqmckl.so: \$(OBJECT_FILES)
 %.o: %.f90 
 	\$(FC) \$(FFLAGS) -c \$*.f90 -o \$*.o
 
-test_%: test_%.c 
+test_qmckl: test_qmckl.c libqmckl.so \$(TESTS)
+	echo \$(TESTS)
 	\$(CC) \$(CFLAGS) -Wl,-rpath,$PWD -L. \
-        -I../munit/ ../munit/munit.c test_\$*.c -lqmckl -o test_\$*
+	../munit/munit.c \$(TESTS) -lqmckl test_qmckl.c -o test_qmckl
 
-test: libqmckl.so \$(TESTS)
-	for i in \$(TESTS) ; do ./\$\$i ; done
+test: test_qmckl
+	./test_qmckl
 
 .PHONY: test
 EOF
@@ -80,6 +81,11 @@ done >> $OUTPUT
 for i in $(ls qmckl_*.f90) ; do
     FILE=${i%.f90}
     echo "${FILE}.o: ${FILE}.f90"
+done >> $OUTPUT
+
+for i in $(ls test_qmckl_*.c) ; do
+    FILE=${i%.c}
+    echo "${FILE}.o: ${FILE}.c qmckl.h" 
 done >> $OUTPUT
 
 

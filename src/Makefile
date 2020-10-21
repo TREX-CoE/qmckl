@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-fPIC -fexceptions -Wall -Werror -Wpedantic -Wextra -g 
+CFLAGS=-fPIC -fexceptions -Wall -Werror -Wpedantic -Wextra -g
 
 FC=gfortran
 FFLAGS=-fcheck=all -Waliasing -Wampersand -Wconversion -Wsurprising -Wintrinsics-std -Wno-tabs -Wintrinsic-shadow -Wline-truncation -Wreal-q-constant -Wuninitialized  -fbacktrace -ffpe-trap=zero,overflow,underflow -finit-real=nan
@@ -7,16 +7,16 @@ FFLAGS=-fcheck=all -Waliasing -Wampersand -Wconversion -Wsurprising -Wintrinsics
 
 export CC CFLAGS FC FFLAGS
 
-ORG_SOURCE_FILES=$(wildcard qmckl*.org)
+ORG_SOURCE_FILES=$(wildcard qmckl*.org) test_qmckl.org
 OBJECT_FILES=$(filter-out $(EXCLUDED_OBJECTS), $(patsubst %.org,%.o,$(ORG_SOURCE_FILES)))
 
-.PHONY: clean 
+.PHONY: clean
 .SECONDARY: # Needed to keep the produced C and Fortran files
 
 libqmckl.so: Makefile.generated
 	$(MAKE) -f Makefile.generated
 
-test: Makefile.generated 
+test: Makefile.generated
 	$(MAKE) -f Makefile.generated test
 
 clean:
