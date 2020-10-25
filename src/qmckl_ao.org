@@ -1,0 +1,400 @@
+# -*- mode: org -*-
+# vim: syntax=c
+#+TITLE: Atomic Orbitals
+
+#+HTML_HEAD: <link rel="stylesheet" type="text/css" href="http://www.pirilampo.org/styles/readtheorg/css/htmlize.css"/>
+#+HTML_HEAD: <link rel="stylesheet" type="text/css" href="http://www.pirilampo.org/styles/readtheorg/css/readtheorg.css"/>
+#+HTML_HEAD: <script src="https://ajax.googleapis.com/ajax/libs/jquery/2.1.3/jquery.min.js"></script>
+#+HTML_HEAD: <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.4/js/bootstrap.min.js"></script>
+#+HTML_HEAD: <script type="text/javascript" src="http://www.pirilampo.org/styles/lib/js/jquery.stickytableheaders.js"></script>
+#+HTML_HEAD: <script type="text/javascript" src="http://www.pirilampo.org/styles/readtheorg/js/readtheorg.js"></script>
+
+This files contains all the routines for the computation of the
+values, gradients and Laplacian of the atomic basis functions.
+
+3 files are produced:
+- a header file : =qmckl_ao.h=
+- a source file : =qmckl_ao.f90=
+- a test   file : =test_qmckl_ao.c=
+
+*** Header
+    #+BEGIN_SRC C :comments link  :tangle qmckl_ao.h
+#ifndef QMCKL_AO_H
+#define QMCKL_AO_H
+#include "qmckl_context.h"
+#include "qmckl_distance.h"
+    #+END_SRC
+
+*** Source
+    #+BEGIN_SRC f90 :comments link :tangle qmckl_ao.f90
+
+    #+END_SRC
+
+*** Test
+    #+BEGIN_SRC C :comments link :tangle test_qmckl_ao.c
+#include <math.h>
+#include "qmckl.h"
+#include "munit.h"
+MunitResult test_qmckl_ao() {
+  qmckl_context context;
+  context = qmckl_context_create();
+    #+END_SRC
+
+
+* Polynomials
+
+   \[ P_l(\mathbf{r},\mathbf{R}_i) = (x-X_i)^a (y-Y_i)^b (z-Z_i)^c \]
+
+** =qmckl_ao_powers=
+
+   Computes all the powers of the =n= input data up to the given
+   maximum value given in input for each of the $n$ points:
+   
+   \[ P_{ij} = X_j^i \]
+
+*** Arguments
+
+    | =context=  | input  | Global state                                      |
+    | =n=        | input  | Number of values                                  |
+    | =X(n)=     | input  | Array containing the input values                 |
+    | =LMAX(n)=  | input  | Array containing the maximum power for each value |
+    | =P(LDP,n)= | output | Array containing all the powers of $X$            |
+    | =LDP=      | input  | Leading dimension of array =P=                    |
+    
+*** Requirements
+
+    - =context= is not 0
+    - =n= > 0
+    - =X= is allocated with at least $n \times 8$ bytes
+    - =LMAX= is allocated with at least $n \times 4$ bytes
+    - =P= is allocated with at least $n \times \max_i \text{LMAX}_i \times 8$ bytes
+    - =LDP= >= $\max_i$ =LMAX[i]=
+
+*** Header
+    #+BEGIN_SRC C :comments link :tangle qmckl_ao.h
+qmckl_exit_code qmckl_ao_powers(qmckl_context context,
+				int64_t n, 
+				double *X, int32_t *LMAX,
+				double *P, int64_t LDP);
+    #+END_SRC
+    
+*** Source
+    #+BEGIN_SRC f90 :comments link :tangle qmckl_ao.f90
+integer function qmckl_ao_powers_f(context, n, X, LMAX, P, ldp) result(info)
+  implicit none
+  integer*8 , intent(in)  :: context
+  integer*8 , intent(in)  :: n
+  real*8    , intent(in)  :: X(n)
+  integer   , intent(in)  :: LMAX(n)
+  real*8    , intent(out) :: P(ldp,n)
+  integer*8 , intent(in)  :: ldp
+
+  integer*8  :: i,j
+
+  info = 0
+
+  if (context == 0_8) then
+     info = -1
+     return
+  endif
+  
+  if (LDP < MAXVAL(LMAX)) then
+     info = -2
+     return
+  endif
+  
+  do j=1,n
+    P(1,j) = X(j)
+    do i=2,LMAX(j)
+       P(i,j) = P(i-1,j) * X(j) 
+    end do
+  end do
+
+end function qmckl_ao_powers_f
+
+
+integer(c_int32_t) function qmckl_ao_powers(context, n, X, LMAX, P, ldp) &
+     bind(C) result(info)
+  use, intrinsic :: iso_c_binding
+  implicit none
+  integer (c_int64_t) , intent(in) , value :: context
+  integer (c_int64_t) , intent(in) , value :: n
+  real    (c_double)  , intent(in)         :: X(n)
+  integer (c_int32_t) , intent(in)         :: LMAX(n)
+  real    (c_double)  , intent(out)        :: P(ldp,n)
+  integer (c_int64_t) , intent(in) , value :: ldp
+  
+  integer, external :: qmckl_ao_powers_f
+  info = qmckl_ao_powers_f(context, n, X, LMAX, P, ldp)
+end function qmckl_ao_powers
+    #+END_SRC
+
+*** Test
+  #+BEGIN_SRC C :comments link :tangle test_qmckl_ao.c
+{
+  int64_t n, LDP ;
+  int32_t *LMAX ;
+  double *X, *P ;
+  int i, j;
+
+  n = 100;
+  LDP = 10;
+
+  X = (double*) qmckl_malloc (context, n*sizeof(double));
+  LMAX = (int32_t*) qmckl_malloc (context, n*sizeof(int32_t));
+  P = (double*) qmckl_malloc (context, LDP*n*sizeof(double));
+
+  for (j=0 ; j<n ; j++) {
+      X[j] = -5. + 0.1 * (double) (j);
+      LMAX[j] = 1 + (j % 9);
+  }
+
+  munit_assert_int64(QMCKL_SUCCESS, ==,
+		     qmckl_ao_powers(context, n, X, LMAX, P, LDP) );
+
+  for (j=0 ; j<n ; j++) {
+    for (i=0 ; i<LMAX[j] ; i++) {
+      munit_assert_double_equal( P[i+j*LDP], pow(X[j],i+1), 10 );
+    }
+  }
+  qmckl_free(X);
+  qmckl_free(P);
+  qmckl_free(LMAX);
+}
+
+  #+END_SRC
+  
+** =qmckl_ao_polynomial_vgl=
+   
+   Computes the value, gradient and Laplacian of the Polynomials for each
+   point given in input and for each center
+
+*** Arguments
+
+    | =context=    | input  | Global state                                         |
+    | =X(3)=       | input  | Array containing the coordinates of the points       |
+    | =R(3)=       | input  | Array containing the x,y,z coordinates of the center |
+    | =lmax=       | input  | Maximum angular momentum                             |
+    | =n=          | output | Number of computed polynomials                       |
+    | =L(LDL,n)=   | output | Contains a,b,c for all =n= results                   |
+    | =LDL=        | input  | Leading dimension of =L=                             |
+    | =VGL(LDV,n)= | output | Value, gradients and Laplacian of the polynomials    |
+    | =LDV=        | input  | Leading dimension of array =VGL=                     |
+    
+*** Requirements
+
+    - =context= is not 0
+    - =n= > 0
+    - =X= is allocated with at least $3 \times 8$ bytes
+    - =R= is allocated with at least $3 \times 8$ bytes
+    - =lmax= >= 0
+    - On output, =n= should be equal to (=lmax=+1)(=lmax=+2)(=lmax=+3)/6
+    - =L= is allocated with at least $3 \times n \times 4$ bytes
+    - =ldl= >= 3
+    - =VGL= is allocated with at least $5 \times n \times 8$ bytes
+    - =ldv= >= 5
+
+*** Header
+    #+BEGIN_SRC C :comments link :tangle qmckl_ao.h
+qmckl_exit_code qmckl_ao_polynomial_vgl(qmckl_context context,
+				double *X, double *R,
+				int32_t lmax, int64_t *n,
+				int32_t *L,   int64_t ldl,
+				double *VGL,  int64_t ldv);
+    #+END_SRC
+    
+*** Source
+    #+BEGIN_SRC f90 :comments link :tangle qmckl_ao.f90
+integer function qmckl_ao_polynomial_vgl_f(context, X, R, lmax, n, L, ldl, VGL, ldv) result(info)
+  implicit none
+  integer*8 , intent(in)  :: context
+  real*8    , intent(in)  :: X(3), R(3)
+  integer   , intent(in)  :: lmax
+  integer*8 , intent(out) :: n
+  integer   , intent(out) :: L(ldl,(lmax+1)*(lmax+2)*(lmax+3)/6)
+  integer*8 , intent(in)  :: ldl
+  real*8    , intent(out) :: VGL(ldv,(lmax+1)*(lmax+2)*(lmax+3)/6)
+  integer*8 , intent(in)  :: ldv
+
+  integer*8         :: i,j
+  integer           :: a,b,c,d
+  real*8            :: Y(3)
+  integer           :: lmax_array(3)
+  real*8            :: pows(-2:lmax,3)
+  integer, external :: qmckl_ao_powers_f
+
+  info = 0
+
+  if (context == 0_8) then
+     info = -1
+     return
+  endif
+
+  n = (lmax+1)*(lmax+2)*(lmax+3)/6
+
+  if (ldl < 3) then
+     info = -2
+     return
+  endif
+
+  if (ldv < 5) then
+     info = -3
+     return
+  endif
+
+
+  do i=1,3
+     Y(i) = X(i) - R(i)
+  end do
+  pows(-2:-1,1:3) = 0.d0
+  pows(0,1:3) = 1.d0
+  lmax_array(1:3) = lmax
+  info = qmckl_ao_powers_f(context, 1_8, Y(1), (/lmax/), pows(1,1), size(pows,1,kind=8)) 
+  if (info /= 0) return
+  info = qmckl_ao_powers_f(context, 1_8, Y(2), (/lmax/), pows(1,2), size(pows,1,kind=8)) 
+  if (info /= 0) return
+  info = qmckl_ao_powers_f(context, 1_8, Y(3), (/lmax/), pows(1,3), size(pows,1,kind=8)) 
+  if (info /= 0) return
+
+
+  n=1
+  vgl(1:5,1:n) = 0.d0
+  l(1:3,n) = 0
+  vgl(1,n) = 1.d0
+  do d=1,lmax
+     do a=0,d
+	do b=0,d
+	   do c=0,d
+	      if (a+b+c == d) then
+		 n = n+1
+		 l(1,n) = a
+		 l(2,n) = b
+		 l(3,n) = c
+
+		 vgl(1,n) = pows(a,1) * pows(b,2) * pows(c,3)
+
+		 vgl(2,n) = dble(a) * pows(a-1,1) * pows(b  ,2) * pows(c  ,3)
+		 vgl(3,n) = dble(b) * pows(a  ,1) * pows(b-1,2) * pows(c  ,3)
+		 vgl(4,n) = dble(c) * pows(a  ,1) * pows(b  ,2) * pows(c-1,3)
+
+		 vgl(5,n) = dble(a) * dble(a-1) * pows(a-2,1) * pows(b  ,2) * pows(c  ,3) &
+		      + dble(b) * dble(b-1) * pows(a  ,1) * pows(b-2,2) * pows(c  ,3) &
+		      + dble(c) * dble(c-1) * pows(a  ,1) * pows(b  ,2) * pows(c-2,3)
+		 exit
+	      end if
+	   end do
+	end do
+     end do
+  end do
+
+end function qmckl_ao_polynomial_vgl_f
+
+integer(c_int32_t) function qmckl_ao_polynomial_vgl(context, X, R, lmax, n, L, ldl, VGL, ldv) &
+     bind(C) result(info)
+  use, intrinsic :: iso_c_binding
+  implicit none
+  integer (c_int64_t) , intent(in) , value :: context
+  real    (c_double)  , intent(in)         :: X(3), R(3)
+  integer (c_int32_t) , intent(in) , value :: lmax
+  integer (c_int64_t) , intent(out)        :: n
+  integer (c_int32_t) , intent(out)        :: L(ldl,(lmax+1)*(lmax+2)*(lmax+3)/6)
+  integer (c_int64_t) , intent(in) , value :: ldl
+  real    (c_double)  , intent(out)        :: VGL(ldv,(lmax+1)*(lmax+2)*(lmax+3)/6)
+  integer (c_int64_t) , intent(in) , value :: ldv
+
+  integer, external :: qmckl_ao_polynomial_vgl_f
+  info = qmckl_ao_polynomial_vgl_f(context, X, R, lmax, n, L, ldl, VGL, ldv) 
+end function qmckl_ao_polynomial_vgl
+    #+END_SRC
+
+*** Test
+    #+BEGIN_SRC C :comments link :tangle test_qmckl_ao.c
+{
+#include <stdio.h>
+  double X[3] = { 1.1 , 2.2 ,  3.3 };
+  double R[3] = { 0.1 , 1.2 , -2.3 };
+  double Y[3];
+  int32_t lmax = 4;
+  int64_t n = 0;
+  int64_t ldl = 3;
+  int64_t ldv = 100;
+  int32_t* L_mem;
+  int32_t* L[100];
+  double*  VGL_mem;
+  double* VGL[100];
+  int j;
+
+  int d = (lmax+1)*(lmax+2)*(lmax+3)/6;
+
+  L_mem = (int32_t*) malloc(ldl*100*sizeof(int32_t));
+  VGL_mem = (double*) malloc(ldv*100*sizeof(double));
+
+  munit_assert_int64(QMCKL_SUCCESS, ==,
+		     qmckl_ao_polynomial_vgl(context, X, R, lmax, &n, L_mem, ldl, VGL_mem, ldv) );
+
+  munit_assert_int64( n, ==, d );
+  for (j=0 ; j<n ; j++) {
+    L[j] = &L_mem[j*ldl];
+    VGL[j] = &VGL_mem[j*ldv];
+  }
+
+  Y[0] = X[0] - R[0];
+  Y[1] = X[1] - R[1];
+  Y[2] = X[2] - R[2];
+  for (j=0 ; j<n ; j++) {
+    munit_assert_int64( L[j][0], >=, 0 );
+    munit_assert_int64( L[j][1], >=, 0 );
+    munit_assert_int64( L[j][2], >=, 0 );
+    munit_assert_double_equal( VGL[j][0], 
+			       pow(Y[0],L[j][0]) * pow(Y[1],L[j][1]) * pow(Y[2],L[j][2]), 10 );
+    if (L[j][0] < 1) {
+      munit_assert_double_equal( VGL[j][1], 0., 10);
+    } else {
+      munit_assert_double_equal( VGL[j][1], 
+				 L[j][0] * pow(Y[0],L[j][0]-1) * pow(Y[1],L[j][1]) * pow(Y[2],L[j][2]), 10 );
+    }
+    if (L[j][1] < 1) {
+      munit_assert_double_equal( VGL[j][2], 0., 10);
+    } else {
+      munit_assert_double_equal( VGL[j][2], 
+				 L[j][1] * pow(Y[0],L[j][0]) * pow(Y[1],L[j][1]-1) * pow(Y[2],L[j][2]), 10 );
+    }
+    if (L[j][2] < 1) {
+      munit_assert_double_equal( VGL[j][3], 0., 10);
+    } else {
+      munit_assert_double_equal( VGL[j][3], 
+				 L[j][2] * pow(Y[0],L[j][0]) * pow(Y[1],L[j][1]) * pow(Y[2],L[j][2]-1), 10 );
+    }
+
+    double w = 0.;
+    if (L[j][0] > 1) w += L[j][0] * (L[j][0]-1) * pow(Y[0],L[j][0]-2) * pow(Y[1],L[j][1]) * pow(Y[2],L[j][2]);
+    if (L[j][1] > 1) w += L[j][1] * (L[j][1]-1) * pow(Y[0],L[j][0]) * pow(Y[1],L[j][1]-2) * pow(Y[2],L[j][2]);
+    if (L[j][2] > 1) w += L[j][2] * (L[j][2]-1) * pow(Y[0],L[j][0]) * pow(Y[1],L[j][1]) * pow(Y[2],L[j][2]-2);
+    munit_assert_double_equal( VGL[j][4], w, 10 );
+  }
+  free(L_mem);
+  free(VGL_mem);
+}
+    #+END_SRC
+
+   
+
+* TODO Gaussian basis functions
+
+* TODO Slater basis functions
+  
+* End of files
+
+*** Header
+  #+BEGIN_SRC C :comments link :tangle qmckl_ao.h
+#endif
+  #+END_SRC
+
+*** Test
+  #+BEGIN_SRC C :comments link :tangle test_qmckl_ao.c
+  if (qmckl_context_destroy(context) != QMCKL_SUCCESS)
+    return QMCKL_FAILURE;
+  return MUNIT_OK;
+}
+
+  #+END_SRC
