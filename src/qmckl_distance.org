@@ -34,33 +34,7 @@ Function for the computation of distances between particles.
 #include "munit.h"
 MunitResult test_qmckl_distance() {
   qmckl_context context;
-  int64_t  m, n, LDA, LDB, LDC;
-  double *A, *B, *C ;
-  int i, j;
-
   context = qmckl_context_create();
-
-  m = 5;
-  n = 6;
-  LDA = 6;
-  LDB = 10;
-  LDC = 5;
-
-  A = (double*) qmckl_malloc (context, LDA*4*sizeof(double));
-  B = (double*) qmckl_malloc (context, LDB*3*sizeof(double));
-  C = (double*) qmckl_malloc (context, LDC*n*sizeof(double));
-
-  for (j=0 ; j<3 ; j++) {
-    for (i=0 ; i<m ; i++) {
-      A[i+j*LDA] = -10. + (double) (i+j);
-    }
-  }
-
-  for (j=0 ; j<3 ; j++) {
-    for (i=0 ; i<n ; i++) {
-      B[i+j*LDB] = -1. + (double) (i*j);
-    }
-  }
 
     #+END_SRC
 
@@ -168,7 +142,7 @@ integer function qmckl_distance_sq_f(context, m, n, A, LDA, B, LDB, C, LDC) resu
 end function qmckl_distance_sq_f
     #+END_SRC
 
-***  C interface                                                   :noexport:
+*** C interface                                                   :noexport:
     #+BEGIN_SRC f90 :comments link  :tangle qmckl_distance.f90
 integer(c_int32_t) function qmckl_distance_sq(context, m, n, A, LDA, B, LDB, C, LDC) &
      bind(C) result(info)
@@ -189,21 +163,58 @@ end function qmckl_distance_sq
     #+END_SRC
 
 *** Test                                                           :noexport:
+  #+BEGIN_SRC f90 :comments link :tangle test_qmckl_distance_f.f90
+  integer(c_int32_t) function test_qmckl_distance_sq(context) bind(C)
+    use iso_c_binding
+    implicit none
+    integer(c_int64_t), intent(in), value :: context
+
+    double precision, allocatable :: A(:,:), B(:,:), C(:,:)
+    integer*8                     :: m, n, LDA, LDB, LDC
+    double precision              :: x
+    integer*8                     :: i,j 
+
+    integer, external             :: qmckl_distance_sq_f
+
+    m = 5
+    n = 6
+    LDA = 6
+    LDB = 10
+    LDC = 5
+
+    allocate( A(LDA,3), B(LDB,3), C(LDC,n) )
+
+    do j=1,3
+       do i=1,m
+          A(i,j) = -10.d0 + dble(i+j)
+       end do
+       do i=1,n
+          B(i,j) = -1.d0 + dble(i*j)
+       end do
+    end do
+
+    test_qmckl_distance_sq = qmckl_distance_sq_f(context, m, n, A, LDA, B, LDB, C, LDC)
+    if (test_qmckl_distance_sq /= 0) return 
+
+    test_qmckl_distance_sq = -1
+
+    do j=1,n
+       do i=1,m
+          x =  (A(i,1)-B(j,1))**2 + &
+               (A(i,2)-B(j,2))**2 + &
+               (A(i,3)-B(j,3))**2
+          if ( dabs(1.d0 - C(i,j)/x) > 1.d-12 ) return
+       end do
+    end do
+    test_qmckl_distance_sq = 0
+
+    deallocate(A,B,C)
+  end function test_qmckl_distance_sq
+  #+END_SRC
+
   #+BEGIN_SRC C :comments link :tangle test_qmckl_distance.c
-
-  munit_assert_int64(QMCKL_SUCCESS, ==,
-		     qmckl_distance_sq(context, m, n, A, LDA, B, LDB, C, LDC) );
-
-  for (j=0 ; j<n ; j++) {
-    for (i=0 ; i<m ; i++) {
-      munit_assert_double_equal(C[i+j*LDC],
-				pow(A[i      ]-B[j      ],2) +
-				pow(A[i+  LDA]-B[j+  LDB],2) +
-				pow(A[i+2*LDA]-B[j+2*LDB],2) ,
-				14 );
-    }
-  }
-
+  int test_qmckl_distance_sq(qmckl_context context);
+  munit_assert_int(0, ==, test_qmckl_distance_sq(context));
   #+END_SRC
 * End of files
 
@@ -214,9 +225,6 @@ end function qmckl_distance_sq
 
 *** Test                                                           :noexport:
   #+BEGIN_SRC C :comments link :tangle test_qmckl_distance.c
-  qmckl_free(A);
-  qmckl_free(B);
-  qmckl_free(C);
   if (qmckl_context_destroy(context) != QMCKL_SUCCESS)
     return QMCKL_FAILURE;
   return MUNIT_OK;
