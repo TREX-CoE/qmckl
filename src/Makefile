@@ -6,6 +6,14 @@ FFLAGS=-fPIC -g -fcheck=all -Waliasing -Wampersand -Wconversion -Wsurprising -Wi
 
 LIBS=-lgfortran -lm
 
+#CC=icc
+#CFLAGS=-fPIC -g
+#
+#FC=ifort
+#FFLAGS=-fPIC -g
+#
+#LIBS=-lm -lifcore -lirc 
+
 
 export CC CFLAGS FC FFLAGS LIBS
 
@@ -25,7 +33,7 @@ doc:$(ORG_SOURCE_FILES)
 	./create_doc.sh $(ORG_SOURCE_FILES)
 
 clean:
-	rm -f qmckl.h test_qmckl_* test_qmckl.c qmckl_*.f90 qmckl_*.c qmckl_*.o qmckl_*.h Makefile.generated libqmckl.so *.html
+	rm -f qmckl.h test_qmckl_* test_qmckl.c qmckl_*.f90 qmckl_*.c qmckl_*.o qmckl_*.h Makefile.generated libqmckl.so *.html *.fh
 
 Makefile.generated: $(ORG_SOURCE_FILES) Makefile create_makefile.sh
 	./create_makefile.sh $(ORG_SOURCE_FILES)

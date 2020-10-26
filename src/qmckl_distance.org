@@ -14,17 +14,14 @@ Function for the computation of distances between particles.
 3 files are produced:
 - a header file : =qmckl_distance.h=
 - a source file : =qmckl_distance.f90=
-- a test   file : =test_qmckl_distance.c=
+- a C test file : =test_qmckl_distance.c=
+- a Fortran test file : =test_qmckl_distance_f.f90=
 
 *** Header                                                         :noexport:
     #+BEGIN_SRC C :comments link  :tangle qmckl_distance.h
 #ifndef QMCKL_DISTANCE_H
 #define QMCKL_DISTANCE_H
 #include "qmckl_context.h"
-    #+END_SRC
-
-*** Source                                                         :noexport:
-    #+BEGIN_SRC f90 :comments link :tangle qmckl_distance.f90
     #+END_SRC
 
 *** Test                                                           :noexport:
@@ -132,10 +129,10 @@ integer function qmckl_distance_sq_f(context, m, n, A, LDA, B, LDB, C, LDC) resu
 
   do j=1,n
      do i=1,m
-        x = A(i,1) - B(j,1)
-        y = A(i,2) - B(j,2)
-        z = A(i,3) - B(j,3)
-        C(i,j) = x*x + y*y + z*z
+	x = A(i,1) - B(j,1)
+	y = A(i,2) - B(j,2)
+	z = A(i,3) - B(j,3)
+	C(i,j) = x*x + y*y + z*z
      end do
   end do
 
@@ -162,60 +159,77 @@ integer(c_int32_t) function qmckl_distance_sq(context, m, n, A, LDA, B, LDB, C, 
 end function qmckl_distance_sq
     #+END_SRC
 
+    #+BEGIN_SRC f90 :comments link  :tangle qmckl_distance.fh
+  interface
+     integer(c_int32_t) function qmckl_distance_sq(context, m, n, A, LDA, B, LDB, C, LDC) &
+          bind(C) 
+       use, intrinsic :: iso_c_binding
+       implicit none
+       integer (c_int64_t) , intent(in) , value :: context
+       integer (c_int64_t) , intent(in) , value :: m, n
+       integer (c_int64_t) , intent(in) , value :: lda
+       integer (c_int64_t) , intent(in) , value :: ldb
+       integer (c_int64_t) , intent(in) , value :: ldc
+       real    (c_double)  , intent(in)         :: A(lda,3)
+       real    (c_double)  , intent(in)         :: B(ldb,3)
+       real    (c_double)  , intent(out)        :: C(ldc,n)
+     end function qmckl_distance_sq
+  end interface
+    #+END_SRC
+
 *** Test                                                           :noexport:
-  #+BEGIN_SRC f90 :comments link :tangle test_qmckl_distance_f.f90
-  integer(c_int32_t) function test_qmckl_distance_sq(context) bind(C)
-    use iso_c_binding
-    implicit none
-    integer(c_int64_t), intent(in), value :: context
+    #+BEGIN_SRC f90 :comments link :tangle test_qmckl_distance_f.f90
+integer(c_int32_t) function test_qmckl_distance_sq(context) bind(C)
+  use, intrinsic :: iso_c_binding
+  implicit none
+  include 'qmckl_distance.fh'
+  integer(c_int64_t), intent(in), value :: context
 
-    double precision, allocatable :: A(:,:), B(:,:), C(:,:)
-    integer*8                     :: m, n, LDA, LDB, LDC
-    double precision              :: x
-    integer*8                     :: i,j 
+  double precision, allocatable :: A(:,:), B(:,:), C(:,:)
+  integer*8                     :: m, n, LDA, LDB, LDC
+  double precision              :: x
+  integer*8                     :: i,j 
 
-    integer, external             :: qmckl_distance_sq_f
+  m = 5
+  n = 6
+  LDA = 6
+  LDB = 10
+  LDC = 5
 
-    m = 5
-    n = 6
-    LDA = 6
-    LDB = 10
-    LDC = 5
+  allocate( A(LDA,3), B(LDB,3), C(LDC,n) )
 
-    allocate( A(LDA,3), B(LDB,3), C(LDC,n) )
+  do j=1,3
+     do i=1,m
+	A(i,j) = -10.d0 + dble(i+j)
+     end do
+     do i=1,n
+	B(i,j) = -1.d0 + dble(i*j)
+     end do
+  end do
 
-    do j=1,3
-       do i=1,m
-          A(i,j) = -10.d0 + dble(i+j)
-       end do
-       do i=1,n
-          B(i,j) = -1.d0 + dble(i*j)
-       end do
-    end do
+  test_qmckl_distance_sq = qmckl_distance_sq(context, m, n, A, LDA, B, LDB, C, LDC)
+  if (test_qmckl_distance_sq /= 0) return 
 
-    test_qmckl_distance_sq = qmckl_distance_sq_f(context, m, n, A, LDA, B, LDB, C, LDC)
-    if (test_qmckl_distance_sq /= 0) return 
+  test_qmckl_distance_sq = -1
 
-    test_qmckl_distance_sq = -1
+  do j=1,n
+     do i=1,m
+	x =  (A(i,1)-B(j,1))**2 + &
+	     (A(i,2)-B(j,2))**2 + &
+	     (A(i,3)-B(j,3))**2
+	if ( dabs(1.d0 - C(i,j)/x) > 1.d-12 ) return
+     end do
+  end do
+  test_qmckl_distance_sq = 0
 
-    do j=1,n
-       do i=1,m
-          x =  (A(i,1)-B(j,1))**2 + &
-               (A(i,2)-B(j,2))**2 + &
-               (A(i,3)-B(j,3))**2
-          if ( dabs(1.d0 - C(i,j)/x) > 1.d-12 ) return
-       end do
-    end do
-    test_qmckl_distance_sq = 0
+  deallocate(A,B,C)
+end function test_qmckl_distance_sq
+    #+END_SRC
 
-    deallocate(A,B,C)
-  end function test_qmckl_distance_sq
-  #+END_SRC
-
-  #+BEGIN_SRC C :comments link :tangle test_qmckl_distance.c
-  int test_qmckl_distance_sq(qmckl_context context);
-  munit_assert_int(0, ==, test_qmckl_distance_sq(context));
-  #+END_SRC
+    #+BEGIN_SRC C :comments link :tangle test_qmckl_distance.c
+int test_qmckl_distance_sq(qmckl_context context);
+munit_assert_int(0, ==, test_qmckl_distance_sq(context));
+    #+END_SRC
 * End of files
 
 *** Header                                                         :noexport:
