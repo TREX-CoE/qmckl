@@ -3,8 +3,8 @@
 # Tangle org files
 
 emacsclient -a "" \
-            --socket-name=org_to_code \
-            --eval "(require 'org)"
+            --socket-name=org_to_code  \
+            --eval "(load-file \"config.el\")"
 
 for INPUT in $@ ; do
     echo $INPUT
