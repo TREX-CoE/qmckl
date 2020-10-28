@@ -14,6 +14,7 @@ for INPUT in $@ ; do
      	--eval "(find-file \"$INPUT\")" \
      	--eval "(org-html-export-to-html)"
 done
+mv *.html ../docs
 
 emacsclient \
     --no-wait \
