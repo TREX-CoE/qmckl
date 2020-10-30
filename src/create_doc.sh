@@ -9,10 +9,10 @@ emacsclient -a "" \
 for INPUT in $@ ; do
     echo $INPUT
     emacsclient \
-	--no-wait \
-	--socket-name=org_to_code \
-     	--eval "(find-file \"$INPUT\")" \
-     	--eval "(org-html-export-to-html)"
+        --no-wait \
+        --socket-name=org_to_code \
+        --eval "(find-file \"$INPUT\")" \
+        --eval "(org-html-export-to-html)"
 done
 mv *.html ../docs
 

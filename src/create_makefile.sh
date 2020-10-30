@@ -10,9 +10,9 @@ emacsclient -a "" \
 
 for INPUT in $@ ; do
     emacsclient \
-	--no-wait \
-	--socket-name=org_to_code \
-     	--eval "(org-babel-tangle-file \"$INPUT\")"
+        --no-wait \
+        --socket-name=org_to_code \
+        --eval "(org-babel-tangle-file \"$INPUT\")"
 done
 
 emacsclient \
