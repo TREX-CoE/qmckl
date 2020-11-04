@@ -162,6 +162,7 @@ end function qmckl_ao_powers
 integer(c_int32_t) function test_qmckl_ao_powers(context) bind(C)
   use, intrinsic :: iso_c_binding
   implicit none
+  include 'qmckl_context.fh'
   include 'qmckl_ao.fh'
 
   integer(c_int64_t), intent(in), value :: context
@@ -170,7 +171,10 @@ integer(c_int32_t) function test_qmckl_ao_powers(context) bind(C)
   integer, allocatable          :: LMAX(:) 
   double precision, allocatable :: X(:), P(:,:)
   integer*8                     :: i,j
-  
+  double precision              :: epsilon
+
+  epsilon = qmckl_context_get_epsilon(context)
+
   n = 100;
   LDP = 10;
   
@@ -178,7 +182,7 @@ integer(c_int32_t) function test_qmckl_ao_powers(context) bind(C)
   
   do j=1,n
      X(j) = -5.d0 + 0.1d0 * dble(j)
-     LMAX(j) = 1 + int(mod(j, 9),4)
+     LMAX(j) = 1 + int(mod(j, 5),4)
   end do
   
   test_qmckl_ao_powers = qmckl_ao_powers(context, n, X, LMAX, P, LDP) 
@@ -188,7 +192,11 @@ integer(c_int32_t) function test_qmckl_ao_powers(context) bind(C)
   
   do j=1,n
      do i=1,LMAX(j)
-        if ( dabs(1.d0 - P(i,j) / (X(j)**i)) > 1.d-14 ) return
+        if ( X(j)**i == 0.d0 ) then
+           if ( P(i,j) /= 0.d0) return
+        else
+           if ( dabs(1.d0 - P(i,j) / (X(j)**i)) > epsilon ) return
+        end if
      end do
   end do
 
@@ -202,6 +210,7 @@ int  test_qmckl_ao_powers(qmckl_context context);
 munit_assert_int(0, ==, test_qmckl_ao_powers(context));
     #+END_SRC
   
+
 ** =qmckl_ao_polynomial_vgl=
    
    Computes the values, gradients and Laplacians at a given point of
@@ -216,21 +225,21 @@ munit_assert_int(0, ==, test_qmckl_ao_powers(context));
     | =n=          | output | Number of computed polynomials                       |
     | =L(ldl,n)=   | output | Contains a,b,c for all =n= results                   |
     | =ldl=        | input  | Leading dimension of =L=                             |
-    | =VGL(ldv,n)= | output | Value, gradients and Laplacian of the polynomials    |
+    | =VGL(ldv,5)= | output | Value, gradients and Laplacian of the polynomials    |
     | =ldv=        | input  | Leading dimension of array =VGL=                     |
     
 *** Requirements
 
     - =context= is not 0
     - =n= > 0
+    - =lmax= >= 0
+    - =ldl= >= 3
+    - =ldv= >= (=lmax=+1)(=lmax=+2)(=lmax=+3)/6
     - =X= is allocated with at least $3 \times 8$ bytes
     - =R= is allocated with at least $3 \times 8$ bytes
-    - =lmax= >= 0
-    - On output, =n= should be equal to (=lmax=+1)(=lmax=+2)(=lmax=+3)/6
     - =L= is allocated with at least $3 \times n \times 4$ bytes
-    - =ldl= >= 3
-    - =VGL= is allocated with at least $5 \times n \times 8$ bytes
-    - =ldv= >= 5
+    - =VGL= is allocated with at least $n \times 5 \times 8$ bytes
+    - On output, =n= should be equal to (=lmax=+1)(=lmax=+2)(=lmax=+3)/6
 
 *** Header
     #+BEGIN_SRC C :comments link :tangle qmckl_ao.h
@@ -238,7 +247,7 @@ qmckl_exit_code qmckl_ao_polynomial_vgl(const qmckl_context context,
                 const double *X, const double *R,
                 const int32_t lmax, const int64_t *n,
                 const int32_t *L,   const int64_t ldl,
-                const double *VGL,  const  int64_t ldv);
+                const double *VGL,  const int64_t ldv);
     #+END_SRC
     
 *** Source
@@ -251,7 +260,7 @@ integer function qmckl_ao_polynomial_vgl_f(context, X, R, lmax, n, L, ldl, VGL, 
   integer*8 , intent(out) :: n
   integer   , intent(out) :: L(ldl,(lmax+1)*(lmax+2)*(lmax+3)/6)
   integer*8 , intent(in)  :: ldl
-  real*8    , intent(out) :: VGL(ldv,(lmax+1)*(lmax+2)*(lmax+3)/6)
+  real*8    , intent(out) :: VGL(ldv,5)
   integer*8 , intent(in)  :: ldv
 
   integer*8         :: i,j
@@ -270,15 +279,18 @@ integer function qmckl_ao_polynomial_vgl_f(context, X, R, lmax, n, L, ldl, VGL, 
      return
   endif
   
-  n = (lmax+1)*(lmax+2)*(lmax+3)/6
-  
   if (ldl < 3) then
      info = -2
      return
   endif
   
-  if (ldv < 5) then
+  if (ldv < (lmax+1)*(lmax+2)*(lmax+3)/6) then
      info = -3
+     return
+  endif
+  
+  if (lmax <= 0) then
+     info = -4
      return
   endif
   
@@ -297,10 +309,10 @@ integer function qmckl_ao_polynomial_vgl_f(context, X, R, lmax, n, L, ldl, VGL, 
   if (info /= 0) return
 
 
+  vgl(1,1) = 1.d0
+  vgl(1,2:5) = 0.d0
+  l(1:3,1) = 0
   n=1
-  vgl(1:5,1:n) = 0.d0
-  l(1:3,n) = 0
-  vgl(1,n) = 1.d0
   dd = 1.d0
   do d=1,lmax
      da = 0.d0
@@ -318,17 +330,17 @@ integer function qmckl_ao_polynomial_vgl_f(context, X, R, lmax, n, L, ldl, VGL, 
            yz = pows(b,2) * pows(c,3)
            xz = pows(a,1) * pows(c,3)
            
-           vgl(1,n) = xy * pows(c,3)
+           vgl(n,1) = xy * pows(c,3)
            
            xy = dc * xy
            xz = db * xz
            yz = da * yz
            
-           vgl(2,n) = pows(a-1,1) * yz
-           vgl(3,n) = pows(b-1,2) * xz
-           vgl(4,n) = pows(c-1,3) * xy
+           vgl(n,2) = pows(a-1,1) * yz
+           vgl(n,3) = pows(b-1,2) * xz
+           vgl(n,4) = pows(c-1,3) * xy
            
-           vgl(5,n) = &
+           vgl(n,5) = &
                 (da-1.d0) * pows(a-2,1) * yz + &
                 (db-1.d0) * pows(b-2,2) * xz + &
                 (dc-1.d0) * pows(c-2,3) * xy
@@ -339,6 +351,13 @@ integer function qmckl_ao_polynomial_vgl_f(context, X, R, lmax, n, L, ldl, VGL, 
      end do
      dd = dd + 1.d0
   end do
+
+  if (n /= (lmax+1)*(lmax+2)*(lmax+3)/6) then
+    info = -5
+    return
+  endif
+
+  info = 0
 
 end function qmckl_ao_polynomial_vgl_f
     #+END_SRC 
@@ -355,7 +374,7 @@ integer(c_int32_t) function qmckl_ao_polynomial_vgl(context, X, R, lmax, n, L, l
   integer (c_int64_t) , intent(out)        :: n
   integer (c_int32_t) , intent(out)        :: L(ldl,(lmax+1)*(lmax+2)*(lmax+3)/6)
   integer (c_int64_t) , intent(in) , value :: ldl
-  real    (c_double)  , intent(out)        :: VGL(ldv,(lmax+1)*(lmax+2)*(lmax+3)/6)
+  real    (c_double)  , intent(out)        :: VGL(ldv,5)
   integer (c_int64_t) , intent(in) , value :: ldv
 
   integer, external :: qmckl_ao_polynomial_vgl_f
@@ -375,7 +394,7 @@ end function qmckl_ao_polynomial_vgl
        real    (c_double)  , intent(in)         :: X(3), R(3)
        integer (c_int64_t) , intent(out)        :: n
        integer (c_int32_t) , intent(out)        :: L(ldl,(lmax+1)*(lmax+2)*(lmax+3)/6)
-       real    (c_double)  , intent(out)        :: VGL(ldv,(lmax+1)*(lmax+2)*(lmax+3)/6)
+       real    (c_double)  , intent(out)        :: VGL(ldv,5)
      end function qmckl_ao_polynomial_vgl
   end interface
     #+END_SRC
@@ -384,6 +403,7 @@ end function qmckl_ao_polynomial_vgl
 integer(c_int32_t) function test_qmckl_ao_polynomial_vgl(context) bind(C)
   use, intrinsic :: iso_c_binding
   implicit none
+  include 'qmckl_context.fh'
   include 'qmckl_ao.fh'
 
   integer(c_int64_t), intent(in), value :: context
@@ -394,6 +414,9 @@ integer(c_int32_t) function test_qmckl_ao_polynomial_vgl(context) bind(C)
   double precision              :: X(3), R(3), Y(3)
   double precision, allocatable :: VGL(:,:)
   double precision              :: w
+  double precision              :: epsilon
+
+  epsilon = qmckl_context_get_epsilon(context)
 
   X = (/ 1.1 , 2.2 ,  3.3 /)
   R = (/ 0.1 , 1.2 , -2.3 /)
@@ -406,7 +429,7 @@ integer(c_int32_t) function test_qmckl_ao_polynomial_vgl(context) bind(C)
 
   d = (lmax+1)*(lmax+2)*(lmax+3)/6
 
-  allocate (L(ldl,100), VGL(ldv,100))
+  allocate (L(ldl,100), VGL(ldv,5))
 
   test_qmckl_ao_polynomial_vgl = &
        qmckl_ao_polynomial_vgl(context, X, R, lmax, n, L, ldl, VGL, ldv)
@@ -417,37 +440,43 @@ integer(c_int32_t) function test_qmckl_ao_polynomial_vgl(context) bind(C)
   if (n /= d) return 
 
   do j=1,n
+     test_qmckl_ao_polynomial_vgl = -11
      do i=1,3
         if (L(i,j) < 0) return
      end do
-     if (dabs(1.d0 - VGL(1,j) / (&
+     test_qmckl_ao_polynomial_vgl = -12
+     if (dabs(1.d0 - VGL(j,1) / (&
           Y(1)**L(1,j) * Y(2)**L(2,j) * Y(3)**L(3,j)  &
-          )) > 1.d-14 ) return
+          )) > epsilon ) return
 
+     test_qmckl_ao_polynomial_vgl = -13
      if (L(1,j) < 1) then
-        if (VGL(2,j) /= 0.d0) return
+        if (VGL(j,2) /= 0.d0) return
      else
-        if (dabs(1.d0 - VGL(2,j) / (&
+        if (dabs(1.d0 - VGL(j,2) / (&
              L(1,j) * Y(1)**(L(1,j)-1) * Y(2)**L(2,j) * Y(3)**L(3,j) &
-             )) > 1.d-14 ) return
+             )) > epsilon ) return
      end if
 
+     test_qmckl_ao_polynomial_vgl = -14
      if (L(2,j) < 1) then
-        if (VGL(3,j) /= 0.d0) return
+        if (VGL(j,3) /= 0.d0) return
      else
-        if (dabs(1.d0 - VGL(3,j) / (&
+        if (dabs(1.d0 - VGL(j,3) / (&
              L(2,j) * Y(1)**L(1,j) * Y(2)**(L(2,j)-1) * Y(3)**L(3,j) &
-             )) > 1.d-14 ) return
+             )) > epsilon ) return
      end if
 
+     test_qmckl_ao_polynomial_vgl = -15
      if (L(3,j) < 1) then
-        if (VGL(4,j) /= 0.d0) return
+        if (VGL(j,4) /= 0.d0) return
      else
-        if (dabs(1.d0 - VGL(4,j) / (&
+        if (dabs(1.d0 - VGL(j,4) / (&
              L(3,j) * Y(1)**L(1,j) * Y(2)**L(2,j) * Y(3)**(L(3,j)-1) &
-             )) > 1.d-14 ) return
+             )) > epsilon ) return
      end if
      
+     test_qmckl_ao_polynomial_vgl = -16
      w = 0.d0
      if (L(1,j) > 1) then
         w = w + L(1,j) * (L(1,j)-1) * Y(1)**(L(1,j)-2) * Y(2)**L(2,j) * Y(3)**L(3,j) 
@@ -458,7 +487,7 @@ integer(c_int32_t) function test_qmckl_ao_polynomial_vgl(context) bind(C)
      if (L(3,j) > 1) then
         w = w + L(3,j) * (L(3,j)-1) * Y(1)**L(1,j) * Y(2)**L(2,j) * Y(3)**(L(3,j)-2) 
      end if
-     if (dabs(1.d0 - VGL(5,j) / w) > 1.d-14 ) return
+     if (dabs(1.d0 - VGL(j,5) / w) > epsilon ) return
   end do
 
   test_qmckl_ao_polynomial_vgl = 0
@@ -474,8 +503,220 @@ munit_assert_int(0, ==, test_qmckl_ao_polynomial_vgl(context));
     #+END_SRC
    
     
-* TODO Gaussian basis functions
+* Gaussian basis functions
 
+
+** =qmckl_ao_gaussians_vgl=
+   
+   Computes the values, gradients and Laplacians at a given point of
+   =n= Gaussian functions centered at the same point:
+   
+   \[ v_i = exp(-a_i |X-R|^2) \]
+   \[ \nabla_x v_i = -2 a_i (X_x -  R_x) v_i \]
+   \[ \nabla_y v_i = -2 a_i (X_y -  R_y) v_i \]
+   \[ \nabla_z v_i = -2 a_i (X_z -  R_z) v_i \]
+   \[ \Delta v_i = a_i (4 |X-R|^2 a_i - 6) v_i \]
+
+*** Arguments
+
+    | =context=    | input  | Global state                                         |
+    | =X(3)=       | input  | Array containing the coordinates of the points       |
+    | =R(3)=       | input  | Array containing the x,y,z coordinates of the center |
+    | =n=          | input  | Number of computed gaussians                         |
+    | =A(n)=       | input  | Exponents of the Gaussians                           |
+    | =VGL(ldv,5)= | output | Value, gradients and Laplacian of the Gaussians      |
+    | =ldv=        | input  | Leading dimension of array =VGL=                     |
+    
+*** Requirements
+
+    - =context= is not 0
+    - =n= > 0
+    - =ldv= >= 5
+    - =A(i)= > 0 for all =i=
+    - =X= is allocated with at least $3 \times 8$ bytes
+    - =R= is allocated with at least $3 \times 8$ bytes
+    - =A= is allocated with at least $n \times 8$ bytes
+    - =VGL= is allocated with at least $n \times 5 \times 8$ bytes
+
+*** Header
+    #+BEGIN_SRC C :comments link :tangle qmckl_ao.h
+qmckl_exit_code qmckl_ao_gaussians_vgl(const qmckl_context context,
+                const double *X, const double *R,
+                const int64_t *n, const int64_t *A,
+                const double *VGL,  const int64_t ldv);
+    #+END_SRC
+    
+*** Source
+    #+BEGIN_SRC f90 :comments link :tangle qmckl_ao.f90
+integer function qmckl_ao_gaussians_vgl_f(context, X, R, n, A, VGL, ldv) result(info)
+  implicit none
+  integer*8 , intent(in)  :: context
+  real*8    , intent(in)  :: X(3), R(3)
+  integer*8 , intent(in)  :: n
+  real*8    , intent(in)  :: A(n)
+  real*8    , intent(out) :: VGL(ldv,5)
+  integer*8 , intent(in)  :: ldv
+
+  integer*8         :: i,j
+  real*8            :: Y(3), r2, t, u, v
+  
+  info = 0
+  
+  if (context == 0_8) then
+     info = -1
+     return
+  endif
+  
+  if (n <= 0) then
+     info = -2
+     return
+  endif
+  
+  if (ldv < n) then
+     info = -3
+     return
+  endif
+  
+  
+  do i=1,3
+     Y(i) = X(i) - R(i)
+  end do
+  r2 = Y(1)*Y(1) + Y(2)*Y(2) + Y(3)*Y(3)
+  
+  do i=1,n
+     VGL(i,1) = dexp(-A(i) * r2)
+  end do
+
+  do i=1,n
+     VGL(i,5) = A(i) * VGL(i,1)
+  end do
+
+  t = -2.d0 * ( X(1) - R(1) )
+  u = -2.d0 * ( X(2) - R(2) )
+  v = -2.d0 * ( X(3) - R(3) )
+
+  do i=1,n
+     VGL(i,2) = t * VGL(i,5)
+     VGL(i,3) = u * VGL(i,5)
+     VGL(i,4) = v * VGL(i,5)
+  end do
+
+  t = 4.d0 * r2
+  do i=1,n
+     VGL(i,5) = (t * A(i) - 6.d0) *  VGL(i,5)
+  end do
+
+end function qmckl_ao_gaussians_vgl_f
+    #+END_SRC 
+
+*** C interface                                                    :noexport:
+    #+BEGIN_SRC f90 :comments link :tangle qmckl_ao.f90
+integer(c_int32_t) function qmckl_ao_gaussians_vgl(context, X, R, n, A, VGL, ldv) &
+     bind(C) result(info)
+  use, intrinsic :: iso_c_binding
+  implicit none
+  integer (c_int64_t) , intent(in) , value :: context
+  real    (c_double)  , intent(in)         :: X(3), R(3)
+  integer (c_int64_t) , intent(in) , value :: n
+  real    (c_double)  , intent(in)         :: A(n)
+  real    (c_double)  , intent(out)        :: VGL(ldv,5)
+  integer (c_int64_t) , intent(in) , value :: ldv
+
+  integer, external :: qmckl_ao_gaussians_vgl_f
+  info = qmckl_ao_gaussians_vgl_f(context, X, R, n, A, VGL, ldv) 
+end function qmckl_ao_gaussians_vgl
+    #+END_SRC
+
+    #+BEGIN_SRC f90 :comments link :tangle qmckl_ao.fh
+  interface
+     integer(c_int32_t) function qmckl_ao_gaussians_vgl(context, X, R, n, A, VGL, ldv) &
+          bind(C) 
+       use, intrinsic :: iso_c_binding
+       integer (c_int64_t) , intent(in) , value :: context
+       integer (c_int64_t) , intent(in) , value :: ldv
+       integer (c_int64_t) , intent(in) , value :: n
+       real    (c_double)  , intent(in)         :: X(3), R(3), A(n)
+       real    (c_double)  , intent(out)        :: VGL(ldv,5)
+     end function qmckl_ao_gaussians_vgl
+  end interface
+    #+END_SRC
+*** Test                                                           :noexport:
+    #+BEGIN_SRC f90 :comments link :tangle test_qmckl_ao_f.f90
+integer(c_int32_t) function test_qmckl_ao_gaussians_vgl(context) bind(C)
+  use, intrinsic :: iso_c_binding
+  implicit none
+  include 'qmckl_context.fh'
+  include 'qmckl_ao.fh'
+
+  integer(c_int64_t), intent(in), value :: context
+  
+  integer*8                     :: n, ldv, j, i
+  double precision              :: X(3), R(3), Y(3), r2
+  double precision, allocatable :: VGL(:,:), A(:)
+  double precision              :: epsilon
+
+  epsilon = qmckl_context_get_epsilon(context)
+
+  X = (/ 1.1 , 2.2 ,  3.3 /)
+  R = (/ 0.1 , 1.2 , -2.3 /)
+  Y(:) = X(:) - R(:)
+  r2 = Y(1)**2 + Y(2)**2 + Y(3)**2
+
+  n = 10;
+  ldv = 100;
+
+  allocate (A(n), VGL(ldv,5))
+  do i=1,n
+     A(i) = 0.0013 * dble(ishft(1,i))
+  end do
+
+
+  test_qmckl_ao_gaussians_vgl = &
+       qmckl_ao_gaussians_vgl(context, X, R, n, A, VGL, ldv)
+  if (test_qmckl_ao_gaussians_vgl /= 0) return
+
+  test_qmckl_ao_gaussians_vgl = -1
+
+  do i=1,n
+     test_qmckl_ao_gaussians_vgl = -11
+     if (dabs(1.d0 - VGL(i,1) / (&
+          dexp(-A(i) * r2) &
+          )) > epsilon ) return
+     
+     test_qmckl_ao_gaussians_vgl = -12
+     if (dabs(1.d0 - VGL(i,2) / (&
+          -2.d0 * A(i) * Y(1) * dexp(-A(i) * r2) &
+          )) > epsilon ) return
+     
+     test_qmckl_ao_gaussians_vgl = -13
+     if (dabs(1.d0 - VGL(i,3) / (&
+          -2.d0 * A(i) * Y(2) * dexp(-A(i) * r2) &
+          )) > epsilon ) return
+     
+     test_qmckl_ao_gaussians_vgl = -14
+     if (dabs(1.d0 - VGL(i,4) / (&
+          -2.d0 * A(i) * Y(3) * dexp(-A(i) * r2) &
+          )) > epsilon ) return
+     
+     test_qmckl_ao_gaussians_vgl = -15
+     if (dabs(1.d0 - VGL(i,5) / (&
+          A(i) * (4.d0*r2*A(i) - 6.d0) * dexp(-A(i) * r2) &
+          )) > epsilon ) return
+  end do
+
+  test_qmckl_ao_gaussians_vgl = 0
+     
+  deallocate(VGL)
+end function test_qmckl_ao_gaussians_vgl
+    #+END_SRC
+
+    #+BEGIN_SRC C :comments link :tangle test_qmckl_ao.c
+int  test_qmckl_ao_gaussians_vgl(qmckl_context context);
+munit_assert_int(0, ==, test_qmckl_ao_gaussians_vgl(context));
+    #+END_SRC
+    #+END_SRC
+   
+    
 * TODO Slater basis functions
   
 * End of files                                                     :noexport:

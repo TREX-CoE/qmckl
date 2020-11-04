@@ -1,8 +1,8 @@
-CC=gcc
-CFLAGS=-fPIC -fexceptions -Wall -Werror -Wpedantic -Wextra -g
+CC=gcc -g
+CFLAGS=-fPIC -fexceptions -Wall -Werror -Wpedantic -Wextra 
 
-FC=gfortran
-FFLAGS=-fPIC -g -fcheck=all -Waliasing -Wampersand -Wconversion -Wsurprising -Wintrinsics-std -Wno-tabs -Wintrinsic-shadow -Wline-truncation -Wreal-q-constant -Wuninitialized  -fbacktrace -ffpe-trap=zero,overflow,underflow -finit-real=nan
+FC=gfortran -g
+FFLAGS=-fPIC  -fcheck=all -Waliasing -Wampersand -Wconversion -Wsurprising -Wintrinsics-std -Wno-tabs -Wintrinsic-shadow -Wline-truncation -Wreal-q-constant -Wuninitialized  -fbacktrace -ffpe-trap=zero,overflow,underflow -finit-real=nan
 
 LIBS=-lgfortran -lm
 
@@ -33,7 +33,7 @@ doc:$(ORG_SOURCE_FILES)
 	./create_doc.sh README.org $(ORG_SOURCE_FILES)
 
 clean:
-	rm -f qmckl.h test_qmckl_* test_qmckl.c qmckl_*.f90 qmckl_*.c qmckl_*.o qmckl_*.h Makefile.generated libqmckl.so *.html *.fh
+	rm -f qmckl.h test_qmckl_* test_qmckl.c test_qmckl qmckl_*.f90 qmckl_*.c qmckl_*.o qmckl_*.h Makefile.generated libqmckl.so *.html *.fh
 
 Makefile.generated: $(ORG_SOURCE_FILES) Makefile create_makefile.sh
 	./create_makefile.sh $(ORG_SOURCE_FILES)
