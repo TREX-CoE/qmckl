@@ -1,24 +1,14 @@
 #!/bin/bash
 
+INPUT=$1
 OUTPUT=Makefile.generated
 
 # Tangle org files
-
-emacsclient -a "" \
-            --socket-name=org_to_code \
-            --eval "(require 'org)"
-
-for INPUT in $@ ; do
-    emacsclient \
-        --no-wait \
-        --socket-name=org_to_code \
-        --eval "(org-babel-tangle-file \"$INPUT\")"
-done
-
-emacsclient \
-    --no-wait \
-    --socket-name=org_to_code \
-    --eval '(kill-emacs)'
+emacs \
+     $INPUT \
+     --batch \
+     -f org-babel-tangle \
+     --kill
 
 
 
@@ -68,7 +58,7 @@ libqmckl.so: \$(OBJECT_FILES)
 %.o: %.c 
 	\$(CC) \$(CFLAGS) -c \$*.c -o \$*.o
 
-%.o: %.f90 
+%.o: %.f90 qmckl_f.o
 	\$(FC) \$(FFLAGS) -c \$*.f90 -o \$*.o
 
 test_qmckl: test_qmckl.c libqmckl.so \$(TESTS) \$(TESTS_F)
