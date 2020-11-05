@@ -1,6 +1,8 @@
-(require 'org)
-(require 'font-lock)
+;; Thanks to Tobias's answer on Emacs Stack Exchange:
+;; https://emacs.stackexchange.com/questions/38437/org-mode-batch-export-missing-syntax-highlighting
 
+(package-initialize)
+(require 'font-lock)
 (require 'subr-x) ;; for `when-let'
 
 (unless (boundp 'maximal-integer)
@@ -66,22 +68,3 @@ with class 'color and highest min-color value."
     (or val 'unspecified)))
 
 (advice-add 'face-attribute :override #'my-face-attribute)
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Debugging:
-(defmacro print-args-and-ret (fun)
-  "Prepare FUN for printing args and return value."
-  `(advice-add (quote ,fun) :around
-           (lambda (oldfun &rest args)
-         (let ((ret (apply oldfun args)))
-           (message ,(concat "Calling " (symbol-name fun) " with args %S returns %S.") args ret)
-           ret))
-           '((name "print-args-and-ret"))))
-
-; (print-args-and-ret htmlize-faces-in-buffer)
-; (print-args-and-ret htmlize-get-override-fstruct)
-; (print-args-and-ret htmlize-face-to-fstruct)
-; (print-args-and-ret htmlize-attrlist-to-fstruct)
-; (print-args-and-ret face-foreground)
-; (print-args-and-ret face-background)
-; (print-args-and-ret face-attribute)
