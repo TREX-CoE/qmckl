@@ -2,7 +2,7 @@ COMPILER=GNU
 #COMPILER=INTEL
 #COMPILER=LLVM
 
-ifeq($(COMPILER),GNU)
+ifeq ($(COMPILER),GNU)
 CC=gcc -g
 CFLAGS=-fPIC -fexceptions -Wall -Werror -Wpedantic -Wextra
 
@@ -12,7 +12,7 @@ FFLAGS=-fPIC  -fcheck=all -Waliasing -Wampersand -Wconversion -Wsurprising -Wint
 LIBS=-lgfortran -lm
 endif
 
-ifeq($(COMPILER),INTEL)
+ifeq ($(COMPILER),INTEL)
 CC=icc -xHost
 CFLAGS=-fPIC -g -O2
 
@@ -23,7 +23,7 @@ LIBS=-lm -lifcore -lirc
 endif
 
 #TODO
-ifeq($(COMPILER),LLVM)
+ifeq ($(COMPILER),LLVM)
 CC=clang
 CFLAGS=-fPIC -g -O2
 
