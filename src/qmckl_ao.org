@@ -205,7 +205,7 @@ munit_assert_int(0, ==, test_qmckl_ao_powers(context));
       | =n=          | output | Number of computed polynomials                       |
       | =L(ldl,n)=   | output | Contains a,b,c for all =n= results                   |
       | =ldl=        | input  | Leading dimension of =L=                             |
-      | =VGL(ldv,5)= | output | Value, gradients and Laplacian of the polynomials    |
+      | =VGL(ldv,n)= | output | Value, gradients and Laplacian of the polynomials    |
       | =ldv=        | input  | Leading dimension of array =VGL=                     |
     
 ***** Requirements
@@ -214,12 +214,25 @@ munit_assert_int(0, ==, test_qmckl_ao_powers(context));
       - =n= > 0
       - =lmax= >= 0
       - =ldl= >= 3
-      - =ldv= >= (=lmax=+1)(=lmax=+2)(=lmax=+3)/6
+      - =ldv= >= 5
       - =X= is allocated with at least $3 \times 8$ bytes
       - =R= is allocated with at least $3 \times 8$ bytes
+      - =n= >= =(lmax+1)(lmax+2)(lmax+3)/6=
       - =L= is allocated with at least $3 \times n \times 4$ bytes
-      - =VGL= is allocated with at least $n \times 5 \times 8$ bytes
-      - On output, =n= should be equal to (=lmax=+1)(=lmax=+2)(=lmax=+3)/6
+      - =VGL= is allocated with at least $5 \times n \times 8$ bytes
+      - On output, =n= should be equal to =(lmax+1)(lmax+2)(lmax+3)/6=
+      - On output, the powers are given in the following order (l=a+b+c):
+        - Increase values of =l=
+        - Within a given value of =l=, alphabetical order of the
+          string made by a*"x" + b*"y" + c*"z" (in Python notation).
+          For example, with a=0, b=2 and c=1 the string is "yyz"
+        
+***** Error codes
+
+      | -1 | Null context        |
+      | -2 | Inconsistent =ldl=  |
+      | -3 | Inconsistent =ldv=  |
+      | -4 | Inconsistent =lmax= |
 
 ***** Header
       #+BEGIN_SRC C :tangle qmckl.h
@@ -240,7 +253,7 @@ integer function qmckl_ao_polynomial_vgl_f(context, X, R, lmax, n, L, ldl, VGL, 
   integer*8 , intent(out) :: n
   integer   , intent(out) :: L(ldl,(lmax+1)*(lmax+2)*(lmax+3)/6)
   integer*8 , intent(in)  :: ldl
-  real*8    , intent(out) :: VGL(ldv,5)
+  real*8    , intent(out) :: VGL(ldv,(lmax+1)*(lmax+2)*(lmax+3)/6)
   integer*8 , intent(in)  :: ldv
 
   integer*8         :: i,j
@@ -264,7 +277,7 @@ integer function qmckl_ao_polynomial_vgl_f(context, X, R, lmax, n, L, ldl, VGL, 
      return
   endif
   
-  if (ldv < (lmax+1)*(lmax+2)*(lmax+3)/6) then
+  if (ldv < 5) then
      info = -3
      return
   endif
@@ -289,8 +302,8 @@ integer function qmckl_ao_polynomial_vgl_f(context, X, R, lmax, n, L, ldl, VGL, 
   if (info /= 0) return
 
 
-  vgl(1,1) = 1.d0
-  vgl(1,2:5) = 0.d0
+  VGL(1,1) = 1.d0
+  vgL(2:5,1) = 0.d0
   l(1:3,1) = 0
   n=1
   dd = 1.d0
@@ -310,17 +323,17 @@ integer function qmckl_ao_polynomial_vgl_f(context, X, R, lmax, n, L, ldl, VGL, 
            yz = pows(b,2) * pows(c,3)
            xz = pows(a,1) * pows(c,3)
            
-           vgl(n,1) = xy * pows(c,3)
+           vgl(1,n) = xy * pows(c,3)
            
            xy = dc * xy
            xz = db * xz
            yz = da * yz
            
-           vgl(n,2) = pows(a-1,1) * yz
-           vgl(n,3) = pows(b-1,2) * xz
-           vgl(n,4) = pows(c-1,3) * xy
+           vgl(2,n) = pows(a-1,1) * yz
+           vgl(3,n) = pows(b-1,2) * xz
+           vgl(4,n) = pows(c-1,3) * xy
            
-           vgl(n,5) = &
+           vgl(5,n) = &
                 (da-1.d0) * pows(a-2,1) * yz + &
                 (db-1.d0) * pows(b-2,2) * xz + &
                 (dc-1.d0) * pows(c-2,3) * xy
@@ -331,11 +344,6 @@ integer function qmckl_ao_polynomial_vgl_f(context, X, R, lmax, n, L, ldl, VGL, 
      end do
      dd = dd + 1.d0
   end do
-
-  if (n /= (lmax+1)*(lmax+2)*(lmax+3)/6) then
-    info = -5
-    return
-  endif
 
   info = 0
 
@@ -354,7 +362,7 @@ integer(c_int32_t) function qmckl_ao_polynomial_vgl(context, X, R, lmax, n, L, l
   integer (c_int64_t) , intent(out)        :: n
   integer (c_int32_t) , intent(out)        :: L(ldl,(lmax+1)*(lmax+2)*(lmax+3)/6)
   integer (c_int64_t) , intent(in) , value :: ldl
-  real    (c_double)  , intent(out)        :: VGL(ldv,5)
+  real    (c_double)  , intent(out)        :: VGL(ldv,(lmax+1)*(lmax+2)*(lmax+3)/6)
   integer (c_int64_t) , intent(in) , value :: ldv
 
   integer, external :: qmckl_ao_polynomial_vgl_f
@@ -362,6 +370,7 @@ integer(c_int32_t) function qmckl_ao_polynomial_vgl(context, X, R, lmax, n, L, l
 end function qmckl_ao_polynomial_vgl
       #+END_SRC
 
+***** Fortran interface                                            :noexport:
       #+BEGIN_SRC f90 :tangle qmckl_f.f90
   interface
      integer(c_int32_t) function qmckl_ao_polynomial_vgl(context, X, R, lmax, n, L, ldl, VGL, ldv) &
@@ -374,7 +383,7 @@ end function qmckl_ao_polynomial_vgl
        real    (c_double)  , intent(in)         :: X(3), R(3)
        integer (c_int64_t) , intent(out)        :: n
        integer (c_int32_t) , intent(out)        :: L(ldl,(lmax+1)*(lmax+2)*(lmax+3)/6)
-       real    (c_double)  , intent(out)        :: VGL(ldv,5)
+       real    (c_double)  , intent(out)        :: VGL(ldv,(lmax+1)*(lmax+2)*(lmax+3)/6)
      end function qmckl_ao_polynomial_vgl
   end interface
       #+END_SRC
@@ -407,7 +416,7 @@ integer(c_int32_t) function test_qmckl_ao_polynomial_vgl(context) bind(C)
 
   d = (lmax+1)*(lmax+2)*(lmax+3)/6
 
-  allocate (L(ldl,100), VGL(ldv,5))
+  allocate (L(ldl,d), VGL(ldv,d))
 
   test_qmckl_ao_polynomial_vgl = &
        qmckl_ao_polynomial_vgl(context, X, R, lmax, n, L, ldl, VGL, ldv)
@@ -423,33 +432,33 @@ integer(c_int32_t) function test_qmckl_ao_polynomial_vgl(context) bind(C)
         if (L(i,j) < 0) return
      end do
      test_qmckl_ao_polynomial_vgl = -12
-     if (dabs(1.d0 - VGL(j,1) / (&
+     if (dabs(1.d0 - VGL(1,j) / (&
           Y(1)**L(1,j) * Y(2)**L(2,j) * Y(3)**L(3,j)  &
           )) > epsilon ) return
 
      test_qmckl_ao_polynomial_vgl = -13
      if (L(1,j) < 1) then
-        if (VGL(j,2) /= 0.d0) return
+        if (VGL(2,j) /= 0.d0) return
      else
-        if (dabs(1.d0 - VGL(j,2) / (&
+        if (dabs(1.d0 - VGL(2,j) / (&
              L(1,j) * Y(1)**(L(1,j)-1) * Y(2)**L(2,j) * Y(3)**L(3,j) &
              )) > epsilon ) return
      end if
 
      test_qmckl_ao_polynomial_vgl = -14
      if (L(2,j) < 1) then
-        if (VGL(j,3) /= 0.d0) return
+        if (VGL(3,j) /= 0.d0) return
      else
-        if (dabs(1.d0 - VGL(j,3) / (&
+        if (dabs(1.d0 - VGL(3,j) / (&
              L(2,j) * Y(1)**L(1,j) * Y(2)**(L(2,j)-1) * Y(3)**L(3,j) &
              )) > epsilon ) return
      end if
 
      test_qmckl_ao_polynomial_vgl = -15
      if (L(3,j) < 1) then
-        if (VGL(j,4) /= 0.d0) return
+        if (VGL(4,j) /= 0.d0) return
      else
-        if (dabs(1.d0 - VGL(j,4) / (&
+        if (dabs(1.d0 - VGL(4,j) / (&
              L(3,j) * Y(1)**L(1,j) * Y(2)**L(2,j) * Y(3)**(L(3,j)-1) &
              )) > epsilon ) return
      end if
@@ -465,7 +474,7 @@ integer(c_int32_t) function test_qmckl_ao_polynomial_vgl(context) bind(C)
      if (L(3,j) > 1) then
         w = w + L(3,j) * (L(3,j)-1) * Y(1)**L(1,j) * Y(2)**L(2,j) * Y(3)**(L(3,j)-2) 
      end if
-     if (dabs(1.d0 - VGL(j,5) / w) > epsilon ) return
+     if (dabs(1.d0 - VGL(5,j) / w) > epsilon ) return
   end do
 
   test_qmckl_ao_polynomial_vgl = 0

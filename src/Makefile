@@ -1,3 +1,8 @@
+COMPILER=GNU
+#COMPILER=INTEL
+#COMPILER=LLVM
+
+ifeq($(COMPILER),GNU)
 CC=gcc -g
 CFLAGS=-fPIC -fexceptions -Wall -Werror -Wpedantic -Wextra
 
@@ -5,14 +10,28 @@ FC=gfortran -g
 FFLAGS=-fPIC  -fcheck=all -Waliasing -Wampersand -Wconversion -Wsurprising -Wintrinsics-std -Wno-tabs -Wintrinsic-shadow -Wline-truncation -Wreal-q-constant -Wuninitialized  -fbacktrace -ffpe-trap=zero,overflow,underflow -finit-real=nan
 
 LIBS=-lgfortran -lm
+endif
 
-#CC=icc -xHost
-#CFLAGS=-fPIC -g -O2
-#
-#FC=ifort -xHost
-#FFLAGS=-fPIC -g -O2
-#
-#LIBS=-lm -lifcore -lirc
+ifeq($(COMPILER),INTEL)
+CC=icc -xHost
+CFLAGS=-fPIC -g -O2
+
+FC=ifort -xHost
+FFLAGS=-fPIC -g -O2
+
+LIBS=-lm -lifcore -lirc
+endif
+
+#TODO
+ifeq($(COMPILER),LLVM)
+CC=clang
+CFLAGS=-fPIC -g -O2
+
+FC=flang
+FFLAGS=fPIC -g -O2
+
+LIBS=-lm
+endif
 
 
 export CC CFLAGS FC FFLAGS LIBS
