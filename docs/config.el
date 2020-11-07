@@ -2,6 +2,7 @@
 ;; https://emacs.stackexchange.com/questions/38437/org-mode-batch-export-missing-syntax-highlighting
 
 (package-initialize)
+(require 'htmlize)
 (require 'font-lock)
 (require 'subr-x) ;; for `when-let'
 
