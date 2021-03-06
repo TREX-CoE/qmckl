@@ -51,16 +51,12 @@ test: Makefile.generated
 
 
 doc: $(ORG_SOURCE_FILES)
-	./merge_org.sh
 	./create_doc.sh $(MERGED_ORG)
-	rm $(MERGED_ORG)
 
 
 clean:
 	rm -f qmckl.h test_qmckl_* test_qmckl.c test_qmckl qmckl_*.f90 qmckl_*.c qmckl_*.o qmckl_*.h Makefile.generated libqmckl.so *.html *.fh *.mod
 
 Makefile.generated: Makefile create_makefile.sh  $(ORG_SOURCE_FILES)
-	./merge_org.sh 
 	./create_makefile.sh $(MERGED_ORG)
-	rm $(MERGED_ORG)
 

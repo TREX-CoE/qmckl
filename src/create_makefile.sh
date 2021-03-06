@@ -1,6 +1,8 @@
 #!/bin/bash
 
 INPUT=$1
+./merge_org.sh $INPUT
+
 OUTPUT=Makefile.generated
 
 # Tangle org files

@@ -1,5 +1,7 @@
 #!/bin/bash
 
+OUTPUT=$1
+
 for i in README.org \
              qmckl.org \
              qmckl_context.org \
@@ -11,5 +13,5 @@ for i in README.org \
              qmckl_footer.org \
              test_qmckl.org
 do
-    cat $i >> merged_qmckl.org
+    cat $i >> $1
 done
