@@ -1,17 +1,18 @@
 #!/bin/bash
 
-INPUT=$1
-./merge_org.sh $INPUT
+MERGED=merged.org
+${QMCKL_ROOT}/tools/merge_org.sh $MERGED
 
 OUTPUT=Makefile.generated
 
 # Tangle org files
 emacs \
-     $INPUT \
+     $MERGED \
      --batch \
      -f org-babel-tangle \
      --kill
 
+rm $MERGED
 
 
 # Create the list of *.o files to be created

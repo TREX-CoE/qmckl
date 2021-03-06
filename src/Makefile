@@ -34,9 +34,10 @@ LIBS=-lm
 endif
 
 
-export CC CFLAGS FC FFLAGS LIBS
+QMCKL_ROOT=$(PWD)/..
 
-MERGED_ORG=merged_qmckl.org
+export CC CFLAGS FC FFLAGS LIBS QMCKL_ROOT
+
 ORG_SOURCE_FILES=$(wildcard *.org)
 OBJECT_FILES=$(filter-out $(EXCLUDED_OBJECTS), $(patsubst %.org,%.o,$(ORG_SOURCE_FILES)))
 
@@ -51,12 +52,12 @@ test: Makefile.generated
 
 
 doc: $(ORG_SOURCE_FILES)
-	./create_doc.sh $(MERGED_ORG)
+	$(QMCKL_ROOT)/tools/create_doc.sh 
 
 
 clean:
 	rm -f qmckl.h test_qmckl_* test_qmckl.c test_qmckl qmckl_*.f90 qmckl_*.c qmckl_*.o qmckl_*.h Makefile.generated libqmckl.so *.html *.fh *.mod
 
-Makefile.generated: Makefile create_makefile.sh  $(ORG_SOURCE_FILES)
-	./create_makefile.sh $(MERGED_ORG)
+Makefile.generated: Makefile $(QMCKL_ROOT)/tools/create_makefile.sh  $(ORG_SOURCE_FILES)
+	$(QMCKL_ROOT)/tools/create_makefile.sh 
 
