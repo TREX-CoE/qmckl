@@ -1,5 +1,7 @@
 #!/bin/bash 
 
+set -x
+
 INPUT=merged.org
 if [[ -z $QMCKL_ROOT ]]
 then
