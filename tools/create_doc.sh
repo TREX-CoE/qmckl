@@ -34,10 +34,10 @@ emacs --batch \
 
 if [[ $? -eq 0 ]]
 then
+  mv index.html ${QMCKL_ROOT}/docs/
   rm -rf $TMPDIR
   exit 0
 else
-  mv index.html ${QMCKL_ROOT}/docs/
   rm -rf $TMPDIR
   exit 2
 fi
