@@ -2,9 +2,36 @@
 ;; https://emacs.stackexchange.com/questions/38437/org-mode-batch-export-missing-syntax-highlighting
 
 (package-initialize)
+(add-to-list 'package-archives
+             '("gnu" . "https://elpa.gnu.org/packages/"))
+(add-to-list 'package-archives
+             '("melpa-stable" . "https://stable.melpa.org/packages/"))
+(add-to-list 'package-archives
+             '("melpa" . "https://melpa.org/packages/"))
+(setq package-archive-priorities '(("melpa-stable" . 100)
+                                   ("melpa" . 50)
+                                   ("gnu" . 10)))
+
+
 (require 'htmlize)
 (require 'font-lock)
 (require 'subr-x) ;; for `when-let'
+(setq org-confirm-babel-evaluate nil)
+(global-font-lock-mode t)
+
+(org-babel-do-load-languages
+ 'org-babel-load-languages
+ '(
+   (emacs-lisp . t)
+   (shell . t)
+   (python . t)
+   (C . t)
+   (org . t)
+   (makefile . t)
+   ))
+
+
+
 
 (unless (boundp 'maximal-integer)
   (defconst maximal-integer (lsh -1 -1)

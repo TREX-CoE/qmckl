@@ -46,7 +46,7 @@
    (emacs-lisp . t)
    (shell . t)
    (python . t)
-   (C . t)                                                                                                                                                                                     
+   (C . t)
    (org . t)
    (makefile . t)
    ))

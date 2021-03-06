@@ -30,7 +30,6 @@ cd $TMPDIR
 emacs --batch \
       --load ${QMCKL_ROOT}/docs/htmlize.el \
       --load ${QMCKL_ROOT}/docs/config.el  \
-      --load ${QMCKL_ROOT}/tools/init.el  \
       $INPUT -f org-html-export-to-html
 
 if [[ $? -eq 0 ]]
