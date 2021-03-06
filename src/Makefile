@@ -34,7 +34,7 @@ LIBS=-lm
 endif
 
 
-QMCKL_ROOT=$(PWD)/..
+QMCKL_ROOT=$(CURDIR)/..
 
 export CC CFLAGS FC FFLAGS LIBS QMCKL_ROOT
 
