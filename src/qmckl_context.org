@@ -1,101 +1,78 @@
-** Context
-   :PROPERTIES:
-   :c:        qmckl_context.c
-   :c_test:   test_qmckl_context.c
-   :fh:       qmckl_f.f90
-   :h:        qmckl.h
-   :END:
+#+TITLE: Context
+#+SETUPFILE: ../docs/theme.setup
 
-   This file is written in C because it is more natural to express the
-   context in C than in Fortran.
+  This file is written in C because it is more natural to express the
+  context in C than in Fortran.
 
-   2 files are produced:
-   - a source file : =qmckl_context.c=
-   - a test   file : =test_qmckl_context.c=
+  The context variable is a handle for the state of the library,
+  and is stored in a data structure, which can't be seen outside of
+  the library.  To simplify compatibility with other languages, the
+  pointer to the internal data structure is converted into a 64-bit
+  signed integer, defined in the ~qmckl_context~ type.  A value of ~0~
+  for the context is equivalent to a ~NULL~ pointer.
 
-*** Headers                                                        :noexport:
-    #+BEGIN_SRC C :tangle (org-entry-get nil "c" t)
-#include "qmckl.h"
-#include <math.h>
-#include <string.h>
-#include <assert.h>
-    #+END_SRC
+   #+begin_src c :comments org :tangle (eval h)
+typedef int64_t qmckl_context ;
+   #+end_src
 
-    #+BEGIN_SRC C :tangle (org-entry-get nil "c_test" t)
+* Headers                                                          :noexport:
+
+  #+NAME: filename
+  #+begin_src elisp tangle: no 
+(file-name-nondirectory (substring buffer-file-name 0 -4))
+  #+end_src
+
+
+  #+begin_src c :tangle (eval c_test) :noweb yes
 #include "qmckl.h"
 #include "munit.h"
-MunitResult test_qmckl_context() {
-    #+END_SRC
+MunitResult test_<<filename()>>() {
+  #+end_src
 
-*** Context
+  #+begin_src c :tangle (eval h_private)
+#ifndef __QMCKL_CONTEXT__
+#define __QMCKL_CONTEXT__
 
-    The <<<context>>> variable is a handle for the state of the library, and
-    is stored  in the  following data structure,  which can't  be seen
-    outside  of  the library.  To  simplify  compatibility with  other
-    languages, the pointer to the internal data structure is converted
-    into a 64-bit signed integer, defined in the ~qmckl_context~ type.
-    A value of ~0~ for the context is equivalent to a ~NULL~ pointer.
+#include <stdint.h>
+#include "qmckl_error.h"
 
-     #+BEGIN_SRC C :comments org :tangle qmckl.h
-typedef int64_t qmckl_context ;
-     #+END_SRC
+  #+end_src
 
-**** Data for error handling
+  #+begin_src c :tangle (eval c) 
+#include <stdint.h>
+#include <assert.h>
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
 
-     We define here the the data structure containing the strings
-     necessary for error handling.
-  
-     #+BEGIN_SRC C :comments org :tangle qmckl.h
-#define  QMCKL_MAX_FUN_LEN  256
-#define  QMCKL_MAX_MSG_LEN  1024
+#include "qmckl_error.h"
+#include "qmckl_context_private.h"
+#include "qmckl_context.h"
+#include "qmckl_memory.h"
+#include "qmckl_precision.h"
 
-typedef struct qmckl_error_struct {
+  #+end_src
 
-  qmckl_exit_code exit_code;
-  char function[QMCKL_MAX_FUN_LEN];
-  char message [QMCKL_MAX_MSG_LEN];
 
-} qmckl_error_struct;
-     #+END_SRC
+* Context handling
 
-     
-**** Basis set data structure
+  The tag is used internally to check if the memory domain pointed
+  by a pointer is a valid <<<context>>>.
 
-     Data  structure for  the info  related to  the atomic  orbitals
-     basis set.
+  #+begin_src c :comments org :tangle (eval h_private) :noweb yes
+<<qmckl_error_struct>>
+<<qmckl_ao_basis_struct>>
 
-     #+BEGIN_SRC C :comments org :tangle (org-entry-get nil "h" t)
-typedef struct qmckl_ao_basis_struct {
-
-  int64_t   shell_num;
-  int64_t   prim_num;
-  int64_t * shell_center;
-  int32_t * shell_ang_mom;
-  double  * shell_factor;
-  double  * exponent    ;
-  double  * coefficient ;
-  int64_t * shell_prim_num;
-  char      type;
-
-} qmckl_ao_basis_struct;
-     #+END_SRC
-
-***** Source
-
-      The tag is used internally to check if the memory domain pointed
-      by a pointer is a valid context.
-
-      #+BEGIN_SRC C :comments org :tangle (org-entry-get nil "h" t)
 typedef struct qmckl_context_struct {
 
   struct qmckl_context_struct * prev;
 
   /* Molecular system */
-  //  struct qmckl_nucleus_struct     * nucleus;
-  //  struct qmckl_electron_struct    * electron;
-  struct qmckl_ao_basis_struct      * ao_basis;
-  //  struct qmckl_mo_struct          * mo;
-  //  struct qmckl_determinant_struct * det;
+  //  qmckl_nucleus_struct     * nucleus;
+  //  qmckl_electron_struct    * electron;
+  qmckl_ao_basis_struct      * ao_basis;
+  //  qmckl_mo_struct          * mo;
+  //  qmckl_determinant_struct * det;
 
   /* Numerical precision */
   uint32_t tag;
@@ -103,105 +80,26 @@ typedef struct qmckl_context_struct {
   int32_t range;
 
   /* Error handling */
-  struct qmckl_error_struct   * error;
+  qmckl_error_struct   * error;
 
 } qmckl_context_struct;
 
 #define VALID_TAG   0xBEEFFACE
 #define INVALID_TAG 0xDEADBEEF
-      #+END_SRC
+  #+end_src
 
-**** ~qmckl_context_update_error~
+** ~qmckl_context_check~
 
-     #+BEGIN_SRC C :comments org :tangle (org-entry-get nil "h" t)
-qmckl_exit_code
-qmckl_context_update_error(qmckl_context context, const qmckl_exit_code exit_code, const char* function, const char* message);
-     #+END_SRC
+   Checks if the  domain pointed by the pointer is  a valid context.
+   Returns  the input  ~qmckl_context~ if  the context  is valid,  0
+   otherwise.
 
-***** Source
-      #+BEGIN_SRC C :tangle (org-entry-get nil "c" t)
-qmckl_exit_code
-qmckl_context_update_error(qmckl_context context, const qmckl_exit_code exit_code, const char* function, const char* message)
-{
-  assert (context != 0);
-  assert (function != NULL);
-  assert (message != NULL);
-  assert (exit_code > 0);
-  assert (exit_code < QMCKL_INVALID_EXIT_CODE);
-
-  qmckl_context_struct* ctx = (qmckl_context_struct*) context;
-  if (ctx == NULL) return QMCKL_FAILURE;
-
-  if (ctx->error != NULL) {
-    free(ctx->error);
-    ctx->error = NULL;
-  }
-
-  qmckl_error_struct* error = (qmckl_error_struct*) qmckl_malloc (context, sizeof(qmckl_error_struct));
-  error->exit_code = exit_code;
-  strcpy(error->function, function);
-  strcpy(error->message, message);
-
-  ctx->error = error;
-
-  return QMCKL_SUCCESS;
-}
-      #+END_SRC
-
-***** TODO Test
-
-**** ~qmckl_context_set_error~
-
-     #+BEGIN_SRC C :comments org :tangle (org-entry-get nil "h" t)
-qmckl_context
-qmckl_context_set_error(qmckl_context context, const qmckl_exit_code exit_code, const char* function, const char* message);
-     #+END_SRC
-
-***** Source
-      #+BEGIN_SRC C :tangle (org-entry-get nil "c" t)
-qmckl_context
-qmckl_context_set_error(qmckl_context context, const qmckl_exit_code exit_code, const char* function, const char* message)
-{
-  assert (context != 0);
-  assert (function != NULL);
-  assert (message != NULL);
-  assert (exit_code > 0);
-  assert (exit_code < QMCKL_INVALID_EXIT_CODE);
-
-  qmckl_context new_context = qmckl_context_copy(context);
-  if (new_context == 0) return context;
-
-  if (qmckl_context_update_error(new_context, exit_code,
-                                 function, message) != QMCKL_SUCCESS) {
-    return context;
-  }
-
-  return new_context;
-}
-      #+END_SRC
-
-***** TODO Test
-
-***** Test                                                         :noexport:
-
-      #+BEGIN_SRC C :tangle (org-entry-get nil "c_test" t)
-qmckl_context  context;
-qmckl_context  new_context;
-      #+END_SRC
-
-
-**** ~qmckl_context_check~
-
-     Checks if the  domain pointed by the pointer is  a valid context.
-     Returns  the input  ~qmckl_context~ if  the context  is valid,  0
-     otherwise.
-
-     #+BEGIN_SRC C :comments org :tangle (org-entry-get nil "h" t)
+   #+begin_src c :comments org :tangle (eval h)
 qmckl_context qmckl_context_check(const qmckl_context context) ;
-     #+END_SRC
+   #+end_src
 
-***** Source
-      #+BEGIN_SRC C :tangle (org-entry-get nil "c" t)
+*** Source
+    #+begin_src c :tangle (eval c)
 qmckl_context qmckl_context_check(const qmckl_context context) {
 
   if (context == (qmckl_context) 0) return (qmckl_context) 0;
@@ -212,20 +110,20 @@ qmckl_context qmckl_context_check(const qmckl_context context) {
 
   return context;
 }
-      #+END_SRC
+    #+end_src
 
-**** ~qmckl_context_create~
+** ~qmckl_context_create~
 
-     To create a new context, use ~qmckl_context_create()~.
-     - On success, returns a pointer to a context using the ~qmckl_context~ type
-     - Returns ~0~ upon failure to allocate the internal data structure
+   To create a new context, use ~qmckl_context_create()~.
+   - On success, returns a pointer to a context using the ~qmckl_context~ type
+   - Returns ~0~ upon failure to allocate the internal data structure
 
-       #+BEGIN_SRC C :comments org :tangle (org-entry-get nil "h" t)
+     #+begin_src c :comments org :tangle (eval h)
 qmckl_context qmckl_context_create();
-       #+END_SRC
+     #+end_src
 
-***** Source
-      #+BEGIN_SRC C :tangle (org-entry-get nil "c" t)
+*** Source
+    #+begin_src c :tangle (eval c)
 qmckl_context qmckl_context_create() {
 
   qmckl_context_struct* context =
@@ -243,38 +141,38 @@ qmckl_context qmckl_context_create() {
 
   return (qmckl_context) context;
 }
-      #+END_SRC
+    #+end_src
 
-***** Fortran interface
-      #+BEGIN_SRC f90 :tangle (org-entry-get nil "fh" t)
+*** Fortran interface
+    #+begin_src f90 :tangle (eval fh)
   interface
      integer (c_int64_t) function qmckl_context_create() bind(C)
        use, intrinsic :: iso_c_binding
      end function qmckl_context_create
   end interface
-      #+END_SRC
+    #+end_src
 
-***** Test                                                         :noexport:
-      #+BEGIN_SRC C :comments link :tangle (org-entry-get nil "c_test" t)
-context = qmckl_context_create();
+*** Test                                                           :noexport:
+    #+begin_src c :comments link :tangle (eval c_test)
+qmckl_context context = qmckl_context_create();
 munit_assert_int64( context, !=, (qmckl_context) 0);
 munit_assert_int64( qmckl_context_check(context), ==,  context);
-      #+END_SRC
+    #+end_src
 
-**** ~qmckl_context_copy~
+** ~qmckl_context_copy~
 
-     This function makes a shallow copy of the current context.
-     - Copying the 0-valued context returns 0
-     - On success, returns a pointer to the new context using the ~qmckl_context~ type
-     - Returns 0 upon failure to allocate the internal data structure
-       for the new context
+   This function makes a shallow copy of the current context.
+   - Copying the 0-valued context returns 0
+   - On success, returns a pointer to the new context using the ~qmckl_context~ type
+   - Returns 0 upon failure to allocate the internal data structure
+     for the new context
 
-       #+BEGIN_SRC C :comments org :tangle (org-entry-get nil "h" t)
+     #+begin_src c :comments org :tangle (eval h)
 qmckl_context qmckl_context_copy(const qmckl_context context);
-       #+END_SRC
+     #+end_src
 
-***** Source
-      #+BEGIN_SRC C :tangle (org-entry-get nil "c" t)
+*** Source
+    #+begin_src c :tangle (eval c)
 qmckl_context qmckl_context_copy(const qmckl_context context) {
 
   const qmckl_context checked_context = qmckl_context_check(context);
@@ -301,39 +199,39 @@ qmckl_context qmckl_context_copy(const qmckl_context context) {
   return (qmckl_context) new_context;
 }
 
-      #+END_SRC
+    #+end_src
 
-***** Fortran interface
-      #+BEGIN_SRC f90 :tangle (org-entry-get nil "fh" t)
+*** Fortran interface
+    #+begin_src f90 :tangle (eval fh)
   interface
      integer (c_int64_t) function qmckl_context_copy(context) bind(C)
        use, intrinsic :: iso_c_binding
        integer (c_int64_t), intent(in), value :: context
      end function qmckl_context_copy
   end interface
-      #+END_SRC
+    #+end_src
 
-***** Test                                                         :noexport:
-      #+BEGIN_SRC C :comments link :tangle (org-entry-get nil "c_test" t)
-new_context = qmckl_context_copy(context);
+*** Test                                                           :noexport:
+    #+begin_src c :comments link :tangle (eval c_test)
+qmckl_context new_context = qmckl_context_copy(context);
 munit_assert_int64(new_context, !=, (qmckl_context) 0);
 munit_assert_int64(new_context, !=, context);
 munit_assert_int64(qmckl_context_check(new_context), ==, new_context);
-      #+END_SRC
+    #+end_src
 
-**** ~qmckl_context_previous~
+** ~qmckl_context_previous~
 
-     Returns the previous context
-     - On success, returns the ancestor of the current context
-     - Returns 0 for the initial context
-     - Returns 0 for the 0-valued context
+   Returns the previous context
+   - On success, returns the ancestor of the current context
+   - Returns 0 for the initial context
+   - Returns 0 for the 0-valued context
 
-       #+BEGIN_SRC C :comments org :tangle (org-entry-get nil "h" t)
+     #+begin_src c :comments org :tangle (eval h)
 qmckl_context qmckl_context_previous(const qmckl_context context);
-       #+END_SRC
+     #+end_src
 
-***** Source
-      #+BEGIN_SRC C :tangle (org-entry-get nil "c" t)
+*** Source
+    #+begin_src c :tangle (eval c)
 qmckl_context qmckl_context_previous(const qmckl_context context) {
 
   const qmckl_context checked_context = qmckl_context_check(context);
@@ -344,40 +242,40 @@ qmckl_context qmckl_context_previous(const qmckl_context context) {
   const qmckl_context_struct* ctx = (qmckl_context_struct*) checked_context;
   return qmckl_context_check((qmckl_context) ctx->prev);
 }
-      #+END_SRC
+    #+end_src
 
-***** Fortran interface
-      #+BEGIN_SRC f90 :tangle (org-entry-get nil "fh" t)
+*** Fortran interface
+    #+begin_src f90 :tangle (eval fh)
   interface
      integer (c_int64_t) function qmckl_context_previous(context) bind(C)
        use, intrinsic :: iso_c_binding
        integer (c_int64_t), intent(in), value :: context
      end function qmckl_context_previous
   end interface
-      #+END_SRC
+    #+end_src
 
-***** Test                                                         :noexport:
-      #+BEGIN_SRC C :comments link :tangle (org-entry-get nil "c_test" t)
+*** Test                                                           :noexport:
+    #+begin_src c :comments link :tangle (eval c_test)
 munit_assert_int64(qmckl_context_previous(new_context), !=, (qmckl_context) 0);
 munit_assert_int64(qmckl_context_previous(new_context), ==, context);
 munit_assert_int64(qmckl_context_previous(context), ==, (qmckl_context) 0);
 munit_assert_int64(qmckl_context_previous((qmckl_context) 0), ==, (qmckl_context) 0);
-      #+END_SRC
+    #+end_src
 
-**** ~qmckl_context_destroy~
+** ~qmckl_context_destroy~
 
-     Destroys the current context, leaving the ancestors untouched.
-     - Succeeds if the current context is properly destroyed
-     - Fails otherwise
-     - Fails if the 0-valued context is given in argument
-     - Fails if the the pointer is not a valid context
+   Destroys the current context, leaving the ancestors untouched.
+   - Succeeds if the current context is properly destroyed
+   - Fails otherwise
+   - Fails if the 0-valued context is given in argument
+   - Fails if the the pointer is not a valid context
 
-     #+BEGIN_SRC C :comments org :tangle (org-entry-get nil "h" t)
+   #+begin_src c :comments org :tangle (eval h)
 qmckl_exit_code qmckl_context_destroy(qmckl_context context);
-     #+END_SRC
+   #+end_src
 
-***** Source
-      #+BEGIN_SRC C :tangle (org-entry-get nil "c" t)
+*** Source
+    #+begin_src c :tangle (eval c)
 qmckl_exit_code qmckl_context_destroy(const qmckl_context context) {
 
   const qmckl_context checked_context = qmckl_context_check(context);
@@ -389,33 +287,170 @@ qmckl_exit_code qmckl_context_destroy(const qmckl_context context) {
   ctx->tag = INVALID_TAG;
   return qmckl_free(context,ctx);
 }
-      #+END_SRC
+    #+end_src
 
-***** Fortran interface
-      #+BEGIN_SRC f90 :tangle (org-entry-get nil "fh" t)
+*** Fortran interface
+    #+begin_src f90 :tangle (eval fh)
   interface
      integer (c_int32_t) function qmckl_context_destroy(context) bind(C)
        use, intrinsic :: iso_c_binding
        integer (c_int64_t), intent(in), value :: context
      end function qmckl_context_destroy
   end interface
-      #+END_SRC
+    #+end_src
 
-***** Test                                                         :noexport:
-      #+BEGIN_SRC C :tangle (org-entry-get nil "c_test" t)
+*** Test                                                           :noexport:
+    #+begin_src c :tangle (eval c_test)
 munit_assert_int64(qmckl_context_check(new_context), ==, new_context);
 munit_assert_int64(new_context, !=, (qmckl_context) 0);
 munit_assert_int32(qmckl_context_destroy(new_context), ==, QMCKL_SUCCESS);
 munit_assert_int64(qmckl_context_check(new_context), !=, new_context);
 munit_assert_int64(qmckl_context_check(new_context), ==, (qmckl_context) 0);
 munit_assert_int64(qmckl_context_destroy((qmckl_context) 0), ==, QMCKL_FAILURE);
-      #+END_SRC
+    #+end_src
 
-**** Basis set
+* Error handling
+** Data structure
+  
+   #+NAME: qmckl_error_struct
+   #+begin_src c :comments org 
+#define  QMCKL_MAX_FUN_LEN  256
+#define  QMCKL_MAX_MSG_LEN  1024
 
-      For H_2 with the following basis set,
+typedef struct qmckl_error_struct {
 
-      #+BEGIN_EXAMPLE
+  qmckl_exit_code exit_code;
+  char function[QMCKL_MAX_FUN_LEN];
+  char message [QMCKL_MAX_MSG_LEN];
+
+} qmckl_error_struct;
+   #+end_src
+
+** ~qmckl_context_update_error~
+
+   #+begin_src c :comments org :tangle (eval h)
+qmckl_exit_code
+qmckl_context_update_error(qmckl_context context, const qmckl_exit_code exit_code, const char* function, const char* message);
+   #+end_src
+
+*** Source
+    #+begin_src c :tangle (eval c)
+qmckl_exit_code
+qmckl_context_update_error(qmckl_context context, const qmckl_exit_code exit_code, const char* function, const char* message)
+{
+  assert (context != 0);
+  assert (function != NULL);
+  assert (message != NULL);
+  assert (exit_code > 0);
+  assert (exit_code < QMCKL_INVALID_EXIT_CODE);
+
+  qmckl_context_struct* ctx = (qmckl_context_struct*) context;
+  if (ctx == NULL) return QMCKL_FAILURE;
+
+  if (ctx->error != NULL) {
+    free(ctx->error);
+    ctx->error = NULL;
+  }
+
+  qmckl_error_struct* error = (qmckl_error_struct*) qmckl_malloc (context, sizeof(qmckl_error_struct));
+  error->exit_code = exit_code;
+  strcpy(error->function, function);
+  strcpy(error->message, message);
+
+  ctx->error = error;
+
+  return QMCKL_SUCCESS;
+}
+    #+end_src
+
+*** TODO Test
+
+** ~qmckl_context_set_error~
+
+   #+begin_src c :comments org :tangle (eval h)
+qmckl_context
+qmckl_context_set_error(qmckl_context context, const qmckl_exit_code exit_code, const char* function, const char* message);
+   #+end_src
+
+*** Source
+    #+begin_src c :tangle (eval c)
+qmckl_context
+qmckl_context_set_error(qmckl_context context, const qmckl_exit_code exit_code, const char* function, const char* message)
+{
+  assert (context != 0);
+  assert (function != NULL);
+  assert (message != NULL);
+  assert (exit_code > 0);
+  assert (exit_code < QMCKL_INVALID_EXIT_CODE);
+
+  qmckl_context new_context = qmckl_context_copy(context);
+  if (new_context == 0) return context;
+
+  if (qmckl_context_update_error(new_context, exit_code,
+                                 function, message) != QMCKL_SUCCESS) {
+    return context;
+  }
+
+  return new_context;
+}
+    #+end_src
+
+*** TODO Test
+
+*** Test                                                           :noexport:
+
+** ~qmckl_failwith~
+
+   To make a function fail, the <<<~qmckl_failwith~>>> function should be
+   called, such that information about the failure is stored in
+   the context. The desired exit code is given as an argument, as
+   well as the name of the function and an error message. The return
+   code of the function is the desired return code.
+
+   #+begin_src c :comments org :tangle (eval h)
+qmckl_exit_code qmckl_failwith(qmckl_context context,
+                               const qmckl_exit_code exit_code,
+                               const char* function,
+                               const char* message) ;
+   #+end_src
+
+   #+begin_src c :comments org :tangle (eval c)
+qmckl_exit_code qmckl_failwith(qmckl_context context,
+                               const qmckl_exit_code exit_code,
+                               const char* function,
+                               const char* message) {
+
+  if (context == 0) return QMCKL_NULL_CONTEXT;
+  assert (exit_code > 0);
+  assert (exit_code < QMCKL_INVALID_EXIT_CODE);
+  assert (function != NULL);
+  assert (message  != NULL);
+  assert (strlen(function) < QMCKL_MAX_FUN_LEN);
+  assert (strlen(message)  < QMCKL_MAX_MSG_LEN);
+  
+  context = qmckl_context_set_error(context, exit_code, function, message);
+  return exit_code;
+}
+
+   #+end_src
+
+   For example, this function can be used as
+   #+begin_src c :tangle no
+if (x < 0) {
+  return qmckl_failwith(context,
+                        QMCKL_INVALID_ARG_2,
+                        "qmckl_function", 
+                        "Expected x >= 0");
+ }
+   #+end_src
+    
+   #   To decode the error messages, ~qmckl_strerror~ converts an
+   #   error code into a string. 
+* Basis set
+
+   For H_2 with the following basis set,
+
+   #+BEGIN_EXAMPLE
 HYDROGEN
 S   5
 1         3.387000E+01           6.068000E-03
@@ -433,11 +468,11 @@ P   1
 1         3.880000E-01           1.000000E+00
 D   1
 1         1.057000E+00           1.0000000
-      #+END_EXAMPLE
+   #+END_EXAMPLE
 
-      we have:
+   we have:
 
-      #+BEGIN_EXAMPLE
+   #+BEGIN_EXAMPLE
 type = 'G'
 shell_num = 12
 prim_num = 20
@@ -451,24 +486,43 @@ EXPONENT = [ 33.87, 5.095, 1.159, 0.3258, 0.1027, 0.3258, 0.1027,
 COEFFICIENT = [ 0.006068, 0.045308, 0.202822, 0.503903, 0.383421,
                 1.0, 1.0, 1.0, 1.0, 1.0, 0.006068, 0.045308, 0.202822,
                 0.503903, 0.383421, 1.0, 1.0, 1.0, 1.0, 1.0]
-      #+END_EXAMPLE
+   #+END_EXAMPLE
 
-**** ~qmckl_context_update_ao_basis~
+** Data structure
 
-     Updates the data describing the AO basis set into the context.
+   #+NAME: qmckl_ao_basis_struct
+   #+begin_src c :comments org :tangle no
+typedef struct qmckl_ao_basis_struct {
 
-     | ~type~                        | Gaussian or Slater                                                   |
-     | ~shell_num~                   | Number of shells                                                     |
-     | ~prim_num~                    | Total number of primitives                                           |
-     | ~SHELL_CENTER(shell_num)~     | Id of the nucleus on which the shell is centered                     |
-     | ~SHELL_ANG_MOM(shell_num)~    | Id of the nucleus on which the shell is centered                     |
-     | ~SHELL_FACTOR(shell_num)~     | Normalization factor for the shell                                   |
-     | ~SHELL_PRIM_NUM(shell_num)~   | Number of primitives in the shell                                    |
-     | ~SHELL_PRIM_INDEX(shell_num)~ | Address of the first primitive of the shelll in the ~EXPONENT~ array |
-     | ~EXPONENT(prim_num)~          | Array of exponents                                                   |
-     | ~COEFFICIENT(prim_num)~       | Array of coefficients                                                |
+  int64_t   shell_num;
+  int64_t   prim_num;
+  int64_t * shell_center;
+  int32_t * shell_ang_mom;
+  double  * shell_factor;
+  double  * exponent    ;
+  double  * coefficient ;
+  int64_t * shell_prim_num;
+  char      type;
 
-     #+BEGIN_SRC C :comments org :tangle (org-entry-get nil "h" t)
+} qmckl_ao_basis_struct;
+   #+end_src
+
+** ~qmckl_context_update_ao_basis~
+
+   Updates the data describing the AO basis set into the context.
+
+   | ~type~                        | Gaussian or Slater                                                   |
+   | ~shell_num~                   | Number of shells                                                     |
+   | ~prim_num~                    | Total number of primitives                                           |
+   | ~SHELL_CENTER(shell_num)~     | Id of the nucleus on which the shell is centered                     |
+   | ~SHELL_ANG_MOM(shell_num)~    | Id of the nucleus on which the shell is centered                     |
+   | ~SHELL_FACTOR(shell_num)~     | Normalization factor for the shell                                   |
+   | ~SHELL_PRIM_NUM(shell_num)~   | Number of primitives in the shell                                    |
+   | ~SHELL_PRIM_INDEX(shell_num)~ | Address of the first primitive of the shelll in the ~EXPONENT~ array |
+   | ~EXPONENT(prim_num)~          | Array of exponents                                                   |
+   | ~COEFFICIENT(prim_num)~       | Array of coefficients                                                |
+
+   #+begin_src c :comments org :tangle (eval h)
 qmckl_exit_code
 qmckl_context_update_ao_basis(qmckl_context   context     , const char      type,
                               const int64_t   shell_num   , const int64_t   prim_num,
@@ -476,10 +530,10 @@ qmckl_context_update_ao_basis(qmckl_context   context     , const char      type
                               const double  * SHELL_FACTOR, const int64_t * SHELL_PRIM_NUM,
                               const int64_t * SHELL_PRIM_INDEX,
                               const double  * EXPONENT    , const double  * COEFFICIENT);
-     #+END_SRC
+   #+end_src
 
-***** Source
-      #+BEGIN_SRC C :tangle (org-entry-get nil "c" t)
+*** Source
+    #+begin_src c :tangle (eval c)
 qmckl_exit_code
 qmckl_context_update_ao_basis(qmckl_context   context     , const char      type,
                               const int64_t   shell_num   , const int64_t   prim_num,
@@ -591,10 +645,10 @@ qmckl_context_update_ao_basis(qmckl_context   context     , const char      type
   ctx->ao_basis = basis;
   return QMCKL_SUCCESS;
 }
-      #+END_SRC
+    #+end_src
 
-***** Fortran interface
-      #+BEGIN_SRC f90 :tangle (org-entry-get nil "fh" t)
+*** Fortran interface
+    #+begin_src f90 :tangle (eval fh)
   interface
      integer (c_int32_t) function qmckl_context_update_ao_basis(context, &
           typ, shell_num, prim_num, SHELL_CENTER, SHELL_ANG_MOM, SHELL_FACTOR, &
@@ -613,26 +667,26 @@ qmckl_context_update_ao_basis(qmckl_context   context     , const char      type
        double precision   , intent(in)        :: COEFFICIENT(prim_num)
      end function qmckl_context_update_ao_basis
   end interface
-      #+END_SRC
+    #+end_src
 
-***** TODO Test
+*** TODO Test
 
-**** ~qmckl_context_set_ao_basis~
+** ~qmckl_context_set_ao_basis~
 
-     Sets the data describing the AO basis set into the context.
+   Sets the data describing the AO basis set into the context.
 
-     | ~type~                        | Gaussian or Slater                                                   |
-     | ~shell_num~                   | Number of shells                                                     |
-     | ~prim_num~                    | Total number of primitives                                           |
-     | ~SHELL_CENTER(shell_num)~     | Id of the nucleus on which the shell is centered                     |
-     | ~SHELL_ANG_MOM(shell_num)~    | Id of the nucleus on which the shell is centered                     |
-     | ~SHELL_FACTOR(shell_num)~     | Normalization factor for the shell                                   |
-     | ~SHELL_PRIM_NUM(shell_num)~   | Number of primitives in the shell                                    |
-     | ~SHELL_PRIM_INDEX(shell_num)~ | Address of the first primitive of the shelll in the ~EXPONENT~ array |
-     | ~EXPONENT(prim_num)~          | Array of exponents                                                   |
-     | ~COEFFICIENT(prim_num)~       | Array of coefficients                                                |
+   | ~type~                        | Gaussian or Slater                                                   |
+   | ~shell_num~                   | Number of shells                                                     |
+   | ~prim_num~                    | Total number of primitives                                           |
+   | ~SHELL_CENTER(shell_num)~     | Id of the nucleus on which the shell is centered                     |
+   | ~SHELL_ANG_MOM(shell_num)~    | Id of the nucleus on which the shell is centered                     |
+   | ~SHELL_FACTOR(shell_num)~     | Normalization factor for the shell                                   |
+   | ~SHELL_PRIM_NUM(shell_num)~   | Number of primitives in the shell                                    |
+   | ~SHELL_PRIM_INDEX(shell_num)~ | Address of the first primitive of the shelll in the ~EXPONENT~ array |
+   | ~EXPONENT(prim_num)~          | Array of exponents                                                   |
+   | ~COEFFICIENT(prim_num)~       | Array of coefficients                                                |
 
-     #+BEGIN_SRC C :comments org :tangle (org-entry-get nil "h" t)
+   #+begin_src c :comments org :tangle (eval h)
 qmckl_context
 qmckl_context_set_ao_basis(const qmckl_context context     , const char      type,
                            const int64_t       shell_num   , const int64_t   prim_num,
@@ -640,10 +694,10 @@ qmckl_context_set_ao_basis(const qmckl_context context     , const char      typ
                            const double  *     SHELL_FACTOR, const int64_t * SHELL_PRIM_NUM,
                            const int64_t *     SHELL_PRIM_INDEX,
                            const double  *     EXPONENT    , const double  * COEFFICIENT);
-     #+END_SRC
+   #+end_src
 
-***** Source
-      #+BEGIN_SRC C :tangle (org-entry-get nil "c" t)
+*** Source
+    #+begin_src c :tangle (eval c)
 qmckl_context
 qmckl_context_set_ao_basis(const qmckl_context context     , const char      type,
                            const int64_t       shell_num   , const int64_t   prim_num,
@@ -665,10 +719,10 @@ qmckl_context_set_ao_basis(const qmckl_context context     , const char      typ
 
   return new_context;
 }
-      #+END_SRC
+    #+end_src
 
-***** Fortran interface
-      #+BEGIN_SRC f90 :tangle (org-entry-get nil "fh" t)
+*** Fortran interface
+    #+begin_src f90 :tangle (eval fh)
   interface
      integer (c_int64_t) function qmckl_context_set_ao_basis(context, &
           typ, shell_num, prim_num, SHELL_CENTER, SHELL_ANG_MOM, SHELL_FACTOR, &
@@ -687,29 +741,29 @@ qmckl_context_set_ao_basis(const qmckl_context context     , const char      typ
        double precision   , intent(in)        :: COEFFICIENT(prim_num)
      end function qmckl_context_set_ao_basis
   end interface
-      #+END_SRC
+    #+end_src
 
-***** TODO Test
+*** TODO Test
 
-**** Precision
+* Precision
 
-     The  following  functions  set   and  get  the  expected  required
-     precision and  range. ~precision~ should  be an integer  between 2
-     and 53, and ~range~ should be an integer between 2 and 11.
+  The  following  functions  set   and  get  the  expected  required
+  precision and  range. ~precision~ should  be an integer  between 2
+  and 53, and ~range~ should be an integer between 2 and 11.
 
-     The setter  functions functions return  a new context as  a 64-bit
-     integer.   The getter  functions  return the  value,  as a  32-bit
-     integer.    The  update   functions   return  ~QMCKL_SUCCESS~   or
-     ~QMCKL_FAILURE~.
+  The setter  functions functions return  a new context as  a 64-bit
+  integer.   The getter  functions  return the  value,  as a  32-bit
+  integer.    The  update   functions   return  ~QMCKL_SUCCESS~   or
+  ~QMCKL_FAILURE~.
 
-**** ~qmckl_context_update_precision~
-     Modifies the parameter for the numerical precision in a given context.
-     #+BEGIN_SRC C :comments org :tangle (org-entry-get nil "h" t)
+** ~qmckl_context_update_precision~
+   Modifies the parameter for the numerical precision in a given context.
+   #+begin_src c :comments org :tangle (eval h)
 qmckl_exit_code qmckl_context_update_precision(const qmckl_context context, const int precision);
-     #+END_SRC
+   #+end_src
 
-***** Source
-      #+BEGIN_SRC C :tangle (org-entry-get nil "c" t)
+*** Source
+    #+begin_src c :tangle (eval c)
 qmckl_exit_code qmckl_context_update_precision(const qmckl_context context, const int precision) {
 
   if (precision <  2) return QMCKL_FAILURE;
@@ -721,10 +775,10 @@ qmckl_exit_code qmckl_context_update_precision(const qmckl_context context, cons
   ctx->precision = precision;
   return QMCKL_SUCCESS;
 }
-      #+END_SRC
+    #+end_src
 
-***** Fortran interface
-      #+BEGIN_SRC f90 :tangle (org-entry-get nil "fh" t)
+*** Fortran interface
+    #+begin_src f90 :tangle (eval fh)
   interface
      integer (c_int32_t) function qmckl_context_update_precision(context, precision) bind(C)
        use, intrinsic :: iso_c_binding
@@ -732,17 +786,17 @@ qmckl_exit_code qmckl_context_update_precision(const qmckl_context context, cons
        integer (c_int32_t), intent(in), value :: precision
      end function qmckl_context_update_precision
   end interface
-      #+END_SRC
+    #+end_src
 
-***** TODO Tests                                                   :noexport:
-**** ~qmckl_context_update_range~
-     Modifies the parameter for the numerical range in a given context.
-     #+BEGIN_SRC C :comments org :tangle (org-entry-get nil "h" t)
+*** TODO Tests                                                     :noexport:
+** ~qmckl_context_update_range~
+   Modifies the parameter for the numerical range in a given context.
+   #+begin_src c :comments org :tangle (eval h)
 qmckl_exit_code qmckl_context_update_range(const qmckl_context context, const int range);
-      #+END_SRC
+    #+end_src
 
-***** Source
-      #+BEGIN_SRC C :tangle (org-entry-get nil "c" t)
+*** Source
+    #+begin_src c :tangle (eval c)
 qmckl_exit_code qmckl_context_update_range(const qmckl_context context, const int range) {
 
   if (range <  2) return QMCKL_FAILURE;
@@ -754,10 +808,10 @@ qmckl_exit_code qmckl_context_update_range(const qmckl_context context, const in
   ctx->range = range;
   return QMCKL_SUCCESS;
 }
-      #+END_SRC
+    #+end_src
 
-***** Fortran interface
-      #+BEGIN_SRC f90 :tangle (org-entry-get nil "fh" t)
+*** Fortran interface
+    #+begin_src f90 :tangle (eval fh)
   interface
      integer (c_int32_t) function qmckl_context_update_range(context, range) bind(C)
        use, intrinsic :: iso_c_binding
@@ -765,17 +819,17 @@ qmckl_exit_code qmckl_context_update_range(const qmckl_context context, const in
        integer (c_int32_t), intent(in), value :: range
      end function qmckl_context_update_range
   end interface
-      #+END_SRC
+    #+end_src
 
-***** TODO Tests                                                   :noexport:
-**** ~qmckl_context_set_precision~
-     Returns a copy of the context with a different precision parameter.
-     #+BEGIN_SRC C :comments org :tangle (org-entry-get nil "h" t)
+*** TODO Tests                                                     :noexport:
+** ~qmckl_context_set_precision~
+   Returns a copy of the context with a different precision parameter.
+   #+begin_src c :comments org :tangle (eval h)
 qmckl_context qmckl_context_set_precision(const qmckl_context context, const int precision);
-     #+END_SRC
+   #+end_src
 
-***** Source
-      #+BEGIN_SRC C :tangle (org-entry-get nil "c" t)
+*** Source
+    #+begin_src c :tangle (eval c)
 qmckl_context qmckl_context_set_precision(const qmckl_context context, const int precision) {
   qmckl_context new_context = qmckl_context_copy(context);
   if (new_context == 0) return 0;
@@ -784,10 +838,10 @@ qmckl_context qmckl_context_set_precision(const qmckl_context context, const int
 
   return new_context;
 }
-      #+END_SRC
+    #+end_src
 
-***** Fortran interface
-      #+BEGIN_SRC f90 :tangle (org-entry-get nil "fh" t)
+*** Fortran interface
+    #+begin_src f90 :tangle (eval fh)
   interface
      integer (c_int64_t) function qmckl_context_set_precision(context, precision) bind(C)
        use, intrinsic :: iso_c_binding
@@ -795,17 +849,17 @@ qmckl_context qmckl_context_set_precision(const qmckl_context context, const int
        integer (c_int32_t), intent(in), value :: precision
      end function qmckl_context_set_precision
   end interface
-      #+END_SRC
+    #+end_src
 
-***** TODO Tests                                                   :noexport:
-**** ~qmckl_context_set_range~
-     Returns a copy of the context with a different precision parameter.
-     #+BEGIN_SRC C :comments org :tangle (org-entry-get nil "h" t)
+*** TODO Tests                                                     :noexport:
+** ~qmckl_context_set_range~
+   Returns a copy of the context with a different precision parameter.
+   #+begin_src c :comments org :tangle (eval h)
 qmckl_context qmckl_context_set_range(const qmckl_context context, const int range);
-     #+END_SRC
+   #+end_src
 
-***** Source
-      #+BEGIN_SRC C :tangle (org-entry-get nil "c" t)
+*** Source
+    #+begin_src c :tangle (eval c)
 qmckl_context qmckl_context_set_range(const qmckl_context context, const int range) {
   qmckl_context new_context = qmckl_context_copy(context);
   if (new_context == 0) return 0;
@@ -814,10 +868,10 @@ qmckl_context qmckl_context_set_range(const qmckl_context context, const int ran
 
   return new_context;
 }
-      #+END_SRC
+    #+end_src
 
-***** Fortran interface
-      #+BEGIN_SRC f90 :tangle (org-entry-get nil "fh" t)
+*** Fortran interface
+    #+begin_src f90 :tangle (eval fh)
   interface
      integer (c_int64_t) function qmckl_context_set_range(context, range) bind(C)
        use, intrinsic :: iso_c_binding
@@ -825,98 +879,101 @@ qmckl_context qmckl_context_set_range(const qmckl_context context, const int ran
        integer (c_int32_t), intent(in), value :: range
      end function qmckl_context_set_range
   end interface
-      #+END_SRC
+    #+end_src
 
-***** TODO Tests                                                   :noexport:
+*** TODO Tests                                                     :noexport:
 
-**** ~qmckl_context_get_precision~
-     Returns the value of the numerical precision in the context
-     #+BEGIN_SRC C :comments org :tangle (org-entry-get nil "h" t)
+** ~qmckl_context_get_precision~
+   Returns the value of the numerical precision in the context
+   #+begin_src c :comments org :tangle (eval h)
 int32_t qmckl_context_get_precision(const qmckl_context context);
-     #+END_SRC
+   #+end_src
 
-***** Source
-      #+BEGIN_SRC C :tangle (org-entry-get nil "c" t)
+*** Source
+    #+begin_src c :tangle (eval c)
 int qmckl_context_get_precision(const qmckl_context context) {
   const qmckl_context_struct* ctx = (qmckl_context_struct*) context;
   return ctx->precision;
 }
-      #+END_SRC
+    #+end_src
 
-***** Fortran interface
-      #+BEGIN_SRC f90 :tangle (org-entry-get nil "fh" t)
+*** Fortran interface
+    #+begin_src f90 :tangle (eval fh)
   interface
      integer (c_int32_t) function qmckl_context_get_precision(context) bind(C)
        use, intrinsic :: iso_c_binding
        integer (c_int64_t), intent(in), value :: context
      end function qmckl_context_get_precision
   end interface
-      #+END_SRC
+    #+end_src
 
-***** TODO Tests                                                   :noexport:
-**** ~qmckl_context_get_range~
-     Returns the value of the numerical range in the context
-     #+BEGIN_SRC C :comments org :tangle (org-entry-get nil "h" t)
+*** TODO Tests                                                     :noexport:
+** ~qmckl_context_get_range~
+   Returns the value of the numerical range in the context
+   #+begin_src c :comments org :tangle (eval h)
 int32_t qmckl_context_get_range(const qmckl_context context);
-     #+END_SRC
+   #+end_src
 
-***** Source
-      #+BEGIN_SRC C :tangle (org-entry-get nil "c" t)
+*** Source
+    #+begin_src c :tangle (eval c)
 int qmckl_context_get_range(const qmckl_context context) {
   const qmckl_context_struct* ctx = (qmckl_context_struct*) context;
   return ctx->range;
 }
-      #+END_SRC
+    #+end_src
 
-***** Fortran interface
-      #+BEGIN_SRC f90 :tangle (org-entry-get nil "fh" t)
+*** Fortran interface
+    #+begin_src f90 :tangle (eval fh)
   interface
      integer (c_int32_t) function qmckl_context_get_range(context) bind(C)
        use, intrinsic :: iso_c_binding
        integer (c_int64_t), intent(in), value :: context
      end function qmckl_context_get_range
   end interface
-      #+END_SRC
+    #+end_src
 
-***** TODO Tests                                                   :noexport:
+*** TODO Tests                                                     :noexport:
 
-**** ~qmckl_context_get_epsilon~
-     Returns $\epsilon = 2^{1-n}$ where ~n~ is the precision
-     #+BEGIN_SRC C :comments org :tangle (org-entry-get nil "h" t)
+** ~qmckl_context_get_epsilon~
+   Returns $\epsilon = 2^{1-n}$ where ~n~ is the precision
+   #+begin_src c :comments org :tangle (eval h)
 double qmckl_context_get_epsilon(const qmckl_context context);
-     #+END_SRC
+   #+end_src
 
-***** Source
-      #+BEGIN_SRC C :tangle (org-entry-get nil "c" t)
+*** Source
+    #+begin_src c :tangle (eval c)
 double qmckl_context_get_epsilon(const qmckl_context context) {
   const qmckl_context_struct* ctx = (qmckl_context_struct*) context;
   return pow(2.0,(double) 1-ctx->precision);
 }
-      #+END_SRC
+    #+end_src
 
-***** Fortran interface
-      #+BEGIN_SRC f90 :tangle (org-entry-get nil "fh" t)
+*** Fortran interface
+    #+begin_src f90 :tangle (eval fh)
   interface
      real (c_double) function qmckl_context_get_epsilon(context) bind(C)
        use, intrinsic :: iso_c_binding
        integer (c_int64_t), intent(in), value :: context
      end function qmckl_context_get_epsilon
   end interface
-      #+END_SRC
+    #+end_src
 
-***** TODO Tests                                                   :noexport:
+*** TODO Tests                                                     :noexport:
 
+* End of files                                                     :noexport:
 
+  #+begin_src c :comments link :tangle (eval h_private)
 
-*** End of files                                                   :noexport:
-
-***** Test
-      #+BEGIN_SRC C :comments link :tangle (org-entry-get nil "c_test" t)
+#endif
+  #+end_src
+  
+*** Test
+     #+begin_src c :comments link :tangle (eval c_test)
 return MUNIT_OK;
 }
-      #+END_SRC
+     #+end_src
 
 
 
- # -*- mode: org -*-
- # vim: syntax=c
+# -*- mode: org -*-
+# vim: syntax=c

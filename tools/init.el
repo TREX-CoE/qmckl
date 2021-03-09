@@ -28,17 +28,17 @@
       `(("." . ,(concat user-emacs-directory "backups"))))
 (setq backup-by-copying t)
 
-(require 'org) 
+(require 'org)
 (setq org-format-latex-options (plist-put org-format-latex-options :scale 1.6))
 
 (setq org-hide-leading-stars t)
 (setq org-alphabetical-lists t)
-(setq org-src-fontify-natively t) 
-(setq org-src-tab-acts-natively t) 
+(setq org-src-fontify-natively t)
+(setq org-src-tab-acts-natively t)
 (setq org-src-preserve-indentation t)
-(setq org-hide-emphasis-markers nil) 
+(setq org-hide-emphasis-markers nil)
 (setq org-pretty-entities nil)
-(setq org-confirm-babel-evaluate nil) ;; Do not ask for confirmation all the time!!           
+(setq org-confirm-babel-evaluate nil) ;; Do not ask for confirmation all the time!!
 
 (org-babel-do-load-languages
  'org-babel-load-languages
@@ -51,14 +51,14 @@
    (makefile . t)
    ))
 
-(add-hook 'org-babel-after-execute-hook 'org-display-inline-images)                           
-'(indent-tabs-mode nil)                                                                       
+(add-hook 'org-babel-after-execute-hook 'org-display-inline-images)
+'(indent-tabs-mode nil)
 
 (require 'evil)
 (setq evil-want-C-i-jump nil)
 (evil-mode 1)
 (global-font-lock-mode t)
-(global-superword-mode 1)                                                                     
+(global-superword-mode 1)
 
 (setq line-number-mode 1)
 (setq column-number-mode 1)
@@ -72,7 +72,7 @@
 (custom-set-variables
  ;; custom-set-variables was added by Custom.
  ;; If you edit it by hand, you could mess it up, so be careful.
- ;; Your init file should contain only one such instance.                                                                                                                                      
+ ;; Your init file should contain only one such instance.
  ;; If there is more than one, they won't work right.
  '(ansi-color-faces-vector
    [default default default italic underline success warning error])
