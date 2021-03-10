@@ -3,6 +3,11 @@
 
 # This file was created by tools/Building.org
 
+# Dependencies
+
+
+LIBS=-lpthread
+
 # Variables
 
 
@@ -39,7 +44,7 @@ FFLAGS=-fPIC  $(INCLUDE) \
 	-Wreal-q-constant -Wuninitialized  -fbacktrace -finit-real=nan \
 	-ffpe-trap=zero,overflow,underflow 
 
-LIBS=-lgfortran -lm
+LIBS+=-lgfortran -lm 
 #----------------------------------------------------------
 endif
 
@@ -54,7 +59,7 @@ CFLAGS=-fPIC -g -O2 $(INCLUDE)
 FC=ifort -xHost
 FFLAGS=-fPIC -g -O2 $(INCLUDE)
 
-LIBS=-lm -lifcore -lirc
+LIBS+=-lm -lifcore -lirc
 #----------------------------------------------------------
 CC=icc -xHost
 endif
@@ -70,11 +75,13 @@ CFLAGS=-fPIC -g -O2 $(INCLUDE)
 FC=flang
 FFLAGS=fPIC -g -O2 $(INCLUDE)
 
-LIBS=-lm
+LIBS+=-lm
 #----------------------------------------------------------
 endif
 
 # Rules
+
+#    The source files are created during the generation of the file ~Makefile.generated~.
 
 
 .PHONY: clean
@@ -83,14 +90,17 @@ endif
 libqmckl.so: Makefile.generated 
 	$(MAKE) -f Makefile.generated
 
-test: Makefile.generated
+../include/qmckl.h: libqmckl.so
+	../tools/build_qmckl_h.sh
+
+test: Makefile.generated ../include/qmckl.h
 	$(MAKE) -f Makefile.generated test
 
 doc: $(ORG_SOURCE_FILES)
 	$(QMCKL_ROOT)/tools/create_doc.sh 
 
 clean:
-	$(RM)	qmckl.h test_qmckl_* test_qmckl.c test_qmckl \
+	$(RM)	test_qmckl_* test_qmckl.c test_qmckl \
 		qmckl_*.f90 qmckl_*.c qmckl_*.o qmckl_*.h \
 		Makefile.generated libqmckl.so *.html *.mod
 

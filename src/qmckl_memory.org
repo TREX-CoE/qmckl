@@ -15,8 +15,11 @@ optimized libraries to fine-tune the memory allocation.
   #+begin_src c :tangle (eval c)
 #include <stdint.h>
 #include <stdlib.h>
+#include <assert.h>
+
 #include "qmckl_error.h"
 #include "qmckl_context.h"
+#include "qmckl_context_private.h"
 #include "qmckl_memory.h"
   #+end_src
 
@@ -26,20 +29,39 @@ optimized libraries to fine-tune the memory allocation.
 MunitResult test_<<filename()>>() {
   #+end_src
 
-* ~qmckl_malloc~
+* 
+  Memory allocation inside the library should be done with
+  ~qmckl_malloc~. It lets the library choose how the memory will be
+  allocated, and a pointer is returned to the user.  The context is
+  passed to let the library store data related to the allocation
+  inside the context. In this particular implementation of the library,
+  we store a list of allocated pointers so that all the memory can be
+  properly freed when the library is de-initialized.
+  If the allocation failed, the ~NULL~ pointer is returned.
 
-  Memory allocation function, letting the library choose how the
-  memory will be allocated, and a pointer is returned to the user.
-  The context is passed to let the library store data related to the
-  allocation inside the context. If the allocation failed, the ~NULL~
-  pointer is returned.
-
-  #+begin_src c :tangle (eval h)
-void* qmckl_malloc(qmckl_context ctx,
+  # Header
+  #+begin_src c :tangle (eval h) :noexport
+void* qmckl_malloc(qmckl_context context,
                    const size_t size);
   #+end_src
+  
+  # Source
+  #+begin_src c :tangle (eval c)
+void* qmckl_malloc(qmckl_context context, const size_t size) {
 
-  #+begin_src f90 :tangle (eval fh)
+  void * pointer = malloc( (size_t) size );
+
+  if (qmckl_context_check(context) != QMCKL_NULL_CONTEXT) {
+    qmckl_exit_code rc;
+    rc = qmckl_context_append_memory(context, pointer, size);
+    assert (rc == QMCKL_SUCCESS);
+  }
+
+  return pointer;
+}
+  #+end_src
+  # Fortran interface
+  #+begin_src f90 :tangle (eval fh) :noexport
   interface
      type (c_ptr) function qmckl_malloc (context, size) bind(C)
        use, intrinsic :: iso_c_binding
@@ -49,24 +71,11 @@ void* qmckl_malloc(qmckl_context ctx,
   end interface
   #+end_src
 
-** Source
-
-   #+begin_src c :tangle (eval c)
-void* qmckl_malloc(qmckl_context ctx, const size_t size) {
-
-  if (ctx == (qmckl_context) 0) {}; /* Avoid unused argument warning */
-  void * result = malloc( (size_t) size );
-  return result;
-
-}
-
-   #+end_src
-
 ** Test                                                            :noexport:
    #+begin_src c :tangle (eval c_test)
     int *a = NULL;
     munit_assert(a == NULL);
-    a = (int*) qmckl_malloc( (qmckl_context) 1, 3*sizeof(int));
+    a = (int*) qmckl_malloc( QMCKL_NULL_CONTEXT, 3*sizeof(int));
     munit_assert(a != NULL);
     a[0] = 1;
     a[1] = 2;
@@ -99,12 +108,22 @@ qmckl_exit_code qmckl_free(qmckl_context context,
 ** Source
    #+begin_src c :tangle (eval c)
 qmckl_exit_code qmckl_free(qmckl_context context, void *ptr) {
+  if (qmckl_context_check(context) != QMCKL_NULL_CONTEXT) {
 
-  if (context == 0) return QMCKL_INVALID_ARG_1;
-  if (ptr == NULL)  return QMCKL_INVALID_ARG_2;
+    if (ptr == NULL) {
+      return qmckl_failwith(context,
+                            QMCKL_INVALID_ARG_2,
+                            "qmckl_free",
+                            "NULL pointer");
+    }
+    
+    qmckl_exit_code rc;
+    rc = qmckl_context_remove_memory(context, ptr);
+
+    assert (rc == QMCKL_SUCCESS);
+  }
   free(ptr);
   return QMCKL_SUCCESS;
-
 }
    #+end_src
 

@@ -1,13 +1,11 @@
 #!/bin/bash
 # Script to build the final qmckl.h file
 #   :PROPERTIES:
-#   :header-args:bash: :tangle build_qmckl_h.sh :noweb  yes :shebang #!/bin/bash :comments both
+#   :header-args:bash: :tangle build_qmckl_h.sh :noweb  yes :shebang #!/bin/bash :comments org
 #   :END:
 
 
-# [[file:Building.org::*Script to build the final qmckl.h file][Script to build the final qmckl.h file:1]]
 # This file was created by tools/Building.org
-# Script to build the final qmckl.h file:1 ends here
 
 
 
@@ -18,20 +16,17 @@
 # Put =.h= files in the correct order:
 
 
-# [[file:Building.org::*Script to build the final qmckl.h file][Script to build the final qmckl.h file:3]]
 HEADERS=""
 for i in $(cat table_of_contents)
 do
     HEADERS+="${i%.org}.h "
 done
-# Script to build the final qmckl.h file:3 ends here
 
 
 
 # Generate C header file
 
 
-# [[file:Building.org::*Script to build the final qmckl.h file][Script to build the final qmckl.h file:4]]
 OUTPUT="../include/qmckl.h"
 
 cat << EOF > ${OUTPUT}
@@ -95,14 +90,12 @@ done
 cat << EOF >> ${OUTPUT}
 #endif
 EOF
-# Script to build the final qmckl.h file:4 ends here
 
 
 
 # Generate Fortran interface file from all =qmckl_*_fh.f90= files
 
 
-# [[file:Building.org::*Script to build the final qmckl.h file][Script to build the final qmckl.h file:5]]
 HEADERS="qmckl_*_fh.f90"
 
 OUTPUT="../include/qmckl_f.f90"
@@ -161,4 +154,3 @@ done
 cat << EOF >> ${OUTPUT}
 end module qmckl
 EOF
-# Script to build the final qmckl.h file:5 ends here
