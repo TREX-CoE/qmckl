@@ -28,13 +28,13 @@ ${QMCKL_ROOT}/tools/tangle.sh *.org
 # functions:
 
 
-OBJECTS=""
+OBJECTS="qmckl_f.o"
 for i in $(ls qmckl_*.c) ; do
     FILE=${i%.c}
     OBJECTS="${OBJECTS} ${FILE}.o"
 done >> $OUTPUT
 
-for i in $(ls qmckl_*_f.f90) ; do
+for i in $(ls qmckl*_f.f90) ; do
     FILE=${i%.f90}
     OBJECTS="${OBJECTS} ${FILE}.o"
 done >> $OUTPUT
@@ -84,13 +84,14 @@ libqmckl.so: \$(OBJECT_FILES)
 %.o: %.c 
 	\$(CC) \$(CFLAGS) -c \$*.c -o \$*.o
 
-
-qmckl_f.o: ../include/qmckl_f.f90
-	\$(FC) \$(FFLAGS) -c ../include/qmckl_f.f90 -o qmckl_f.o
-
 %.o: %.f90 qmckl_f.o
 	\$(FC) \$(FFLAGS) -c \$*.f90 -o \$*.o
 
+../include/qmckl.h ../include/qmckl_f.f90:
+	../tools/build_qmckl_h.sh
+
+qmckl_f.o: ../include/qmckl_f.f90
+	\$(FC) \$(FFLAGS) -c ../include/qmckl_f.f90 -o qmckl_f.o
 
 test_qmckl: test_qmckl.c libqmckl.so \$(TESTS) \$(TESTS_F)
 	\$(CC) \$(CFLAGS) -Wl,-rpath,$PWD -L. \

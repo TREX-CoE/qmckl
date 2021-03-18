@@ -1,8 +1,36 @@
 #+TITLE: Atomic Orbitals
 #+SETUPFILE: ../docs/theme.setup
 
- The routines for the computation of the values, gradients and
- Laplacian of atomic basis functions are defined here.
+The atomic basis set is defined as a list of shells. Each shell $s$ is
+centered on a nucleus $A$, possesses a given angular momentum $l$ and a
+radial function $R_s$. The radial function is a linear combination of
+\emph{primitive} functions that can be of type Slater ($p=1$)  or
+Gaussian ($p=2$):
+
+\[
+  R_s(\mathbf{r}) = \mathcal{N}_s |\mathbf{r}-\mathbf{R}_A|^{n_s}
+  \sum_{k=1}^{N_{\text{prim}}} a_{ks}
+ \exp \left( - \gamma_{ks} | \mathbf{r}-\mathbf{R}_A | ^p \right). |
+\]
+
+In the case of Gaussian functions, $n_s$ is always zero.
+The normalization factor $\mathcal{N}_s$ ensures that all the functions
+of the shell are normalized to unity. As this normalization requires
+the ability to compute overlap integrals, it should be written in the
+file to ensure that the file is self-contained and does not require
+the client program to have the ability to compute such integrals.
+
+Atomic orbitals (AOs) are defined as
+
+\[
+\chi_i (\mathbf{r}) = P_{\eta(i)}(\mathbf{r})\, R_{\theta(i)} (\mathbf{r})
+\]
+    
+where $\theta(i)$ returns the shell on which the AO is expanded,
+and $\eta(i)$ denotes which angular function is chosen.
+
+In this section we describe the kernels used to compute the values,
+gradients and Laplacian of the atomic basis functions.
 
 * Headers                                                          :noexport:
 
@@ -20,59 +48,33 @@ MunitResult test_<<filename()>>() {
   context = qmckl_context_create();
   #+end_src
 
-* Polynomials
+* Polynomial part
 
-  \[
-  P_l(\mathbf{r},\mathbf{R}_i)  =   (x-X_i)^a (y-Y_i)^b (z-Z_i)^c 
-  \]
-
-  \begin{eqnarray*} 
-  \frac{\partial }{\partial x} P_l\left(\mathbf{r},\mathbf{R}_i \right) &
-                 = & a (x-X_i)^{a-1} (y-Y_i)^b (z-Z_i)^c \\
-  \frac{\partial }{\partial y} P_l\left(\mathbf{r},\mathbf{R}_i \right) &
-                 = & b (x-X_i)^a (y-Y_i)^{b-1} (z-Z_i)^c \\
-  \frac{\partial }{\partial z} P_l\left(\mathbf{r},\mathbf{R}_i \right) &
-                 = & c (x-X_i)^a (y-Y_i)^b (z-Z_i)^{c-1} \\
-  \end{eqnarray*} 
-
-    
-  \begin{eqnarray*} 
-  \left( \frac{\partial }{\partial x^2} + 
-             \frac{\partial }{\partial y^2} + 
-             \frac{\partial }{\partial z^2} \right) P_l
-             \left(\mathbf{r},\mathbf{R}_i \right) &  = &  
-           a(a-1) (x-X_i)^{a-2} (y-Y_i)^b (z-Z_i)^c + \\
-        && b(b-1) (x-X_i)^a (y-Y_i)^{b-1} (z-Z_i)^c + \\
-        && c(c-1) (x-X_i)^a (y-Y_i)^b (z-Z_i)^{c-1} 
-  \end{eqnarray*}
-
-** <<<~qmckl_ao_power~>>>
-
-   Computes all the powers of the ~n~ input data up to the given
-   maximum value given in input for each of the $n$ points:
+** Powers of $x-X_i$
    
-   \[ P_{ij} = X_j^i \]
+   The ~qmckl_ao_power~ function computes all the powers of the ~n~
+   input data up to the given maximum value given in input for each of
+   the $n$ points:
+   
+   \[ P_{ik} = X_i^k \]
 
-*** Arguments
-
-    | ~context~  | input  | Global state                                      |
-    | ~n~        | input  | Number of values                                  |
-    | ~X(n)~     | input  | Array containing the input values                 |
-    | ~LMAX(n)~  | input  | Array containing the maximum power for each value |
-    | ~P(LDP,n)~ | output | Array containing all the powers of ~X~            |
-    | ~LDP~      | input  | Leading dimension of array ~P~                    |
+   | ~context~  | input  | Global state                                      |
+   | ~n~        | input  | Number of values                                  |
+   | ~X(n)~     | input  | Array containing the input values                 |
+   | ~LMAX(n)~  | input  | Array containing the maximum power for each value |
+   | ~P(LDP,n)~ | output | Array containing all the powers of ~X~            |
+   | ~LDP~      | input  | Leading dimension of array ~P~                    |
     
-*** Requirements
+   Requirements:
 
-    - ~context~ is not 0
-    - ~n~ > 0
-    - ~X~ is allocated with at least $n \times 8$ bytes
-    - ~LMAX~ is allocated with at least $n \times 4$ bytes
-    - ~P~ is allocated with at least $n \times \max_i \text{LMAX}_i \times 8$ bytes
-    - ~LDP~ >= $\max_i$ ~LMAX[i]~
+   - ~context~ is not ~QMCKL_NULL_CONTEXT~
+   - ~n~ > 0
+   - ~X~ is allocated with at least $n \times 8$ bytes
+   - ~LMAX~ is allocated with at least $n \times 4$ bytes
+   - ~P~ is allocated with at least $n \times \max_i \text{LMAX}_i \times 8$ bytes
+   - ~LDP~ >= $\max_i$ ~LMAX[i]~
 
-*** Header
-    #+begin_src c :tangle (eval h) 
+   #+begin_src c :tangle (eval h) 
 qmckl_exit_code
 qmckl_ao_power(const qmckl_context context,
                const int64_t n, 
@@ -80,11 +82,11 @@ qmckl_ao_power(const qmckl_context context,
                const int32_t *LMAX,
                const double *P,
                const int64_t LDP);
-    #+end_src 
-    
-*** Source
-    #+begin_src f90 :tangle (eval f) 
+   #+end_src 
+
+   #+begin_src f90 :tangle (eval f) 
 integer function qmckl_ao_power_f(context, n, X, LMAX, P, ldp) result(info)
+  use qmckl
   implicit none
   integer*8 , intent(in)  :: context
   integer*8 , intent(in)  :: n
@@ -93,32 +95,42 @@ integer function qmckl_ao_power_f(context, n, X, LMAX, P, ldp) result(info)
   real*8    , intent(out) :: P(ldp,n)
   integer*8 , intent(in)  :: ldp
 
-  integer*8  :: i,j
+  integer*8  :: i,k
 
-  info = 0
+  info = QMCKL_SUCCESS
 
-  if (context == 0_8) then
-     info = -1
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
      return
   endif
-  
-  if (LDP < MAXVAL(LMAX)) then
-     info = -2
+
+  if (n <= ldp) then
+     info = QMCKL_INVALID_ARG_2
      return
   endif
-  
-  do j=1,n
-    P(1,j) = X(j)
-    do i=2,LMAX(j)
-       P(i,j) = P(i-1,j) * X(j) 
-    end do
+
+  k = MAXVAL(LMAX)
+  if (LDP < k) then
+     info = QMCKL_INVALID_ARG_6
+     return
+  endif
+
+  if (k <= 0) then
+     info = QMCKL_INVALID_ARG_4
+     return
+  endif
+
+  do i=1,n
+     P(1,i) = X(i)
+     do k=2,LMAX(i)
+        P(k,i) = P(k-1,i) * X(i) 
+     end do
   end do
 
 end function qmckl_ao_power_f
-    #+end_src 
+   #+end_src 
 
-*** C interface                                                    :noexport:
-    #+begin_src f90 :tangle (eval f) 
+   #+begin_src f90 :tangle (eval f) :exports none
 integer(c_int32_t) function qmckl_ao_power(context, n, X, LMAX, P, ldp) &
      bind(C) result(info)
   use, intrinsic :: iso_c_binding
@@ -129,13 +141,13 @@ integer(c_int32_t) function qmckl_ao_power(context, n, X, LMAX, P, ldp) &
   integer (c_int32_t) , intent(in)         :: LMAX(n)
   real    (c_double)  , intent(out)        :: P(ldp,n)
   integer (c_int64_t) , intent(in) , value :: ldp
-  
+
   integer, external :: qmckl_ao_power_f
   info = qmckl_ao_power_f(context, n, X, LMAX, P, ldp)
 end function qmckl_ao_power
-    #+end_src
+   #+end_src
 
-    #+begin_src f90 :tangle (eval fh) 
+   #+begin_src f90 :tangle (eval fh) :exports none
   interface
      integer(c_int32_t) function qmckl_ao_power(context, n, X, LMAX, P, ldp) bind(C)
        use, intrinsic :: iso_c_binding
@@ -147,16 +159,16 @@ end function qmckl_ao_power
        real    (c_double)  , intent(out)        :: P(ldp,n)
      end function qmckl_ao_power
   end interface
-    #+end_src
-  
-*** Test                                                           :noexport:
-    #+begin_src f90 :tangle (eval f_test) 
+   #+end_src
+
+   # Test
+   #+begin_src f90 :tangle (eval f_test) 
 integer(c_int32_t) function test_qmckl_ao_power(context) bind(C)
   use qmckl
   implicit none
 
   integer(c_int64_t), intent(in), value :: context
-  
+
   integer*8                     :: n, LDP 
   integer, allocatable          :: LMAX(:) 
   double precision, allocatable :: X(:), P(:,:)
@@ -167,19 +179,19 @@ integer(c_int32_t) function test_qmckl_ao_power(context) bind(C)
 
   n = 100;
   LDP = 10;
-  
+
   allocate(X(n), P(LDP,n), LMAX(n))
-  
+
   do j=1,n
      X(j) = -5.d0 + 0.1d0 * dble(j)
      LMAX(j) = 1 + int(mod(j, 5),4)
   end do
-  
+
   test_qmckl_ao_power = qmckl_ao_power(context, n, X, LMAX, P, LDP) 
   if (test_qmckl_ao_power /= 0) return
-  
+
   test_qmckl_ao_power = -1
-  
+
   do j=1,n
      do i=1,LMAX(j)
         if ( X(j)**i == 0.d0 ) then
@@ -193,58 +205,79 @@ integer(c_int32_t) function test_qmckl_ao_power(context) bind(C)
   test_qmckl_ao_power = 0
   deallocate(X,P,LMAX)
 end function test_qmckl_ao_power
-    #+end_src
+   #+end_src
 
-    #+begin_src c :tangle (eval c_test)
+   #+begin_src c :tangle (eval c_test) :exports none
 int  test_qmckl_ao_power(qmckl_context context);
 munit_assert_int(0, ==, test_qmckl_ao_power(context));
-    #+end_src
+   #+end_src
+
+** Value, Gradient and Laplacian of a polynomial
+
+   A polynomial is centered on a nucleus $\mathbf{R}_i$
   
-** <<<~qmckl_ao_polynomial_vgl~>>>
-   
-   Computes the values, gradients and Laplacians at a given point of
-   all polynomials with an angular momentum up to ~lmax~.
-   
-*** Arguments
+   \[
+   P_l(\mathbf{r},\mathbf{R}_i)  =   (x-X_i)^a (y-Y_i)^b (z-Z_i)^c 
+   \]
 
-    | ~context~    | input  | Global state                                         |
-    | ~X(3)~       | input  | Array containing the coordinates of the points       |
-    | ~R(3)~       | input  | Array containing the x,y,z coordinates of the center |
-    | ~lmax~       | input  | Maximum angular momentum                             |
-    | ~n~          | output | Number of computed polynomials                       |
-    | ~L(ldl,n)~   | output | Contains a,b,c for all ~n~ results                   |
-    | ~ldl~        | input  | Leading dimension of ~L~                             |
-    | ~VGL(ldv,n)~ | output | Value, gradients and Laplacian of the polynomials    |
-    | ~ldv~        | input  | Leading dimension of array ~VGL~                     |
+   The gradients with respect to electron coordinates are
+  
+   \begin{eqnarray*} 
+   \frac{\partial }{\partial x} P_l\left(\mathbf{r},\mathbf{R}_i \right) &
+                  = & a (x-X_i)^{a-1} (y-Y_i)^b (z-Z_i)^c \\
+   \frac{\partial }{\partial y} P_l\left(\mathbf{r},\mathbf{R}_i \right) &
+                  = & b (x-X_i)^a (y-Y_i)^{b-1} (z-Z_i)^c \\
+   \frac{\partial }{\partial z} P_l\left(\mathbf{r},\mathbf{R}_i \right) &
+                  = & c (x-X_i)^a (y-Y_i)^b (z-Z_i)^{c-1} \\
+   \end{eqnarray*} 
+
+   and the Laplacian is
     
-*** Requirements
+   \begin{eqnarray*} 
+   \left( \frac{\partial }{\partial x^2} + 
+              \frac{\partial }{\partial y^2} + 
+              \frac{\partial }{\partial z^2} \right) P_l
+              \left(\mathbf{r},\mathbf{R}_i \right) &  = &  
+            a(a-1) (x-X_i)^{a-2} (y-Y_i)^b (z-Z_i)^c + \\
+         && b(b-1) (x-X_i)^a (y-Y_i)^{b-1} (z-Z_i)^c + \\
+         && c(c-1) (x-X_i)^a (y-Y_i)^b (z-Z_i)^{c-1}.
+   \end{eqnarray*}
 
-    - ~context~ is not 0
-    - ~n~ > 0
-    - ~lmax~ >= 0
-    - ~ldl~ >= 3
-    - ~ldv~ >= 5
-    - ~X~ is allocated with at least $3 \times 8$ bytes
-    - ~R~ is allocated with at least $3 \times 8$ bytes
-    - ~n~ >= ~(lmax+1)(lmax+2)(lmax+3)/6~
-    - ~L~ is allocated with at least $3 \times n \times 4$ bytes
-    - ~VGL~ is allocated with at least $5 \times n \times 8$ bytes
-    - On output, ~n~ should be equal to ~(lmax+1)(lmax+2)(lmax+3)/6~
-    - On output, the powers are given in the following order (l=a+b+c):
-      - Increase values of ~l~
-      - Within a given value of ~l~, alphabetical order of the
-        string made by a*"x" + b*"y" + c*"z" (in Python notation).
-        For example, with a=0, b=2 and c=1 the string is "yyz"
-        
-*** Error codes
+   ~qmckl_ao_polynomial_vgl~ computes the values, gradients and
+   Laplacians at a given point in space, of all polynomials with an
+   angular momentum up to ~lmax~.
 
-    | -1 | Null context        |
-    | -2 | Inconsistent ~ldl~  |
-    | -3 | Inconsistent ~ldv~  |
-    | -4 | Inconsistent ~lmax~ |
+   | ~context~    | input  | Global state                                         |
+   | ~X(3)~       | input  | Array containing the coordinates of the points       |
+   | ~R(3)~       | input  | Array containing the x,y,z coordinates of the center |
+   | ~lmax~       | input  | Maximum angular momentum                             |
+   | ~n~          | output | Number of computed polynomials                       |
+   | ~L(ldl,n)~   | output | Contains a,b,c for all ~n~ results                   |
+   | ~ldl~        | input  | Leading dimension of ~L~                             |
+   | ~VGL(ldv,n)~ | output | Value, gradients and Laplacian of the polynomials    |
+   | ~ldv~        | input  | Leading dimension of array ~VGL~                     |
+    
+   Requirements:
 
-*** Header
-    #+begin_src c :tangle (eval h) 
+   - ~context~ is not ~QMCKL_NULL_CONTEXT~
+   - ~n~ > 0
+   - ~lmax~ >= 0
+   - ~ldl~ >= 3
+   - ~ldv~ >= 5
+   - ~X~ is allocated with at least $3 \times 8$ bytes
+   - ~R~ is allocated with at least $3 \times 8$ bytes
+   - ~n~ >= ~(lmax+1)(lmax+2)(lmax+3)/6~
+   - ~L~ is allocated with at least $3 \times n \times 4$ bytes
+   - ~VGL~ is allocated with at least $5 \times n \times 8$ bytes
+   - On output, ~n~ should be equal to ~(lmax+1)(lmax+2)(lmax+3)/6~
+   - On output, the powers are given in the following order (l=a+b+c):
+     - Increasing values of ~l~
+     - Within a given value of ~l~, alphabetical order of the
+       string made by a*"x" + b*"y" + c*"z" (in Python notation).
+       For example, with a=0, b=2 and c=1 the string is "yyz"
+
+   # Header
+   #+begin_src c :tangle (eval h) 
 qmckl_exit_code
 qmckl_ao_polynomial_vgl(const qmckl_context context,
                         const double *X,
@@ -255,11 +288,12 @@ qmckl_ao_polynomial_vgl(const qmckl_context context,
                         const int64_t ldl,
                         const double *VGL,
                         const int64_t ldv);
-    #+end_src
-    
-*** Source
-    #+begin_src f90 :tangle (eval f)
+   #+end_src
+
+   # Source
+   #+begin_src f90 :tangle (eval f)
 integer function qmckl_ao_polynomial_vgl_f(context, X, R, lmax, n, L, ldl, VGL, ldv) result(info)
+  use qmckl
   implicit none
   integer*8 , intent(in)  :: context
   real*8    , intent(in)  :: X(3), R(3)
@@ -278,69 +312,74 @@ integer function qmckl_ao_polynomial_vgl_f(context, X, R, lmax, n, L, ldl, VGL, 
   integer, external :: qmckl_ao_power_f
   double precision  :: xy, yz, xz
   double precision  :: da, db, dc, dd
-  
+
   info = 0
-  
-  if (context == 0_8) then
-     info = -1
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
      return
   endif
-  
-  if (ldl < 3) then
-     info = -2
-     return
-  endif
-  
-  if (ldv < 5) then
-     info = -3
-     return
-  endif
-  
+
   if (lmax <= 0) then
-     info = -4
+     info = QMCKL_INVALID_ARG_4
      return
   endif
-  
-  
+
+  if (n <= 0) then
+     info = QMCKL_INVALID_ARG_5
+     return
+  endif
+
+  if (ldl < 3) then
+     info = QMCKL_INVALID_ARG_7
+     return
+  endif
+
+  if (ldv < 5) then
+     info = QMCKL_INVALID_ARG_9
+     return
+  endif
+
+
   do i=1,3
      Y(i) = X(i) - R(i)
   end do
 
   lmax_array(1:3) = lmax
   if (lmax == 0) then
-    VGL(1,1) = 1.d0
-    vgL(2:5,1) = 0.d0
-    l(1:3,1) = 0
-    n=1
+     VGL(1,1) = 1.d0
+     vgL(2:5,1) = 0.d0
+     l(1:3,1) = 0
+     n=1
   else if (lmax > 0) then
-    pows(-2:0,1:3) = 1.d0
-    do i=1,lmax
+     pows(-2:0,1:3) = 1.d0
+     do i=1,lmax
         pows(i,1) = pows(i-1,1) * Y(1) 
         pows(i,2) = pows(i-1,2) * Y(2) 
         pows(i,3) = pows(i-1,3) * Y(3) 
-    end do
+     end do
 
-    VGL(1:5,1:4) = 0.d0
-    l(1:3,1:4) = 0
+     VGL(1:5,1:4) = 0.d0
+     l  (1:3,1:4) = 0
 
-    VGL(1,1) = 1.d0
-    vgl(1:5,2:4) = 0.d0
+     VGL(1  ,1  ) = 1.d0
+     vgl(1:5,2:4) = 0.d0
 
-    l(1,2) = 1
-    vgl(1,2) = pows(1,1)
-    vgL(2,2) = 1.d0
+     l  (1,2) = 1
+     vgl(1,2) = pows(1,1)
+     vgL(2,2) = 1.d0
 
-    l(2,3) = 1
-    vgl(1,3) = pows(1,2)
-    vgL(3,3) = 1.d0
+     l  (2,3) = 1
+     vgl(1,3) = pows(1,2)
+     vgL(3,3) = 1.d0
 
-    l(3,4) = 1
-    vgl(1,4) = pows(1,3)
-    vgL(4,4) = 1.d0
+     l  (3,4) = 1
+     vgl(1,4) = pows(1,3)
+     vgL(4,4) = 1.d0
 
-    n=4
+     n=4
   endif
-        
+
   ! l>=2
   dd = 2.d0
   do d=2,lmax
@@ -355,21 +394,21 @@ integer function qmckl_ao_polynomial_vgl_f(context, X, R, lmax, n, L, ldl, VGL, 
            l(1,n) = a
            l(2,n) = b
            l(3,n) = c
-           
+
            xy = pows(a,1) * pows(b,2)
            yz = pows(b,2) * pows(c,3)
            xz = pows(a,1) * pows(c,3)
-           
+
            vgl(1,n) = xy * pows(c,3)
-           
+
            xy = dc * xy
            xz = db * xz
            yz = da * yz
-           
+
            vgl(2,n) = pows(a-1,1) * yz
            vgl(3,n) = pows(b-1,2) * xz
            vgl(4,n) = pows(c-1,3) * xy
-           
+
            vgl(5,n) = &
                 (da-1.d0) * pows(a-2,1) * yz + &
                 (db-1.d0) * pows(b-2,2) * xz + &
@@ -382,13 +421,13 @@ integer function qmckl_ao_polynomial_vgl_f(context, X, R, lmax, n, L, ldl, VGL, 
      dd = dd + 1.d0
   end do
 
-  info = 0
+  info = QMCKL_SUCCESS
 
 end function qmckl_ao_polynomial_vgl_f
-    #+end_src 
+   #+end_src 
 
-*** C interface                                                    :noexport:
-    #+begin_src f90 :tangle (eval f)
+
+   #+begin_src f90 :tangle (eval f) :exports none
 integer(c_int32_t) function qmckl_ao_polynomial_vgl(context, X, R, lmax, n, L, ldl, VGL, ldv) &
      bind(C) result(info)
   use, intrinsic :: iso_c_binding
@@ -405,10 +444,9 @@ integer(c_int32_t) function qmckl_ao_polynomial_vgl(context, X, R, lmax, n, L, l
   integer, external :: qmckl_ao_polynomial_vgl_f
   info = qmckl_ao_polynomial_vgl_f(context, X, R, lmax, n, L, ldl, VGL, ldv) 
 end function qmckl_ao_polynomial_vgl
-    #+end_src
+   #+end_src
 
-*** Fortran interface                                              :noexport:
-    #+begin_src f90 :tangle (eval fh)
+   #+begin_src f90 :tangle (eval fh) :exports none
   interface
      integer(c_int32_t) function qmckl_ao_polynomial_vgl(context, X, R, lmax, n, L, ldl, VGL, ldv) &
           bind(C) 
@@ -423,15 +461,15 @@ end function qmckl_ao_polynomial_vgl
        real    (c_double)  , intent(out)        :: VGL(ldv,(lmax+1)*(lmax+2)*(lmax+3)/6)
      end function qmckl_ao_polynomial_vgl
   end interface
-    #+end_src
-*** Test                                                           :noexport:
-    #+begin_src f90 :tangle (eval f_test)
+   #+end_src
+
+   #+begin_src f90 :tangle (eval f_test)
 integer(c_int32_t) function test_qmckl_ao_polynomial_vgl(context) bind(C)
   use qmckl
   implicit none
 
   integer(c_int64_t), intent(in), value :: context
-  
+
   integer                       :: lmax, d, i
   integer, allocatable          :: L(:,:)
   integer*8                     :: n, ldl, ldv, j
@@ -450,7 +488,7 @@ integer(c_int32_t) function test_qmckl_ao_polynomial_vgl(context) bind(C)
   n = 0;
   ldl = 3;
   ldv = 100;
-  
+
   d = (lmax+1)*(lmax+2)*(lmax+3)/6
 
   allocate (L(ldl,d), VGL(ldv,d))
@@ -499,7 +537,7 @@ integer(c_int32_t) function test_qmckl_ao_polynomial_vgl(context) bind(C)
              L(3,j) * Y(1)**L(1,j) * Y(2)**L(2,j) * Y(3)**(L(3,j)-1) &
              )) > epsilon ) return
      end if
-     
+
      test_qmckl_ao_polynomial_vgl = -16
      w = 0.d0
      if (L(1,j) > 1) then
@@ -515,30 +553,27 @@ integer(c_int32_t) function test_qmckl_ao_polynomial_vgl(context) bind(C)
   end do
 
   test_qmckl_ao_polynomial_vgl = 0
-     
+
   deallocate(L,VGL)
 end function test_qmckl_ao_polynomial_vgl
-    #+end_src
+   #+end_src
 
-    #+begin_src c :tangle (eval c_test)
+   #+begin_src c :tangle (eval c_test)
 int  test_qmckl_ao_polynomial_vgl(qmckl_context context);
 munit_assert_int(0, ==, test_qmckl_ao_polynomial_vgl(context));
-    #+end_src
+   #+end_src
    
 * Gaussian basis functions
-
-** <<<~qmckl_ao_gaussian_vgl~>>>
-   
-   Computes the values, gradients and Laplacians at a given point of
-   ~n~ Gaussian functions centered at the same point:
+  
+   ~qmckl_ao_gaussian_vgl~ computes the values, gradients and
+   Laplacians at a given point of ~n~ Gaussian functions centered at
+   the same point:
    
    \[ v_i = \exp(-a_i |X-R|^2) \]
    \[ \nabla_x v_i = -2 a_i (X_x -  R_x) v_i \]
    \[ \nabla_y v_i = -2 a_i (X_y -  R_y) v_i \]
    \[ \nabla_z v_i = -2 a_i (X_z -  R_z) v_i \]
    \[ \Delta v_i = a_i (4 |X-R|^2 a_i - 6) v_i \]
-
-*** Arguments
 
     | ~context~    | input  | Global state                                         |
     | ~X(3)~       | input  | Array containing the coordinates of the points       |
@@ -548,7 +583,7 @@ munit_assert_int(0, ==, test_qmckl_ao_polynomial_vgl(context));
     | ~VGL(ldv,5)~ | output | Value, gradients and Laplacian of the Gaussians      |
     | ~ldv~        | input  | Leading dimension of array ~VGL~                     |
     
-*** Requirements
+    Requirements :
 
     - ~context~ is not 0
     - ~n~ > 0
@@ -559,7 +594,6 @@ munit_assert_int(0, ==, test_qmckl_ao_polynomial_vgl(context));
     - ~A~ is allocated with at least $n \times 8$ bytes
     - ~VGL~ is allocated with at least $n \times 5 \times 8$ bytes
 
-*** Header
     #+begin_src c :tangle (eval h)
 qmckl_exit_code
 qmckl_ao_gaussian_vgl(const qmckl_context context,
@@ -571,9 +605,9 @@ qmckl_ao_gaussian_vgl(const qmckl_context context,
                       const int64_t ldv);
     #+end_src
     
-*** Source
     #+begin_src f90 :tangle (eval f)
 integer function qmckl_ao_gaussian_vgl_f(context, X, R, n, A, VGL, ldv) result(info)
+  use qmckl
   implicit none
   integer*8 , intent(in)  :: context
   real*8    , intent(in)  :: X(3), R(3)
@@ -585,20 +619,20 @@ integer function qmckl_ao_gaussian_vgl_f(context, X, R, n, A, VGL, ldv) result(i
   integer*8         :: i,j
   real*8            :: Y(3), r2, t, u, v
   
-  info = 0
+  info = QMCKL_SUCCESS
   
-  if (context == 0_8) then
-     info = -1
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
      return
   endif
   
   if (n <= 0) then
-     info = -2
+     info = QMCKL_INVALID_ARG_4
      return
   endif
   
   if (ldv < n) then
-     info = -3
+     info = QMCKL_INVALID_ARG_7
      return
   endif
   
@@ -634,8 +668,7 @@ integer function qmckl_ao_gaussian_vgl_f(context, X, R, n, A, VGL, ldv) result(i
 end function qmckl_ao_gaussian_vgl_f
     #+end_src 
 
-*** C interface                                                    :noexport:
-    #+begin_src f90 :tangle (eval f)
+    #+begin_src f90 :tangle (eval f) :exports none
 integer(c_int32_t) function qmckl_ao_gaussian_vgl(context, X, R, n, A, VGL, ldv) &
      bind(C) result(info)
   use, intrinsic :: iso_c_binding
@@ -652,7 +685,7 @@ integer(c_int32_t) function qmckl_ao_gaussian_vgl(context, X, R, n, A, VGL, ldv)
 end function qmckl_ao_gaussian_vgl
     #+end_src
 
-    #+begin_src f90 :tangle (eval fh)
+    #+begin_src f90 :tangle (eval fh) :exports none
   interface
      integer(c_int32_t) function qmckl_ao_gaussian_vgl(context, X, R, n, A, VGL, ldv) &
           bind(C) 
@@ -665,8 +698,9 @@ end function qmckl_ao_gaussian_vgl
      end function qmckl_ao_gaussian_vgl
   end interface
     #+end_src
-*** Test                                                           :noexport:
-    #+begin_src f90 :tangle (eval f_test)
+
+  # Test
+  #+begin_src f90 :tangle (eval f_test)
 integer(c_int32_t) function test_qmckl_ao_gaussian_vgl(context) bind(C)
   use qmckl
   implicit none
@@ -731,12 +765,12 @@ integer(c_int32_t) function test_qmckl_ao_gaussian_vgl(context) bind(C)
      
   deallocate(VGL)
 end function test_qmckl_ao_gaussian_vgl
-    #+end_src
+  #+end_src
 
-    #+begin_src c :tangle (eval c_test) :exports none
+  #+begin_src c :tangle (eval c_test) :exports none
 int test_qmckl_ao_gaussian_vgl(qmckl_context context);
 munit_assert_int(0, ==, test_qmckl_ao_gaussian_vgl(context));
-    #+end_src
+  #+end_src
    
 * TODO Slater basis functions
   
@@ -749,8 +783,35 @@ munit_assert_int(0, ==, test_qmckl_ao_gaussian_vgl(context));
   return MUNIT_OK;
 }
   #+end_src
-  
+ 
+**✸ Compute file names                                                                       
+    #+begin_src emacs-lisp                                                                   
+; The following is required to compute the file names                                        
+                                                                                             
+(setq pwd (file-name-directory buffer-file-name))                                            
+(setq name (file-name-nondirectory (substring buffer-file-name 0 -4)))                       
+(setq f  (concat pwd name "_f.f90"))                                                         
+(setq fh (concat pwd name "_fh.f90"))                                                        
+(setq c  (concat pwd name ".c"))                                                             
+(setq h  (concat name ".h"))                                                                 
+(setq h_private  (concat name "_private.h"))                                                 
+(setq c_test  (concat pwd "test_" name ".c"))                                                
+(setq f_test  (concat pwd "test_" name "_f.f90"))                                            
+                                                                                             
+; Minted                                                                                     
+(require 'ox-latex)                                                                          
+(setq org-latex-listings 'minted)                                                            
+(add-to-list 'org-latex-packages-alist '("" "listings"))                                     
+(add-to-list 'org-latex-packages-alist '("" "color"))                                        
+                                                                                             
+    #+end_src                                                                                
+
+    #+RESULTS:
+    |   | color    |
+    |   | listings |
+         
 
 # -*- mode: org -*-
 # vim: syntax=c
   
+

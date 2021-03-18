@@ -55,6 +55,7 @@ MunitResult test_<<filename()>>() {
 #include "qmckl_context_private.h"
 #include "qmckl_memory.h"
 
+#include <stdio.h>
   #+end_src
 
 * Context handling
@@ -103,6 +104,7 @@ typedef struct qmckl_context_struct {
   qmckl_memory_struct      * alloc;
 
   /* Thread lock */
+  int                        lock_count;
   pthread_mutex_t            mutex;
 
   /* Validity checking */
@@ -150,8 +152,10 @@ qmckl_context qmckl_context_check(const qmckl_context context) {
 
   const qmckl_context_struct* ctx = (qmckl_context_struct*) context;
 
-  if (ctx->tag != VALID_TAG)
-    return QMCKL_NULL_CONTEXT;
+  /* Try to access memory */
+  if (ctx->tag != VALID_TAG) {
+      return QMCKL_NULL_CONTEXT;
+  }
 
   return context;
 }
@@ -183,18 +187,7 @@ qmckl_context qmckl_context_create() {
   memset(ctx, 0, sizeof(qmckl_context_struct));
 
   /* Initialize lock */
-  pthread_mutexattr_t attr;
-  int rc;
-
-  rc = pthread_mutexattr_init(&attr); 
-  assert (rc == 0);
-
-  (void) pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK);
-
-  rc = pthread_mutex_init ( &(ctx->mutex), &attr);
-  assert (rc == 0);
-
-  (void)pthread_mutexattr_destroy(&attr);
+  init_lock(&(ctx->mutex));
 
   /* Initialize data */
   ctx->tag = VALID_TAG;
@@ -218,7 +211,6 @@ qmckl_context qmckl_context_create() {
    # Test
    #+begin_src c :comments link :tangle (eval c_test) :exports none
 munit_assert_int64( qmckl_context_check(QMCKL_NULL_CONTEXT), ==,  QMCKL_NULL_CONTEXT);
-munit_assert_int64( qmckl_context_check(0x12345), ==,  QMCKL_NULL_CONTEXT);
 
 qmckl_context context = qmckl_context_create();
 munit_assert_int64( context, !=, QMCKL_NULL_CONTEXT );
@@ -228,29 +220,60 @@ munit_assert_int64( qmckl_context_check(context), ==,  context );
 ** Locking
 
    For thread safety, the context may be locked/unlocked. The lock is
-   initialized with the ~PTHREAD_MUTEX_ERRORCHECK~, so it is a bit
-   slower than a usual mutex but safer.
+   initialized with the ~PTHREAD_MUTEX_RECURSIVE~ attribute, and the
+   number of times the thread has locked it is saved in the
+   ~lock_count~ attribute.
 
    # Header
    #+begin_src c :comments org :tangle (eval h) :exports none
 void qmckl_lock  (qmckl_context context);
 void qmckl_unlock(qmckl_context context);
+
+void init_lock(pthread_mutex_t* mutex);
    #+end_src
 
    # Source
    #+begin_src c :tangle (eval c)
+void init_lock(pthread_mutex_t* mutex) {
+  pthread_mutexattr_t attr;
+  int rc;
+  
+  rc = pthread_mutexattr_init(&attr); 
+  assert (rc == 0);
+  
+  (void) pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+  
+  rc = pthread_mutex_init ( mutex, &attr);
+  assert (rc == 0);
+  
+  (void)pthread_mutexattr_destroy(&attr);
+}
+
 void qmckl_lock(qmckl_context context) {
   if (context == QMCKL_NULL_CONTEXT)
     return ;
   qmckl_context_struct *ctx = (qmckl_context_struct*) context;
+  errno = 0;
   int rc = pthread_mutex_lock( &(ctx->mutex) );
+  if (rc != 0) {
+    fprintf(stderr, "qmckl_lock:%s\n", strerror(rc) );
+    fflush(stderr);
+  }
   assert (rc == 0);
+  ctx->lock_count++;
+  printf("  lock : %d\n", ctx->lock_count);
 }
 
 void qmckl_unlock(qmckl_context context) {
   qmckl_context_struct *ctx = (qmckl_context_struct*) context;
   int rc = pthread_mutex_unlock( &(ctx->mutex) );
+  if (rc != 0) {
+    fprintf(stderr, "qmckl_unlock:%s\n", strerror(rc) );
+    fflush(stderr);
+  }
   assert (rc == 0);
+  ctx->lock_count--;
+  printf("unlock : %d\n", ctx->lock_count);
 }
    #+end_src
 
@@ -292,7 +315,7 @@ qmckl_context qmckl_context_copy(const qmckl_context context) {
   /* Copy the old context on the new one */
   memcpy(new_ctx, old_ctx, sizeof(qmckl_context_struct));
 
-  qmckl_unlock(context);
+  qmckl_unlock( (qmckl_context) old_ctx );
   
   new_ctx->prev = old_ctx;
 
@@ -334,32 +357,42 @@ qmckl_context qmckl_context_destroy(qmckl_context context);
     #+begin_src c :tangle (eval c)
 qmckl_context qmckl_context_destroy(const qmckl_context context) {
 
-  qmckl_lock(context);
-  
   const qmckl_context checked_context = qmckl_context_check(context);
   if (checked_context == QMCKL_NULL_CONTEXT) return QMCKL_NULL_CONTEXT;
 
+  qmckl_lock(context);
+  
   qmckl_context_struct* ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);  /* Shouldn't be true because the context is valid */
 
-  const qmckl_context prev_context = (qmckl_context) ctx->prev;
-  memset(ctx, 0, sizeof(qmckl_context_struct));
-  ctx->tag = INVALID_TAG;
+  qmckl_unlock(context);
 
+  const int rc_destroy = pthread_mutex_destroy( &(ctx->mutex) );
+  if (rc_destroy != 0) {
+     fprintf(stderr, "qmckl_context_destroy: %s %d\n", strerror(rc_destroy), ctx->lock_count);
+     abort();
+  }
+
+  const qmckl_context prev_context = (qmckl_context) ctx->prev;
+  if (prev_context == QMCKL_NULL_CONTEXT) {
+    /* This is the first context, free all memory. */
+    struct qmckl_memory_struct* old = NULL;
+    while (ctx->alloc != NULL) {
+       old = ctx->alloc;
+       ctx->alloc = ctx->alloc->prev;
+       free(old->pointer);
+       old->pointer = NULL;
+       free(old);
+       old = NULL;
+    }
+  }
+  
+  ctx->tag = INVALID_TAG;
   const qmckl_exit_code rc = qmckl_free(context,ctx);
   assert (rc == QMCKL_SUCCESS);
 
-  if (prev_context == QMCKL_NULL_CONTEXT) {
-    /* This is the first context, free all memory. */
-    while (ctx->alloc != NULL) {
-       free(ctx->alloc->pointer);
-       ctx->alloc = ctx->alloc->prev;
-    }
-    int rc = pthread_mutex_destroy( &(ctx->mutex) );
-    assert (rc == 0);
-  }
-  
-  qmckl_unlock(context);
+  //memset(ctx, 0, sizeof(qmckl_context_struct));
+
 
   return prev_context;
 }
@@ -1094,8 +1127,8 @@ double qmckl_context_get_epsilon(const qmckl_context context);
    # Source
    #+begin_src c :tangle (eval c)
 double qmckl_context_get_epsilon(const qmckl_context context) {
-  const qmckl_context_struct* ctx = (qmckl_context_struct*) context;
-  return 1. /  (double) (1 << (1 - ctx->fp->precision));
+  const int precision = qmckl_context_get_precision(context);
+  return 1. /  (double) (1L << (precision-1));
 }
    #+end_src
 
@@ -1245,51 +1278,72 @@ qmckl_context_update_ao_basis(qmckl_context   context     , const char      type
   basis->shell_center  = (int64_t*) qmckl_malloc (context, shell_num * sizeof(int64_t));
   if (basis->shell_center == NULL) {
     qmckl_free(context, basis);
+    basis = NULL;
     return QMCKL_FAILURE;
   }
 
   basis->shell_ang_mom = (int32_t*) qmckl_malloc (context, shell_num * sizeof(int32_t));
   if (basis->shell_ang_mom == NULL) {
     qmckl_free(context, basis->shell_center);
+    basis->shell_center = NULL;
     qmckl_free(context, basis);
+    basis = NULL;
     return QMCKL_FAILURE;
   }
 
   basis->shell_prim_num= (int64_t*) qmckl_malloc (context, shell_num * sizeof(int64_t));
   if (basis->shell_prim_num == NULL) {
     qmckl_free(context, basis->shell_ang_mom);
+    basis->shell_ang_mom = NULL;
     qmckl_free(context, basis->shell_center);
+    basis->shell_center = NULL;
     qmckl_free(context, basis);
+    basis = NULL;
     return QMCKL_FAILURE;
   }
 
   basis->shell_factor  = (double *) qmckl_malloc (context, shell_num * sizeof(double ));
   if (basis->shell_factor == NULL) {
     qmckl_free(context, basis->shell_prim_num);
+    basis->shell_prim_num = NULL;
     qmckl_free(context, basis->shell_ang_mom);
+    basis->shell_ang_mom = NULL;
     qmckl_free(context, basis->shell_center);
+    basis->shell_center = NULL;
     qmckl_free(context, basis);
+    basis = NULL;
     return QMCKL_FAILURE;
   }
 
   basis->exponent      = (double *) qmckl_malloc (context, prim_num  * sizeof(double ));
   if (basis->exponent == NULL) {
     qmckl_free(context, basis->shell_factor);
+    basis->shell_factor = NULL;
     qmckl_free(context, basis->shell_prim_num);
+    basis->shell_prim_num = NULL;
     qmckl_free(context, basis->shell_ang_mom);
+    basis->shell_ang_mom = NULL;
     qmckl_free(context, basis->shell_center);
+    basis->shell_center = NULL;
     qmckl_free(context, basis);
+    basis = NULL;
     return QMCKL_FAILURE;
   }
 
   basis->coefficient   = (double *) qmckl_malloc (context, prim_num  * sizeof(double ));
   if (basis->coefficient == NULL) {
     qmckl_free(context, basis->exponent);
+    basis->exponent = NULL;
     qmckl_free(context, basis->shell_factor);
+    basis->shell_factor = NULL;
     qmckl_free(context, basis->shell_prim_num);
+    basis->shell_prim_num = NULL;
     qmckl_free(context, basis->shell_ang_mom);
+    basis->shell_ang_mom = NULL;
     qmckl_free(context, basis->shell_center);
+    basis->shell_center = NULL;
     qmckl_free(context, basis);
+    basis = NULL;
     return QMCKL_FAILURE;
   }
 
