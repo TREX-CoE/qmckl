@@ -195,6 +195,20 @@ qmckl_context qmckl_context_create() {
   const qmckl_context context = (qmckl_context) ctx;
   assert ( qmckl_context_check(context) != QMCKL_NULL_CONTEXT );
 
+  /*
+  qmckl_memory_struct* alloc = (qmckl_memory_struct*)
+    malloc(sizeof(qmckl_memory_struct));
+
+  if (alloc == NULL) {
+    qmckl_unlock(context);
+    return QMCKL_NULL_CONTEXT;
+  }
+  
+  memset(alloc,0,sizeof(qmckl_memory_struct));
+
+  ctx->alloc = alloc;
+  */
+
   return context;
 }
    #+end_src
@@ -261,7 +275,9 @@ void qmckl_lock(qmckl_context context) {
   }
   assert (rc == 0);
   ctx->lock_count++;
+/*
   printf("  lock : %d\n", ctx->lock_count);
+*/
 }
 
 void qmckl_unlock(qmckl_context context) {
@@ -273,7 +289,9 @@ void qmckl_unlock(qmckl_context context) {
   }
   assert (rc == 0);
   ctx->lock_count--;
+/*
   printf("unlock : %d\n", ctx->lock_count);
+*/
 }
    #+end_src
 
@@ -315,10 +333,11 @@ qmckl_context qmckl_context_copy(const qmckl_context context) {
   /* Copy the old context on the new one */
   memcpy(new_ctx, old_ctx, sizeof(qmckl_context_struct));
 
-  qmckl_unlock( (qmckl_context) old_ctx );
-  
   new_ctx->prev = old_ctx;
 
+  qmckl_unlock( (qmckl_context) new_ctx );
+  qmckl_unlock( (qmckl_context) old_ctx );
+  
   return (qmckl_context) new_ctx;
 }
 
@@ -367,28 +386,34 @@ qmckl_context qmckl_context_destroy(const qmckl_context context) {
 
   qmckl_unlock(context);
 
-  const int rc_destroy = pthread_mutex_destroy( &(ctx->mutex) );
-  if (rc_destroy != 0) {
-     fprintf(stderr, "qmckl_context_destroy: %s %d\n", strerror(rc_destroy), ctx->lock_count);
-     abort();
-  }
-
   const qmckl_context prev_context = (qmckl_context) ctx->prev;
   if (prev_context == QMCKL_NULL_CONTEXT) {
     /* This is the first context, free all memory. */
-    struct qmckl_memory_struct* old = NULL;
+    struct qmckl_memory_struct* new = NULL;
     while (ctx->alloc != NULL) {
-       old = ctx->alloc;
-       ctx->alloc = ctx->alloc->prev;
-       free(old->pointer);
-       old->pointer = NULL;
-       free(old);
-       old = NULL;
+       new = ctx->alloc->next;
+       free(ctx->alloc->pointer);
+       ctx->alloc->pointer = NULL;
+       free(ctx->alloc);
+       ctx->alloc = new;
     }
   }
   
+  qmckl_exit_code rc;
+  rc = qmckl_context_remove_memory(context,ctx);
+/*
+  assert (rc == QMCKL_SUCCESS);
+  */
+
   ctx->tag = INVALID_TAG;
-  const qmckl_exit_code rc = qmckl_free(context,ctx);
+
+  const int rc_destroy = pthread_mutex_destroy( &(ctx->mutex) );
+  if (rc_destroy != 0) {
+     fprintf(stderr, "qmckl_context_destroy: %s (count = %d)\n", strerror(rc_destroy), ctx->lock_count);
+     abort();
+  }
+
+  rc = qmckl_free(context,ctx);
   assert (rc == QMCKL_SUCCESS);
 
   //memset(ctx, 0, sizeof(qmckl_context_struct));
@@ -472,7 +497,7 @@ munit_assert_int64(qmckl_context_previous(QMCKL_NULL_CONTEXT), ==, QMCKL_NULL_CO
    #+NAME: qmckl_memory_struct
    #+begin_src c :comments org :tangle no
 typedef struct qmckl_memory_struct {
-  struct qmckl_memory_struct * prev    ;
+  struct qmckl_memory_struct * next    ;
   void                       * pointer ;
   size_t                       size    ;
 } qmckl_memory_struct;
@@ -510,19 +535,27 @@ qmckl_exit_code qmckl_context_append_memory(qmckl_context context,
 
   qmckl_context_struct* ctx = (qmckl_context_struct*) context; 
 
-  qmckl_memory_struct* alloc = (qmckl_memory_struct*)
+  qmckl_memory_struct* new_alloc = (qmckl_memory_struct*)
     malloc(sizeof(qmckl_memory_struct));
 
-  if (alloc == NULL) {
+  if (new_alloc == NULL) {
     qmckl_unlock(context);
     return QMCKL_ALLOCATION_FAILED;
   }
   
-  alloc->prev    = ctx->alloc;
-  alloc->pointer = pointer;
-  alloc->size    = size;
+  new_alloc->next    = NULL;
+  new_alloc->pointer = pointer;
+  new_alloc->size    = size;
 
-  ctx->alloc = alloc;
+  qmckl_memory_struct* alloc = ctx->alloc;
+  if (alloc == NULL) {
+    ctx->alloc = new_alloc;
+  } else {
+    while (alloc != NULL) {
+      alloc = alloc->next;
+    }
+    alloc->next = new_alloc;
+  }
     
   qmckl_unlock(context);
 
@@ -560,35 +593,26 @@ qmckl_exit_code qmckl_context_remove_memory(qmckl_context context,
 
   qmckl_context_struct* ctx = (qmckl_context_struct*) context; 
 
-  qmckl_memory_struct* alloc;
-  qmckl_memory_struct* next;
+  qmckl_memory_struct* alloc = ctx->alloc;
+  qmckl_memory_struct* prev  = ctx->alloc;
 
-  if (ctx->alloc->pointer == pointer) {
-
-    alloc = ctx->alloc->prev;
-    free(ctx->alloc);
-    ctx->alloc = alloc;
-
-  } else {
-
-    next  = ctx->alloc;
-    alloc = next->prev;
-
-    while (alloc != NULL) {
-      if (alloc->pointer == pointer) {
-        next->prev = alloc->prev;
-        free(alloc);
-        alloc = NULL;
-      } else {
-        next = alloc;
-        alloc = alloc->prev;
-      }
-    }
+  while ( (alloc != NULL) && (alloc->pointer != pointer) ) {
+    prev = alloc;
+    alloc = alloc->next;
   }
+  
+  if (alloc != NULL) {
+    prev->next = alloc->next;
+    free(alloc);
+  } 
       
   qmckl_unlock(context);
 
-  return QMCKL_SUCCESS;
+  if (alloc != NULL) {
+    return QMCKL_SUCCESS;
+  } else {
+    return QMCKL_DEALLOCATION_FAILED;
+  }
 }
    #+end_src
 
