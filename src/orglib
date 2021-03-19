@@ -7,15 +7,17 @@ Function to get the value of a property.
 (pop x)
 #+end_src
 
+#+RESULTS: get_value
 
-Generates a C prototype
-#+NAME: generate_h
-#+BEGIN_SRC python :var d=[] :results output :noweb yes :wrap "src C :tangle qmckl.h :comments org"
+
+Generates a C header
+#+NAME: generate_header
+#+BEGIN_SRC python :var d=[] :var rettyp=[] :var fname=[] :results output :noweb yes :wrap "src C :tangle qmckl.h :comments org"
 const_d = {
     'in':    'const' 
     ,'input': 'const' 
-    ,'out': '' 
-    ,'output': ''
+    ,'out': 'const'
+    ,'output': 'const'
 }
 
 results = []
@@ -28,11 +30,69 @@ for typ, name, inout, _ in d:
 
 results=',\n'.join(results)
 
-typ = '<<get_value("Type")>>'
-name= '<<get_value("Name")>>'
 template = f"""
-{typ} {name} ( {results} )
+{rettyp} {fname} ( {results} )
 """
 print(template)
 #+END_SRC
 
+
+Generates a C interface
+#+NAME: generate_c_interface
+#+BEGIN_SRC python :var d=[] :var rettyp=[] :var fname=[] :results output :noweb yes :wrap "src f90 :tangle (fname).f :comments org"
+
+ctypeid_d = {
+    'integer'       :    'c_int32_t' ,
+    'character'     :    'c_char',
+    'real'          :    'c_float',
+    'integer*8'     :    'c_int64_t' ,
+    'real*8'        :    'c_double'
+}
+
+# Get the ctype for return type
+ctypeid = "("+ctypeid_d[rettyp]+")"
+rettypcopy = rettyp
+rettyp = rettyp + ctypeid
+
+# Set up function name
+fname_copy = fname
+fname_call = fname
+fname = " function " + fname
+
+results = ["& \n bind(C) result(info) \n use, intrinsic :: iso_c_binding \n implicit none"]
+namelist = ''
+first = True
+for typ, name, inout, _ in d:
+    if '[' in name:
+        inout = " , intent(" + inout +") ,       ::"
+        name = name.split('[')[0]
+    else:
+        inout = " , intent(" + inout +") , value ::"
+    if '*' in typ:
+        typ = typ.split('*')[0]
+    if first:
+        namelist = namelist + name
+        first = False
+    else:
+        namelist = namelist + " , " + name
+    ctypeid = "("+ctypeid_d[typ]+")"
+    typ = typ +  ctypeid
+    results += [ f"{typ} {inout} {name}" ]
+
+fname = fname + "(" + namelist + ")"
+fname_call = fname_call + "_f(" + namelist + ")"
+
+# Add function type
+results += [ f"{rettyp}, external :: {name}"]
+# Call function
+results += [ f"info = {fname_call}"]
+# End function
+results += [ f"end function {fname_copy}"]
+
+results='\n'.join(results)
+
+template = f"""
+{rettyp} {fname} {results}
+"""
+print(template)
+#+END_SRC
