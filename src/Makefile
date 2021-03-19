@@ -20,7 +20,7 @@ OBJECT_FILES=$(filter-out $(EXCLUDED_OBJECTS), $(patsubst %.org,%.o,$(ORG_SOURCE
 INCLUDE=-I$(QMCKL_ROOT)/include/
 
 # Compiler options
-  
+
 #  GNU, Intel and LLVM compilers are supported. Choose here:
 
 
@@ -42,14 +42,14 @@ FFLAGS=-fPIC  $(INCLUDE) \
 	-fcheck=all -Waliasing -Wampersand -Wconversion -Wsurprising \
 	-Wintrinsics-std -Wno-tabs -Wintrinsic-shadow -Wline-truncation \
 	-Wreal-q-constant -Wuninitialized  -fbacktrace -finit-real=nan \
-	-ffpe-trap=zero,overflow,underflow 
+	-ffpe-trap=zero,overflow,underflow
 
-LIBS+=-lgfortran -lm 
+LIBS+=-lgfortran -lm
 #----------------------------------------------------------
 endif
 
 # Intel
-   
+
 
 ifeq ($(COMPILER),INTEL)
 #----------------------------------------------------------
@@ -65,7 +65,7 @@ CC=icc -xHost
 endif
 
 # LLVM
-   
+
 
 ifeq ($(COMPILER),LLVM)
 #----------------------------------------------------------
@@ -87,7 +87,7 @@ endif
 .PHONY: clean
 .SECONDARY: # Needed to keep the produced C and Fortran files
 
-libqmckl.so: Makefile.generated 
+libqmckl.so: Makefile.generated
 	$(MAKE) -f Makefile.generated
 
 ../include/qmckl.h: libqmckl.so
@@ -97,7 +97,7 @@ test: Makefile.generated ../include/qmckl.h
 	$(MAKE) -f Makefile.generated test
 
 doc: $(ORG_SOURCE_FILES)
-	$(QMCKL_ROOT)/tools/create_doc.sh 
+	$(QMCKL_ROOT)/tools/build_doc.sh
 
 clean:
 	$(RM)	test_qmckl_* test_qmckl.c test_qmckl \

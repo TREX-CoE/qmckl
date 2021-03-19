@@ -7,7 +7,7 @@
 #   This script generates the Makefile that compiles the library.
 #   The ~OUTPUT~ variable contains the name of the generated Makefile,typically
 #   =Makefile.generated=.
-  
+
 
 # This file was created by tools/Building.org
 
@@ -29,14 +29,9 @@ ${QMCKL_ROOT}/tools/tangle.sh *.org
 
 
 OBJECTS="qmckl_f.o"
-for i in $(ls qmckl_*.c) ; do
-    FILE=${i%.c}
-    OBJECTS="${OBJECTS} ${FILE}.o"
-done >> $OUTPUT
-
-for i in $(ls qmckl*_f.f90) ; do
-    FILE=${i%.f90}
-    OBJECTS="${OBJECTS} ${FILE}.o"
+for i in $(ls qmckl_*.c qmckl_*f.f90) ; do
+    FILE=${i%.*}
+    OBJECTS+=" ${FILE}.o"
 done >> $OUTPUT
 
 
@@ -46,8 +41,8 @@ done >> $OUTPUT
 
 TESTS=""
 for i in $(ls test_qmckl_*.c) ; do
-    FILE=${i%.c}.o
-    TESTS="${TESTS} ${FILE}"
+    FILE=${i%.c}
+    TESTS+=" ${FILE}.o"
 done >> $OUTPUT
 
 
@@ -57,8 +52,8 @@ done >> $OUTPUT
 
 TESTS_F=""
 for i in $(ls test_qmckl_*_f.f90) ; do
-    FILE=${i%.f90}.o
-    TESTS_F="${TESTS_F} ${FILE}"
+    FILE=${i%.f90}
+    TESTS_F+=" ${FILE}.o"
 done >> $OUTPUT
 
 
@@ -68,7 +63,7 @@ done >> $OUTPUT
 
 cat << EOF > ${OUTPUT}
 CC=$CC
-CFLAGS=$CFLAGS -I../munit/ 
+CFLAGS=$CFLAGS -I../munit/
 
 FC=$FC
 FFLAGS=$FFLAGS
@@ -80,8 +75,8 @@ LIBS=$LIBS
 
 libqmckl.so: \$(OBJECT_FILES)
 	\$(CC) -shared \$(OBJECT_FILES) -o libqmckl.so
-           
-%.o: %.c 
+
+%.o: %.c
 	\$(CC) \$(CFLAGS) -c \$*.c -o \$*.o
 
 %.o: %.f90 qmckl_f.o

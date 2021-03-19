@@ -19,19 +19,23 @@
 # The file is not tangled if the last modification date of the org
 # file is less recent than one of the tangled files.
 
+
 function tangle()
 {
-    if [[ -f ${1%.org}.c && $1 -ot ${1%.org}.c ]]
-    then return
-    elif [[ -f ${1%.org}.f90 && $1 -ot ${1%.org}.f90 ]]
-    then return
-    fi
-    emacs --batch $1 --load=../tools/config_tangle.el -f org-babel-tangle
-}
+    local org_file=$1
+    local c_file=${org_file%.org}.c
+    local f_file=${org_file%.org}.f90
 
+    if [[ ${org_file} -ot ${c_file} ]] ; then
+        return
+    elif [[ ${org_file} -ot ${f_file} ]] ; then
+        return
+    fi
+    emacs --batch ${org_file} --load=../tools/config_tangle.el -f org-babel-tangle
+}
 
 for i in $@
 do
-        echo "--- $i ----"
-        tangle $i
+    echo "--- ${i} ----"
+    tangle ${i}
 done

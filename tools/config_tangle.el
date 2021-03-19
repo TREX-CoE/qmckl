@@ -14,7 +14,6 @@
                                    ("gnu" . 10)))
 
 
-(require 'htmlize)
 (require 'font-lock)
 (setq org-confirm-babel-evaluate nil)
 (global-font-lock-mode t)

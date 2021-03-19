@@ -69,7 +69,7 @@ cat << EOF > ${OUTPUT}
  *     OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *     
  *     
- *     
+ *    
  *    
  */
 
@@ -139,7 +139,7 @@ cat << EOF > ${OUTPUT}
 !     OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 !     
 !     
-!     
+!    
 !    
 !
 module qmckl
