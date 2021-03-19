@@ -6,7 +6,7 @@
 <!-- 2021-03-19 Fri 12:49 -->
 <meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>QMCkl source code documentation</title>
+<title>Memory management</title>
 <meta name="generator" content="Org mode" />
 <meta name="author" content="TREX CoE" />
 <style type="text/css">
@@ -306,45 +306,126 @@ for the JavaScript code in this tag.
  |
  <a accesskey="H" href="index.html"> HOME </a>
 </div><div id="content">
-<h1 class="title">QMCkl source code documentation</h1>
-<hr />
-
-
-<ul class="org-ul">
-<li><a href="./qmckl.html">Introduction</a></li>
-<li><a href="./qmckl_error.html">Error handling</a></li>
-<li><a href="./qmckl_context.html">Context</a></li>
-<li><a href="./qmckl_memory.html">Memory management</a></li>
-<li><a href="./qmckl_distance.html">Distances</a></li>
-<li><a href="./qmckl_ao.html">Atomic Orbitals</a></li>
-<li><a href="./test_qmckl.html">Testing</a></li>
+<h1 class="title">Memory management</h1>
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org79490f4"></a></li>
 </ul>
-
-
-<hr />
-
-
+</div>
+</div>
 <p>
-The ultimate goal of the QMCkl library is to provide a high-performance
-implementation  of  the main  kernels  of  QMC. In  this  particular
-implementation of the library, we focus on the definition of the API
-and the tests, and on a <i>pedagogical</i> presentation of the
-algorithms.  We expect the HPC experts to use this repository as a
-reference for re-writing optimized libraries.
+We override the allocation functions to enable the possibility of
+optimized libraries to fine-tune the memory allocation.
 </p>
 
+
+<div id="outline-container-org79490f4" class="outline-2">
+<h2 id="org79490f4"></h2>
+<div class="outline-text-2" id="text-org79490f4">
 <p>
-The source code of the library is available at
-<a href="https://github.com/trex-coe/qmckl">https://github.com/trex-coe/qmckl</a>
-and bug reports should be submitted at
-<a href="https://github.com/trex-coe/qmckl/issues">https://github.com/trex-coe/qmckl/issues</a>.
+Memory allocation inside the library should be done with
+<code>qmckl_malloc</code>. It lets the library choose how the memory will be
+allocated, and a pointer is returned to the user.  The context is
+passed to let the library store data related to the allocation
+inside the context. In this particular implementation of the library,
+we store a list of allocated pointers so that all the memory can be
+properly freed when the library is de-initialized.
+If the allocation failed, the <code>NULL</code> pointer is returned.
 </p>
 
-<hr />
+<div class="org-src-container">
+<pre class="src src-c"><span style="color: #228b22;">void</span>* <span style="color: #0000ff;">qmckl_malloc</span>(<span style="color: #228b22;">qmckl_context</span> <span style="color: #a0522d;">context</span>,
+                   <span style="color: #a020f0;">const</span> <span style="color: #228b22;">size_t</span> <span style="color: #a0522d;">size</span>);
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-c"><span style="color: #228b22;">void</span>* <span style="color: #0000ff;">qmckl_malloc</span>(<span style="color: #228b22;">qmckl_context</span> <span style="color: #a0522d;">context</span>, <span style="color: #a020f0;">const</span> <span style="color: #228b22;">size_t</span> <span style="color: #a0522d;">size</span>) {
+
+  <span style="color: #228b22;">void</span> * <span style="color: #a0522d;">pointer</span> = malloc( (<span style="color: #228b22;">size_t</span>) size );
+
+  <span style="color: #a020f0;">if</span> (qmckl_context_check(context) != QMCKL_NULL_CONTEXT) {
+    <span style="color: #228b22;">qmckl_exit_code</span> <span style="color: #a0522d;">rc</span>;
+    rc = qmckl_context_append_memory(context, pointer, size);
+    assert (rc == QMCKL_SUCCESS);
+  }
+
+  <span style="color: #a020f0;">return</span> pointer;
+}
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-f90"><span style="color: #a020f0;">interface</span>
+   <span style="color: #228b22;">type (c_ptr) </span><span style="color: #a020f0;">function</span> <span style="color: #0000ff;">qmckl_malloc</span> <span style="color: #000000; background-color: #ffffff;">(context, size) bind(C)</span>
+     <span style="color: #a020f0;">use</span>, <span style="color: #a020f0;">intrinsic</span> :: <span style="color: #0000ff;">iso_c_binding</span>
+     <span style="color: #228b22;">integer</span> (<span style="color: #008b8b;">c_int64_t</span>), <span style="color: #a020f0;">intent</span>(in), <span style="color: #a020f0;">value</span> ::<span style="color: #a0522d;"> context</span>
+     <span style="color: #228b22;">integer</span> (<span style="color: #008b8b;">c_int64_t</span>), <span style="color: #a020f0;">intent</span>(in), <span style="color: #a020f0;">value</span> ::<span style="color: #a0522d;"> size</span>
+   <span style="color: #a020f0;">end function</span> <span style="color: #0000ff;">qmckl_malloc</span>
+<span style="color: #a020f0;">end interface</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-c"><span style="color: #228b22;">qmckl_context</span> <span style="color: #a0522d;">context</span> = qmckl_context_create();    
+
+<span style="color: #228b22;">int</span> *<span style="color: #a0522d;">a</span> = (<span style="color: #228b22;">int</span>*) <span style="color: #0000ff;">qmckl_malloc</span>(context, 3*<span style="color: #a020f0;">sizeof</span>(<span style="color: #228b22;">int</span>));
+<span style="color: #0000ff;">munit_assert</span>(a != <span style="color: #008b8b;">NULL</span>);
+
+<span style="color: #228b22;">a</span>[0] = 1;  <span style="color: #0000ff;">munit_assert_int</span>(<span style="color: #228b22;">a</span>[0], ==, 1);
+<span style="color: #228b22;">a</span>[1] = 2;  <span style="color: #0000ff;">munit_assert_int</span>(<span style="color: #228b22;">a</span>[1], ==, 2);
+<span style="color: #228b22;">a</span>[2] = 3;  <span style="color: #0000ff;">munit_assert_int</span>(<span style="color: #228b22;">a</span>[2], ==, 3);
+</pre>
+</div>
 
 <p>
-<img src="https://trex-coe.eu/sites/default/files/inline-images/euflag.jpg" alt="euflag.jpg" /> <a href="https://trex-coe.eu">TREX: Targeting Real Chemical Accuracy at the Exascale</a> project has received funding from the European Union’s Horizon 2020 - Research and Innovation program - under grant agreement no. 952165. The content of this document does not represent the opinion of the European Union, and the European Union is not responsible for any use that might be made of such content.
+When freeing the memory with <code>qmckl_free</code>, the context is passed, in
+case some important information has been stored related to memory
+allocation and needs to be updated.
 </p>
+
+<div class="org-src-container">
+<pre class="src src-c"><span style="color: #228b22;">qmckl_exit_code</span> <span style="color: #0000ff;">qmckl_free</span>(<span style="color: #228b22;">qmckl_context</span> <span style="color: #a0522d;">context</span>,
+                           <span style="color: #228b22;">void</span> *<span style="color: #a0522d;">ptr</span>);
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-f90"><span style="color: #a020f0;">interface</span>
+   <span style="color: #228b22;">integer</span> (<span style="color: #008b8b;">c_int32_t</span>) <span style="color: #a020f0;">function</span> <span style="color: #0000ff;">qmckl_free</span> (context, ptr) <span style="color: #a020f0;">bind</span>(C)
+     <span style="color: #a020f0;">use</span>, <span style="color: #a020f0;">intrinsic</span> :: <span style="color: #0000ff;">iso_c_binding</span>
+     <span style="color: #228b22;">integer</span> (<span style="color: #008b8b;">c_int64_t</span>), <span style="color: #a020f0;">intent</span>(in), <span style="color: #a020f0;">value</span> ::<span style="color: #a0522d;"> context</span>
+     <span style="color: #228b22;">type (c_ptr)</span>, <span style="color: #a020f0;">intent</span>(in), <span style="color: #a020f0;">value</span> :: <span style="color: #a0522d;">ptr</span>
+   <span style="color: #a020f0;">end function</span> <span style="color: #0000ff;">qmckl_free</span>
+<span style="color: #a020f0;">end interface</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-c"><span style="color: #228b22;">qmckl_exit_code</span> <span style="color: #0000ff;">qmckl_free</span>(<span style="color: #228b22;">qmckl_context</span> <span style="color: #a0522d;">context</span>, <span style="color: #228b22;">void</span> *<span style="color: #a0522d;">ptr</span>) {
+  <span style="color: #a020f0;">if</span> (qmckl_context_check(context) != QMCKL_NULL_CONTEXT) {
+
+    <span style="color: #a020f0;">if</span> (ptr == <span style="color: #008b8b;">NULL</span>) {
+      <span style="color: #a020f0;">return</span> qmckl_failwith(context,
+                            QMCKL_INVALID_ARG_2,
+                            <span style="color: #8b2252;">"qmckl_free"</span>,
+                            <span style="color: #8b2252;">"NULL pointer"</span>);
+    }
+
+    <span style="color: #228b22;">qmckl_exit_code</span> <span style="color: #a0522d;">rc</span>;
+    rc = qmckl_context_remove_memory(context, ptr);
+
+    assert (rc == QMCKL_SUCCESS);
+  }
+  free(ptr);
+  <span style="color: #a020f0;">return</span> QMCKL_SUCCESS;
+}
+</pre>
+</div>
+</div>
+</div>
 </div>
 <div id="postamble" class="status">
 <p class="author">Author: TREX CoE</p>
