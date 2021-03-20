@@ -97,7 +97,7 @@ test: libqmckl.so
 	$(MAKE) -f Makefile.generated test
 
 doc: $(ORG_SOURCE_FILES)
-	$(QMCKL_ROOT)/tools/create_doc.sh
+	$(QMCKL_ROOT)/tools/build_doc.sh
 
 clean:
 	$(RM)	test_qmckl_* test_qmckl.c test_qmckl \
