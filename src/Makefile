@@ -87,17 +87,17 @@ endif
 .PHONY: clean
 .SECONDARY: # Needed to keep the produced C and Fortran files
 
-libqmckl.so: Makefile.generated
+libqmckl.so: ../include/qmckl.h
 	$(MAKE) -f Makefile.generated
 
-../include/qmckl.h: libqmckl.so
+../include/qmckl.h: Makefile.generated
 	../tools/build_qmckl_h.sh
 
-test: Makefile.generated ../include/qmckl.h
+test: libqmckl.so
 	$(MAKE) -f Makefile.generated test
 
 doc: $(ORG_SOURCE_FILES)
-	$(QMCKL_ROOT)/tools/build_doc.sh
+	$(QMCKL_ROOT)/tools/create_doc.sh
 
 clean:
 	$(RM)	test_qmckl_* test_qmckl.c test_qmckl \

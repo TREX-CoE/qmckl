@@ -1,0 +1,230 @@
+# -*- mode: org -*-
+
+* Function to get the value of a property.
+#+NAME: get_value
+#+begin_src elisp :var key="Type"
+(setq x (org-property-values key))
+(pop x)
+#+end_src
+
+#+RESULTS: get_value
+
+* Table of function arguments
+  
+  #+NAME: test
+  | qmckl_context | context   | in  | Global state                                  |
+  | char          | transa    | in  | Array ~A~ is ~'N'~: Normal, ~'T'~: Transposed |
+  | char          | transb    | in  | Array ~B~ is ~'N'~: Normal, ~'T'~: Transposed |
+  | int64_t       | m         | in  | Number of points in the first set             |
+  | int64_t       | n         | in  | Number of points in the second set            |
+  | double        | A[3][lda] | in  | Array containing the $m \times 3$ matrix $A$  |
+  | int64_t       | lda       | in  | Leading dimension of array ~A~                |
+  | double        | B[3][ldb] | in  | Array containing the $n \times 3$ matrix $B$  |
+  | int64_t       | ldb       | in  | Leading dimension of array ~B~                |
+  | double        | C[n][ldc] | out | Array containing the $m \times n$ matrix $C$  |
+  | int64_t       | ldc       | in  | Leading dimension of array ~C~                |
+
+  
+** Fortran-C type conversions
+
+   #+NAME:f_of_c
+   #+BEGIN_SRC python :var table=test :var rettyp="integer" :var fname=[] :results value :noweb yes :wrap "src f90 :tangle (eval f) :comments org :exports none"
+f_of_c_d = { '' : ''
+     , 'qmckl_context' : 'integer (c_int64_t)'
+     , 'int32_t'       : 'integer (c_int32_t)'
+     , 'int64_t'       : 'integer (c_int64_t)'
+     , 'float'         : 'real    (c_float  )'
+     , 'double'        : 'real    (c_double )'
+     , 'char'          : 'character'
+ }
+   #+END_SRC
+   
+   #+NAME:c_of_f
+   #+BEGIN_SRC python :var table=test :var rettyp="integer" :var fname=[] :results value :noweb yes :wrap "src f90 :tangle (eval f) :comments org :exports none"
+ctypeid_d = { '' : ''
+     , 'integer'       : 'integer(c_int32_t)' 
+     , 'integer*8'     : 'integer(c_int64_t)' 
+     , 'real'          : 'real(c_float)'
+     , 'real*8'        : 'real(c_double)'
+     , 'character'     : 'character(c_char)'
+ }
+   #+END_SRC
+   
+** Parse the table
+
+   #+NAME: parse_table
+   #+BEGIN_SRC python :results none :noweb yes :exports none
+def parse_table(table):
+    result = []
+
+    for line in table:
+        d = { "c_type"  : line[0],
+              "inout"   : line[2].lower(),
+              "name"    : line[1],
+              "comment" : line[3] }
+
+        # Handle inout
+        if d["inout"] in ["input", "in"]:
+            d["inout"] == "in"
+        elif d["inout"] in ["output", "out"]:
+            d["inout"] == "out"
+        elif d["inout"] in ["input/output", "inout"]:
+            d["inout"] == "inout"
+
+        # Find dimensions
+        dims = d["name"].split('[')
+        d["rank"] = len(dims) - 1
+        if d["rank"] == 0:
+            d["dims"] = []
+        else:
+            d["name"] = d["name"].split('[')[0].strip()
+            d["dims"] = [ x.replace(']','').strip() for x in dims[1:] ]
+        
+        result.append(d)
+
+    return result
+   #+END_SRC
+
+** Generates a C header
+
+   #+NAME: generate_c_header
+   #+BEGIN_SRC python :var table=[] :var rettyp=[] :var fname=[] :results drawer :noweb yes :wrap "src c :tangle (eval h) :comments org"
+<<parse_table>>
+
+results = []
+for d in parse_table(table):
+    name = d["name"]
+    c_type = d["c_type"]
+
+    # Add star for arrays
+    if d["rank"] > 0:
+        c_type += "*"
+
+    # Only inputs are const
+    if d["inout"] == "in":
+        const = "const"
+    else:
+        const = "     "
+    
+    results += [ f"      {const} {c_type} {name}" ]
+
+results=',\n'.join(results)
+template = f"""{rettyp} {fname} (
+{results} ); """
+return template
+
+   #+END_SRC
+
+   #+RESULTS: generate_c_header
+   #+begin_src c :tangle (eval h) :comments org
+   [] [] (
+    ); 
+   #+end_src
+   
+** Generates a C interface to the Fortran function
+
+   #+NAME: generate_c_interface
+   #+BEGIN_SRC python :var table=[]   :var rettyp="integer" :var fname=[] :results value :noweb yes :wrap "src f90 :tangle (eval f) :comments org :exports none"
+<<c_of_f>>
+<<f_of_c>>
+<<parse_table>>
+d = parse_table(table)
+
+args = ", ".join([ x["name"] for x in d ])
+
+rettyp_c = ctypeid_d[rettyp.lower()]
+
+results = [ f"{rettyp_c} function {fname} &"
+, f"    ({args}) &"
+,  "    bind(C) result(info)"
+,  ""            
+,  "  use, intrinsic :: iso_c_binding"
+,  "  implicit none"
+,  ""
+]
+
+for d in parse_table(table):
+    f_type = f_of_c_d[d["c_type"]]
+    inout  = "intent("+d["inout"]+")"
+    name = d["name"]
+
+    # Input scalars are passed by value
+    if d["rank"] == 0 and inout == "in":
+        value = ", value"
+    else:
+        value = "       "
+
+    # Append dimensions to the name
+    if d["rank"] == 0:
+        dims = ""
+    else:
+        d["dims"].reverse()
+        dims = "(" + ",".join(d["dims"]) + ")"
+
+    results += [ f"  {f_type:20}, {inout:12}{value} :: {name}{dims}" ]
+
+results += [ ""
+, f"  {rettyp_c}, external :: {fname}_f"
+, f"  info = {fname}_f &"
+, f"         ({args})" 
+,  ""
+, f"end function {fname}"
+]
+results='\n'.join(results)
+return results
+   #+END_SRC
+
+
+** Generates a Fortran interface to the C function
+
+   #+NAME: generate_f_interface
+   #+BEGIN_SRC python :var table=test :var rettyp="integer" :var fname=[] :results value :noweb yes :wrap "src f90 :tangle (eval fh) :comments org :exports none"
+<<c_of_f>>
+<<f_of_c>>
+<<parse_table>>
+d = parse_table(table)
+
+args = ", ".join([ x["name"] for x in d ])
+
+rettyp_c = ctypeid_d[rettyp.lower()]
+
+results = [ f"interface"
+, f"  {rettyp_c} function {fname} &"
+, f"      ({args}) &"
+,  "      bind(C)"
+,  "    use, intrinsic :: iso_c_binding"
+,  "    implicit none"
+,  ""
+]
+
+for d in parse_table(table):
+    f_type = f_of_c_d[d["c_type"]]
+    inout  = "intent("+d["inout"]+")"
+    name = d["name"]
+
+    # Input scalars are passed by value
+    if d["rank"] == 0 and inout == "in":
+        value = ", value"
+    else:
+        value = "       "
+
+    # Append dimensions to the name
+    if d["rank"] == 0:
+        dims = ""
+    else:
+        d["dims"].reverse()
+        dims = "(" + ",".join(d["dims"]) + ")"
+
+    results += [ f"    {f_type:20}, {inout:12}{value} :: {name}{dims}" ]
+
+results += [ ""
+, f"  end function {fname}"
+, f"end interface"
+]
+results='\n'.join(results)
+return results
+   #+END_SRC
+
+   #+RESULTS: generate_c_interface
+   #+begin_src f90 :tangle (eval f) :comments org :exports none
+   #+end_src
