@@ -42,4 +42,5 @@
 (setq h_private  (concat name "_private.h"))
 (setq c_test  (concat pwd "test_" name ".c"))
 (setq f_test  (concat pwd "test_" name "_f.f90"))
+(org-babel-lob-ingest "../tools/lib.org")
 
