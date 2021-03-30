@@ -19,7 +19,12 @@
 HEADERS=""
 for i in $(cat table_of_contents)
 do
-    HEADERS+="${i%.org}.h "
+    HEADERS+="${i%.org}_type.h "
+done
+
+for i in $(cat table_of_contents)
+do
+    HEADERS+="${i%.org}_func.h "
 done
 
 
@@ -96,7 +101,8 @@ EOF
 # Generate Fortran interface file from all =qmckl_*_fh.f90= files
 
 
-HEADERS="qmckl_*_fh.f90"
+HEADERS_TYPE="qmckl_*_fh_type.f90"
+HEADERS="qmckl_*_fh_func.f90"
 
 OUTPUT="../include/qmckl_f.f90"
 cat << EOF > ${OUTPUT}
@@ -145,6 +151,11 @@ cat << EOF > ${OUTPUT}
 module qmckl
   use, intrinsic :: iso_c_binding
 EOF
+
+for i in ${HEADERS_TYPE}
+do
+    cat $i >> ${OUTPUT}
+done
 
 for i in ${HEADERS}
 do
