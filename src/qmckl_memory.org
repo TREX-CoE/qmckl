@@ -15,12 +15,15 @@ optimized libraries to fine-tune the memory allocation.
   #+begin_src c :tangle (eval c)
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 #include <assert.h>
 
 #include "qmckl_error_type.h"
+#include "qmckl_memory_private_type.h"
 #include "qmckl_context_type.h"
 #include "qmckl_context_private_type.h"
 
+#include "qmckl_memory_private_func.h"
 #include "qmckl_memory_func.h"
 #include "qmckl_context_func.h"
 #include "qmckl_error_func.h"
@@ -29,13 +32,59 @@ optimized libraries to fine-tune the memory allocation.
   #+begin_src c :tangle (eval c_test) :noweb yes
 #include "qmckl.h"
 #include "munit.h"
+#include "qmckl_context_private_type.h"
+#include "qmckl_memory_private_func.h"
 MunitResult test_<<filename()>>() {
   #+end_src
 
-* 
-:PROPERTIES:
-:UNNUMBERED: t
-:END:
+
+  #+begin_src c :tangle (eval h_private_type) :noweb yes
+#ifndef QMCKL_MEMORY_HPT
+#define QMCKL_MEMORY_HPT
+
+#include <stdint.h>
+  #+end_src
+
+* Memory data structure for the context
+  
+  Every time a new block of memory is allocated, the information
+  relative to the allocation is stored in a new ~qmckl_memory_info_struct~.
+  A ~qmckl_memory_info_struct~ contains the pointer to the memory block, 
+  its size in bytes, and extra implementation-specific information such as
+  alignment, pinning, if the memory should be allocated on CPU or GPU
+  /etc/.
+
+  #+begin_src c :tangle (eval h_private_type) :noweb yes
+typedef struct qmckl_memory_info_struct {
+  size_t size;
+  void*  pointer;
+} qmckl_memory_info_struct;
+
+static const qmckl_memory_info_struct qmckl_memory_info_struct_zero =
+  {
+   .size = (size_t) 0,
+   .pointer = NULL
+  };
+  #+end_src
+  
+  The ~memory~ element of the context is a data structure which
+  contains an array of ~qmckl_memory_info_struct~, the size of the
+  array, and the number of allocated blocks.
+  
+  #+begin_src c :tangle (eval h_private_type) :noweb yes
+typedef struct qmckl_memory_struct {
+  size_t                    n_allocated;
+  size_t                    array_size;
+  qmckl_memory_info_struct* element;
+} qmckl_memory_struct;
+  #+end_src
+
+* Passing info to allocation routines
+
+  Passing information to the allocation routine should be done by
+  passing an instance of a ~qmckl_memory_info_struct~.
+  
+* Allocation/deallocation functions
 
   Memory allocation inside the library should be done with
   ~qmckl_malloc~. It lets the library choose how the memory will be
@@ -47,55 +96,88 @@ MunitResult test_<<filename()>>() {
   If the allocation failed, the ~NULL~ pointer is returned.
 
   # Header
-  #+begin_src c :tangle (eval h_func) :noexport
+  #+begin_src c :tangle (eval h_private_func) :noexport
 void* qmckl_malloc(qmckl_context context,
-                   const size_t size);
+                   const qmckl_memory_info_struct info);
   #+end_src
   
-  In this implementation, we use ~calloc~ because it initializes the
-  memory block to zero, so structs will have ~NULL~-initialized pointers.
-
   # Source
   #+begin_src c :tangle (eval c)
-void* qmckl_malloc(qmckl_context context, const size_t size) {
+void* qmckl_malloc(qmckl_context context, const qmckl_memory_info_struct info) {
 
   assert (qmckl_context_check(context) != QMCKL_NULL_CONTEXT);
-  void * pointer = calloc(size, (size_t) 1);
 
-  /*
-  if (qmckl_context_check(context) != QMCKL_NULL_CONTEXT) {
-    qmckl_exit_code rc;
-    rc = qmckl_context_append_memory(context, pointer, size);
-    assert (rc == QMCKL_SUCCESS);
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+
+  /* Allocate memory and zero it */
+  void * pointer = malloc(info.size);
+  if (pointer == NULL) {
+    return NULL;
   }
-  */
+  memset(pointer, 0, info.size);
 
+  qmckl_lock(context);
+  {
+    /* If qmckl_memory_struct is full, reallocate a larger one */
+    if (ctx->memory.n_allocated == ctx->memory.array_size) {
+      const size_t old_size = ctx->memory.array_size;
+      qmckl_memory_info_struct * new_array = reallocarray(ctx->memory.element,
+                                                          2L * old_size,
+                                                          sizeof(qmckl_memory_info_struct));
+      if (new_array == NULL) {
+        qmckl_unlock(context);
+        return NULL;
+      }
+      
+      memset( &(new_array[old_size]), 0, old_size * sizeof(qmckl_memory_info_struct) );
+      ctx->memory.element = new_array;
+      ctx->memory.array_size = 2L * old_size;
+    }
+    
+    /* Find first NULL entry */
+    size_t pos = (size_t) 0;
+    while ( pos < ctx->memory.array_size && ctx->memory.element[pos].size > (size_t) 0) {
+      pos += (size_t) 1;
+    }
+    assert (ctx->memory.element[pos].size == (size_t) 0);
+
+    /* Copy info at the new location */
+    ctx->memory.element[pos].size    = info.size;
+    ctx->memory.element[pos].pointer = pointer;
+    ctx->memory.n_allocated += (size_t) 1;
+  }
+  qmckl_unlock(context);
+  
   return pointer;
 }
   #+end_src
 
-  # Fortran interface
-  #+begin_src f90 :tangle (eval fh_func) :noexport
-  interface
-     type (c_ptr) function qmckl_malloc (context, size) bind(C)
-       use, intrinsic :: iso_c_binding
-       import
-       integer (qmckl_context), intent(in), value :: context
-       integer (c_int64_t)    , intent(in), value :: size
-     end function qmckl_malloc
-  end interface
-  #+end_src
 
    # Test                                                            :noexport:
    #+begin_src c :tangle (eval c_test)
+/* Create a context */
 qmckl_context context = qmckl_context_create();    
 
-int *a = (int*) qmckl_malloc(context, 3*sizeof(int));
-munit_assert(a != NULL);
+qmckl_memory_info_struct info = qmckl_memory_info_struct_zero;
+info.size = (size_t) 3;
 
+/* Allocate an array of ints */
+int *a = (int*) qmckl_malloc(context, info);
+
+/* Check that array of ints is OK */
+munit_assert(a != NULL);
 a[0] = 1;  munit_assert_int(a[0], ==, 1);
 a[1] = 2;  munit_assert_int(a[1], ==, 2);
 a[2] = 3;  munit_assert_int(a[2], ==, 3);
+
+/* Allocate another array of ints */
+int *b = (int*) qmckl_malloc(context, info);
+
+/* Check that array of ints is OK */
+munit_assert(b != NULL);
+b[0] = 1;  munit_assert_int(b[0], ==, 1);
+b[1] = 2;  munit_assert_int(b[1], ==, 2);
+b[2] = 3;  munit_assert_int(b[2], ==, 3);
    #+end_src
 
   When freeing the memory with ~qmckl_free~, the context is passed, in
@@ -104,40 +186,53 @@ a[2] = 3;  munit_assert_int(a[2], ==, 3);
 
   #+begin_src c :tangle (eval h_func)
 qmckl_exit_code qmckl_free(qmckl_context context,
-                           void *ptr);
-  #+end_src
-
-  #+begin_src f90 :tangle (eval fh_func)
-  interface
-     integer (qmckl_exit_code) function qmckl_free (context, ptr) bind(C)
-       use, intrinsic :: iso_c_binding
-       import
-       integer (qmckl_context), intent(in), value :: context
-       type (c_ptr), intent(in), value :: ptr
-     end function qmckl_free
-  end interface
+                           void * const ptr);
   #+end_src
 
    # Source
    #+begin_src c :tangle (eval c)
-qmckl_exit_code qmckl_free(qmckl_context context, void *ptr) {
-  if (qmckl_context_check(context) != QMCKL_NULL_CONTEXT) {
+qmckl_exit_code qmckl_free(qmckl_context context, void * const ptr) {
 
-    if (ptr == NULL) {
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
       return qmckl_failwith(context,
-                            QMCKL_INVALID_ARG_2,
+                            QMCKL_INVALID_CONTEXT,
                             "qmckl_free",
-                            "NULL pointer");
+                            NULL);
+  }
+  
+  if (ptr == NULL) {
+    return qmckl_failwith(context,
+                          QMCKL_INVALID_ARG_2,
+                          "qmckl_free",
+                          "NULL pointer");
+  }
+  
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+
+  qmckl_lock(context);
+  {
+    /* Find pointer in array of saved pointers */
+    size_t pos = (size_t) 0;
+    while ( pos < ctx->memory.array_size && ctx->memory.element[pos].pointer != ptr) {
+      pos += (size_t) 1;
     }
     
-    /*
-    qmckl_exit_code rc;
-    rc = qmckl_context_remove_memory(context, ptr);
+    if (pos >= ctx->memory.array_size) {
+      /* Not found */
+      qmckl_unlock(context);
+      return qmckl_failwith(context,
+                            QMCKL_FAILURE,
+                            "qmckl_free",
+                            "Pointer not found in context");
+    }
 
-    assert (rc == QMCKL_SUCCESS);
-    */
+    free(ptr);
+
+    memset( &(ctx->memory.element[pos]), 0, sizeof(qmckl_memory_info_struct) );
+    ctx->memory.n_allocated -= (size_t) 1;
   }
-  free(ptr);
+  qmckl_unlock(context);
+
   return QMCKL_SUCCESS;
 }
    #+end_src
@@ -145,11 +240,27 @@ qmckl_exit_code qmckl_free(qmckl_context context, void *ptr) {
    # Test
    #+begin_src c :tangle (eval c_test) :exports none
 qmckl_exit_code rc;
-
+/* Assert that both arrays are allocated */
 munit_assert(a != NULL);
+munit_assert(b != NULL);
+
+/* Free in NULL context */
+rc = qmckl_free(QMCKL_NULL_CONTEXT, a);
+munit_assert(rc == QMCKL_INVALID_CONTEXT);
+
+/* Free NULL pointer */
+rc = qmckl_free(context, NULL);
+munit_assert(rc == QMCKL_INVALID_ARG_2);
+
+/* Free for the first time */
 rc = qmckl_free(context, a);
 munit_assert(rc == QMCKL_SUCCESS);
 
+/* Free again */
+rc = qmckl_free(context, a);
+munit_assert(rc == QMCKL_FAILURE);
+
+/* Clean up */
 rc = qmckl_context_destroy(context);
 munit_assert(rc == QMCKL_SUCCESS);
 
@@ -157,6 +268,10 @@ munit_assert(rc == QMCKL_SUCCESS);
 
 * End of files                                                     :noexport:
 
+  #+begin_src c :comments org :tangle (eval h_private_type)
+#endif
+
+  #+end_src
 ** Test
   #+begin_src c :comments org :tangle (eval c_test)
   return MUNIT_OK;
