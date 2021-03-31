@@ -1,0 +1,1531 @@
+#+TITLE: Atomic Orbitals
+#+SETUPFILE: ../docs/theme.setup
+
+The atomic basis set is defined as a list of shells. Each shell $s$ is
+centered on a nucleus $A$, possesses a given angular momentum $l$ and a
+radial function $R_s$. The radial function is a linear combination of
+\emph{primitive} functions that can be of type Slater ($p=1$)  or
+Gaussian ($p=2$):
+
+\[
+  R_s(\mathbf{r}) = \mathcal{N}_s |\mathbf{r}-\mathbf{R}_A|^{n_s}
+  \sum_{k=1}^{N_{\text{prim}}} a_{ks}
+ \exp \left( - \gamma_{ks} | \mathbf{r}-\mathbf{R}_A | ^p \right). 
+\]
+
+In the case of Gaussian functions, $n_s$ is always zero.
+The normalization factor $\mathcal{N}_s$ ensures that all the functions
+of the shell are normalized to unity. As this normalization requires
+the ability to compute overlap integrals, it should be written in the
+file to ensure that the file is self-contained and does not require
+the client program to have the ability to compute such integrals.
+
+Atomic orbitals (AOs) are defined as
+
+\[
+\chi_i (\mathbf{r}) = P_{\eta(i)}(\mathbf{r})\, R_{\theta(i)} (\mathbf{r})
+\]
+    
+where $\theta(i)$ returns the shell on which the AO is expanded,
+and $\eta(i)$ denotes which angular function is chosen.
+
+In this section we describe the kernels used to compute the values,
+gradients and Laplacian of the atomic basis functions.
+
+* Headers                                                          :noexport:
+
+  #+NAME: filename
+  #+begin_src elisp :tangle no 
+(file-name-nondirectory (substring buffer-file-name 0 -4))
+  #+end_src
+
+  #+begin_src c :tangle (eval h_private_type)
+#ifndef QMCKL_AO_HPT
+#define QMCKL_AO_HPT
+  #+end_src
+
+  #+begin_src c :tangle (eval c_test) :noweb yes
+#include "qmckl.h"
+#include "munit.h"
+MunitResult test_<<filename()>>() {
+  qmckl_context context;
+  context = qmckl_context_create();
+  #+end_src
+
+  #+begin_src c :tangle (eval c)
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <assert.h>
+
+#include "qmckl_error_type.h"
+#include "qmckl_context_type.h"
+#include "qmckl_context_private_type.h"
+#include "qmckl_memory_private_type.h"
+
+#include "qmckl_error_func.h"
+#include "qmckl_memory_private_func.h"
+#include "qmckl_memory_func.h"
+#include "qmckl_context_func.h"
+  #+end_src
+
+* Context
+
+  The following arrays are stored in the context:
+ 
+   | ~type~             |               | Gaussian (~'G'~) or Slater (~'S'~)                                   |
+   | ~shell_num~        |               | Number of shells                                                     |
+   | ~prim_num~         |               | Total number of primitives                                           |
+   | ~shell_center~     | ~[shell_num]~ | Id of the nucleus on which each shell is centered                    |
+   | ~shell_ang_mom~    | ~[shell_num]~ | Angular momentum of each shell                                       |
+   | ~shell_prim_num~   | ~[shell_num]~ | Number of primitives in each shell                                   |
+   | ~shell_prim_index~ | ~[shell_num]~ | Address of the first primitive of each shell in the ~EXPONENT~ array |
+   | ~shell_factor~     | ~[shell_num]~ | Normalization factor for each shell                                  |
+   | ~exponent~         | ~[prim_num]~  | Array of exponents                                                   |
+   | ~coefficient~      | ~[prim_num]~  | Array of coefficients                                                |
+
+   For H_2 with the following basis set,
+
+   #+BEGIN_EXAMPLE
+HYDROGEN
+S   5
+1         3.387000E+01           6.068000E-03
+2         5.095000E+00           4.530800E-02
+3         1.159000E+00           2.028220E-01
+4         3.258000E-01           5.039030E-01
+5         1.027000E-01           3.834210E-01
+S   1
+1         3.258000E-01           1.000000E+00
+S   1
+1         1.027000E-01           1.000000E+00
+P   1
+1         1.407000E+00           1.000000E+00
+P   1
+1         3.880000E-01           1.000000E+00
+D   1
+1         1.057000E+00           1.0000000
+   #+END_EXAMPLE
+
+   we have:
+
+   #+BEGIN_EXAMPLE
+type = 'G'
+shell_num = 12
+prim_num = 20
+shell_center = [1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2]
+shell_ang_mom = ['S', 'S', 'S', 'P', 'P', 'D', 'S', 'S', 'S', 'P', 'P', 'D']
+shell_factor  = [ 1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.]
+shell_prim_num = [5, 1, 1, 1, 1, 1, 5, 1, 1, 1, 1, 1]
+prim_index = [1, 6, 7, 8, 9, 10, 11, 16, 17, 18, 19, 20]
+exponent = [ 33.87, 5.095, 1.159, 0.3258, 0.1027, 0.3258, 0.1027,
+             1.407, 0.388, 1.057, 33.87, 5.095, 1.159, 0.3258, 0.1027,
+             0.3258, 0.1027, 1.407, 0.388, 1.057]
+coefficient = [ 0.006068, 0.045308, 0.202822, 0.503903, 0.383421,
+                1.0, 1.0, 1.0, 1.0, 1.0, 0.006068, 0.045308, 0.202822,
+                0.503903, 0.383421, 1.0, 1.0, 1.0, 1.0, 1.0]
+   #+END_EXAMPLE
+
+** Data structure
+
+   #+begin_src c :comments org :tangle (eval h_private_type)
+typedef struct qmckl_ao_basis_struct {
+  int32_t   provided;
+  int32_t   uninitialized;
+  int64_t   shell_num;
+  int64_t   prim_num;
+  int64_t * shell_center;
+  int32_t * shell_ang_mom;
+  int64_t * shell_prim_num;
+  int64_t * shell_prim_index;
+  double  * shell_factor;
+  double  * exponent    ;
+  double  * coefficient ;
+  char      type;
+} qmckl_ao_basis_struct;
+   #+end_src
+
+   The ~uninitialized~ integer contains one bit set to one for each
+   initialization function which has not bee called. When it is equal
+   to zero, the struct is initialized and ~provided == 1~.
+   
+** Access functions
+
+   Access to scalars copies the values at the passed address, and
+   for array values a pointer to the array is returned.
+   
+   #+begin_src c :comments org :tangle (eval h_func)
+char      qmckl_get_ao_basis_type           (qmckl_context context);
+int64_t   qmckl_get_ao_basis_shell_num      (qmckl_context context);
+int64_t   qmckl_get_ao_basis_prim_num       (qmckl_context context);
+int64_t*  qmckl_get_ao_basis_shell_center   (qmckl_context context);
+int32_t*  qmckl_get_ao_basis_shell_ang_mom  (qmckl_context context);
+int64_t*  qmckl_get_ao_basis_shell_prim_num (qmckl_context context);
+double*   qmckl_get_ao_basis_shell_factor   (qmckl_context context);
+double*   qmckl_get_ao_basis_exponent       (qmckl_context context);
+double*   qmckl_get_ao_basis_coefficient    (qmckl_context context);
+   #+end_src
+
+   #+NAME:post
+   #+begin_src c 
+if (ctx->ao_basis.uninitialized &= mask != 0) {
+  return NULL;
+}
+   #+end_src
+   
+
+   #+begin_src c :comments org :tangle (eval c) :noweb yes
+char qmckl_get_ao_basis_type (qmckl_context context) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return (char) 0;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  int32_t mask = 1;
+
+  if (ctx->ao_basis.uninitialized &= mask != 0) {
+    return (char) 0;
+  }
+
+  assert (ctx->ao_basis.type != (char) 0);
+  return ctx->ao_basis.type;
+}
+
+
+int64_t qmckl_get_ao_basis_shell_num (qmckl_context context) {
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return (int64_t) 0;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  int32_t mask = 1 << 1;
+
+  if (ctx->ao_basis.uninitialized &= mask != 0) {
+    return (int64_t) 0;
+  }
+
+  assert (ctx->ao_basis.shell_num != (int64_t) 0);
+  return ctx->ao_basis.shell_num;
+}
+
+
+int64_t qmckl_get_ao_basis_prim_num (qmckl_context context) {
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return (int64_t) 0;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  int32_t mask = 1 << 2;
+
+  if (ctx->ao_basis.uninitialized &= mask != 0) {
+    return (int64_t) 0;
+  }
+
+  assert (ctx->ao_basis.prim_num != (int64_t) 0);
+  return ctx->ao_basis.prim_num;
+}
+
+
+int64_t* qmckl_get_ao_basis_shell_center (qmckl_context context) {
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return NULL;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  int32_t mask = 1 << 3;
+
+  if (ctx->ao_basis.uninitialized &= mask != 0) {
+    return NULL;
+  }
+
+  assert (ctx->ao_basis.shell_center != NULL);
+  return ctx->ao_basis.shell_center;
+}
+
+
+int32_t* qmckl_get_ao_basis_shell_ang_mom (qmckl_context context) {
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return NULL;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  int32_t mask = 1 << 4;
+
+  if (ctx->ao_basis.uninitialized &= mask != 0) {
+    return NULL;
+  }
+
+  assert (ctx->ao_basis.shell_ang_mom != NULL);
+  return ctx->ao_basis.shell_ang_mom;
+}
+
+
+int64_t* qmckl_get_ao_basis_shell_prim_num (qmckl_context context) {
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return NULL;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  int32_t mask = 1 << 5;
+
+  if (ctx->ao_basis.uninitialized &= mask != 0) {
+    return NULL;
+  }
+
+  assert (ctx->ao_basis.shell_prim_num != NULL);
+  return ctx->ao_basis.shell_prim_num;
+}
+
+
+int64_t* qmckl_get_ao_basis_shell_prim_index (qmckl_context context) {
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return NULL;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  int32_t mask = 1 << 6;
+
+  if (ctx->ao_basis.uninitialized &= mask != 0) {
+    return NULL;
+  }
+
+  assert (ctx->ao_basis.shell_prim_index != NULL);
+  return ctx->ao_basis.shell_prim_index;
+}
+
+
+double* qmckl_get_ao_basis_shell_factor (qmckl_context context) {
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return NULL;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  int32_t mask = 1 << 7;
+
+  if (ctx->ao_basis.uninitialized &= mask != 0) {
+    return NULL;
+  }
+
+  assert (ctx->ao_basis.shell_factor != NULL);
+  return ctx->ao_basis.shell_factor;
+}
+
+
+double* qmckl_get_ao_basis_exponent (qmckl_context context) {
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return NULL;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+
+  int32_t mask = 1 << 8;
+
+  if (ctx->ao_basis.uninitialized &= mask != 0) {
+    return NULL;
+  }
+
+  assert (ctx->ao_basis.exponent != NULL);
+  return ctx->ao_basis.exponent;
+}
+
+
+double* qmckl_get_ao_basis_coefficient (qmckl_context context) {
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return NULL;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  int32_t mask = 1 << 9;
+
+  if (ctx->ao_basis.uninitialized &= mask != 0) {
+    return NULL;
+  }
+
+  assert (ctx->ao_basis.coefficient != NULL);
+  return ctx->ao_basis.coefficient;
+}
+   #+end_src
+
+** Initialization functions
+
+   To set the basis set, all the following functions need to be
+   called. When
+   
+   #+begin_src c :comments org :tangle (eval h_func)
+qmckl_exit_code  qmckl_set_ao_basis_type          (qmckl_context context, const char      t);
+qmckl_exit_code  qmckl_set_ao_basis_shell_num     (qmckl_context context, const int64_t   shell_num);
+qmckl_exit_code  qmckl_set_ao_basis_prim_num      (qmckl_context context, const int64_t   prim_num);
+qmckl_exit_code  qmckl_set_ao_basis_shell_center  (qmckl_context context, const int64_t * shell_center);
+qmckl_exit_code  qmckl_set_ao_basis_shell_ang_mom (qmckl_context context, const int32_t * shell_ang_mom);
+qmckl_exit_code  qmckl_set_ao_basis_shell_center  (qmckl_context context, const int64_t * shell_prim_num);
+qmckl_exit_code  qmckl_set_ao_basis_shell_factor  (qmckl_context context, const double  * shell_factor);
+qmckl_exit_code  qmckl_set_ao_basis_exponent      (qmckl_context context, const double  * exponent);
+qmckl_exit_code  qmckl_set_ao_basis_coefficient   (qmckl_context context, const double  * coefficient);
+   #+end_src
+
+   #+NAME:pre2
+   #+begin_src c 
+if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+  return QMCKL_NULL_CONTEXT;
+ }
+
+qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+   #+end_src
+
+   #+NAME:post2
+   #+begin_src c 
+ctx->ao_basis.uninitialized &= !(mask); 
+
+if (ctx->ao_basis.uninitialized == 0) {
+  ctx->ao_basis.provided = 1;
+}
+
+return QMCKL_SUCCESS;
+   #+end_src
+   
+
+   #+begin_src c :comments org :tangle (eval c) :noweb yes
+qmckl_exit_code qmckl_set_ao_basis_type(qmckl_context context, const char t) {
+  <<pre2>>
+
+  if (t != 'G' && t != 'S') {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_set_ao_basis_type",
+                           NULL);
+  }
+
+  int32_t mask = 1;
+  ctx->ao_basis.type = t;
+
+  <<post2>>
+}
+
+
+qmckl_exit_code qmckl_set_ao_basis_shell_num(qmckl_context context, const int64_t shell_num) {
+  <<pre2>>
+
+  if (shell_num <= 0) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_set_ao_basis_shell_num",
+                           "shell_num <= 0");
+  }
+
+  int64_t prim_num = qmckl_get_ao_basis_prim_num(context);
+
+  if (0L < prim_num && prim_num < shell_num) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_set_ao_basis_shell_num",
+                           "shell_num > prim_num");
+  }
+
+  int32_t mask = 1 << 1;
+  ctx->ao_basis.shell_num = shell_num;
+
+  <<post2>>
+}
+ 
+
+qmckl_exit_code  qmckl_set_ao_basis_prim_num(qmckl_context context, const int64_t prim_num) {
+  <<pre2>>
+
+  if (prim_num <= 0) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_set_ao_basis_shell_num",
+                           "prim_num must be positive");
+  }
+
+  int64_t shell_num = qmckl_get_ao_basis_shell_num(context);
+
+  if (prim_num < shell_num) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_set_ao_basis_shell_num",
+                           "prim_num < shell_num");
+  }
+
+  int32_t mask = 1 << 2;
+  ctx->ao_basis.prim_num = prim_num;
+
+  <<post2>>
+}
+ 
+
+qmckl_exit_code  qmckl_set_ao_basis_shell_center(qmckl_context context, const int64_t* shell_center) {
+  <<pre2>>
+
+  int32_t mask = 1 << 3;
+
+  const int64_t shell_num = qmckl_get_ao_basis_shell_num(context);
+  if (shell_num == 0L) {
+    return qmckl_failwith( context,
+                           QMCKL_FAILURE,
+                           "qmckl_set_ao_basis_shell_center",
+                           "shell_num is not set");
+  }
+    
+  if (ctx->ao_basis.shell_center != NULL) {
+    qmckl_exit_code rc = qmckl_free(context, ctx->ao_basis.shell_center);
+    if (rc != QMCKL_SUCCESS) {
+      return qmckl_failwith( context, rc, 
+                             "qmckl_set_ao_basis_shell_center",
+                             NULL);
+    }
+  }
+
+  qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+  mem_info.size = shell_num * sizeof(int64_t);
+  int64_t* new_array = (int64_t*) qmckl_malloc(context, mem_info);
+
+  if (new_array == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_ALLOCATION_FAILED,
+                           "qmckl_set_ao_basis_shell_center",
+                           NULL);
+  }
+
+  memcpy(new_array, shell_center, mem_info.size);
+    
+  ctx->ao_basis.shell_center = new_array;
+
+  <<post2>>
+}
+
+ 
+qmckl_exit_code  qmckl_set_ao_basis_shell_ang_mom(qmckl_context context, const int32_t* shell_ang_mom) {
+  <<pre2>>
+
+  int32_t mask = 1 << 4;
+
+  const int64_t shell_num = qmckl_get_ao_basis_shell_num(context);
+  if (shell_num == 0L) {
+    return qmckl_failwith( context,
+                           QMCKL_FAILURE,
+                           "qmckl_set_ao_basis_shell_ang_mom",
+                           "shell_num is not set");
+  }
+    
+  if (ctx->ao_basis.shell_ang_mom != NULL) {
+    qmckl_exit_code rc = qmckl_free(context, ctx->ao_basis.shell_ang_mom);
+    if (rc != QMCKL_SUCCESS) {
+      return qmckl_failwith( context, rc, 
+                             "qmckl_set_ao_basis_shell_ang_mom",
+                             NULL);
+    }
+  }
+
+    
+  qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+  mem_info.size = shell_num * sizeof(int64_t);
+  int32_t* new_array = (int32_t*) qmckl_malloc(context, mem_info);
+
+  if (new_array == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_ALLOCATION_FAILED,
+                           "qmckl_set_ao_basis_shell_ang_mom",
+                           NULL);
+  }
+
+  memcpy(new_array, shell_ang_mom, mem_info.size);
+    
+  ctx->ao_basis.shell_ang_mom = new_array;
+
+  <<post2>>
+}
+ 
+
+qmckl_exit_code  qmckl_set_ao_basis_shell_prim_num(qmckl_context context, const int64_t* shell_prim_num) {
+  <<pre2>>
+
+  int32_t mask = 1 << 5;
+
+  const int64_t shell_num = qmckl_get_ao_basis_shell_num(context);
+  if (shell_num == 0L) {
+    return qmckl_failwith( context,
+                           QMCKL_FAILURE,
+                           "qmckl_set_ao_basis_shell_prim_num",
+                           "shell_num is not set");
+  }
+    
+  if (ctx->ao_basis.shell_prim_num != NULL) {
+    qmckl_exit_code rc = qmckl_free(context, ctx->ao_basis.shell_prim_num);
+    if (rc != QMCKL_SUCCESS) {
+      return qmckl_failwith( context, rc, 
+                             "qmckl_set_ao_basis_shell_prim_num",
+                             NULL);
+    }
+  }
+
+    
+  qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+  mem_info.size = shell_num * sizeof(int64_t);
+  int64_t* new_array = (int64_t*) qmckl_malloc(context, mem_info);
+
+  if (new_array == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_ALLOCATION_FAILED,
+                           "qmckl_set_ao_basis_shell_prim_num",
+                           NULL);
+  }
+
+  memcpy(new_array, shell_prim_num, mem_info.size);
+    
+  ctx->ao_basis.shell_prim_num = new_array;
+
+  <<post2>>
+}
+
+ 
+qmckl_exit_code  qmckl_set_ao_basis_shell_prim_index(qmckl_context context, const int64_t* shell_prim_index) {
+  <<pre2>>
+
+  int32_t mask = 1 << 6;
+
+  const int64_t shell_num = qmckl_get_ao_basis_shell_num(context);
+  if (shell_num == 0L) {
+    return qmckl_failwith( context,
+                           QMCKL_FAILURE,
+                           "qmckl_set_ao_basis_shell_prim_index",
+                           "shell_num is not set");
+  }
+    
+  if (ctx->ao_basis.shell_prim_index != NULL) {
+    qmckl_exit_code rc = qmckl_free(context, ctx->ao_basis.shell_prim_index);
+    if (rc != QMCKL_SUCCESS) {
+      return qmckl_failwith( context, rc, 
+                             "qmckl_set_ao_basis_shell_prim_index",
+                             NULL);
+    }
+  }
+    
+  qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+  mem_info.size = shell_num * sizeof(int64_t);
+  int64_t* new_array = (int64_t*) qmckl_malloc(context, mem_info);
+
+  if (new_array == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_ALLOCATION_FAILED,
+                           "qmckl_set_ao_basis_shell_prim_index",
+                           NULL);
+  }
+
+  memcpy(new_array, shell_prim_index, mem_info.size);
+    
+  ctx->ao_basis.shell_prim_index = new_array;
+
+  <<post2>>
+}
+
+ 
+qmckl_exit_code  qmckl_set_ao_basis_shell_factor(qmckl_context context, const double* shell_factor) {
+  <<pre2>>
+
+  int32_t mask = 1 << 7;
+
+  const int64_t shell_num = qmckl_get_ao_basis_shell_num(context);
+  if (shell_num == 0L) {
+    return qmckl_failwith( context,
+                           QMCKL_FAILURE,
+                           "qmckl_set_ao_basis_shell_factor",
+                           "shell_num is not set");
+  }
+    
+    
+  if (ctx->ao_basis.shell_factor != NULL) {
+    qmckl_exit_code rc = qmckl_free(context, ctx->ao_basis.shell_factor);
+    if (rc != QMCKL_SUCCESS) {
+      return qmckl_failwith( context, rc, 
+                             "qmckl_set_ao_basis_shell_factor",
+                             NULL);
+    }
+  }
+    
+  qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+  mem_info.size = shell_num * sizeof(double);
+  double* new_array = (double*) qmckl_malloc(context, mem_info);
+
+  if (new_array == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_ALLOCATION_FAILED,
+                           "qmckl_set_ao_basis_shell_factor",
+                           NULL);
+  }
+
+  memcpy(new_array, shell_factor, mem_info.size);
+    
+  ctx->ao_basis.shell_factor = new_array;
+
+  <<post2>>
+}
+ 
+qmckl_exit_code  qmckl_set_ao_basis_exponent(qmckl_context context, const double* exponent) {
+  <<pre2>>
+
+  int32_t mask = 1 << 8;
+
+  const int64_t prim_num = qmckl_get_ao_basis_prim_num(context);
+  if (prim_num == 0L) {
+    return qmckl_failwith( context,
+                           QMCKL_FAILURE,
+                           "qmckl_set_ao_basis_exponent",
+                           "prim_num is not set");
+  }
+    
+  if (ctx->ao_basis.exponent != NULL) {
+    qmckl_exit_code rc = qmckl_free(context, ctx->ao_basis.exponent);
+    if (rc != QMCKL_SUCCESS) {
+      return qmckl_failwith( context, rc, 
+                             "qmckl_set_ao_basis_exponent",
+                             NULL);
+    }
+  }
+    
+  qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+  mem_info.size = prim_num * sizeof(double);
+  double* new_array = (double*) qmckl_malloc(context, mem_info);
+
+  if (new_array == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_ALLOCATION_FAILED,
+                           "qmckl_set_ao_basis_exponent",
+                           NULL);
+  }
+
+  memcpy(new_array, exponent, mem_info.size);
+    
+  ctx->ao_basis.exponent = new_array;
+
+  <<post2>>
+}
+ 
+qmckl_exit_code  qmckl_set_ao_basis_coefficient(qmckl_context context, const double* coefficient) {
+  <<pre2>>
+
+  int32_t mask = 1 << 9;
+
+  const int64_t prim_num = qmckl_get_ao_basis_prim_num(context);
+  if (prim_num == 0L) {
+    return qmckl_failwith( context,
+                           QMCKL_FAILURE,
+                           "qmckl_set_ao_basis_coefficient",
+                           "prim_num is not set");
+  }
+    
+  if (ctx->ao_basis.coefficient != NULL) {
+    qmckl_exit_code rc = qmckl_free(context, ctx->ao_basis.coefficient);
+    if (rc != QMCKL_SUCCESS) {
+      return qmckl_failwith( context, rc, 
+                             "qmckl_set_ao_basis_coefficient",
+                             NULL);
+    }
+  }
+    
+  qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+  mem_info.size = prim_num * sizeof(double);
+  double* new_array = (double*) qmckl_malloc(context, mem_info);
+
+  if (new_array == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_ALLOCATION_FAILED,
+                           "qmckl_set_ao_basis_coefficient",
+                           NULL);
+  }
+
+  memcpy(new_array, coefficient, mem_info.size);
+    
+  ctx->ao_basis.coefficient = new_array;
+
+  <<post2>>
+}
+ 
+   #+end_src
+
+
+
+* Polynomial part
+
+** Powers of $x-X_i$
+   
+   The ~qmckl_ao_power~ function computes all the powers of the ~n~
+   input data up to the given maximum value given in input for each of
+   the $n$ points:
+   
+   \[ P_{ik} = X_i^k \]
+
+   | ~context~  | input  | Global state                                      |
+   | ~n~        | input  | Number of values                                  |
+   | ~X(n)~     | input  | Array containing the input values                 |
+   | ~LMAX(n)~  | input  | Array containing the maximum power for each value |
+   | ~P(LDP,n)~ | output | Array containing all the powers of ~X~            |
+   | ~LDP~      | input  | Leading dimension of array ~P~                    |
+    
+   Requirements:
+
+   - ~context~ is not ~QMCKL_NULL_CONTEXT~
+   - ~n~ > 0
+   - ~X~ is allocated with at least $n \times 8$ bytes
+   - ~LMAX~ is allocated with at least $n \times 4$ bytes
+   - ~P~ is allocated with at least $n \times \max_i \text{LMAX}_i \times 8$ bytes
+   - ~LDP~ >= $\max_i$ ~LMAX[i]~
+
+   #+begin_src c :tangle (eval h_func) 
+qmckl_exit_code
+qmckl_ao_power(const qmckl_context context,
+               const int64_t n, 
+               const double *X,
+               const int32_t *LMAX,
+               const double *P,
+               const int64_t LDP);
+   #+end_src 
+
+   #+begin_src f90 :tangle (eval f) 
+integer function qmckl_ao_power_f(context, n, X, LMAX, P, ldp) result(info)
+  use qmckl
+  implicit none
+  integer*8 , intent(in)  :: context
+  integer*8 , intent(in)  :: n
+  real*8    , intent(in)  :: X(n)
+  integer   , intent(in)  :: LMAX(n)
+  real*8    , intent(out) :: P(ldp,n)
+  integer*8 , intent(in)  :: ldp
+
+  integer*8  :: i,k
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (n <= ldp) then
+     info = QMCKL_INVALID_ARG_2
+     return
+  endif
+
+  k = MAXVAL(LMAX)
+  if (LDP < k) then
+     info = QMCKL_INVALID_ARG_6
+     return
+  endif
+
+  if (k <= 0) then
+     info = QMCKL_INVALID_ARG_4
+     return
+  endif
+
+  do i=1,n
+     P(1,i) = X(i)
+     do k=2,LMAX(i)
+        P(k,i) = P(k-1,i) * X(i) 
+     end do
+  end do
+
+end function qmckl_ao_power_f
+   #+end_src 
+
+   #+begin_src f90 :tangle (eval f) :exports none
+integer(c_int32_t) function qmckl_ao_power(context, n, X, LMAX, P, ldp) &
+     bind(C) result(info)
+  use, intrinsic :: iso_c_binding
+  implicit none
+  integer (c_int64_t) , intent(in) , value :: context
+  integer (c_int64_t) , intent(in) , value :: n
+  real    (c_double)  , intent(in)         :: X(n)
+  integer (c_int32_t) , intent(in)         :: LMAX(n)
+  real    (c_double)  , intent(out)        :: P(ldp,n)
+  integer (c_int64_t) , intent(in) , value :: ldp
+
+  integer, external :: qmckl_ao_power_f
+  info = qmckl_ao_power_f(context, n, X, LMAX, P, ldp)
+end function qmckl_ao_power
+   #+end_src
+
+   #+begin_src f90 :tangle (eval fh_func) :exports none
+  interface
+     integer(c_int32_t) function qmckl_ao_power(context, n, X, LMAX, P, ldp) bind(C)
+       use, intrinsic :: iso_c_binding
+       integer (c_int64_t) , intent(in) , value :: context
+       integer (c_int64_t) , intent(in) , value :: n
+       integer (c_int64_t) , intent(in) , value :: ldp
+       real    (c_double)  , intent(in)         :: X(n)
+       integer (c_int32_t) , intent(in)         :: LMAX(n)
+       real    (c_double)  , intent(out)        :: P(ldp,n)
+     end function qmckl_ao_power
+  end interface
+   #+end_src
+
+   # Test
+   #+begin_src f90 :tangle (eval f_test) 
+integer(c_int32_t) function test_qmckl_ao_power(context) bind(C)
+  use qmckl
+  implicit none
+
+  integer(qmckl_context), intent(in), value :: context
+
+  integer*8                     :: n, LDP 
+  integer, allocatable          :: LMAX(:) 
+  double precision, allocatable :: X(:), P(:,:)
+  integer*8                     :: i,j
+  double precision              :: epsilon
+
+  epsilon = qmckl_get_numprec_epsilon(context)
+  print *, epsilon
+
+  n = 100;
+  LDP = 10;
+
+  allocate(X(n), P(LDP,n), LMAX(n))
+
+  do j=1,n
+     X(j) = -5.d0 + 0.1d0 * dble(j)
+     LMAX(j) = 1 + int(mod(j, 5),4)
+  end do
+
+  test_qmckl_ao_power = qmckl_ao_power(context, n, X, LMAX, P, LDP) 
+  if (test_qmckl_ao_power /= QMCKL_SUCCESS) return
+
+  test_qmckl_ao_power = QMCKL_FAILURE
+
+  do j=1,n
+     do i=1,LMAX(j)
+        if ( X(j)**i == 0.d0 ) then
+           if ( P(i,j) /= 0.d0) return
+        else
+           if ( dabs(1.d0 - P(i,j) / (X(j)**i)) > epsilon ) return
+        end if
+     end do
+  end do
+
+  test_qmckl_ao_power = QMCKL_SUCCESS
+  deallocate(X,P,LMAX)
+end function test_qmckl_ao_power
+   #+end_src
+
+   #+begin_src c :tangle (eval c_test) :exports none
+int  test_qmckl_ao_power(qmckl_context context);
+munit_assert_int(0, ==, test_qmckl_ao_power(context));
+   #+end_src
+
+** Value, Gradient and Laplacian of a polynomial
+
+   A polynomial is centered on a nucleus $\mathbf{R}_i$
+  
+   \[
+   P_l(\mathbf{r},\mathbf{R}_i)  =   (x-X_i)^a (y-Y_i)^b (z-Z_i)^c 
+   \]
+
+   The gradients with respect to electron coordinates are
+  
+   \begin{eqnarray*} 
+   \frac{\partial }{\partial x} P_l\left(\mathbf{r},\mathbf{R}_i \right) &
+                  = & a (x-X_i)^{a-1} (y-Y_i)^b (z-Z_i)^c \\
+   \frac{\partial }{\partial y} P_l\left(\mathbf{r},\mathbf{R}_i \right) &
+                  = & b (x-X_i)^a (y-Y_i)^{b-1} (z-Z_i)^c \\
+   \frac{\partial }{\partial z} P_l\left(\mathbf{r},\mathbf{R}_i \right) &
+                  = & c (x-X_i)^a (y-Y_i)^b (z-Z_i)^{c-1} \\
+   \end{eqnarray*} 
+
+   and the Laplacian is
+    
+   \begin{eqnarray*} 
+   \left( \frac{\partial }{\partial x^2} + 
+              \frac{\partial }{\partial y^2} + 
+              \frac{\partial }{\partial z^2} \right) P_l
+              \left(\mathbf{r},\mathbf{R}_i \right) &  = &  
+            a(a-1) (x-X_i)^{a-2} (y-Y_i)^b (z-Z_i)^c + \\
+         && b(b-1) (x-X_i)^a (y-Y_i)^{b-1} (z-Z_i)^c + \\
+         && c(c-1) (x-X_i)^a (y-Y_i)^b (z-Z_i)^{c-1}.
+   \end{eqnarray*}
+
+   ~qmckl_ao_polynomial_vgl~ computes the values, gradients and
+   Laplacians at a given point in space, of all polynomials with an
+   angular momentum up to ~lmax~.
+
+   | ~context~    | input  | Global state                                         |
+   | ~X(3)~       | input  | Array containing the coordinates of the points       |
+   | ~R(3)~       | input  | Array containing the x,y,z coordinates of the center |
+   | ~lmax~       | input  | Maximum angular momentum                             |
+   | ~n~          | output | Number of computed polynomials                       |
+   | ~L(ldl,n)~   | output | Contains a,b,c for all ~n~ results                   |
+   | ~ldl~        | input  | Leading dimension of ~L~                             |
+   | ~VGL(ldv,n)~ | output | Value, gradients and Laplacian of the polynomials    |
+   | ~ldv~        | input  | Leading dimension of array ~VGL~                     |
+    
+   Requirements:
+
+   - ~context~ is not ~QMCKL_NULL_CONTEXT~
+   - ~n~ > 0
+   - ~lmax~ >= 0
+   - ~ldl~ >= 3
+   - ~ldv~ >= 5
+   - ~X~ is allocated with at least $3 \times 8$ bytes
+   - ~R~ is allocated with at least $3 \times 8$ bytes
+   - ~n~ >= ~(lmax+1)(lmax+2)(lmax+3)/6~
+   - ~L~ is allocated with at least $3 \times n \times 4$ bytes
+   - ~VGL~ is allocated with at least $5 \times n \times 8$ bytes
+   - On output, ~n~ should be equal to ~(lmax+1)(lmax+2)(lmax+3)/6~
+   - On output, the powers are given in the following order (l=a+b+c):
+     - Increasing values of ~l~
+     - Within a given value of ~l~, alphabetical order of the
+       string made by a*"x" + b*"y" + c*"z" (in Python notation).
+       For example, with a=0, b=2 and c=1 the string is "yyz"
+
+   # Header
+   #+begin_src c :tangle (eval h_func) 
+qmckl_exit_code
+qmckl_ao_polynomial_vgl(const qmckl_context context,
+                        const double *X,
+                        const double *R,
+                        const int32_t lmax,
+                        const int64_t *n,
+                        const int32_t *L,
+                        const int64_t ldl,
+                        const double *VGL,
+                        const int64_t ldv);
+   #+end_src
+
+   # Source
+   #+begin_src f90 :tangle (eval f)
+integer function qmckl_ao_polynomial_vgl_f(context, X, R, lmax, n, L, ldl, VGL, ldv) result(info)
+  use qmckl
+  implicit none
+  integer*8 , intent(in)  :: context
+  real*8    , intent(in)  :: X(3), R(3)
+  integer   , intent(in)  :: lmax
+  integer*8 , intent(out) :: n
+  integer   , intent(out) :: L(ldl,(lmax+1)*(lmax+2)*(lmax+3)/6)
+  integer*8 , intent(in)  :: ldl
+  real*8    , intent(out) :: VGL(ldv,(lmax+1)*(lmax+2)*(lmax+3)/6)
+  integer*8 , intent(in)  :: ldv
+
+  integer*8         :: i,j
+  integer           :: a,b,c,d
+  real*8            :: Y(3)
+  integer           :: lmax_array(3)
+  real*8            :: pows(-2:lmax,3)
+  integer, external :: qmckl_ao_power_f
+  double precision  :: xy, yz, xz
+  double precision  :: da, db, dc, dd
+
+  info = 0
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (lmax < 0) then
+     info = QMCKL_INVALID_ARG_4
+     return
+  endif
+
+  if (ldl < 3) then
+     info = QMCKL_INVALID_ARG_7
+     return
+  endif
+
+  if (ldv < 5) then
+     info = QMCKL_INVALID_ARG_9
+     return
+  endif
+
+
+  do i=1,3
+     Y(i) = X(i) - R(i)
+  end do
+
+  lmax_array(1:3) = lmax
+  if (lmax == 0) then
+     VGL(1,1) = 1.d0
+     vgL(2:5,1) = 0.d0
+     l(1:3,1) = 0
+     n=1
+  else if (lmax > 0) then
+     pows(-2:0,1:3) = 1.d0
+     do i=1,lmax
+        pows(i,1) = pows(i-1,1) * Y(1) 
+        pows(i,2) = pows(i-1,2) * Y(2) 
+        pows(i,3) = pows(i-1,3) * Y(3) 
+     end do
+
+     VGL(1:5,1:4) = 0.d0
+     l  (1:3,1:4) = 0
+
+     VGL(1  ,1  ) = 1.d0
+     vgl(1:5,2:4) = 0.d0
+
+     l  (1,2) = 1
+     vgl(1,2) = pows(1,1)
+     vgL(2,2) = 1.d0
+
+     l  (2,3) = 1
+     vgl(1,3) = pows(1,2)
+     vgL(3,3) = 1.d0
+
+     l  (3,4) = 1
+     vgl(1,4) = pows(1,3)
+     vgL(4,4) = 1.d0
+
+     n=4
+  endif
+
+  ! l>=2
+  dd = 2.d0
+  do d=2,lmax
+     da = dd
+     do a=d,0,-1
+        db = dd-da
+        do b=d-a,0,-1
+           c  = d  - a  - b
+           dc = dd - da - db
+           n = n+1
+
+           l(1,n) = a
+           l(2,n) = b
+           l(3,n) = c
+
+           xy = pows(a,1) * pows(b,2)
+           yz = pows(b,2) * pows(c,3)
+           xz = pows(a,1) * pows(c,3)
+
+           vgl(1,n) = xy * pows(c,3)
+
+           xy = dc * xy
+           xz = db * xz
+           yz = da * yz
+
+           vgl(2,n) = pows(a-1,1) * yz
+           vgl(3,n) = pows(b-1,2) * xz
+           vgl(4,n) = pows(c-1,3) * xy
+
+           vgl(5,n) = &
+                (da-1.d0) * pows(a-2,1) * yz + &
+                (db-1.d0) * pows(b-2,2) * xz + &
+                (dc-1.d0) * pows(c-2,3) * xy
+
+           db = db - 1.d0
+        end do
+        da = da - 1.d0
+     end do
+     dd = dd + 1.d0
+  end do
+
+  info = QMCKL_SUCCESS
+
+end function qmckl_ao_polynomial_vgl_f
+   #+end_src 
+
+
+   #+begin_src f90 :tangle (eval f) :exports none
+integer(c_int32_t) function qmckl_ao_polynomial_vgl(context, X, R, lmax, n, L, ldl, VGL, ldv) &
+     bind(C) result(info)
+  use, intrinsic :: iso_c_binding
+  implicit none
+  integer (c_int64_t) , intent(in) , value :: context
+  real    (c_double)  , intent(in)         :: X(3), R(3)
+  integer (c_int32_t) , intent(in) , value :: lmax
+  integer (c_int64_t) , intent(out)        :: n
+  integer (c_int32_t) , intent(out)        :: L(ldl,(lmax+1)*(lmax+2)*(lmax+3)/6)
+  integer (c_int64_t) , intent(in) , value :: ldl
+  real    (c_double)  , intent(out)        :: VGL(ldv,(lmax+1)*(lmax+2)*(lmax+3)/6)
+  integer (c_int64_t) , intent(in) , value :: ldv
+
+  integer, external :: qmckl_ao_polynomial_vgl_f
+  info = qmckl_ao_polynomial_vgl_f(context, X, R, lmax, n, L, ldl, VGL, ldv) 
+end function qmckl_ao_polynomial_vgl
+   #+end_src
+
+   #+begin_src f90 :tangle (eval fh_func) :exports none
+  interface
+     integer(c_int32_t) function qmckl_ao_polynomial_vgl(context, X, R, lmax, n, L, ldl, VGL, ldv) &
+          bind(C) 
+       use, intrinsic :: iso_c_binding
+       integer (c_int64_t) , intent(in) , value :: context
+       integer (c_int32_t) , intent(in) , value :: lmax
+       integer (c_int64_t) , intent(in) , value :: ldl
+       integer (c_int64_t) , intent(in) , value :: ldv
+       real    (c_double)  , intent(in)         :: X(3), R(3)
+       integer (c_int64_t) , intent(out)        :: n
+       integer (c_int32_t) , intent(out)        :: L(ldl,(lmax+1)*(lmax+2)*(lmax+3)/6)
+       real    (c_double)  , intent(out)        :: VGL(ldv,(lmax+1)*(lmax+2)*(lmax+3)/6)
+     end function qmckl_ao_polynomial_vgl
+  end interface
+   #+end_src
+
+   #+begin_src f90 :tangle (eval f_test)
+integer(c_int32_t) function test_qmckl_ao_polynomial_vgl(context) bind(C)
+  use qmckl
+  implicit none
+
+  integer(c_int64_t), intent(in), value :: context
+
+  integer                       :: lmax, d, i
+  integer, allocatable          :: L(:,:)
+  integer*8                     :: n, ldl, ldv, j
+  double precision              :: X(3), R(3), Y(3)
+  double precision, allocatable :: VGL(:,:)
+  double precision              :: w
+  double precision              :: epsilon
+
+  epsilon = qmckl_get_numprec_epsilon(context)
+
+  X = (/ 1.1 , 2.2 ,  3.3 /)
+  R = (/ 0.1 , 1.2 , -2.3 /)
+  Y(:) = X(:) - R(:)
+
+  lmax = 4;
+  ldl = 3;
+  ldv = 100;
+
+  d = (lmax+1)*(lmax+2)*(lmax+3)/6
+
+  allocate (L(ldl,d), VGL(ldv,d))
+
+  test_qmckl_ao_polynomial_vgl = &
+       qmckl_ao_polynomial_vgl(context, X, R, lmax, n, L, ldl, VGL, ldv)
+
+  if (test_qmckl_ao_polynomial_vgl /= QMCKL_SUCCESS) return
+  if (n /= d) return
+
+  do j=1,n
+     test_qmckl_ao_polynomial_vgl = QMCKL_FAILURE
+     do i=1,3
+        if (L(i,j) < 0) return
+     end do
+     test_qmckl_ao_polynomial_vgl = QMCKL_FAILURE
+     if (dabs(1.d0 - VGL(1,j) / (&
+          Y(1)**L(1,j) * Y(2)**L(2,j) * Y(3)**L(3,j)  &
+          )) > epsilon ) return
+
+     test_qmckl_ao_polynomial_vgl = QMCKL_FAILURE
+     if (L(1,j) < 1) then
+        if (VGL(2,j) /= 0.d0) return
+     else
+        if (dabs(1.d0 - VGL(2,j) / (&
+             L(1,j) * Y(1)**(L(1,j)-1) * Y(2)**L(2,j) * Y(3)**L(3,j) &
+             )) > epsilon ) return
+     end if
+
+     test_qmckl_ao_polynomial_vgl = QMCKL_FAILURE
+     if (L(2,j) < 1) then
+        if (VGL(3,j) /= 0.d0) return
+     else
+        if (dabs(1.d0 - VGL(3,j) / (&
+             L(2,j) * Y(1)**L(1,j) * Y(2)**(L(2,j)-1) * Y(3)**L(3,j) &
+             )) > epsilon ) return
+     end if
+
+     test_qmckl_ao_polynomial_vgl = QMCKL_FAILURE
+     if (L(3,j) < 1) then
+        if (VGL(4,j) /= 0.d0) return
+     else
+        if (dabs(1.d0 - VGL(4,j) / (&
+             L(3,j) * Y(1)**L(1,j) * Y(2)**L(2,j) * Y(3)**(L(3,j)-1) &
+             )) > epsilon ) return
+     end if
+
+     test_qmckl_ao_polynomial_vgl = QMCKL_FAILURE
+     w = 0.d0
+     if (L(1,j) > 1) then
+        w = w + L(1,j) * (L(1,j)-1) * Y(1)**(L(1,j)-2) * Y(2)**L(2,j) * Y(3)**L(3,j) 
+     end if
+     if (L(2,j) > 1) then
+        w = w + L(2,j) * (L(2,j)-1) * Y(1)**L(1,j) * Y(2)**(L(2,j)-2) * Y(3)**L(3,j) 
+     end if
+     if (L(3,j) > 1) then
+        w = w + L(3,j) * (L(3,j)-1) * Y(1)**L(1,j) * Y(2)**L(2,j) * Y(3)**(L(3,j)-2) 
+     end if
+     if (dabs(1.d0 - VGL(5,j) / w) > epsilon ) return
+  end do
+
+  test_qmckl_ao_polynomial_vgl = QMCKL_SUCCESS
+
+  deallocate(L,VGL)
+end function test_qmckl_ao_polynomial_vgl
+   #+end_src
+
+   #+begin_src c :tangle (eval c_test)
+int  test_qmckl_ao_polynomial_vgl(qmckl_context context);
+munit_assert_int(0, ==, test_qmckl_ao_polynomial_vgl(context));
+   #+end_src
+   
+* Gaussian basis functions
+  
+   ~qmckl_ao_gaussian_vgl~ computes the values, gradients and
+   Laplacians at a given point of ~n~ Gaussian functions centered at
+   the same point:
+   
+   \[ v_i = \exp(-a_i |X-R|^2) \]
+   \[ \nabla_x v_i = -2 a_i (X_x -  R_x) v_i \]
+   \[ \nabla_y v_i = -2 a_i (X_y -  R_y) v_i \]
+   \[ \nabla_z v_i = -2 a_i (X_z -  R_z) v_i \]
+   \[ \Delta v_i = a_i (4 |X-R|^2 a_i - 6) v_i \]
+
+    | ~context~    | input  | Global state                                         |
+    | ~X(3)~       | input  | Array containing the coordinates of the points       |
+    | ~R(3)~       | input  | Array containing the x,y,z coordinates of the center |
+    | ~n~          | input  | Number of computed Gaussians                         |
+    | ~A(n)~       | input  | Exponents of the Gaussians                           |
+    | ~VGL(ldv,5)~ | output | Value, gradients and Laplacian of the Gaussians      |
+    | ~ldv~        | input  | Leading dimension of array ~VGL~                     |
+    
+    Requirements :
+
+    - ~context~ is not 0
+    - ~n~ > 0
+    - ~ldv~ >= 5
+    - ~A(i)~ > 0 for all ~i~
+    - ~X~ is allocated with at least $3 \times 8$ bytes
+    - ~R~ is allocated with at least $3 \times 8$ bytes
+    - ~A~ is allocated with at least $n \times 8$ bytes
+    - ~VGL~ is allocated with at least $n \times 5 \times 8$ bytes
+
+    #+begin_src c :tangle (eval h_func)
+qmckl_exit_code
+qmckl_ao_gaussian_vgl(const qmckl_context context,
+                      const double *X,
+                      const double *R,
+                      const int64_t *n,
+                      const int64_t *A,
+                      const double *VGL,
+                      const int64_t ldv);
+    #+end_src
+    
+    #+begin_src f90 :tangle (eval f)
+integer function qmckl_ao_gaussian_vgl_f(context, X, R, n, A, VGL, ldv) result(info)
+  use qmckl
+  implicit none
+  integer*8 , intent(in)  :: context
+  real*8    , intent(in)  :: X(3), R(3)
+  integer*8 , intent(in)  :: n
+  real*8    , intent(in)  :: A(n)
+  real*8    , intent(out) :: VGL(ldv,5)
+  integer*8 , intent(in)  :: ldv
+
+  integer*8         :: i,j
+  real*8            :: Y(3), r2, t, u, v
+  
+  info = QMCKL_SUCCESS
+  
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+  
+  if (n <= 0) then
+     info = QMCKL_INVALID_ARG_4
+     return
+  endif
+  
+  if (ldv < n) then
+     info = QMCKL_INVALID_ARG_7
+     return
+  endif
+  
+  
+  do i=1,3
+     Y(i) = X(i) - R(i)
+  end do
+  r2 = Y(1)*Y(1) + Y(2)*Y(2) + Y(3)*Y(3)
+  
+  do i=1,n
+     VGL(i,1) = dexp(-A(i) * r2)
+  end do
+
+  do i=1,n
+     VGL(i,5) = A(i) * VGL(i,1)
+  end do
+
+  t = -2.d0 * ( X(1) - R(1) )
+  u = -2.d0 * ( X(2) - R(2) )
+  v = -2.d0 * ( X(3) - R(3) )
+
+  do i=1,n
+     VGL(i,2) = t * VGL(i,5)
+     VGL(i,3) = u * VGL(i,5)
+     VGL(i,4) = v * VGL(i,5)
+  end do
+
+  t = 4.d0 * r2
+  do i=1,n
+     VGL(i,5) = (t * A(i) - 6.d0) *  VGL(i,5)
+  end do
+
+end function qmckl_ao_gaussian_vgl_f
+    #+end_src 
+
+    #+begin_src f90 :tangle (eval f) :exports none
+integer(c_int32_t) function qmckl_ao_gaussian_vgl(context, X, R, n, A, VGL, ldv) &
+     bind(C) result(info)
+  use, intrinsic :: iso_c_binding
+  implicit none
+  integer (c_int64_t) , intent(in) , value :: context
+  real    (c_double)  , intent(in)         :: X(3), R(3)
+  integer (c_int64_t) , intent(in) , value :: n
+  real    (c_double)  , intent(in)         :: A(n)
+  real    (c_double)  , intent(out)        :: VGL(ldv,5)
+  integer (c_int64_t) , intent(in) , value :: ldv
+
+  integer, external :: qmckl_ao_gaussian_vgl_f
+  info = qmckl_ao_gaussian_vgl_f(context, X, R, n, A, VGL, ldv) 
+end function qmckl_ao_gaussian_vgl
+    #+end_src
+
+    #+begin_src f90 :tangle (eval fh_func) :exports none
+  interface
+     integer(c_int32_t) function qmckl_ao_gaussian_vgl(context, X, R, n, A, VGL, ldv) &
+          bind(C) 
+       use, intrinsic :: iso_c_binding
+       integer (c_int64_t) , intent(in) , value :: context
+       integer (c_int64_t) , intent(in) , value :: ldv
+       integer (c_int64_t) , intent(in) , value :: n
+       real    (c_double)  , intent(in)         :: X(3), R(3), A(n)
+       real    (c_double)  , intent(out)        :: VGL(ldv,5)
+     end function qmckl_ao_gaussian_vgl
+  end interface
+    #+end_src
+
+  # Test
+  #+begin_src f90 :tangle (eval f_test)
+integer(c_int32_t) function test_qmckl_ao_gaussian_vgl(context) bind(C)
+  use qmckl
+  implicit none
+
+  integer(c_int64_t), intent(in), value :: context
+  
+  integer*8                     :: n, ldv, j, i
+  double precision              :: X(3), R(3), Y(3), r2
+  double precision, allocatable :: VGL(:,:), A(:)
+  double precision              :: epsilon
+
+  epsilon = qmckl_get_numprec_epsilon(context)
+
+  X = (/ 1.1 , 2.2 ,  3.3 /)
+  R = (/ 0.1 , 1.2 , -2.3 /)
+  Y(:) = X(:) - R(:)
+  r2 = Y(1)**2 + Y(2)**2 + Y(3)**2
+
+  n = 10;
+  ldv = 100;
+
+  allocate (A(n), VGL(ldv,5))
+  do i=1,n
+     A(i) = 0.0013 * dble(ishft(1,i))
+  end do
+
+
+  test_qmckl_ao_gaussian_vgl = &
+       qmckl_ao_gaussian_vgl(context, X, R, n, A, VGL, ldv)
+  if (test_qmckl_ao_gaussian_vgl /= 0) return
+
+  test_qmckl_ao_gaussian_vgl = -1
+
+  do i=1,n
+     test_qmckl_ao_gaussian_vgl = -11
+     if (dabs(1.d0 - VGL(i,1) / (&
+          dexp(-A(i) * r2) &
+          )) > epsilon ) return
+     
+     test_qmckl_ao_gaussian_vgl = -12
+     if (dabs(1.d0 - VGL(i,2) / (&
+          -2.d0 * A(i) * Y(1) * dexp(-A(i) * r2) &
+          )) > epsilon ) return
+     
+     test_qmckl_ao_gaussian_vgl = -13
+     if (dabs(1.d0 - VGL(i,3) / (&
+          -2.d0 * A(i) * Y(2) * dexp(-A(i) * r2) &
+          )) > epsilon ) return
+     
+     test_qmckl_ao_gaussian_vgl = -14
+     if (dabs(1.d0 - VGL(i,4) / (&
+          -2.d0 * A(i) * Y(3) * dexp(-A(i) * r2) &
+          )) > epsilon ) return
+     
+     test_qmckl_ao_gaussian_vgl = -15
+     if (dabs(1.d0 - VGL(i,5) / (&
+          A(i) * (4.d0*r2*A(i) - 6.d0) * dexp(-A(i) * r2) &
+          )) > epsilon ) return
+  end do
+
+  test_qmckl_ao_gaussian_vgl = 0
+     
+  deallocate(VGL)
+end function test_qmckl_ao_gaussian_vgl
+  #+end_src
+
+  #+begin_src c :tangle (eval c_test) :exports none
+int test_qmckl_ao_gaussian_vgl(qmckl_context context);
+munit_assert_int(0, ==, test_qmckl_ao_gaussian_vgl(context));
+  #+end_src
+   
+* TODO Slater basis functions
+  
+* End of files                                                     :noexport:
+  
+  #+begin_src c :tangle (eval h_private_type)
+#endif
+  #+end_src
+
+*** Test
+  #+begin_src c :tangle (eval c_test)
+  if (qmckl_context_destroy(context) != QMCKL_SUCCESS)
+    return QMCKL_FAILURE;
+  return MUNIT_OK;
+}
+  #+end_src
+ 
+**✸ Compute file names                                                                       
+    #+begin_src emacs-lisp                                                                   
+; The following is required to compute the file names                                        
+                                                                                             
+(setq pwd (file-name-directory buffer-file-name))                                            
+(setq name (file-name-nondirectory (substring buffer-file-name 0 -4)))                       
+(setq f  (concat pwd name "_f.f90"))                                                         
+(setq fh (concat pwd name "_fh.f90"))                                                        
+(setq c  (concat pwd name ".c"))                                                             
+(setq h  (concat name ".h"))                                                                 
+(setq h_private  (concat name "_private.h"))                                                 
+(setq c_test  (concat pwd "test_" name ".c"))                                                
+(setq f_test  (concat pwd "test_" name "_f.f90"))                                            
+                                                                                             
+; Minted                                                                                     
+(require 'ox-latex)                                                                          
+(setq org-latex-listings 'minted)                                                            
+(add-to-list 'org-latex-packages-alist '("" "listings"))                                     
+(add-to-list 'org-latex-packages-alist '("" "color"))                                        
+                                                                                             
+    #+end_src                                                                                
+
+    #+RESULTS:
+    |   | color    |
+    |   | listings |
+         
+
+# -*- mode: org -*-
+# vim: syntax=c
+  
+
