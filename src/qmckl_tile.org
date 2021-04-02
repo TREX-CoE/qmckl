@@ -76,19 +76,20 @@ MunitResult test_<<filename()>>() {
    tiles is fixed at compile-time to increase performance. It is
    defined as $2^s$:
   
-  |  s | tile size |
-  |----+-----------|
-  |  2 |         4 |
-  |  3 |         8 |
-  |  4 |        16 |
-  | 55 |        32 |
-  |  6 |        64 |
-  |  7 |       128 |
+  | s | tile size |
+  |---+-----------|
+  | 2 |         4 |
+  | 3 |         8 |
+  | 4 |        16 |
+  | 5 |        32 |
+  | 6 |        64 |
+  | 7 |       128 |
 
   
   #+begin_src c :tangle (eval h_private_type)
 #define TILE_SIZE_SHIFT 3
 #define TILE_SIZE       8
+#define VEC_SIZE        8
   #+end_src
 
    
@@ -96,8 +97,8 @@ MunitResult test_<<filename()>>() {
   #+begin_src c
 typedef struct $T$_tile_struct {
   $T$ element[TILE_SIZE][TILE_SIZE];
-  int32_t is_null;
-  int32_t padding;
+  int64_t is_null;
+  int64_t padding[VEC_SIZE-1];
 } $T$_tile_struct;
   #+end_src
 
@@ -109,8 +110,10 @@ typedef struct $T$_tile_struct {
   #+begin_src c
 typedef struct $T$_tiled_matrix {
   $T$_tile_struct** tile;
-  size_t rows;
-  size_t cols;
+  size_t n_row;
+  size_t n_col;
+  size_t n_tile_row;
+  size_t n_tile_col;
 } $T$_tiled_matrix;
   #+end_src
    
@@ -120,16 +123,37 @@ typedef struct $T$_tiled_matrix {
   #+begin_src c
 qmckl_exit_code $T$_tiled_matrix_init (qmckl_context context,
                                        $T$_tiled_matrix* m,
-                                       size_t rows,
-                                       size_t cols);
+                                       size_t n_tile_row,
+                                       size_t n_tile_col);
   #+end_src
 
   #+NAME: init_c
   #+begin_src c
 qmckl_exit_code $T$_tiled_matrix_init (qmckl_context context,
                                        $T$_tiled_matrix* m,
-                                       size_t rows,
-                                       size_t cols) {
+                                       size_t n_tile_row,
+                                       size_t n_tile_col) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+} $T$_tiled_matrix;
+  #+end_src
+   
+  When a tiled matrix is initialized, it is set to zero.
+
+  #+NAME: init_hpf
+  #+begin_src c
+qmckl_exit_code $T$_tiled_matrix_init (qmckl_context context,
+                                       $T$_tiled_matrix* m,
+                                       size_t n_tile_row,
+                                       size_t n_tile_col);
+  #+end_src
+
+  #+NAME: init_c
+  #+begin_src c
+qmckl_exit_code $T$_tiled_matrix_init (qmckl_context context,
+                                       $T$_tiled_matrix* m,
+                                       size_t n_tile_row,
+                                       size_t n_tile_col) {
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return QMCKL_INVALID_CONTEXT;
@@ -142,14 +166,14 @@ qmckl_exit_code $T$_tiled_matrix_init (qmckl_context context,
                           NULL);
   }
 
-  if (rows == (size_t) 0) {
+  if (n_tile_row == (size_t) 0) {
     return qmckl_failwith(context,
                           QMCKL_INVALID_ARG_3,
                           "$T$_tiled_matrix_init",
                           NULL);
   }
 
-  if (cols == (size_t) 0) {
+  if (n_tile_col == (size_t) 0) {
     return qmckl_failwith(context,
                           QMCKL_INVALID_ARG_4,
                           "$T$_tiled_matrix_init",
@@ -157,19 +181,19 @@ qmckl_exit_code $T$_tiled_matrix_init (qmckl_context context,
   }
 
   qmckl_memory_info_struct info = qmckl_memory_info_struct_zero;
-  size_t n = rows * cols;
+  size_t n = n_tile_row * n_tile_col;
 
   /* Check overflow */
-  if (n/cols != rows
+  if (n/n_tile_col != n_tile_row
       || n > SIZE_MAX / sizeof($T$_tile_struct) ) {
     return qmckl_failwith(context,
                           QMCKL_ALLOCATION_FAILED,
                           "$T$_tiled_matrix_init",
-                          "rows * cols overflows" );
+                          "n_tile_row * n_tile_col overflows" );
   }
   
   /* Allocate array of column pointers */
-  info.size = cols * sizeof($T$_tile_struct*) ;
+  info.size = n_tile_col * sizeof($T$_tile_struct*) ;
   m->tile = ($T$_tile_struct**) qmckl_malloc(context, info);
 
   if (m->tile == NULL) {
@@ -192,15 +216,16 @@ qmckl_exit_code $T$_tiled_matrix_init (qmckl_context context,
   }
 
   /* Compute array of pointers to the 1st element of columns */
-  for (size_t i=1 ; i<cols ; ++i) {
-    m->tile[i] = m->tile[i-1] + rows;
+  for (size_t i=1 ; i<n_tile_col ; ++i) {
+    m->tile[i] = m->tile[i-1] + n_tile_row;
   }
   
-  m->rows = rows;
-  m->cols = cols;
+  m->n_tile_row = n_tile_row;
+  m->n_tile_col = n_tile_col;
   return QMCKL_SUCCESS;
 }
   
+
   #+end_src
 
 * Write templates
@@ -251,8 +276,8 @@ return '\n'.join( [ ""
 
   typedef struct float_tiled_matrix {
     float_tile_struct** tile;
-    size_t rows;
-    size_t cols;
+    size_t n_tile_row;
+    size_t n_tile_col;
   } float_tiled_matrix;
 
 
@@ -265,8 +290,8 @@ return '\n'.join( [ ""
 
   typedef struct double_tiled_matrix {
     double_tile_struct** tile;
-    size_t rows;
-    size_t cols;
+    size_t n_tile_row;
+    size_t n_tile_col;
   } double_tiled_matrix;
 
 
@@ -276,15 +301,15 @@ return '\n'.join( [ ""
 
   qmckl_exit_code float_tiled_matrix_init (qmckl_context context,
                                          float_tiled_matrix* m,
-                                         size_t rows,
-                                         size_t cols);
+                                         size_t n_tile_row,
+                                         size_t n_tile_col);
 
 
 
   qmckl_exit_code double_tiled_matrix_init (qmckl_context context,
                                          double_tiled_matrix* m,
-                                         size_t rows,
-                                         size_t cols);
+                                         size_t n_tile_row,
+                                         size_t n_tile_col);
 
 
   #+end_src
@@ -293,8 +318,8 @@ return '\n'.join( [ ""
 
   qmckl_exit_code float_tiled_matrix_init (qmckl_context context,
                                          float_tiled_matrix* m,
-                                         size_t rows,
-                                         size_t cols) {
+                                         size_t n_tile_row,
+                                         size_t n_tile_col) {
 
     if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
       return QMCKL_INVALID_CONTEXT;
@@ -307,14 +332,14 @@ return '\n'.join( [ ""
                             NULL);
     }
 
-    if (rows == (size_t) 0) {
+    if (n_tile_row == (size_t) 0) {
       return qmckl_failwith(context,
                             QMCKL_INVALID_ARG_3,
                             "float_tiled_matrix_init",
                             NULL);
     }
 
-    if (cols == (size_t) 0) {
+    if (n_tile_col == (size_t) 0) {
       return qmckl_failwith(context,
                             QMCKL_INVALID_ARG_4,
                             "float_tiled_matrix_init",
@@ -322,19 +347,19 @@ return '\n'.join( [ ""
     }
 
     qmckl_memory_info_struct info = qmckl_memory_info_struct_zero;
-    size_t n = rows * cols;
+    size_t n = n_tile_row * n_tile_col;
 
     /* Check overflow */
-    if (n/cols != rows
+    if (n/n_tile_col != n_tile_row
         || n > SIZE_MAX / sizeof(float_tile_struct) ) {
       return qmckl_failwith(context,
                             QMCKL_ALLOCATION_FAILED,
                             "float_tiled_matrix_init",
-                            "rows * cols overflows" );
+                            "n_tile_row * n_tile_col overflows" );
     }
 
     /* Allocate array of column pointers */
-    info.size = cols * sizeof(float_tile_struct*) ;
+    info.size = n_tile_col * sizeof(float_tile_struct*) ;
     m->tile = (float_tile_struct**) qmckl_malloc(context, info);
 
     if (m->tile == NULL) {
@@ -357,12 +382,12 @@ return '\n'.join( [ ""
     }
 
     /* Compute array of pointers to the 1st element of columns */
-    for (size_t i=1 ; i<cols ; ++i) {
-      m->tile[i] = m->tile[i-1] + rows;
+    for (size_t i=1 ; i<n_tile_col ; ++i) {
+      m->tile[i] = m->tile[i-1] + n_tile_row;
     }
 
-    m->rows = rows;
-    m->cols = cols;
+    m->n_tile_row = n_tile_row;
+    m->n_tile_col = n_tile_col;
     return QMCKL_SUCCESS;
   }
 
@@ -371,8 +396,8 @@ return '\n'.join( [ ""
 
   qmckl_exit_code double_tiled_matrix_init (qmckl_context context,
                                          double_tiled_matrix* m,
-                                         size_t rows,
-                                         size_t cols) {
+                                         size_t n_tile_row,
+                                         size_t n_tile_col) {
 
     if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
       return QMCKL_INVALID_CONTEXT;
@@ -385,14 +410,14 @@ return '\n'.join( [ ""
                             NULL);
     }
 
-    if (rows == (size_t) 0) {
+    if (n_tile_row == (size_t) 0) {
       return qmckl_failwith(context,
                             QMCKL_INVALID_ARG_3,
                             "double_tiled_matrix_init",
                             NULL);
     }
 
-    if (cols == (size_t) 0) {
+    if (n_tile_col == (size_t) 0) {
       return qmckl_failwith(context,
                             QMCKL_INVALID_ARG_4,
                             "double_tiled_matrix_init",
@@ -400,19 +425,19 @@ return '\n'.join( [ ""
     }
 
     qmckl_memory_info_struct info = qmckl_memory_info_struct_zero;
-    size_t n = rows * cols;
+    size_t n = n_tile_row * n_tile_col;
 
     /* Check overflow */
-    if (n/cols != rows
+    if (n/n_tile_col != n_tile_row
         || n > SIZE_MAX / sizeof(double_tile_struct) ) {
       return qmckl_failwith(context,
                             QMCKL_ALLOCATION_FAILED,
                             "double_tiled_matrix_init",
-                            "rows * cols overflows" );
+                            "n_tile_row * n_tile_col overflows" );
     }
 
     /* Allocate array of column pointers */
-    info.size = cols * sizeof(double_tile_struct*) ;
+    info.size = n_tile_col * sizeof(double_tile_struct*) ;
     m->tile = (double_tile_struct**) qmckl_malloc(context, info);
 
     if (m->tile == NULL) {
@@ -435,12 +460,12 @@ return '\n'.join( [ ""
     }
 
     /* Compute array of pointers to the 1st element of columns */
-    for (size_t i=1 ; i<cols ; ++i) {
-      m->tile[i] = m->tile[i-1] + rows;
+    for (size_t i=1 ; i<n_tile_col ; ++i) {
+      m->tile[i] = m->tile[i-1] + n_tile_row;
     }
 
-    m->rows = rows;
-    m->cols = cols;
+    m->n_tile_row = n_tile_row;
+    m->n_tile_col = n_tile_col;
     return QMCKL_SUCCESS;
   }
 
