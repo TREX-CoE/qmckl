@@ -38,8 +38,8 @@
     #+NAME:f_of_c
     #+BEGIN_SRC python :var table=test :var rettyp="integer" :var fname=[] :results value :noweb yes :wrap "src f90 :tangle (eval f) :comments org :exports none"
 f_of_c_d = { '' : ''
-     , 'qmckl_context'   : 'integer (qmckl_context)'
-     , 'qmckl_exit_code' : 'integer (qmckl_exit_code)'
+     , 'qmckl_context'   : 'integer (c_int64_t)'
+     , 'qmckl_exit_code' : 'integer (c_int32_t)'
      , 'int32_t'         : 'integer (c_int32_t)'
      , 'int64_t'         : 'integer (c_int64_t)'
      , 'float'           : 'real    (c_float  )'
@@ -48,11 +48,16 @@ f_of_c_d = { '' : ''
  }
     #+END_SRC
 
+    #+RESULTS: f_of_c
+    #+begin_src f90 :tangle (eval f) :comments org :exports none
+    None
+    #+end_src
+
     #+NAME:c_of_f
     #+BEGIN_SRC python :var table=test :var rettyp="integer" :var fname=[] :results value :noweb yes :wrap "src f90 :tangle (eval f) :comments org :exports none"
 ctypeid_d = { '' : ''
-     , 'qmckl_context'   : 'integer (qmckl_context)'
-     , 'qmckl_exit_code' : 'integer (qmckl_exit_code)'
+     , 'qmckl_context'   : 'integer(c_int64_t)'
+     , 'qmckl_exit_code' : 'integer(c_int32_t)'
      , 'integer'         : 'integer(c_int32_t)'
      , 'integer*8'       : 'integer(c_int64_t)'
      , 'real'            : 'real(c_float)'
@@ -60,6 +65,11 @@ ctypeid_d = { '' : ''
      , 'character'       : 'character(c_char)'
  }
     #+END_SRC
+
+    #+RESULTS: c_of_f
+    #+begin_src f90 :tangle (eval f) :comments org :exports none
+    None
+    #+end_src
 
 *** Parse the table
 
@@ -108,16 +118,19 @@ for d in parse_table(table):
     c_type = d["c_type"]
 
     # Add star for arrays
-    if d["rank"] > 0:
+    if d["rank"] > 0 or d["inout"] in ["out", "inout"]:
         c_type += "*"
+
+    if d["inout"] == "out":
+        c_type += " const"
 
     # Only inputs are const
     if d["inout"] == "in":
-        const = "const"
+        const = "const "
     else:
-        const = "     "
-
-    results += [ f"      {const} {c_type} {name}" ]
+        const = ""
+        
+    results += [ f"      {const}{c_type} {name}" ]
 
 results=',\n'.join(results)
 template = f"""{rettyp} {fname} (
@@ -128,8 +141,18 @@ return template
 
     #+RESULTS: generate_c_header
     #+begin_src c :tangle (eval h_func) :comments org
-   [] [] (
-    );
+    [] [] (
+          const qmckl_context context,
+          const char transa,
+          const char transb,
+          const int64_t m,
+          const int64_t n,
+          const double* const A,
+          const int64_t lda,
+          const double* const B,
+          const int64_t ldb,
+                double* const C,
+          const int64_t ldc ); 
     #+end_src
 
 *** Generates a C interface to the Fortran function
@@ -150,7 +173,6 @@ results = [ f"{rettyp_c} function {fname} &"
 ,  "    bind(C) result(info)"
 ,  ""
 ,  "  use, intrinsic :: iso_c_binding"
-,  "  import"
 ,  "  implicit none"
 ,  ""
 ]
@@ -161,7 +183,7 @@ for d in parse_table(table):
     name = d["name"]
 
     # Input scalars are passed by value
-    if d["rank"] == 0 and inout == "in":
+    if d["rank"] == 0 and d["inout"] == "in":
         value = ", value"
     else:
         value = "       "
@@ -189,7 +211,7 @@ return results
 *** Generates a Fortran interface to the C function
 
     #+NAME: generate_f_interface
-    #+BEGIN_SRC python :var table=test :var rettyp="integer" :var fname=[] :results value :noweb yes :wrap "src f90 :tangle (eval fh) :comments org :exports none"
+    #+BEGIN_SRC python :var table=test :var rettyp="integer" :var fname=[] :results value :noweb yes :wrap "src f90 :tangle (eval fh_func) :comments org :exports none"
 <<c_of_f>>
 <<f_of_c>>
 <<parse_table>>
@@ -215,7 +237,7 @@ for d in parse_table(table):
     name = d["name"]
 
     # Input scalars are passed by value
-    if d["rank"] == 0 and inout == "in":
+    if d["rank"] == 0 and d["inout"] == "in":
         value = ", value"
     else:
         value = "       "
@@ -237,6 +259,29 @@ results='\n'.join(results)
 return results
     #+END_SRC
 
-    #+RESULTS: generate_c_interface
-    #+begin_src f90 :tangle (eval f) :comments org :exports none
+    #+RESULTS: generate_f_interface
+    #+begin_src f90 :tangle (eval fh_func) :comments org :exports none
+    interface
+      integer(c_int32_t) function [] &
+          (context, transa, transb, m, n, A, lda, B, ldb, C, ldc) &
+          bind(C)
+        use, intrinsic :: iso_c_binding
+        import
+        implicit none
+
+        integer (qmckl_context), intent(in)  , value :: context
+        character           , intent(in)  , value :: transa
+        character           , intent(in)  , value :: transb
+        integer (c_int64_t) , intent(in)  , value :: m
+        integer (c_int64_t) , intent(in)  , value :: n
+        real    (c_double ) , intent(in)          :: A(lda,3)
+        integer (c_int64_t) , intent(in)  , value :: lda
+        real    (c_double ) , intent(in)          :: B(ldb,3)
+        integer (c_int64_t) , intent(in)  , value :: ldb
+        real    (c_double ) , intent(out)         :: C(ldc,n)
+        integer (c_int64_t) , intent(in)  , value :: ldc
+
+      end function []
+    end interface
     #+end_src
+

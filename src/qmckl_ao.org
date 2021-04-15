@@ -34,6 +34,10 @@ In this section we describe the kernels used to compute the values,
 gradients and Laplacian of the atomic basis functions.
 
 * Headers                                                          :noexport:
+  #+begin_src elisp :noexport :results none                                                    
+(org-babel-lob-ingest "../tools/lib.org")
+#+end_src
+
 
   #+begin_src c :tangle (eval h_private_type)
 #ifndef QMCKL_AO_HPT
@@ -759,11 +763,13 @@ qmckl_exit_code  qmckl_set_ao_basis_coefficient(qmckl_context context, const dou
  
    #+end_src
 
-
-
 * Polynomial part
-
 ** Powers of $x-X_i$
+   :PROPERTIES:
+   :Name:     qmckl_ao_power
+   :CRetType: qmckl_exit_code
+   :FRetType: qmckl_exit_code
+   :END:
    
    The ~qmckl_ao_power~ function computes all the powers of the ~n~
    input data up to the given maximum value given in input for each of
@@ -771,33 +777,41 @@ qmckl_exit_code  qmckl_set_ao_basis_coefficient(qmckl_context context, const dou
    
    \[ P_{ik} = X_i^k \]
 
-   | ~context~  | input  | Global state                                      |
-   | ~n~        | input  | Number of values                                  |
-   | ~X(n)~     | input  | Array containing the input values                 |
-   | ~LMAX(n)~  | input  | Array containing the maximum power for each value |
-   | ~P(LDP,n)~ | output | Array containing all the powers of ~X~            |
-   | ~LDP~      | input  | Leading dimension of array ~P~                    |
-    
-   Requirements:
+   #+NAME: qmckl_ao_power_args
+   | qmckl_context | context   | in  | Global state                                      |
+   | int64_t       | n         | in  | Number of values                                  |
+   | double        | X[n]      | in  | Array containing the input values                 |
+   | int32_t       | LMAX[n]   | in  | Array containing the maximum power for each value |
+   | double        | P[n][ldp] | out | Array containing all the powers of ~X~            |
+   | int64_t       | ldp       | in  | Leading dimension of array ~P~                    |
 
-   - ~context~ is not ~QMCKL_NULL_CONTEXT~
-   - ~n~ > 0
-   - ~X~ is allocated with at least $n \times 8$ bytes
-   - ~LMAX~ is allocated with at least $n \times 4$ bytes
-   - ~P~ is allocated with at least $n \times \max_i \text{LMAX}_i \times 8$ bytes
-   - ~LDP~ >= $\max_i$ ~LMAX[i]~
+*** Requirements:
 
-   #+begin_src c :tangle (eval h_func) 
-qmckl_exit_code
-qmckl_ao_power(const qmckl_context context,
-               const int64_t n, 
-               const double *X,
-               const int32_t *LMAX,
-               const double *P,
-               const int64_t LDP);
-   #+end_src 
+    - ~context~ is not ~QMCKL_NULL_CONTEXT~
+    - ~n~ > 0
+    - ~X~ is allocated with at least $n \times 8$ bytes
+    - ~LMAX~ is allocated with at least $n \times 4$ bytes
+    - ~P~ is allocated with at least $n \times \max_i \text{LMAX}_i \times 8$ bytes
+    - ~LDP~ >= $\max_i$ ~LMAX[i]~
 
-   #+begin_src f90 :tangle (eval f) 
+*** C Header
+
+    #+CALL: generate_c_header(table=qmckl_ao_power_args,rettyp=get_value("CRetType"),fname="qmckl_ao_power")
+
+    #+RESULTS:
+    #+begin_src c :tangle (eval h_func) :comments org
+    qmckl_exit_code qmckl_ao_power (
+          const qmckl_context context,
+          const int64_t n,
+          const double* X,
+          const int32_t* LMAX,
+          double* const P,
+          const int64_t ldp ); 
+    #+end_src
+
+*** Source
+
+    #+begin_src f90 :tangle (eval f) 
 integer function qmckl_ao_power_f(context, n, X, LMAX, P, ldp) result(info)
   use qmckl
   implicit none
@@ -841,41 +855,62 @@ integer function qmckl_ao_power_f(context, n, X, LMAX, P, ldp) result(info)
   end do
 
 end function qmckl_ao_power_f
-   #+end_src 
+    #+end_src 
 
-   #+begin_src f90 :tangle (eval f) :exports none
-integer(c_int32_t) function qmckl_ao_power(context, n, X, LMAX, P, ldp) &
-     bind(C) result(info)
-  use, intrinsic :: iso_c_binding
-  implicit none
-  integer (c_int64_t) , intent(in) , value :: context
-  integer (c_int64_t) , intent(in) , value :: n
-  real    (c_double)  , intent(in)         :: X(n)
-  integer (c_int32_t) , intent(in)         :: LMAX(n)
-  real    (c_double)  , intent(out)        :: P(ldp,n)
-  integer (c_int64_t) , intent(in) , value :: ldp
+*** C interface
+    #+CALL: generate_c_interface(table=qmckl_ao_power_args,rettyp=get_value("CRetType"),fname="qmckl_ao_power")
 
-  integer, external :: qmckl_ao_power_f
-  info = qmckl_ao_power_f(context, n, X, LMAX, P, ldp)
-end function qmckl_ao_power
-   #+end_src
+    #+RESULTS:
+    #+begin_src f90 :tangle (eval f) :comments org :exports none
+    integer(c_int32_t) function qmckl_ao_power &
+        (context, n, X, LMAX, P, ldp) &
+        bind(C) result(info)
 
-   #+begin_src f90 :tangle (eval fh_func) :exports none
-  interface
-     integer(c_int32_t) function qmckl_ao_power(context, n, X, LMAX, P, ldp) bind(C)
-       use, intrinsic :: iso_c_binding
-       integer (c_int64_t) , intent(in) , value :: context
-       integer (c_int64_t) , intent(in) , value :: n
-       integer (c_int64_t) , intent(in) , value :: ldp
-       real    (c_double)  , intent(in)         :: X(n)
-       integer (c_int32_t) , intent(in)         :: LMAX(n)
-       real    (c_double)  , intent(out)        :: P(ldp,n)
-     end function qmckl_ao_power
-  end interface
-   #+end_src
+      use, intrinsic :: iso_c_binding
+      implicit none
 
-   # Test
-   #+begin_src f90 :tangle (eval f_test) 
+      integer (c_int64_t) , intent(in)  , value :: context
+      integer (c_int64_t) , intent(in)  , value :: n
+      real    (c_double ) , intent(in)          :: X(n)
+      integer (c_int32_t) , intent(in)          :: LMAX(n)
+      real    (c_double ) , intent(out)         :: P(ldp,n)
+      integer (c_int64_t) , intent(in)  , value :: ldp
+
+      integer(c_int32_t), external :: qmckl_ao_power_f
+      info = qmckl_ao_power_f &
+             (context, n, X, LMAX, P, ldp)
+
+    end function qmckl_ao_power
+    #+end_src
+
+*** Fortran interface
+
+    #+CALL: generate_f_interface(table=qmckl_ao_power_args,rettyp=get_value("CRetType"),fname="qmckl_ao_power")
+
+    #+RESULTS:
+    #+begin_src f90 :tangle (eval fh_func) :comments org :exports none
+    interface
+      integer(c_int32_t) function qmckl_ao_power &
+          (context, n, X, LMAX, P, ldp) &
+          bind(C)
+        use, intrinsic :: iso_c_binding
+        import
+        implicit none
+
+        integer (c_int64_t) , intent(in)  , value :: context
+        integer (c_int64_t) , intent(in)  , value :: n
+        real    (c_double ) , intent(in)          :: X(n)
+        integer (c_int32_t) , intent(in)          :: LMAX(n)
+        real    (c_double ) , intent(out)         :: P(ldp,n)
+        integer (c_int64_t) , intent(in)  , value :: ldp
+
+      end function qmckl_ao_power
+    end interface
+    #+end_src
+
+*** Test
+
+    #+begin_src f90 :tangle (eval f_test) 
 integer(c_int32_t) function test_qmckl_ao_power(context) bind(C)
   use qmckl
   implicit none
@@ -919,14 +954,19 @@ integer(c_int32_t) function test_qmckl_ao_power(context) bind(C)
   test_qmckl_ao_power = QMCKL_SUCCESS
   deallocate(X,P,LMAX)
 end function test_qmckl_ao_power
-   #+end_src
+    #+end_src
 
-   #+begin_src c :tangle (eval c_test) :exports none
+    #+begin_src c :tangle (eval c_test) :exports none
 int  test_qmckl_ao_power(qmckl_context context);
 munit_assert_int(0, ==, test_qmckl_ao_power(context));
-   #+end_src
+    #+end_src
 
 ** Value, Gradient and Laplacian of a polynomial
+   :PROPERTIES:
+   :Name:     qmckl_ao_polynomial_vgl
+   :CRetType: qmckl_exit_code
+   :FRetType: qmckl_exit_code
+   :END:
 
    A polynomial is centered on a nucleus $\mathbf{R}_i$
   
@@ -961,51 +1001,56 @@ munit_assert_int(0, ==, test_qmckl_ao_power(context));
    Laplacians at a given point in space, of all polynomials with an
    angular momentum up to ~lmax~.
 
-   | ~context~    | input  | Global state                                         |
-   | ~X(3)~       | input  | Array containing the coordinates of the points       |
-   | ~R(3)~       | input  | Array containing the x,y,z coordinates of the center |
-   | ~lmax~       | input  | Maximum angular momentum                             |
-   | ~n~          | output | Number of computed polynomials                       |
-   | ~L(ldl,n)~   | output | Contains a,b,c for all ~n~ results                   |
-   | ~ldl~        | input  | Leading dimension of ~L~                             |
-   | ~VGL(ldv,n)~ | output | Value, gradients and Laplacian of the polynomials    |
-   | ~ldv~        | input  | Leading dimension of array ~VGL~                     |
+   #+NAME: qmckl_ao_polynomial_vgl_args
+   | qmckl_context | context     | in    | Global state                                         |
+   | double        | X[3]        | in    | Array containing the coordinates of the points       |
+   | double        | R[3]        | in    | Array containing the x,y,z coordinates of the center |
+   | int32_t       | lmax        | in    | Maximum angular momentum                             |
+   | int64_t       | n           | inout | Number of computed polynomials                       |
+   | int32_t       | L[n][ldl]   | out   | Contains a,b,c for all ~n~ results                   |
+   | int64_t       | ldl         | in    | Leading dimension of ~L~                             |
+   | double        | VGL[n][ldv] | out   | Value, gradients and Laplacian of the polynomials    |
+   | int64_t       | ldv         | in    | Leading dimension of array ~VGL~                     |
     
-   Requirements:
+*** Requirements:
 
-   - ~context~ is not ~QMCKL_NULL_CONTEXT~
-   - ~n~ > 0
-   - ~lmax~ >= 0
-   - ~ldl~ >= 3
-   - ~ldv~ >= 5
-   - ~X~ is allocated with at least $3 \times 8$ bytes
-   - ~R~ is allocated with at least $3 \times 8$ bytes
-   - ~n~ >= ~(lmax+1)(lmax+2)(lmax+3)/6~
-   - ~L~ is allocated with at least $3 \times n \times 4$ bytes
-   - ~VGL~ is allocated with at least $5 \times n \times 8$ bytes
-   - On output, ~n~ should be equal to ~(lmax+1)(lmax+2)(lmax+3)/6~
-   - On output, the powers are given in the following order (l=a+b+c):
-     - Increasing values of ~l~
-     - Within a given value of ~l~, alphabetical order of the
-       string made by a*"x" + b*"y" + c*"z" (in Python notation).
-       For example, with a=0, b=2 and c=1 the string is "yyz"
+    - ~context~ is not ~QMCKL_NULL_CONTEXT~
+    - ~n~ > 0
+    - ~lmax~ >= 0
+    - ~ldl~ >= 3
+    - ~ldv~ >= 5
+    - ~X~ is allocated with at least $3 \times 8$ bytes
+    - ~R~ is allocated with at least $3 \times 8$ bytes
+    - ~n~ >= ~(lmax+1)(lmax+2)(lmax+3)/6~
+    - ~L~ is allocated with at least $3 \times n \times 4$ bytes
+    - ~VGL~ is allocated with at least $5 \times n \times 8$ bytes
+    - On output, ~n~ should be equal to ~(lmax+1)(lmax+2)(lmax+3)/6~
+    - On output, the powers are given in the following order (l=a+b+c):
+      - Increasing values of ~l~
+      - Within a given value of ~l~, alphabetical order of the
+        string made by a*"x" + b*"y" + c*"z" (in Python notation).
+        For example, with a=0, b=2 and c=1 the string is "yyz"
 
-   # Header
-   #+begin_src c :tangle (eval h_func) 
-qmckl_exit_code
-qmckl_ao_polynomial_vgl(const qmckl_context context,
-                        const double *X,
-                        const double *R,
-                        const int32_t lmax,
-                        const int64_t *n,
-                        const int32_t *L,
-                        const int64_t ldl,
-                        const double *VGL,
-                        const int64_t ldv);
-   #+end_src
+*** C Header
 
-   # Source
-   #+begin_src f90 :tangle (eval f)
+    #+CALL: generate_c_header(table=qmckl_ao_polynomial_vgl_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+
+    #+RESULTS:
+    #+begin_src c :tangle (eval h_func) :comments org
+    qmckl_exit_code qmckl_ao_polynomial_vgl (
+          const qmckl_context context,
+          const double* X,
+          const double* R,
+          const int32_t lmax,
+          int64_t* n,
+          int32_t* const L,
+          const int64_t ldl,
+          double* const VGL,
+          const int64_t ldv ); 
+    #+end_src
+
+*** Source
+    #+begin_src f90 :tangle (eval f)
 integer function qmckl_ao_polynomial_vgl_f(context, X, R, lmax, n, L, ldl, VGL, ldv) result(info)
   use qmckl
   implicit none
@@ -1133,46 +1178,69 @@ integer function qmckl_ao_polynomial_vgl_f(context, X, R, lmax, n, L, ldl, VGL, 
   info = QMCKL_SUCCESS
 
 end function qmckl_ao_polynomial_vgl_f
-   #+end_src 
+    #+end_src 
+    
+*** C interface
 
+    #+CALL: generate_c_interface(table=qmckl_ao_polynomial_vgl_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
 
-   #+begin_src f90 :tangle (eval f) :exports none
-integer(c_int32_t) function qmckl_ao_polynomial_vgl(context, X, R, lmax, n, L, ldl, VGL, ldv) &
-     bind(C) result(info)
-  use, intrinsic :: iso_c_binding
-  implicit none
-  integer (c_int64_t) , intent(in) , value :: context
-  real    (c_double)  , intent(in)         :: X(3), R(3)
-  integer (c_int32_t) , intent(in) , value :: lmax
-  integer (c_int64_t) , intent(out)        :: n
-  integer (c_int32_t) , intent(out)        :: L(ldl,(lmax+1)*(lmax+2)*(lmax+3)/6)
-  integer (c_int64_t) , intent(in) , value :: ldl
-  real    (c_double)  , intent(out)        :: VGL(ldv,(lmax+1)*(lmax+2)*(lmax+3)/6)
-  integer (c_int64_t) , intent(in) , value :: ldv
+    #+RESULTS:
+    #+begin_src f90 :tangle (eval f) :comments org :exports none
+    integer(c_int32_t) function qmckl_ao_polynomial_vgl &
+        (context, X, R, lmax, n, L, ldl, VGL, ldv) &
+        bind(C) result(info)
 
-  integer, external :: qmckl_ao_polynomial_vgl_f
-  info = qmckl_ao_polynomial_vgl_f(context, X, R, lmax, n, L, ldl, VGL, ldv) 
-end function qmckl_ao_polynomial_vgl
-   #+end_src
+      use, intrinsic :: iso_c_binding
+      implicit none
 
-   #+begin_src f90 :tangle (eval fh_func) :exports none
-  interface
-     integer(c_int32_t) function qmckl_ao_polynomial_vgl(context, X, R, lmax, n, L, ldl, VGL, ldv) &
-          bind(C) 
-       use, intrinsic :: iso_c_binding
-       integer (c_int64_t) , intent(in) , value :: context
-       integer (c_int32_t) , intent(in) , value :: lmax
-       integer (c_int64_t) , intent(in) , value :: ldl
-       integer (c_int64_t) , intent(in) , value :: ldv
-       real    (c_double)  , intent(in)         :: X(3), R(3)
-       integer (c_int64_t) , intent(out)        :: n
-       integer (c_int32_t) , intent(out)        :: L(ldl,(lmax+1)*(lmax+2)*(lmax+3)/6)
-       real    (c_double)  , intent(out)        :: VGL(ldv,(lmax+1)*(lmax+2)*(lmax+3)/6)
-     end function qmckl_ao_polynomial_vgl
-  end interface
-   #+end_src
+      integer (c_int64_t) , intent(in)  , value :: context
+      real    (c_double ) , intent(in)          :: X(3)
+      real    (c_double ) , intent(in)          :: R(3)
+      integer (c_int32_t) , intent(in)  , value :: lmax
+      integer (c_int64_t) , intent(inout)        :: n
+      integer (c_int32_t) , intent(out)         :: L(ldl,n)
+      integer (c_int64_t) , intent(in)  , value :: ldl
+      real    (c_double ) , intent(out)         :: VGL(ldv,n)
+      integer (c_int64_t) , intent(in)  , value :: ldv
 
-   #+begin_src f90 :tangle (eval f_test)
+      integer(c_int32_t), external :: qmckl_ao_polynomial_vgl_f
+      info = qmckl_ao_polynomial_vgl_f &
+             (context, X, R, lmax, n, L, ldl, VGL, ldv)
+
+    end function qmckl_ao_polynomial_vgl
+    #+end_src
+
+*** Fortran interface
+
+    #+CALL: generate_f_interface(table=qmckl_ao_polynomial_vgl_args,rettyp=get_value("FRetType"),fname=get_value("Name"))
+
+    #+RESULTS:
+    #+begin_src f90 :tangle (eval fh_func) :comments org :exports none
+    interface
+      integer(c_int32_t) function qmckl_ao_polynomial_vgl &
+          (context, X, R, lmax, n, L, ldl, VGL, ldv) &
+          bind(C)
+        use, intrinsic :: iso_c_binding
+        import
+        implicit none
+
+        integer (c_int64_t) , intent(in)  , value :: context
+        real    (c_double ) , intent(in)          :: X(3)
+        real    (c_double ) , intent(in)          :: R(3)
+        integer (c_int32_t) , intent(in)  , value :: lmax
+        integer (c_int64_t) , intent(inout)        :: n
+        integer (c_int32_t) , intent(out)         :: L(ldl,n)
+        integer (c_int64_t) , intent(in)  , value :: ldl
+        real    (c_double ) , intent(out)         :: VGL(ldv,n)
+        integer (c_int64_t) , intent(in)  , value :: ldv
+
+      end function qmckl_ao_polynomial_vgl
+    end interface
+    #+end_src
+    
+*** Test
+
+    #+begin_src f90 :tangle (eval f_test)
 integer(c_int32_t) function test_qmckl_ao_polynomial_vgl(context) bind(C)
   use qmckl
   implicit none
@@ -1262,12 +1330,12 @@ integer(c_int32_t) function test_qmckl_ao_polynomial_vgl(context) bind(C)
 
   deallocate(L,VGL)
 end function test_qmckl_ao_polynomial_vgl
-   #+end_src
+    #+end_src
 
-   #+begin_src c :tangle (eval c_test)
+    #+begin_src c :tangle (eval c_test)
 int  test_qmckl_ao_polynomial_vgl(qmckl_context context);
 munit_assert_int(0, ==, test_qmckl_ao_polynomial_vgl(context));
-   #+end_src
+    #+end_src
    
 * Gaussian basis functions
   
