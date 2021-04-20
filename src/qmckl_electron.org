@@ -1,0 +1,446 @@
+#+TITLE: Electrons
+#+SETUPFILE: ../docs/theme.setup
+#+INCLUDE: ../tools/lib.org
+
+In conventional QMC simulations, up-spin and down-spin electrons are
+different. The ~electron~  data structure contains the number of
+up-spin and down-spin electrons, and the electron coordinates.
+
+* Headers                                                          :noexport:
+  #+begin_src elisp :noexport :results none                                                    
+(org-babel-lob-ingest "../tools/lib.org")
+#+end_src
+
+
+  #+begin_src c :tangle (eval h_private_type)
+#ifndef QMCKL_ELECTRON_HPT
+#define QMCKL_ELECTRON_HPT
+#include <stdbool.h>
+  #+end_src
+
+  #+begin_src c :tangle (eval c_test) :noweb yes
+#include "qmckl.h"
+#include "munit.h"
+MunitResult test_<<filename()>>() {
+  qmckl_context context;
+  context = qmckl_context_create();
+  #+end_src
+
+  #+begin_src c :tangle (eval c)
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdbool.h>
+#include <assert.h>
+
+#include "qmckl_error_type.h"
+#include "qmckl_context_type.h"
+#include "qmckl_context_private_type.h"
+#include "qmckl_memory_private_type.h"
+
+#include "qmckl_error_func.h"
+#include "qmckl_memory_private_func.h"
+#include "qmckl_memory_func.h"
+#include "qmckl_context_func.h"
+  #+end_src
+
+* Context
+
+  The following data stored in the context:
+ 
+   | ~date~          | uint64_t                 | Last modification date of the coordinates |
+   | ~uninitialized~ | int32_t                  | Keeps bit set for uninitialized data      |
+   | ~num~           | int64_t                  | Total number of electrons                 |
+   | ~up_num~        | int64_t                  | Number of up-spin electrons               |
+   | ~down_num~      | int64_t                  | Number of down-spin electrons             |
+   | ~walk_num~      | int64_t                  | Number of walkers                         |
+   | ~provided~      | bool                     | If true, ~electron~ is valid              |
+   | ~coord_new~     | double[walk_num][3][num] | New set of electron coordinates           |
+   | ~coord_old~     | double[walk_num][3][num] | Old set of electron coordinates           |
+
+** Data structure
+
+   #+begin_src c :comments org :tangle (eval h_private_type)
+typedef struct qmckl_electron_struct {
+  int64_t   date;
+  int64_t   num;
+  int64_t   up_num;
+  int64_t   down_num;
+  int64_t   walk_num;
+  double*   coord_new;
+  double*   coord_old;
+  int32_t   uninitialized;
+  bool      provided;
+} qmckl_electron_struct;
+   #+end_src
+
+   The ~uninitialized~ integer contains one bit set to one for each
+   initialization function which has not bee called. It becomes equal
+   to zero after all initialization functions have been called. The
+   struct is then initialized and ~provided == true~.
+   
+** Access functions
+
+   Access to scalars copies the values at the passed address, and
+   for array values a pointer to the array is returned.
+   
+   #+begin_src c :comments org :tangle (eval h_private_func)
+int64_t   qmckl_get_electron_num        (const qmckl_context context);
+int64_t   qmckl_get_electron_up_num     (const qmckl_context context);
+int64_t   qmckl_get_electron_down_num   (const qmckl_context context);
+int64_t   qmckl_get_electron_walk_num   (const qmckl_context context);
+double*   qmckl_get_electron_coord_new  (const qmckl_context context);
+double*   qmckl_get_electron_coord_old  (const qmckl_context context);
+   #+end_src
+
+   #+begin_src c :comments org :tangle (eval h_func)
+bool      qmckl_electron_provided       (const qmckl_context context);
+   #+end_src
+
+   #+NAME:post
+   #+begin_src c 
+if ( (ctx->electron.uninitialized & mask) != 0) {
+  return NULL;
+}
+   #+end_src
+   
+   #+begin_src c :comments org :tangle (eval c) :noweb yes
+int64_t qmckl_get_electron_num (const qmckl_context context) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return (char) 0;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  int32_t mask = 1;
+
+  if ( (ctx->electron.uninitialized & mask) != 0) {
+    return (int64_t) 0;
+  }
+
+  assert (ctx->electron.num > (int64_t) 0);
+  return ctx->electron.num;
+}
+
+
+int64_t qmckl_get_electron_up_num (const qmckl_context context) {
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return (int64_t) 0;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  int32_t mask = 1 << 1;
+
+  if ( (ctx->electron.uninitialized & mask) != 0) {
+    return (int64_t) 0;
+  }
+
+  assert (ctx->electron.up_num > (int64_t) 0);
+  return ctx->electron.up_num;
+}
+
+
+int64_t qmckl_get_electron_down_num (const qmckl_context context) {
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return (int64_t) 0;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  int32_t mask = 1 << 2;
+
+  if ( (ctx->electron.uninitialized & mask) != 0) {
+    return (int64_t) 0;
+  }
+
+  assert (ctx->electron.down_num >= (int64_t) 0);
+  return ctx->electron.down_num;
+}
+
+
+int64_t qmckl_get_electron_walk_num (const qmckl_context context) {
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return (int64_t) 0;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  int32_t mask = 1 << 3;
+
+  if ( (ctx->electron.uninitialized & mask) != 0) {
+    return (int64_t) 0;
+  }
+
+  assert (ctx->electron.walk_num > (int64_t) 0);
+  return ctx->electron.walk_num;
+}
+
+
+
+bool qmckl_electron_provided(const qmckl_context context) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return false;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  return ctx->electron.provided;
+}
+   #+end_src
+   
+** Initialization functions
+
+   To set the data relative to the electrons in the context, the
+   following functions need to be called. When the data structure is
+   initialized, the ~coord_new~ and ~coord_old~ arrays are both allocated.
+   
+   #+begin_src c :comments org :tangle (eval h_func)
+qmckl_exit_code  qmckl_set_electron_num        (qmckl_context context, const int64_t up_num, const int64_t down_num);
+qmckl_exit_code  qmckl_set_electron_walk_num   (qmckl_context context, const int64_t walk_num);
+qmckl_exit_code  qmckl_set_electron_coord      (qmckl_context context, const double* coord);
+   #+end_src
+
+   #+NAME:pre2
+   #+begin_src c 
+if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+  return QMCKL_NULL_CONTEXT;
+ }
+
+qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+   #+end_src
+
+   #+NAME:post2
+   #+begin_src c 
+ctx->electron.uninitialized &= ~mask; 
+ctx->electron.provided = (ctx->electron.uninitialized == 0);
+
+if (ctx->electron.provided) {
+  if (ctx->electron.coord_new != NULL) {
+    qmckl_free(context, ctx->electron.coord_new);
+    ctx->electron.coord_new = NULL;
+  }
+  if (ctx->electron.coord_old != NULL) {
+    qmckl_free(context, ctx->electron.coord_old);
+    ctx->electron.coord_old = NULL;
+  }
+
+  qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+  mem_info.size = ctx->electron.num * ctx->electron.walk_num * 3 * sizeof(double);
+
+  double* coord_new = (double*) qmckl_malloc(context, mem_info);
+  if (coord_new == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_ALLOCATION_FAILED,
+                           "qmckl_set_electron_num",
+                           NULL);
+  }
+  ctx->electron.coord_new = coord_new;
+
+  double* coord_old = (double*) qmckl_malloc(context, mem_info);
+  if (coord_old == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_ALLOCATION_FAILED,
+                           "qmckl_set_electron_num",
+                           NULL);
+  }
+  ctx->electron.coord_old = coord_old;
+ }
+
+return QMCKL_SUCCESS;
+   #+end_src
+   
+   To set the number of electrons, we give the number of up-spin and
+   down-spin electrons to the context.
+   
+   #+begin_src c :comments org :tangle (eval c) :noweb yes
+qmckl_exit_code qmckl_set_electron_num(qmckl_context context,
+                                       const int64_t up_num,
+                                       const int64_t down_num) {
+  <<pre2>>
+
+  if (up_num <= 0) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_set_electron_num",
+                           "up_num <= 0");
+  }
+
+  if (down_num <= 0) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_3,
+                           "qmckl_set_electron_num",
+                           "down_num <= 0");
+  }
+
+  int32_t mask = (1 << 3) -1;
+
+  ctx->electron.up_num = up_num;
+  ctx->electron.down_num = down_num;
+  ctx->electron.num = up_num + down_num;
+
+  <<post2>>
+}
+   #+end_src
+ 
+ 
+   Then, we set the number of walkers:
+   
+   #+begin_src c :comments org :tangle (eval c) :noweb yes
+qmckl_exit_code qmckl_set_electron_walk_num(qmckl_context context, const int64_t walk_num) {
+  <<pre2>>
+
+  if (walk_num <= 0) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_set_electron_walk_num",
+                           "walk_num <= 0");
+  }
+
+  int32_t mask = 1 << 3;
+  ctx->electron.walk_num = walk_num;
+
+  <<post2>>
+}
+    #+end_src
+ 
+ 
+    The following function sets the electron coordinates of all the
+    walkers. When this is done, the pointers to the old and new sets
+    of coordinates are swapped, and the new coordinates are
+    overwritten. 
+    
+   #+begin_src c :comments org :tangle (eval c) :noweb yes
+qmckl_exit_code  qmckl_set_electron_coord(qmckl_context context, const double* coord) {
+  <<pre2>>
+
+  const int64_t num = qmckl_get_electron_num(context);
+  if (num == 0L) {
+    return qmckl_failwith( context,
+                           QMCKL_FAILURE,
+                           "qmckl_set_electron_coord",
+                           "num is not set");
+  }
+    
+  const int64_t walk_num = qmckl_get_electron_walk_num(context);
+  if (walk_num == 0L) {
+    return qmckl_failwith( context,
+                           QMCKL_FAILURE,
+                           "qmckl_set_electron_coord",
+                           "walk_num is not set");
+  }
+    
+  /* If num and walk_num are set, the arrays should be allocated */
+  assert (ctx->electron.coord_old != NULL);
+  assert (ctx->electron.coord_new != NULL);
+  
+  /* Increment the date of the context */
+  ctx->date += 1UL;
+
+  /* Swap pointers */
+  double * swap;
+  swap = ctx->electron.coord_old;
+  ctx->electron.coord_old = ctx->electron.coord_new;
+  ctx->electron.coord_new = swap;
+  
+  memcpy(ctx->electron.coord_new, coord, walk_num * num * 3 * sizeof(double));
+  ctx->electron.date = ctx->date;
+
+  return QMCKL_SUCCESS;
+    
+}
+   #+end_src
+
+** Test
+
+    #+begin_src c :tangle (eval c_test)
+/* Reference input data */
+
+#define up_num      ((int64_t) 3)
+#define down_num    ((int64_t) 2)
+#define walk_num    ((int64_t) 2)
+#define num         (up_num+down_num)
+
+double coord[walk_num*3*num] =
+  { 7.303633091022677881e+00, 1.375868694453235719e+01, 1.167371490471771217e-01,                   
+    4.547755371567960836e+00, 3.245907105524011182e+00, 2.410764357550297110e-01,
+    5.932816068137344523e+00, 1.491671465549257469e+01, 3.825374039119375236e-01,
+    7.347336142660052083e+00, 1.341946976062362129e+00, 1.648917914228352322e+00,
+    5.735221530102248444e+00, 1.064667491680036271e+01, 4.227201772236627297e-01,
+    8.099550978782254163e+00, 6.861498941099086757e+00, 4.015884841159429036e-02,
+    1.014757367558326173e+01, 5.219335322173662917e+00, 5.037004126899931322e-02,
+    1.484094322159507051e+01, 9.777903829455864226e+00, 5.243007994024882767e-02,
+    9.081723054990456845e+00, 5.499568496038920173e+00, 2.910446438899221347e-02,
+    2.583154239492383653e+00, 1.442282811294904432e+00, 6.387191629878670451e-02 };
+  
+/* --- */
+  
+qmckl_exit_code rc;
+
+munit_assert(!qmckl_electron_provided(context));
+
+rc = qmckl_set_electron_num (context, up_num, down_num);
+munit_assert_int64(rc, ==, QMCKL_SUCCESS);
+munit_assert(!qmckl_electron_provided(context));
+
+rc = qmckl_set_electron_walk_num (context, walk_num);
+munit_assert_int64(rc, ==, QMCKL_SUCCESS);
+munit_assert(qmckl_electron_provided(context));
+
+rc = qmckl_set_electron_coord (context, coord);
+munit_assert_int64(rc, ==, QMCKL_SUCCESS);
+
+    #+end_src
+
+* End of files                                                     :noexport:
+  
+  #+begin_src c :tangle (eval h_private_type)
+#endif
+  #+end_src
+
+*** Test
+  #+begin_src c :tangle (eval c_test)
+  if (qmckl_context_destroy(context) != QMCKL_SUCCESS)
+    return QMCKL_FAILURE;
+  return MUNIT_OK;
+}
+  #+end_src
+ 
+**✸ Compute file names                                                                       
+    #+begin_src emacs-lisp                                                                   
+; The following is required to compute the file names                                        
+                                                                                             
+(setq pwd (file-name-directory buffer-file-name))                                            
+(setq name (file-name-nondirectory (substring buffer-file-name 0 -4)))                       
+(setq f  (concat pwd name "_f.f90"))                                                         
+(setq fh (concat pwd name "_fh.f90"))                                                        
+(setq c  (concat pwd name ".c"))                                                             
+(setq h  (concat name ".h"))                                                                 
+(setq h_private  (concat name "_private.h"))                                                 
+(setq c_test  (concat pwd "test_" name ".c"))                                                
+(setq f_test  (concat pwd "test_" name "_f.f90"))                                            
+                                                                                             
+; Minted                                                                                     
+(require 'ox-latex)                                                                          
+(setq org-latex-listings 'minted)                                                            
+(add-to-list 'org-latex-packages-alist '("" "listings"))                                     
+(add-to-list 'org-latex-packages-alist '("" "color"))                                        
+                                                                                             
+    #+end_src                                                                                
+
+    #+RESULTS:
+    |   | color    |
+    |   | listings |
+         
+
+# -*- mode: org -*-
+# vim: syntax=c
+  
+

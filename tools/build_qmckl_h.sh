@@ -78,11 +78,12 @@ cat << EOF > ${OUTPUT}
  *    
  */
 
-#ifndef __QMCKL_H__
-#define __QMCKL_H__
+#ifndef QMCKL_H
+#define QMCKL_H
 
 #include <stdlib.h>
 #include <stdint.h>
+#include <stdbool.h>
 EOF
 
 for i in ${HEADERS}
