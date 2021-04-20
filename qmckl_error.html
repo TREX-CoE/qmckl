@@ -3,7 +3,7 @@
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head>
-<!-- 2021-03-28 Sun 23:40 -->
+<!-- 2021-04-20 Tue 22:01 -->
 <meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Error handling</title>
@@ -311,14 +311,18 @@ for the JavaScript code in this tag.
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents">
 <ul>
-<li><a href="#orgd7973f6"></a></li>
+<li><a href="#org6298949"></a></li>
+<li><a href="#org7d7c090">1. Decoding errors</a></li>
+<li><a href="#orged55d75">2. Data structure in context</a></li>
+<li><a href="#org213eefa">3. Updating errors in the context</a></li>
+<li><a href="#orgf2919cf">4. Failing</a></li>
 </ul>
 </div>
 </div>
 
-<div id="outline-container-orgd7973f6" class="outline-2">
-<h2 id="orgd7973f6"></h2>
-<div class="outline-text-2" id="text-orgd7973f6">
+<div id="outline-container-org6298949" class="outline-2">
+<h2 id="org6298949"></h2>
+<div class="outline-text-2" id="text-org6298949">
 <p>
 The library should never make the calling programs abort, nor
 perform any input/output operations. This decision has to be taken
@@ -329,9 +333,10 @@ by the developer of the code calling the library.
 All the functions return with an exit code, defined as
 </p>
 <div class="org-src-container">
-<pre class="src src-c" id="org6cac882"><span style="color: #a020f0;">typedef</span> <span style="color: #228b22;">int32_t</span> <span style="color: #228b22;">qmckl_exit_code</span>;
+<pre class="src src-c" id="orgbc1078d"><span style="color: #a020f0;">typedef</span> <span style="color: #228b22;">int32_t</span> <span style="color: #228b22;">qmckl_exit_code</span>;
 </pre>
 </div>
+
 
 <p>
 The exit code returns the completion status of the function to the
@@ -345,7 +350,7 @@ error code is returned to the program.
 Here is the complete list of exit codes.
 </p>
 
-<table id="orgd252c8d" border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+<table id="orgc6473bc" border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
 
 
 <colgroup>
@@ -468,9 +473,19 @@ Here is the complete list of exit codes.
 </table>
 
 <p>
-The <code>qmckl_strerror</code> converts an exit code into a string. The
+The <code>qmckl_string_of_error</code> converts an exit code into a string. The
 string is assumed to be large enough to contain the error message
 (typically 128 characters).
+</p>
+</div>
+</div>
+
+<div id="outline-container-org7d7c090" class="outline-2">
+<h2 id="org7d7c090"><span class="section-number-2">1</span> Decoding errors</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+To decode the error messages, <code>qmckl_string_of_error</code> converts an
+error code into a string.  
 </p>
 
 <pre class="example">
@@ -550,7 +565,8 @@ The text strings are extracted from the previous table.
 <pre class="src src-f90"><span style="color: #a020f0;">interface</span>
    <span style="color: #a020f0;">subroutine</span> <span style="color: #0000ff;">qmckl_string_of_error</span> (error, string) <span style="color: #a020f0;">bind</span>(C, name=<span style="color: #8b2252;">'qmckl_string_of_error_f'</span>)
      <span style="color: #a020f0;">use</span>, <span style="color: #a020f0;">intrinsic</span> :: <span style="color: #0000ff;">iso_c_binding</span>
-     <span style="color: #228b22;">integer</span> (<span style="color: #008b8b;">c_int32_t</span>), <span style="color: #a020f0;">intent</span>(in), <span style="color: #a020f0;">value</span> ::<span style="color: #a0522d;"> error</span>
+     <span style="color: #a020f0;">import</span>
+     <span style="color: #228b22;">integer</span> (qmckl_exit_code), <span style="color: #a020f0;">intent</span>(in), <span style="color: #a020f0;">value</span> ::<span style="color: #a0522d;"> error</span>
      <span style="color: #228b22;">character</span>, <span style="color: #a020f0;">intent</span>(out) ::<span style="color: #a0522d;"> string(128)</span>
    <span style="color: #a020f0;">end subroutine</span> <span style="color: #0000ff;">qmckl_string_of_error</span>
 <span style="color: #a020f0;">end interface</span>
@@ -558,10 +574,143 @@ The text strings are extracted from the previous table.
 </div>
 </div>
 </div>
+
+<div id="outline-container-orged55d75" class="outline-2">
+<h2 id="orged55d75"><span class="section-number-2">2</span> Data structure in context</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+The strings are declared with a maximum fixed size to avoid
+dynamic memory allocation.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-c"><span style="color: #483d8b;">#define</span>  <span style="color: #a0522d;">QMCKL_MAX_FUN_LEN</span>   256
+<span style="color: #483d8b;">#define</span>  <span style="color: #a0522d;">QMCKL_MAX_MSG_LEN</span>  1024
+
+<span style="color: #a020f0;">typedef</span> <span style="color: #a020f0;">struct</span> <span style="color: #228b22;">qmckl_error_struct</span> {
+
+  <span style="color: #228b22;">qmckl_exit_code</span> <span style="color: #a0522d;">exit_code</span>;
+  <span style="color: #228b22;">char</span> <span style="color: #a0522d;">function</span>[QMCKL_MAX_FUN_LEN];
+  <span style="color: #228b22;">char</span> <span style="color: #a0522d;">message</span> [QMCKL_MAX_MSG_LEN];
+
+} <span style="color: #228b22;">qmckl_error_struct</span>;
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org213eefa" class="outline-2">
+<h2 id="org213eefa"><span class="section-number-2">3</span> Updating errors in the context</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+The error is updated in the context using <code>qmckl_set_error</code>.
+When the error is set in the context, it is mandatory to specify
+from which function the error is triggered, and a message
+explaining the error. The exit code can't be <code>QMCKL_SUCCESS</code>.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-c"><span style="color: #228b22;">qmckl_exit_code</span>
+<span style="color: #0000ff;">qmckl_set_error</span>(<span style="color: #228b22;">qmckl_context</span> <span style="color: #a0522d;">context</span>,
+                <span style="color: #a020f0;">const</span> <span style="color: #228b22;">qmckl_exit_code</span> <span style="color: #a0522d;">exit_code</span>,
+                <span style="color: #a020f0;">const</span> <span style="color: #228b22;">char</span>* <span style="color: #a0522d;">function_name</span>,
+                <span style="color: #a020f0;">const</span> <span style="color: #228b22;">char</span>* <span style="color: #a0522d;">message</span>)
+{
+  /* <span style="color: #b22222;">Passing a function name and a message is mandatory. </span>*/
+  assert (function_name != <span style="color: #008b8b;">NULL</span>);
+  assert (message != <span style="color: #008b8b;">NULL</span>);
+
+  /* <span style="color: #b22222;">Exit codes are assumed valid. </span>*/
+  assert (exit_code &gt;= 0);
+  assert (exit_code != QMCKL_SUCCESS);
+  assert (exit_code &lt; QMCKL_INVALID_EXIT_CODE);
+
+  /* <span style="color: #b22222;">The context is assumed to exist. </span>*/
+  assert (qmckl_context_check(context) != QMCKL_NULL_CONTEXT);
+
+  qmckl_lock(context);
+  {
+    <span style="color: #228b22;">qmckl_context_struct</span>* <span style="color: #a020f0;">const</span> <span style="color: #a0522d;">ctx</span> = (<span style="color: #228b22;">qmckl_context_struct</span>* <span style="color: #a020f0;">const</span>) context;
+    assert (ctx != <span style="color: #008b8b;">NULL</span>); /* <span style="color: #b22222;">Impossible because the context is valid. </span>*/
+
+    ctx-&gt;error.exit_code = exit_code;
+    strncpy(ctx-&gt;error.function, function_name, QMCKL_MAX_FUN_LEN);
+    strncpy(ctx-&gt;error.message, message, QMCKL_MAX_MSG_LEN);
+  }
+  qmckl_unlock(context);
+
+  <span style="color: #a020f0;">return</span> QMCKL_SUCCESS;
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgf2919cf" class="outline-2">
+<h2 id="orgf2919cf"><span class="section-number-2">4</span> Failing</h2>
+<div class="outline-text-2" id="text-4">
+<p>
+To make a function fail, the <code>qmckl_failwith</code> function should be
+called, such that information about the failure is stored in
+the context. The desired exit code is given as an argument, as
+well as the name of the function and an error message. If the
+message is <code>NULL</code>, then the default message obtained by
+<code>qmckl_string_of_error</code> is used. The return code of the function is
+the desired return code.
+Upon failure, a <code>QMCKL_NULL_CONTEXT</code> is returned.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-c"><span style="color: #228b22;">qmckl_exit_code</span> <span style="color: #0000ff;">qmckl_failwith</span>(<span style="color: #228b22;">qmckl_context</span> <span style="color: #a0522d;">context</span>,
+                               <span style="color: #a020f0;">const</span> <span style="color: #228b22;">qmckl_exit_code</span> <span style="color: #a0522d;">exit_code</span>,
+                               <span style="color: #a020f0;">const</span> <span style="color: #228b22;">char</span>* <span style="color: #a0522d;">function</span>,
+                               <span style="color: #a020f0;">const</span> <span style="color: #228b22;">char</span>* <span style="color: #a0522d;">message</span>) {
+
+  assert (exit_code &gt; 0);
+  assert (exit_code &lt; QMCKL_INVALID_EXIT_CODE);
+  assert (function != <span style="color: #008b8b;">NULL</span>);
+  assert (strlen(function) &lt; QMCKL_MAX_FUN_LEN);
+  <span style="color: #a020f0;">if</span> (message != <span style="color: #008b8b;">NULL</span>) {
+    assert (strlen(message)  &lt; QMCKL_MAX_MSG_LEN);
+  }
+
+  <span style="color: #a020f0;">if</span> (qmckl_context_check(context) == QMCKL_NULL_CONTEXT)
+    <span style="color: #a020f0;">return</span> QMCKL_INVALID_CONTEXT;
+
+  <span style="color: #a020f0;">if</span> (message == <span style="color: #008b8b;">NULL</span>) {
+    <span style="color: #228b22;">qmckl_exit_code</span> <span style="color: #a0522d;">rc</span> = 
+      qmckl_set_error(context, exit_code, function, qmckl_string_of_error(exit_code));
+    assert (rc == QMCKL_SUCCESS);
+  } <span style="color: #a020f0;">else</span> {
+    <span style="color: #228b22;">qmckl_exit_code</span> <span style="color: #a0522d;">rc</span> = 
+      qmckl_set_error(context, exit_code, function, message);
+    assert (rc == QMCKL_SUCCESS);
+  }
+
+  <span style="color: #a020f0;">return</span> exit_code;
+}
+
+</pre>
+</div>
+
+<p>
+For example, this function can be used as
+</p>
+<div class="org-src-container">
+<pre class="src src-c"><span style="color: #a020f0;">if</span> (x &lt; 0) {
+  <span style="color: #a020f0;">return</span> qmckl_failwith(context,
+                        QMCKL_INVALID_ARG_2,
+                        <span style="color: #8b2252;">"qmckl_function"</span>, 
+                        <span style="color: #8b2252;">"Expected x &gt;= 0"</span>);
+ }
+</pre>
+</div>
+</div>
+</div>
 </div>
 <div id="postamble" class="status">
 <p class="author">Author: TREX CoE</p>
-<p class="date">Created: 2021-03-28 Sun 23:40</p>
+<p class="date">Created: 2021-04-20 Tue 22:01</p>
 <p class="validation"><a href="http://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>
