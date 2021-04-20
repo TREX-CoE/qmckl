@@ -21,6 +21,7 @@ OUTPUT=Makefile.generated
 
 
 ${QMCKL_ROOT}/tools/tangle.sh *.org
+../tools/build_qmckl_h.sh
 
 
 
@@ -62,38 +63,67 @@ done >> $OUTPUT
 
 
 cat << EOF > ${OUTPUT}
+.POSIX:
+.SUFFIXES:
+
+PREFIX=/usr/local
+
 CC=$CC
 CFLAGS=$CFLAGS -I../munit/
 
 FC=$FC
 FFLAGS=$FFLAGS
+
 OBJECT_FILES=$OBJECTS
 TESTS=$TESTS
 TESTS_F=$TESTS_F
 
 LIBS=$LIBS
 
-libqmckl.so: \$(OBJECT_FILES)
-	\$(CC) -shared \$(OBJECT_FILES) -o libqmckl.so
+QMCKL_ROOT=\$(shell dirname \$(CURDIR))
+shared_lib=\$(QMCKL_ROOT)/lib/libqmckl.so
+static_lib=\$(QMCKL_ROOT)/lib/libqmckl.a
+qmckl_h=\$(QMCKL_ROOT)/include/qmckl.h
+qmckl_f=\$(QMCKL_ROOT)/include/qmckl_f.f90
+munit=\$(QMCKL_ROOT)/munit/munit.c 
 
-%.o: %.c
-	\$(CC) \$(CFLAGS) -c \$*.c -o \$*.o
+shared: \$(shared_lib)
+static: \$(static_lib)
+all: shared static
 
-%.o: %.f90 qmckl_f.o
-	\$(FC) \$(FFLAGS) -c \$*.f90 -o \$*.o
+\$(shared_lib): \$(OBJECT_FILES)
+	\$(CC) -shared \$(OBJECT_FILES) -o \$(shared_lib)
 
-../include/qmckl.h ../include/qmckl_f.f90:
-	../tools/build_qmckl_h.sh
+\$(static_lib): \$(OBJECT_FILES)
+	\$(AR) rcs \$(static_lib) \$(OBJECT_FILES)
 
-qmckl_f.o: ../include/qmckl_f.f90
-	\$(FC) \$(FFLAGS) -c ../include/qmckl_f.f90 -o qmckl_f.o
 
-test_qmckl: test_qmckl.c libqmckl.so \$(TESTS) \$(TESTS_F)
-	\$(CC) \$(CFLAGS) -Wl,-rpath,$PWD -L. \
-	../munit/munit.c \$(TESTS) \$(TESTS_F) -lqmckl \$(LIBS) test_qmckl.c -o test_qmckl
+# Test
+  
+qmckl_f.o: \$(qmckl_f)
+	\$(FC) \$(FFLAGS) -c \$(qmckl_f) -o \$@
 
-test: test_qmckl
+test_qmckl: test_qmckl.c \$(qmckl_h) \$(static_lib) \$(TESTS) \$(TESTS_F)
+	\$(CC) \$(CFLAGS) \
+	\$(munit) \$(TESTS) \$(TESTS_F) \$(static_lib) \$(LIBS) test_qmckl.c -o \$@
+
+test_qmckl_shared: test_qmckl.c \$(qmckl_h) \$(shared_lib) \$(TESTS) \$(TESTS_F)
+	\$(CC) \$(CFLAGS) -Wl,-rpath,$PWD/../lib -L../lib \
+	\$(munit) \$(TESTS) \$(TESTS_F) -lqmckl \$(LIBS) test_qmckl.c -o \$@
+
+check: test_qmckl test_qmckl_shared
 	./test_qmckl
 
-.PHONY: test
+clean:
+	\$(RM) -- *.o *.mod \$(shared_lib) \$(static_lib) test_qmckl
+
+.SUFFIXES: .c .f90 .o
+
+.c.o:
+	\$(CC) \$(CFLAGS) -c \$*.c -o \$*.o
+
+.f90.o: qmckl_f.o
+	\$(FC) \$(FFLAGS) -c \$*.f90 -o \$*.o
+
+.PHONY: check clean all
 EOF

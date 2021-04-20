@@ -3,6 +3,8 @@
 
 # This file was created by tools/Building.org
 
+.POSIX:
+
 # Dependencies
 
 
@@ -13,10 +15,15 @@ LIBS=-lpthread
 
 QMCKL_ROOT=$(shell dirname $(CURDIR))
 
+shared_lib=$(QMCKL_ROOT)/lib/libqmckl.so
+static_lib=$(QMCKL_ROOT)/lib/libqmckl.a
+qmckl_h=$(QMCKL_ROOT)/include/qmckl.h
+qmckl_f=$(QMCKL_ROOT)/include/qmckl_f.f90
+
 export CC CFLAGS FC FFLAGS LIBS QMCKL_ROOT
 
 ORG_SOURCE_FILES=$(wildcard *.org)
-OBJECT_FILES=$(filter-out $(EXCLUDED_OBJECTS), $(patsubst %.org,%.o,$(ORG_SOURCE_FILES)))
+C_SOURCE_FILES=$(patsubst %.org,%.c,$(ORG_SOURCE_FILES))
 INCLUDE=-I$(QMCKL_ROOT)/include/
 
 # Compiler options
@@ -82,27 +89,41 @@ endif
 # Rules
 
 #    The source files are created during the generation of the file ~Makefile.generated~.
+#    The Makefile.generated is the one that will be distributed with the library.
 
 
-.PHONY: clean
+.PHONY: clean shared static doc all check
 .SECONDARY: # Needed to keep the produced C and Fortran files
 
-libqmckl.so: ../include/qmckl.h
-	$(MAKE) -f Makefile.generated
+$(shared_lib) $(static_lib): $(qmckl_h) $(qmckl_f) Makefile.generated
+	$(MAKE) -f Makefile.generated $@
 
-../include/qmckl.h: Makefile.generated
+$(qmckl_f) $(qmckl_h): Makefile.generated
 	../tools/build_qmckl_h.sh
 
-test: libqmckl.so
-	$(MAKE) -f Makefile.generated test
+shared: $(shared_lib)
+static: $(static_lib)
+all: shared static doc
+
+check: $(static_lib)
+	$(MAKE) -f Makefile.generated check
 
 doc: $(ORG_SOURCE_FILES)
 	$(QMCKL_ROOT)/tools/build_doc.sh
 
 clean:
-	$(RM)	test_qmckl_* test_qmckl.c test_qmckl \
-		qmckl_*.f90 qmckl_*.c qmckl_*.o qmckl_*.h \
-		Makefile.generated libqmckl.so *.html *.mod
+	- $(MAKE) -f Makefile.generated clean
+	- $(RM)	test_qmckl_* test_qmckl.c \
+		$(qmckl_h) $(qmckl_f) \
+		qmckl_*.f90 qmckl_*.c qmckl_*.h \
+		Makefile.generated *.html 
 
 Makefile.generated: Makefile $(QMCKL_ROOT)/tools/create_makefile.sh  $(ORG_SOURCE_FILES)
 	$(QMCKL_ROOT)/tools/create_makefile.sh
+
+
+.SUFFIXES: .org .c
+
+.org.c:
+	../tools/tangle.sh $<
+
