@@ -78,6 +78,7 @@ function extract_doc()
 {
     local org=$1
     local local_html=${SRC}/${org%.org}.html
+    local local_text=${SRC}/${org%.org}.txt
     local html=${DOCS}/${org%.org}.html
 
     if [[ -f ${html} && ${org} -ot ${html} ]]
@@ -89,8 +90,9 @@ function extract_doc()
           --load ${CONFIG_DOC}       \
           ${org}                     \
           --load ${CONFIG_TANGLE}    \
-          -f org-html-export-to-html
-    mv ${local_html} ${DOCS}
+          -f org-html-export-to-html \
+          -f org-ascii-export-to-ascii
+    mv ${local_html} ${local_text} ${DOCS}
 
 }
 

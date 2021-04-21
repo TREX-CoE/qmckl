@@ -116,7 +116,11 @@ clean:
 	- $(RM)	test_qmckl_* test_qmckl.c \
 		$(qmckl_h) $(qmckl_f) \
 		qmckl_*.f90 qmckl_*.c qmckl_*.h \
-		Makefile.generated *.html
+		Makefile.generated *.html *.txt
+
+veryclean: clean FORCE
+	- $(RM)	$(QMCKL_ROOT)/docs/*.html \
+		$(QMCKL_ROOT)/docs/*.txt
 
 Makefile.generated: Makefile $(QMCKL_ROOT)/tools/create_makefile.sh  $(ORG_SOURCE_FILES)
 	$(QMCKL_ROOT)/tools/create_makefile.sh

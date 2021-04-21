@@ -52,8 +52,8 @@ $(distdir): $(qmckl_h) $(qmckl_f) $(static_lib) $(shared_lib) src/Makefile.gener
 
 
 FORCE:
-	- rm -- $(distdir).tar.gz >/dev/null 2>&1
-	- rm -rf -- $(distdir) >/dev/null 2>&1
+	rm -f -- $(distdir).tar.gz
+	rm -rf -- $(distdir)
 
 
 distcheck: $(distdir).tar.gz
