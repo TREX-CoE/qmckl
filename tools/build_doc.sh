@@ -5,12 +5,12 @@
 #   :END:
 
 #   First define readonly global variables.
-  
+
 
 readonly DOCS=${QMCKL_ROOT}/docs/
 readonly SRC=${QMCKL_ROOT}/src/
 readonly HTMLIZE=${DOCS}/htmlize.el
-readonly CONFIG_DOC=${QMCKL_ROOT}/tools/config_doc.el  
+readonly CONFIG_DOC=${QMCKL_ROOT}/tools/config_doc.el
 readonly CONFIG_TANGLE=${QMCKL_ROOT}/tools/config_tangle.el
 
 
@@ -34,7 +34,7 @@ function check_preconditions()
             exit 2
         fi
     done
-    
+
     for file in ${CONFIG_DOC} ${CONFIG_TANGLE}
     do
         if [[ ! -f ${file} ]]
@@ -55,7 +55,7 @@ function install_htmlize()
 {
     local url="https://github.com/hniksic/emacs-htmlize"
     local repo="emacs-htmlize"
-    
+
     [[ -f ${HTMLIZE} ]] || (
         cd ${DOCS}
         git clone ${url} \
@@ -77,8 +77,8 @@ function install_htmlize()
 function extract_doc()
 {
     local org=$1
-    local local_html=${SRC}/${org%.org}.html 
-    local html=${DOCS}/${org%.org}.html 
+    local local_html=${SRC}/${org%.org}.html
+    local html=${DOCS}/${org%.org}.html
 
     if [[ -f ${html} && ${org} -ot ${html} ]]
     then
@@ -89,7 +89,7 @@ function extract_doc()
           --load ${CONFIG_DOC}       \
           ${org}                     \
           --load ${CONFIG_TANGLE}    \
-          -f org-html-export-to-html 
+          -f org-html-export-to-html
     mv ${local_html} ${DOCS}
 
 }
@@ -100,13 +100,11 @@ function extract_doc()
 
 
 function main() {
-    
-    [[ check_preconditions ]] \
-        || exit 1
-    
+
+    check_preconditions || exit 1
+
     # Install htmlize if needed
-    [[ install_htmlize ]] \
-        || exit 2
+    install_htmlize || exit 2
 
     # Create documentation
     cd ${SRC} \

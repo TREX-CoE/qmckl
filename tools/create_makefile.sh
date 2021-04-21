@@ -85,7 +85,7 @@ shared_lib=\$(QMCKL_ROOT)/lib/libqmckl.so
 static_lib=\$(QMCKL_ROOT)/lib/libqmckl.a
 qmckl_h=\$(QMCKL_ROOT)/include/qmckl.h
 qmckl_f=\$(QMCKL_ROOT)/share/qmckl/fortran/qmckl_f.f90
-munit=\$(QMCKL_ROOT)/munit/munit.c 
+munit=\$(QMCKL_ROOT)/munit/munit.c
 
 shared: \$(shared_lib)
 static: \$(static_lib)
