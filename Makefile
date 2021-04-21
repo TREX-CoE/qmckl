@@ -59,8 +59,12 @@ FORCE:
 distcheck: $(distdir).tar.gz
 	gzip -cd $(distdir).tar.gz | tar xvf -
 	cd $(distdir) && $(MAKE) all check
-	rm $(distdir)/lib/libqmckl.so $(distdir)/include/qmckl.h \
-		$(distdir)/include/qmckl_f.f90
+	rm $(distdir)/lib/libqmckl.so
+	rm $(distdir)/include/qmckl.h 
+	rm $(distdir)/share/qmckl/fortran/qmckl_f.f90
+	rm $(distdir)/share/qmckl/doc/html/*.html
+	rm $(distdir)/share/qmckl/doc/html/*.css
+	rm $(distdir)/share/qmckl/doc/text/*.txt
 	cd $(distdir) && $(MAKE) clean
 	rm -rf $(distdir)
 	@echo "*** Package $(distdir).tar.gz is ready for distribution."
