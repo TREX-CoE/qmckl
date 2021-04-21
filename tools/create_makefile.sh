@@ -21,7 +21,7 @@ OUTPUT=Makefile.generated
 
 
 ${QMCKL_ROOT}/tools/tangle.sh *.org
-../tools/build_qmckl_h.sh
+${QMCKL_ROOT}/tools/build_qmckl_h.sh
 
 
 
@@ -66,7 +66,7 @@ cat << EOF > ${OUTPUT}
 .POSIX:
 .SUFFIXES:
 
-PREFIX=/usr/local
+prefix=/usr/local
 
 CC=$CC
 CFLAGS=$CFLAGS -I../munit/
@@ -84,7 +84,7 @@ QMCKL_ROOT=\$(shell dirname \$(CURDIR))
 shared_lib=\$(QMCKL_ROOT)/lib/libqmckl.so
 static_lib=\$(QMCKL_ROOT)/lib/libqmckl.a
 qmckl_h=\$(QMCKL_ROOT)/include/qmckl.h
-qmckl_f=\$(QMCKL_ROOT)/include/qmckl_f.f90
+qmckl_f=\$(QMCKL_ROOT)/share/qmckl/fortran/qmckl_f.f90
 munit=\$(QMCKL_ROOT)/munit/munit.c 
 
 shared: \$(shared_lib)
@@ -99,7 +99,7 @@ all: shared static
 
 
 # Test
-  
+
 qmckl_f.o: \$(qmckl_f)
 	\$(FC) \$(FFLAGS) -c \$(qmckl_f) -o \$@
 
@@ -108,7 +108,7 @@ test_qmckl: test_qmckl.c \$(qmckl_h) \$(static_lib) \$(TESTS) \$(TESTS_F)
 	\$(munit) \$(TESTS) \$(TESTS_F) \$(static_lib) \$(LIBS) test_qmckl.c -o \$@
 
 test_qmckl_shared: test_qmckl.c \$(qmckl_h) \$(shared_lib) \$(TESTS) \$(TESTS_F)
-	\$(CC) \$(CFLAGS) -Wl,-rpath,$PWD/../lib -L../lib \
+	\$(CC) \$(CFLAGS) -Wl,-rpath,\$(QMCKL_ROOT)/lib -L\$(QMCKL_ROOT)/lib \
 	\$(munit) \$(TESTS) \$(TESTS_F) -lqmckl \$(LIBS) test_qmckl.c -o \$@
 
 check: test_qmckl test_qmckl_shared
@@ -116,6 +116,16 @@ check: test_qmckl test_qmckl_shared
 
 clean:
 	\$(RM) -- *.o *.mod \$(shared_lib) \$(static_lib) test_qmckl
+
+install:
+	install -d \$(prefix)/lib
+	install -d \$(prefix)/include
+	install -d \$(prefix)/share/qmckl/fortran
+	install -d \$(prefix)/man
+	install \$(shared_lib) \$(prefix)/lib
+	install \$(static_lib) \$(prefix)/lib
+	install \$(qmckl_h) \$(prefix)/include
+	install \$(qmckl_f) \$(prefix)/share/qmckl/fortran
 
 .SUFFIXES: .c .f90 .o
 

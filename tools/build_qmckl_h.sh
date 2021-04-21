@@ -78,8 +78,8 @@ cat << EOF > ${OUTPUT}
  *    
  */
 
-#ifndef QMCKL_H
-#define QMCKL_H
+#ifndef __QMCKL_H__
+#define __QMCKL_H__
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -105,7 +105,7 @@ EOF
 HEADERS_TYPE="qmckl_*_fh_type.f90"
 HEADERS="qmckl_*_fh_func.f90"
 
-OUTPUT="../include/qmckl_f.f90"
+OUTPUT="../share/qmckl/fortran/qmckl_f.f90"
 cat << EOF > ${OUTPUT}
 !
 !    ------------------------------------------

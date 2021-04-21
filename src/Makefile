@@ -18,7 +18,7 @@ QMCKL_ROOT=$(shell dirname $(CURDIR))
 shared_lib=$(QMCKL_ROOT)/lib/libqmckl.so
 static_lib=$(QMCKL_ROOT)/lib/libqmckl.a
 qmckl_h=$(QMCKL_ROOT)/include/qmckl.h
-qmckl_f=$(QMCKL_ROOT)/include/qmckl_f.f90
+qmckl_f=$(QMCKL_ROOT)/share/qmckl/fortran/qmckl_f.f90
 
 export CC CFLAGS FC FFLAGS LIBS QMCKL_ROOT
 
@@ -92,18 +92,18 @@ endif
 #    The Makefile.generated is the one that will be distributed with the library.
 
 
-.PHONY: clean shared static doc all check
+.PHONY: clean shared static doc all check install uninstall
 .SECONDARY: # Needed to keep the produced C and Fortran files
 
-$(shared_lib) $(static_lib): $(qmckl_h) $(qmckl_f) Makefile.generated
+$(shared_lib) $(static_lib) install uninstall: $(qmckl_h) $(qmckl_f) Makefile.generated
 	$(MAKE) -f Makefile.generated $@
 
 $(qmckl_f) $(qmckl_h): Makefile.generated
-	../tools/build_qmckl_h.sh
+	$(QMCKL_ROOT)/tools/build_qmckl_h.sh
 
 shared: $(shared_lib)
 static: $(static_lib)
-all: shared static doc
+all: shared static doc check
 
 check: $(static_lib)
 	$(MAKE) -f Makefile.generated check
@@ -125,5 +125,4 @@ Makefile.generated: Makefile $(QMCKL_ROOT)/tools/create_makefile.sh  $(ORG_SOURC
 .SUFFIXES: .org .c
 
 .org.c:
-	../tools/tangle.sh $<
-
+	$(QMCKL_ROOT)/tools/tangle.sh $<
