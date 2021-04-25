@@ -92,7 +92,7 @@ endif
 #    The Makefile.generated is the one that will be distributed with the library.
 
 
-.PHONY: clean shared static doc all check install uninstall
+.PHONY: clean shared static doc all check install uninstall syntax
 .SECONDARY: # Needed to keep the produced C and Fortran files
 
 $(shared_lib) $(static_lib) install uninstall: $(qmckl_h) $(qmckl_f) Makefile.generated
@@ -107,6 +107,9 @@ all: shared static doc check
 
 check: $(static_lib)
 	$(MAKE) -f Makefile.generated check
+
+syntax:
+	cppcheck --addon=cert qmckl_*.c
 
 doc: $(ORG_SOURCE_FILES)
 	$(QMCKL_ROOT)/tools/build_doc.sh
