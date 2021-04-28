@@ -62,9 +62,9 @@ distcheck: $(distdir).tar.gz
 	rm $(distdir)/lib/libqmckl.so
 	rm $(distdir)/include/qmckl.h 
 	rm $(distdir)/share/qmckl/fortran/qmckl_f.f90
-	rm $(distdir)/share/qmckl/doc/html/*.html
-	rm $(distdir)/share/qmckl/doc/html/*.css
-	rm $(distdir)/share/qmckl/doc/text/*.txt
+	rm $(distdir)/share/doc/qmckl/html/*.html
+	rm $(distdir)/share/doc/qmckl/html/*.css
+	rm $(distdir)/share/doc/qmckl/text/*.txt
 	cd $(distdir) && $(MAKE) clean
 	rm -rf $(distdir)
 	@echo "*** Package $(distdir).tar.gz is ready for distribution."
