@@ -36,17 +36,17 @@ $(distdir): $(qmckl_h) $(qmckl_f) $(static_lib) $(shared_lib) src/Makefile.gener
 	mkdir -p $(distdir)/src
 	mkdir -p $(distdir)/include
 	mkdir -p $(distdir)/share/qmckl/fortran
-	mkdir -p $(distdir)/share/qmckl/doc/html/
-	mkdir -p $(distdir)/share/qmckl/doc/text/
+	mkdir -p $(distdir)/share/doc/qmckl/html/
+	mkdir -p $(distdir)/share/doc/qmckl/text/
 	mkdir -p $(distdir)/man
 	cp munit/munit.h munit/munit.c $(distdir)/munit/
 	cp src/*.c src/*.h src/*.f90 $(distdir)/src/
 	cp src/Makefile.generated $(distdir)/src/Makefile
 	cp include/* $(distdir)/include
 	cp Makefile $(distdir)/
-	cp docs/*.html $(distdir)/share/qmckl/doc/html/
-	cp docs/*.css  $(distdir)/share/qmckl/doc/html/
-	cp docs/*.txt  $(distdir)/share/qmckl/doc/text/
+	cp docs/*.html $(distdir)/share/doc/qmckl/html/
+	cp docs/*.css  $(distdir)/share/doc/qmckl/html/
+	cp docs/*.txt  $(distdir)/share/doc/qmckl/text/
 	cp share/qmckl/fortran/*  $(distdir)/share/qmckl/fortran
 	mkdir -p $(distdir)/lib
 
