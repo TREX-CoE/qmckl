@@ -113,9 +113,9 @@ check: $(static_lib)
 
 cppcheck:
 	cppcheck \
-	 --addon=cert \
-	--enable=warning,style,performance,portability,information \
-	 qmckl_*.c
+	  --addon=cert \
+	  --enable=warning,style,performance,portability,information \
+	  qmckl_*.c
 
 doc: $(ORG_SOURCE_FILES)
 	$(QMCKL_ROOT)/tools/build_doc.sh

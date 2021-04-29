@@ -14,14 +14,16 @@ QMCKL_ROOT=$(CURDIR)
 shared_lib=$(QMCKL_ROOT)/lib/libqmckl.so
 static_lib=$(QMCKL_ROOT)/lib/libqmckl.a
 qmckl_h=$(QMCKL_ROOT)/include/qmckl.h
-qmckl_f=$(QMCKL_ROOT)/share/qmckl/fortran/qmckl_f.f90
+qmckl_f=$(QMCKL_ROOT)/share/$(package)/fortran/qmckl_f.f90
 
-docdir=$(prefix)/share/doc/qmckl
+datarootdir=$(prefix)/share
+datadir=$(datarootdir)
+docdir=$(datarootdir)/doc/$(package)
 libdir=$(prefix)/lib
 includedir=$(prefix)/include
-fortrandir=$(prefix)/share/qmckl/fortran
+fortrandir=$(datarootdir)/$(package)/fortran
 
-export prefix shared_lib static_lib qmckl_h qmckl_f
+export prefix shared_lib static_lib qmckl_h qmckl_f datarootdir datadir docdir libdir includedir fortrandir package
 
 
 all clean doc install uninstall check:
@@ -64,8 +66,8 @@ distcheck: $(distdir).tar.gz
 	gzip -cd $(distdir).tar.gz | tar xvf -
 	cd $(distdir) && $(MAKE) all 
 	cd $(distdir) && $(MAKE) check
-	cd $(distdir) && $(MAKE) prefix=$${PWD}/_inst install
-	cd $(distdir) && $(MAKE) prefix=$${PWD}/_inst uninstall
+	cd $(distdir) && $(MAKE) DESTDIR=$${PWD}/_inst install
+	cd $(distdir) && $(MAKE) DESTDIR=$${PWD}/_inst uninstall
 	@remaining="`find $${PWD}/$(distdir)/_inst -type f | wc -l`" ;\
 		if test "$${remaining}" -ne 0; then \
 			echo "*** $${remaining} file(s) remaining in stage directory"; \

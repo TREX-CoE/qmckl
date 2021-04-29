@@ -87,8 +87,20 @@ qmckl_h=\$(QMCKL_ROOT)/include/qmckl.h
 qmckl_f=\$(QMCKL_ROOT)/share/qmckl/fortran/qmckl_f.f90
 munit=\$(QMCKL_ROOT)/munit/munit.c
 
+package=qmckl
+datarootdir=\$(prefix)/share
+datadir=\$(datarootdir)
+docdir=\$(datarootdir)/doc/\$(package)
+htmldir=\$(docdir)/html
+libdir=\$(prefix)/lib
+includedir=\$(prefix)/include
+fortrandir=\$(datarootdir)/\$(package)/fortran
+        
+
 shared: \$(shared_lib)
 static: \$(static_lib)
+
+        
 all: shared static
 
 \$(shared_lib): \$(OBJECT_FILES)
@@ -121,25 +133,25 @@ clean:
 
 
 install:
-	install -d \$(prefix)/lib
-	install -d \$(prefix)/include
-	install -d \$(prefix)/share/qmckl/fortran
-	install -d \$(prefix)/share/doc/qmckl/html/
-	install -d \$(prefix)/share/doc/qmckl/text/
-	install    \$(shared_lib) \$(prefix)/lib
-	install    \$(static_lib) \$(prefix)/lib
-	install    \$(qmckl_h) \$(prefix)/include
-	install    \$(qmckl_f) \$(prefix)/share/qmckl/fortran
-	install    \$(QMCKL_ROOT)/share/doc/qmckl/html/*.html \$(prefix)/share/doc/qmckl/html/
-	install    \$(QMCKL_ROOT)/share/doc/qmckl/html/*.css  \$(prefix)/share/doc/qmckl/html/
-	install    \$(QMCKL_ROOT)/share/doc/qmckl/text/*.txt  \$(prefix)/share/doc/qmckl/text/
+	install -d \$(DESTDIR)\$(prefix)/lib
+	install -d \$(DESTDIR)\$(prefix)/include
+	install -d \$(DESTDIR)\$(prefix)/share/qmckl/fortran
+	install -d \$(DESTDIR)\$(prefix)/share/doc/qmckl/html/
+	install -d \$(DESTDIR)\$(prefix)/share/doc/qmckl/text/
+	install    \$(shared_lib) \$(DESTDIR)\$(libdir)/
+	install    \$(static_lib) \$(DESTDIR)\$(libdir)/
+	install    \$(qmckl_h) \$(DESTDIR)\$(includedir)
+	install    \$(qmckl_f) \$(DESTDIR)\$(fortrandir)
+	install    \$(QMCKL_ROOT)/share/doc/qmckl/html/*.html \$(DESTDIR)\$(docdir)/html/
+	install    \$(QMCKL_ROOT)/share/doc/qmckl/html/*.css  \$(DESTDIR)\$(docdir)/html/
+	install    \$(QMCKL_ROOT)/share/doc/qmckl/text/*.txt  \$(DESTDIR)\$(docdir)/text/
 
 uninstall:
-	rm \$(prefix)/lib/libqmckl.so
-	rm \$(prefix)/lib/libqmckl.a
-	rm \$(prefix)/include/qmckl.h
-	rm -rf \$(prefix)/share/qmckl/
-	rm -rf \$(prefix)/share/doc/qmckl/
+	rm \$(DESTDIR)\$(libdir)/libqmckl.so
+	rm \$(DESTDIR)\$(libdir)/libqmckl.a
+	rm \$(DESTDIR)\$(includedir)/qmckl.h
+	rm -rf \$(DESTDIR)\$(datarootdir)/\$(package)
+	rm -rf \$(DESTDIR)\$(docdir)
 
 .SUFFIXES: .c .f90 .o
 
