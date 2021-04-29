@@ -1,11 +1,22 @@
 ;; Thanks to Tobias's answer on Emacs Stack Exchange:
 ;; https://emacs.stackexchange.com/questions/38437/org-mode-batch-export-missing-syntax-highlighting
 
+
 (package-initialize)
+
 (require 'htmlize)
 (require 'font-lock)
-(require 'subr-x) ;; for `when-let'
+(setq org-confirm-babel-evaluate nil)
+(global-font-lock-mode t)
+(setq org-src-fontify-natively t)
 
+;(require 'ox-latex)
+;(setq org-latex-listings t)
+;(add-to-list 'org-latex-packages-alist '("" "listings"))
+;(add-to-list 'org-latex-packages-alist '("" "color"))
+
+
+(require 'subr-x) ;; for `when-let'
 (unless (boundp 'maximal-integer)
   (defconst maximal-integer (lsh -1 -1)
     "Maximal integer value representable natively in emacs lisp."))
@@ -65,7 +76,10 @@ with class 'color and highest min-color value."
     (when (and inherited-face
            (null (eq inherited-face 'unspecified)))
       (setq val (my-face-attribute inherited-face attribute)))))
-    ;; (message "face: %S attribute: %S display-attr: %S, val: %S" face attribute display-attr val) ;; for debugging
+     ;;(message "face: %S attribute: %S display-attr: %S, val: %S" face attribute display-attr val) ;; for debugging
     (or val 'unspecified)))
 
 (advice-add 'face-attribute :override #'my-face-attribute)
+
+
+

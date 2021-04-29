@@ -1,0 +1,521 @@
+#+TITLE: Tiled arrays
+#+SETUPFILE: ../docs/theme.setup
+
+To increase performance, matrices may be stored as tiled
+arrays. Instead of storing a matrix in a two-dimensional array, it may
+be stored as a two dimensional array of small matrices (a rank 4
+tensor). This improves the locality of the data in matrix
+multiplications, and also enables the possibility to use BLAS3
+while also exploiting part of the sparse structure of the matrices.
+
+   Tile
+    │        ┌──────┬──────┬──────┐
+    │        │1 4 7 │      │      │
+    └───────►│2 5 8 │ T_12 │ T_13 │
+             │3 6 9 │      │      │
+             ├──────┼──────┼──────┤
+             │      │      │      │
+             │ T_21 │ T_22 │ T_23 │
+             │      │      │      │
+             ├──────┼──────┼──────┤
+             │      │      │      │
+             │ T_31 │ T_32 │ T_33 │
+             │      │      │      │
+             └──────┴──────┴──────┘
+           
+  In this file, tiled matrice will be produced for the following
+  types:
+
+  #+NAME: types
+  | float  |
+  | double |
+
+* Headers                                                          :noexport:
+
+  #+NAME: filename
+  #+begin_src elisp :tangle no 
+(file-name-nondirectory (substring buffer-file-name 0 -4))
+  #+end_src
+
+  #+begin_src c :tangle (eval h_private_type)
+#ifndef QMCKL_TILE_HPT
+#define QMCKL_TILE_HPT
+  #+end_src
+
+  #+begin_src c :tangle (eval c_test) :noweb yes
+#include "qmckl.h"
+#include "munit.h"
+MunitResult test_<<filename()>>() {
+  qmckl_context context;
+  context = qmckl_context_create();
+  #+end_src
+
+  #+begin_src c :tangle (eval c)
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <assert.h>
+#include <limits.h>
+
+#include "qmckl_context_type.h"
+#include "qmckl_error_type.h"
+#include "qmckl_memory_private_type.h"
+#include "qmckl_tile_private_type.h"
+
+#include "qmckl_context_func.h"
+#include "qmckl_error_func.h"
+#include "qmckl_memory_private_func.h"
+#include "qmckl_tile_private_func.h"
+  #+end_src
+
+* Data structures
+  
+** Tile
+
+   A tile is a small matrix of fixed size. The dimensions of the
+   tiles is fixed at compile-time to increase performance. It is
+   defined as $2^s$:
+  
+  | s | tile size |
+  |---+-----------|
+  | 2 |         4 |
+  | 3 |         8 |
+  | 4 |        16 |
+  | 5 |        32 |
+  | 6 |        64 |
+  | 7 |       128 |
+
+  
+  #+begin_src c :tangle (eval h_private_type)
+#define TILE_SIZE_SHIFT 3
+#define TILE_SIZE       8
+#define VEC_SIZE        8
+  #+end_src
+
+   
+  #+NAME: tile_hpt
+  #+begin_src c
+typedef struct $T$_tile_struct {
+  $T$ element[TILE_SIZE][TILE_SIZE];
+  int64_t is_null;
+  int64_t padding[VEC_SIZE-1];
+} $T$_tile_struct;
+  #+end_src
+
+** Tiled matrix
+
+   A tiled matrix is a two-dimensional array of tiles.
+
+  #+NAME: matrix_hpt
+  #+begin_src c
+typedef struct $T$_tiled_matrix {
+  $T$_tile_struct** tile;
+  size_t n_row;
+  size_t n_col;
+  size_t n_tile_row;
+  size_t n_tile_col;
+} $T$_tiled_matrix;
+  #+end_src
+   
+  When a tiled matrix is initialized, it is set to zero.
+
+  #+NAME: init_hpf
+  #+begin_src c
+qmckl_exit_code $T$_tiled_matrix_init (qmckl_context context,
+                                       $T$_tiled_matrix* m,
+                                       size_t n_tile_row,
+                                       size_t n_tile_col);
+  #+end_src
+
+  #+NAME: init_c
+  #+begin_src c
+qmckl_exit_code $T$_tiled_matrix_init (qmckl_context context,
+                                       $T$_tiled_matrix* m,
+                                       size_t n_tile_row,
+                                       size_t n_tile_col) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+} $T$_tiled_matrix;
+  #+end_src
+   
+  When a tiled matrix is initialized, it is set to zero.
+
+  #+NAME: init_hpf
+  #+begin_src c
+qmckl_exit_code $T$_tiled_matrix_init (qmckl_context context,
+                                       $T$_tiled_matrix* m,
+                                       size_t n_tile_row,
+                                       size_t n_tile_col);
+  #+end_src
+
+  #+NAME: init_c
+  #+begin_src c
+qmckl_exit_code $T$_tiled_matrix_init (qmckl_context context,
+                                       $T$_tiled_matrix* m,
+                                       size_t n_tile_row,
+                                       size_t n_tile_col) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_INVALID_CONTEXT;
+  }
+
+  if (m == NULL) {
+    return qmckl_failwith(context,
+                          QMCKL_INVALID_ARG_2,
+                          "$T$_tiled_matrix_init",
+                          NULL);
+  }
+
+  if (n_tile_row == (size_t) 0) {
+    return qmckl_failwith(context,
+                          QMCKL_INVALID_ARG_3,
+                          "$T$_tiled_matrix_init",
+                          NULL);
+  }
+
+  if (n_tile_col == (size_t) 0) {
+    return qmckl_failwith(context,
+                          QMCKL_INVALID_ARG_4,
+                          "$T$_tiled_matrix_init",
+                          NULL);
+  }
+
+  qmckl_memory_info_struct info = qmckl_memory_info_struct_zero;
+  size_t n = n_tile_row * n_tile_col;
+
+  /* Check overflow */
+  if (n/n_tile_col != n_tile_row
+      || n > SIZE_MAX / sizeof($T$_tile_struct) ) {
+    return qmckl_failwith(context,
+                          QMCKL_ALLOCATION_FAILED,
+                          "$T$_tiled_matrix_init",
+                          "n_tile_row * n_tile_col overflows" );
+  }
+  
+  /* Allocate array of column pointers */
+  info.size = n_tile_col * sizeof($T$_tile_struct*) ;
+  m->tile = ($T$_tile_struct**) qmckl_malloc(context, info);
+
+  if (m->tile == NULL) {
+    return qmckl_failwith(context,
+                          QMCKL_ALLOCATION_FAILED,
+                          "$T$_tiled_matrix_init",
+                          NULL);
+  }
+  
+
+  /* Allocate array of tiles */
+  info.size = n * sizeof($T$_tile_struct) ;
+  m->tile[0] = ($T$_tile_struct*) qmckl_malloc(context, info);
+
+  if (m->tile[0] == NULL) {
+    return qmckl_failwith(context,
+                          QMCKL_ALLOCATION_FAILED,
+                          "$T$_tiled_matrix_init",
+                          NULL);
+  }
+
+  /* Compute array of pointers to the 1st element of columns */
+  for (size_t i=1 ; i<n_tile_col ; ++i) {
+    m->tile[i] = m->tile[i-1] + n_tile_row;
+  }
+  
+  m->n_tile_row = n_tile_row;
+  m->n_tile_col = n_tile_col;
+  return QMCKL_SUCCESS;
+}
+  
+
+  #+end_src
+
+* Write templates
+
+  #+begin_src python :noweb yes :results drawer :var types=types :exports results
+def generate(f, text):
+    result = [ f"#+begin_src c :tangle (eval {f})" ]
+    for t in types:
+        t=t[0]
+        result += [ text.replace("$T$",t), "" ]
+
+    result += [ "#+end_src" ]
+    return '\n'.join(result)
+
+return '\n'.join( [ ""
+
+, generate("h_private_type", """ 
+<<tile_hpt>>
+
+<<matrix_hpt>>
+""") 
+
+, ""
+
+, generate("h_private_func", """ 
+<<init_hpf>>
+""") 
+
+, ""
+
+, generate("c", """ 
+<<init_c>>
+""")
+
+]  )
+  #+end_src 
+
+  #+RESULTS:
+  :results:
+
+  #+begin_src c :tangle (eval h_private_type)
+
+  typedef struct float_tile_struct {
+    float element[TILE_SIZE][TILE_SIZE];
+    int32_t is_null;
+    int32_t padding;
+  } float_tile_struct;
+
+  typedef struct float_tiled_matrix {
+    float_tile_struct** tile;
+    size_t n_tile_row;
+    size_t n_tile_col;
+  } float_tiled_matrix;
+
+
+
+  typedef struct double_tile_struct {
+    double element[TILE_SIZE][TILE_SIZE];
+    int32_t is_null;
+    int32_t padding;
+  } double_tile_struct;
+
+  typedef struct double_tiled_matrix {
+    double_tile_struct** tile;
+    size_t n_tile_row;
+    size_t n_tile_col;
+  } double_tiled_matrix;
+
+
+  #+end_src
+
+  #+begin_src c :tangle (eval h_private_func)
+
+  qmckl_exit_code float_tiled_matrix_init (qmckl_context context,
+                                         float_tiled_matrix* m,
+                                         size_t n_tile_row,
+                                         size_t n_tile_col);
+
+
+
+  qmckl_exit_code double_tiled_matrix_init (qmckl_context context,
+                                         double_tiled_matrix* m,
+                                         size_t n_tile_row,
+                                         size_t n_tile_col);
+
+
+  #+end_src
+
+  #+begin_src c :tangle (eval c)
+
+  qmckl_exit_code float_tiled_matrix_init (qmckl_context context,
+                                         float_tiled_matrix* m,
+                                         size_t n_tile_row,
+                                         size_t n_tile_col) {
+
+    if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+      return QMCKL_INVALID_CONTEXT;
+    }
+
+    if (m == NULL) {
+      return qmckl_failwith(context,
+                            QMCKL_INVALID_ARG_2,
+                            "float_tiled_matrix_init",
+                            NULL);
+    }
+
+    if (n_tile_row == (size_t) 0) {
+      return qmckl_failwith(context,
+                            QMCKL_INVALID_ARG_3,
+                            "float_tiled_matrix_init",
+                            NULL);
+    }
+
+    if (n_tile_col == (size_t) 0) {
+      return qmckl_failwith(context,
+                            QMCKL_INVALID_ARG_4,
+                            "float_tiled_matrix_init",
+                            NULL);
+    }
+
+    qmckl_memory_info_struct info = qmckl_memory_info_struct_zero;
+    size_t n = n_tile_row * n_tile_col;
+
+    /* Check overflow */
+    if (n/n_tile_col != n_tile_row
+        || n > SIZE_MAX / sizeof(float_tile_struct) ) {
+      return qmckl_failwith(context,
+                            QMCKL_ALLOCATION_FAILED,
+                            "float_tiled_matrix_init",
+                            "n_tile_row * n_tile_col overflows" );
+    }
+
+    /* Allocate array of column pointers */
+    info.size = n_tile_col * sizeof(float_tile_struct*) ;
+    m->tile = (float_tile_struct**) qmckl_malloc(context, info);
+
+    if (m->tile == NULL) {
+      return qmckl_failwith(context,
+                            QMCKL_ALLOCATION_FAILED,
+                            "float_tiled_matrix_init",
+                            NULL);
+    }
+
+
+    /* Allocate array of tiles */
+    info.size = n * sizeof(float_tile_struct) ;
+    m->tile[0] = (float_tile_struct*) qmckl_malloc(context, info);
+
+    if (m->tile[0] == NULL) {
+      return qmckl_failwith(context,
+                            QMCKL_ALLOCATION_FAILED,
+                            "float_tiled_matrix_init",
+                            NULL);
+    }
+
+    /* Compute array of pointers to the 1st element of columns */
+    for (size_t i=1 ; i<n_tile_col ; ++i) {
+      m->tile[i] = m->tile[i-1] + n_tile_row;
+    }
+
+    m->n_tile_row = n_tile_row;
+    m->n_tile_col = n_tile_col;
+    return QMCKL_SUCCESS;
+  }
+
+
+
+
+  qmckl_exit_code double_tiled_matrix_init (qmckl_context context,
+                                         double_tiled_matrix* m,
+                                         size_t n_tile_row,
+                                         size_t n_tile_col) {
+
+    if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+      return QMCKL_INVALID_CONTEXT;
+    }
+
+    if (m == NULL) {
+      return qmckl_failwith(context,
+                            QMCKL_INVALID_ARG_2,
+                            "double_tiled_matrix_init",
+                            NULL);
+    }
+
+    if (n_tile_row == (size_t) 0) {
+      return qmckl_failwith(context,
+                            QMCKL_INVALID_ARG_3,
+                            "double_tiled_matrix_init",
+                            NULL);
+    }
+
+    if (n_tile_col == (size_t) 0) {
+      return qmckl_failwith(context,
+                            QMCKL_INVALID_ARG_4,
+                            "double_tiled_matrix_init",
+                            NULL);
+    }
+
+    qmckl_memory_info_struct info = qmckl_memory_info_struct_zero;
+    size_t n = n_tile_row * n_tile_col;
+
+    /* Check overflow */
+    if (n/n_tile_col != n_tile_row
+        || n > SIZE_MAX / sizeof(double_tile_struct) ) {
+      return qmckl_failwith(context,
+                            QMCKL_ALLOCATION_FAILED,
+                            "double_tiled_matrix_init",
+                            "n_tile_row * n_tile_col overflows" );
+    }
+
+    /* Allocate array of column pointers */
+    info.size = n_tile_col * sizeof(double_tile_struct*) ;
+    m->tile = (double_tile_struct**) qmckl_malloc(context, info);
+
+    if (m->tile == NULL) {
+      return qmckl_failwith(context,
+                            QMCKL_ALLOCATION_FAILED,
+                            "double_tiled_matrix_init",
+                            NULL);
+    }
+
+
+    /* Allocate array of tiles */
+    info.size = n * sizeof(double_tile_struct) ;
+    m->tile[0] = (double_tile_struct*) qmckl_malloc(context, info);
+
+    if (m->tile[0] == NULL) {
+      return qmckl_failwith(context,
+                            QMCKL_ALLOCATION_FAILED,
+                            "double_tiled_matrix_init",
+                            NULL);
+    }
+
+    /* Compute array of pointers to the 1st element of columns */
+    for (size_t i=1 ; i<n_tile_col ; ++i) {
+      m->tile[i] = m->tile[i-1] + n_tile_row;
+    }
+
+    m->n_tile_row = n_tile_row;
+    m->n_tile_col = n_tile_col;
+    return QMCKL_SUCCESS;
+  }
+
+
+
+  #+end_src
+  :end:
+
+* End of files                                                     :noexport:
+  
+  #+begin_src c :tangle (eval h_private_type)
+#endif
+  #+end_src
+
+*** Test
+  #+begin_src c :tangle (eval c_test)
+  if (qmckl_context_destroy(context) != QMCKL_SUCCESS)
+    return QMCKL_FAILURE;
+  return MUNIT_OK;
+}
+  #+end_src
+ 
+**✸ Compute file names                                                                       
+    #+begin_src emacs-lisp                                                                   
+; The following is required to compute the file names                                        
+                                                                                             
+(setq pwd (file-name-directory buffer-file-name))                                            
+(setq name (file-name-nondirectory (substring buffer-file-name 0 -4)))                       
+(setq f  (concat pwd name "_f.f90"))                                                         
+(setq fh (concat pwd name "_fh.f90"))                                                        
+(setq c  (concat pwd name ".c"))                                                             
+(setq h  (concat name ".h"))                                                                 
+(setq h_private  (concat name "_private.h"))                                                 
+(setq c_test  (concat pwd "test_" name ".c"))                                                
+(setq f_test  (concat pwd "test_" name "_f.f90"))                                            
+                                                                                             
+; Minted                                                                                     
+(require 'ox-latex)                                                                          
+(setq org-latex-listings 'minted)                                                            
+(add-to-list 'org-latex-packages-alist '("" "listings"))                                     
+(add-to-list 'org-latex-packages-alist '("" "color"))                                        
+                                                                                             
+    #+end_src                                                                                
+
+    #+RESULTS:
+    |   | color    |
+    |   | listings |
+         
+
+# -*- mode: org -*-
+# vim: syntax=c
+  
+

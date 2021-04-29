@@ -1,0 +1,324 @@
+#+TITLE: Numerical precision
+#+SETUPFILE: ../docs/theme.setup
+#+INCLUDE: ../tools/lib.org                                                                  
+
+* Headers                                                          :noexport:
+
+  #+begin_src c :tangle (eval c_test) :noweb yes
+#include "qmckl.h"
+#include "munit.h"
+MunitResult test_<<filename()>>() {
+  #+end_src
+
+  #+begin_src c :tangle (eval h_private_type)
+#ifndef QMCKL_NUMPREC_HPT
+#define QMCKL_NUMPREC_HPT
+
+#include <stdint.h>
+  #+end_src
+
+  #+begin_src c :tangle (eval c) 
+#include <stdint.h>
+#include <assert.h>
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "qmckl_error_type.h"
+#include "qmckl_context_type.h"
+#include "qmckl_context_private_type.h"
+#include "qmckl_numprec_type.h"
+
+#include "qmckl_numprec_func.h"
+#include "qmckl_error_func.h"
+#include "qmckl_context_func.h"
+
+  #+end_src
+
+* Control of the numerical precision
+
+ Controlling numerical precision enables optimizations. Here, the
+ default parameters determining the target numerical precision and
+ range are defined. Following the IEEE Standard for Floating-Point
+ Arithmetic (IEEE 754),
+ /precision/ refers to the number of significand bits and /range/
+ refers to the number of exponent bits.
+
+ #+NAME: table-precision
+ | ~QMCKL_DEFAULT_PRECISION~ | 53 |
+ | ~QMCKL_DEFAULT_RANGE~     | 11 |
+
+ # We need to force Emacs not to indent the Python code:
+ # -*- org-src-preserve-indentation: t
+
+#+begin_src python :var table=table-precision  :results drawer :exports results
+""" This script generates the C and Fortran constants from the org-mode table.
+"""
+
+result = [ "#+begin_src c :comments org :tangle (eval h_type)" ]
+for (text, code) in table:
+    text=text.replace("~","")
+    result += [ f"#define  {text:30s} {code:d}" ]
+result += [ "#+end_src" ]
+
+result += [ "" ]
+
+result += [ "#+begin_src f90 :comments org :tangle (eval fh_func) :exports none" ]
+for (text, code) in table:
+    text=text.replace("~","")
+    result += [ f"   integer, parameter :: {text:30s} = {code:d}" ]
+result += [ "#+end_src" ]
+
+return '\n'.join(result)
+
+#+end_src
+
+#+RESULTS:
+:results:
+#+begin_src c :comments org :tangle (eval h_type)
+#define  QMCKL_DEFAULT_PRECISION        53
+#define  QMCKL_DEFAULT_RANGE            11
+#+end_src
+
+#+begin_src f90 :comments org :tangle (eval fh_func) :exports none
+   integer, parameter :: QMCKL_DEFAULT_PRECISION        = 53
+   integer, parameter :: QMCKL_DEFAULT_RANGE            = 11
+#+end_src
+:end:
+
+    #+begin_src c :comments org :tangle (eval h_private_type)
+typedef struct qmckl_numprec_struct {
+  uint32_t  precision;
+  uint32_t  range;
+} qmckl_numprec_struct;
+    #+end_src
+  
+  The following functions set and get the required precision and
+  range. ~precision~ is an integer between 2 and 53, and ~range~ is an
+  integer between 2 and 11.
+
+  The setter functions functions return a new context as a 64-bit
+  integer. The getter functions return the value, as a 32-bit
+  integer. The update functions return ~QMCKL_SUCCESS~ or
+  ~QMCKL_FAILURE~.
+
+* Precision
+  ~qmckl_context_set_numprec_precision~ modifies the parameter for the
+  numerical precision in the context.
+
+  # Header
+  #+begin_src c :comments org :tangle (eval h_func) :exports none
+qmckl_exit_code qmckl_set_numprec_precision(const qmckl_context context, const int precision);
+  #+end_src
+
+  # Source
+  #+begin_src c :tangle (eval c)
+qmckl_exit_code qmckl_set_numprec_precision(const qmckl_context context, const int precision) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT)
+    return QMCKL_INVALID_CONTEXT;
+
+  if (precision <  2) {
+    return qmckl_failwith(context,
+                          QMCKL_INVALID_ARG_2,
+                          "qmckl_update_numprec_precision",
+                          "precision < 2");
+  }
+
+  if (precision > 53) {
+    return qmckl_failwith(context,
+                          QMCKL_INVALID_ARG_2,
+                          "qmckl_update_numprec_precision",
+                          "precision > 53");
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+
+  /* This should be always true because the context is valid */
+  assert (ctx != NULL);
+
+  qmckl_lock(context);
+  {
+    ctx->numprec.precision = (uint32_t) precision;
+  }
+  qmckl_unlock(context);
+
+  return QMCKL_SUCCESS;
+}
+  #+end_src
+
+  # Fortran interface
+
+  #+begin_src f90 :tangle (eval fh_func)
+  interface
+     integer (qmckl_exit_code) function qmckl_set_numprec_precision(context, precision) bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       integer (qmckl_context), intent(in), value :: context
+       integer (c_int32_t), intent(in), value :: precision
+     end function qmckl_set_numprec_precision
+  end interface
+  #+end_src
+
+  ~qmckl_get_numprec_precision~ returns the value of the numerical precision in the context.
+
+  #+begin_src c :comments org :tangle (eval h_func) :exports none
+int32_t qmckl_get_numprec_precision(const qmckl_context context);
+  #+end_src
+
+  # Source
+  #+begin_src c :tangle (eval c)
+int qmckl_get_numprec_precision(const qmckl_context context) {
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+      return qmckl_failwith(context,
+                      QMCKL_INVALID_CONTEXT,
+                      "qmckl_get_numprec_precision",
+                      "");
+  }
+
+  const qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  return ctx->numprec.precision;
+}
+  #+end_src
+    
+  # Fortran interface
+  #+begin_src f90 :tangle (eval fh_func)
+  interface
+     integer (qmckl_exit_code) function qmckl_get_numprec_precision(context) bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       integer (qmckl_context), intent(in), value :: context
+     end function qmckl_get_numprec_precision
+  end interface
+  #+end_src
+
+* Range
+   
+   ~qmckl_set_numprec_range~ modifies the parameter for the numerical
+   range in a given context.
+
+   # Header
+   #+begin_src c :comments org :tangle (eval h_func) :exports none
+qmckl_exit_code qmckl_set_numprec_range(const qmckl_context context, const int range);
+   #+end_src
+
+   # Source
+   #+begin_src c :tangle (eval c)
+qmckl_exit_code qmckl_set_numprec_range(const qmckl_context context, const int range) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT)
+    return QMCKL_INVALID_CONTEXT;
+
+  if (range <  2) {
+    return qmckl_failwith(context,
+                    QMCKL_INVALID_ARG_2,
+                    "qmckl_set_numprec_range",
+                    "range < 2");
+  }
+
+  if (range > 11) {
+    return qmckl_failwith(context,
+                    QMCKL_INVALID_ARG_2,
+                    "qmckl_set_numprec_range",
+                    "range > 11");
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+
+  /* This should be always true because the context is valid */
+  assert (ctx != NULL);
+
+  qmckl_lock(context);
+  {
+    ctx->numprec.range = (uint32_t) range;
+  }
+  qmckl_unlock(context);
+
+  return QMCKL_SUCCESS;
+}
+   #+end_src
+
+   # Fortran interface
+   #+begin_src f90 :tangle (eval fh_func)
+  interface
+     integer (qmckl_exit_code) function qmckl_numprec_set_range(context, range) bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       integer (qmckl_context), intent(in), value :: context
+       integer (c_int32_t), intent(in), value :: range
+     end function qmckl_numprec_set_range
+  end interface
+   #+end_src
+
+   ~qmckl_get_numprec_range~ returns the value of the numerical range in the context.
+
+  #+begin_src c :comments org :tangle (eval h_func) :exports none
+int32_t qmckl_context_get_range(const qmckl_context context);
+  #+end_src
+
+  # Source
+  #+begin_src c :tangle (eval c)
+int qmckl_get_numprec_range(const qmckl_context context) {
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+      return qmckl_failwith(context,
+                      QMCKL_INVALID_CONTEXT,
+                      "qmckl_get_numprec_range",
+                      "");
+  }
+
+  const qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  return ctx->numprec.range;
+}
+  #+end_src
+
+  # Fortran interface
+  #+begin_src f90 :tangle (eval fh_func) :exports none
+  interface
+     integer (qmckl_exit_code) function qmckl_get_numprec_range(context) bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       integer (qmckl_context), intent(in), value :: context
+     end function qmckl_get_numprec_range
+  end interface
+  #+end_src
+
+* Helper functions
+
+  ~qmckl_get_numprec_epsilon~ returns $\epsilon = 2^{1-n}$ where ~n~ is the precision.
+  We need to remove the sign bit from the precision.
+
+  #+begin_src c :comments org :tangle (eval h_func) :exports none
+double qmckl_get_numprec_epsilon(const qmckl_context context);
+  #+end_src
+
+  # Source
+  #+begin_src c :tangle (eval c)
+double qmckl_get_numprec_epsilon(const qmckl_context context) {
+  const int precision = qmckl_get_numprec_precision(context);
+  return 1. /  (double) (1L << (precision-2));
+}
+  #+end_src
+
+  # Fortran interface
+  #+begin_src f90 :tangle (eval fh_func) :exports none
+  interface
+     real (c_double) function qmckl_get_numprec_epsilon(context) bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       integer (qmckl_context), intent(in), value :: context
+     end function qmckl_get_numprec_epsilon
+  end interface
+  #+end_src
+
+* End of files                                                     :noexport:
+
+  #+begin_src c :comments link :tangle (eval h_private_type)
+#endif
+  #+end_src
+
+*** Test
+     #+begin_src c :comments link :tangle (eval c_test)
+return MUNIT_OK;
+}
+     #+end_src
+
