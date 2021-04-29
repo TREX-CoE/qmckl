@@ -167,7 +167,10 @@ endif
 .PHONY: clean shared static doc all check install uninstall
 .SECONDARY: # Needed to keep the produced C and Fortran files
 
-$(shared_lib) $(static_lib) install uninstall: $(qmckl_h) $(qmckl_f) Makefile.generated
+$(shared_lib) $(static_lib): $(qmckl_h) $(qmckl_f) Makefile.generated
+	$(MAKE) -f Makefile.generated $@
+
+install uninstall: Makefile.generated
 	$(MAKE) -f Makefile.generated $@
 
 $(qmckl_f) $(qmckl_h): Makefile.generated
@@ -180,6 +183,12 @@ all: shared static doc check
 check: $(static_lib)
 	$(MAKE) -f Makefile.generated check
 
+cppcheck:
+	cppcheck \
+	  --addon=cert \
+	  --enable=warning,style,performance,portability,information \
+	  qmckl_*.c
+
 doc: $(ORG_SOURCE_FILES)
 	$(QMCKL_ROOT)/tools/build_doc.sh
 
@@ -191,10 +200,10 @@ clean:
 		Makefile.generated *.html *.txt
 
 veryclean: clean FORCE
-	- $(RM)	$(QMCKL_ROOT)/docs/*.html \
-		$(QMCKL_ROOT)/docs/*.txt
+	- $(RM)	$(QMCKL_ROOT)/share/doc/qmckl/html/*.html \
+		$(QMCKL_ROOT)/share/doc/qmckl/text/*.txt
 
-Makefile.generated: Makefile $(QMCKL_ROOT)/tools/create_makefile.sh  $(ORG_SOURCE_FILES)
+Makefile.generated: Makefile $(QMCKL_ROOT)/tools/create_makefile.sh  $(ORG_SOURCE_FILES) ../tools/Building.org
 	$(QMCKL_ROOT)/tools/create_makefile.sh
 
 
@@ -361,15 +370,29 @@ check: test_qmckl test_qmckl_shared
 clean:
 	\$(RM) -- *.o *.mod \$(shared_lib) \$(static_lib) test_qmckl
 
+
+
+
 install:
 	install -d \$(prefix)/lib
 	install -d \$(prefix)/include
 	install -d \$(prefix)/share/qmckl/fortran
-	install -d \$(prefix)/man
-	install \$(shared_lib) \$(prefix)/lib
-	install \$(static_lib) \$(prefix)/lib
-	install \$(qmckl_h) \$(prefix)/include
-	install \$(qmckl_f) \$(prefix)/share/qmckl/fortran
+	install -d \$(prefix)/share/doc/qmckl/html/
+	install -d \$(prefix)/share/doc/qmckl/text/
+	install    \$(shared_lib) \$(prefix)/lib
+	install    \$(static_lib) \$(prefix)/lib
+	install    \$(qmckl_h) \$(prefix)/include
+	install    \$(qmckl_f) \$(prefix)/share/qmckl/fortran
+	install    \$(QMCKL_ROOT)/share/doc/qmckl/html/*.html \$(prefix)/share/doc/qmckl/html/
+	install    \$(QMCKL_ROOT)/share/doc/qmckl/html/*.css  \$(prefix)/share/doc/qmckl/html/
+	install    \$(QMCKL_ROOT)/share/doc/qmckl/text/*.txt  \$(prefix)/share/doc/qmckl/text/
+
+uninstall:
+	rm \$(prefix)/lib/libqmckl.so
+	rm \$(prefix)/lib/libqmckl.a
+	rm \$(prefix)/include/qmckl.h
+	rm -rf \$(prefix)/share/qmckl/
+	rm -rf \$(prefix)/share/doc/qmckl/
 
 .SUFFIXES: .c .f90 .o
 
@@ -379,7 +402,7 @@ install:
 .f90.o: qmckl_f.o
 	\$(FC) \$(FFLAGS) -c \$*.f90 -o \$*.o
 
-.PHONY: check clean all
+.PHONY: check cppcheck clean all
 EOF
 
   #+end_src
@@ -495,9 +518,9 @@ EOF
   First define readonly global variables.
 
   #+begin_src bash :noweb yes
-readonly DOCS=${QMCKL_ROOT}/docs/
+readonly DOCS=${QMCKL_ROOT}/share/doc/qmckl/
 readonly SRC=${QMCKL_ROOT}/src/
-readonly HTMLIZE=${DOCS}/htmlize.el
+readonly HTMLIZE=${DOCS}/html/htmlize.el
 readonly CONFIG_DOC=${QMCKL_ROOT}/tools/config_doc.el
 readonly CONFIG_TANGLE=${QMCKL_ROOT}/tools/config_tangle.el
   #+end_src
@@ -513,7 +536,7 @@ function check_preconditions()
         exit 1
     fi
 
-    for dir in ${DOCS} ${SRC}
+    for dir in ${DOCS}/html ${DOCS}/text ${SRC}
     do
         if [[ ! -d ${dir} ]]
         then
@@ -543,7 +566,7 @@ function install_htmlize()
     local repo="emacs-htmlize"
 
     [[ -f ${HTMLIZE} ]] || (
-        cd ${DOCS}
+        cd ${DOCS}/html
         git clone ${url} \
             && cp ${repo}/htmlize.el ${HTMLIZE} \
             && rm -rf ${repo}
@@ -564,7 +587,8 @@ function extract_doc()
     local org=$1
     local local_html=${SRC}/${org%.org}.html
     local local_text=${SRC}/${org%.org}.txt
-    local html=${DOCS}/${org%.org}.html
+    local html=${DOCS}/html/${org%.org}.html
+    local text=${DOCS}/text/${org%.org}.txt
 
     if [[ -f ${html} && ${org} -ot ${html} ]]
     then
@@ -577,7 +601,8 @@ function extract_doc()
           --load ${CONFIG_TANGLE}    \
           -f org-html-export-to-html \
           -f org-ascii-export-to-ascii
-    mv ${local_html} ${local_text} ${DOCS}
+    mv ${local_html} ${DOCS}/html
+    mv ${local_text} ${DOCS}/text
 
 }
   #+end_src
@@ -605,7 +630,7 @@ function main() {
 
     if [[ $? -eq 0 ]]
     then
-        cd ${DOCS}
+        cd ${DOCS}/html
         rm -f index.html
         ln README.html index.html
         exit 0

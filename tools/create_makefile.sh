@@ -117,15 +117,29 @@ check: test_qmckl test_qmckl_shared
 clean:
 	\$(RM) -- *.o *.mod \$(shared_lib) \$(static_lib) test_qmckl
 
+
+
+
 install:
 	install -d \$(prefix)/lib
 	install -d \$(prefix)/include
 	install -d \$(prefix)/share/qmckl/fortran
-	install -d \$(prefix)/man
-	install \$(shared_lib) \$(prefix)/lib
-	install \$(static_lib) \$(prefix)/lib
-	install \$(qmckl_h) \$(prefix)/include
-	install \$(qmckl_f) \$(prefix)/share/qmckl/fortran
+	install -d \$(prefix)/share/doc/qmckl/html/
+	install -d \$(prefix)/share/doc/qmckl/text/
+	install    \$(shared_lib) \$(prefix)/lib
+	install    \$(static_lib) \$(prefix)/lib
+	install    \$(qmckl_h) \$(prefix)/include
+	install    \$(qmckl_f) \$(prefix)/share/qmckl/fortran
+	install    \$(QMCKL_ROOT)/share/doc/qmckl/html/*.html \$(prefix)/share/doc/qmckl/html/
+	install    \$(QMCKL_ROOT)/share/doc/qmckl/html/*.css  \$(prefix)/share/doc/qmckl/html/
+	install    \$(QMCKL_ROOT)/share/doc/qmckl/text/*.txt  \$(prefix)/share/doc/qmckl/text/
+
+uninstall:
+	rm \$(prefix)/lib/libqmckl.so
+	rm \$(prefix)/lib/libqmckl.a
+	rm \$(prefix)/include/qmckl.h
+	rm -rf \$(prefix)/share/qmckl/
+	rm -rf \$(prefix)/share/doc/qmckl/
 
 .SUFFIXES: .c .f90 .o
 
@@ -135,5 +149,5 @@ install:
 .f90.o: qmckl_f.o
 	\$(FC) \$(FFLAGS) -c \$*.f90 -o \$*.o
 
-.PHONY: check clean all
+.PHONY: check cppcheck clean all
 EOF

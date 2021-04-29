@@ -92,10 +92,13 @@ endif
 #    The Makefile.generated is the one that will be distributed with the library.
 
 
-.PHONY: clean shared static doc all check install uninstall syntax
+.PHONY: clean shared static doc all check install uninstall
 .SECONDARY: # Needed to keep the produced C and Fortran files
 
-$(shared_lib) $(static_lib) install uninstall: $(qmckl_h) $(qmckl_f) Makefile.generated
+$(shared_lib) $(static_lib): $(qmckl_h) $(qmckl_f) Makefile.generated
+	$(MAKE) -f Makefile.generated $@
+
+install uninstall: Makefile.generated
 	$(MAKE) -f Makefile.generated $@
 
 $(qmckl_f) $(qmckl_h): Makefile.generated
@@ -108,8 +111,11 @@ all: shared static doc check
 check: $(static_lib)
 	$(MAKE) -f Makefile.generated check
 
-syntax:
-	cppcheck --addon=cert qmckl_*.c
+cppcheck:
+	cppcheck \
+	 --addon=cert \
+	--enable=warning,style,performance,portability,information \
+	 qmckl_*.c
 
 doc: $(ORG_SOURCE_FILES)
 	$(QMCKL_ROOT)/tools/build_doc.sh
@@ -122,10 +128,10 @@ clean:
 		Makefile.generated *.html *.txt
 
 veryclean: clean FORCE
-	- $(RM)	$(QMCKL_ROOT)/docs/*.html \
-		$(QMCKL_ROOT)/docs/*.txt
+	- $(RM)	$(QMCKL_ROOT)/share/doc/qmckl/html/*.html \
+		$(QMCKL_ROOT)/share/doc/qmckl/text/*.txt
 
-Makefile.generated: Makefile $(QMCKL_ROOT)/tools/create_makefile.sh  $(ORG_SOURCE_FILES)
+Makefile.generated: Makefile $(QMCKL_ROOT)/tools/create_makefile.sh  $(ORG_SOURCE_FILES) ../tools/Building.org
 	$(QMCKL_ROOT)/tools/create_makefile.sh
 
 

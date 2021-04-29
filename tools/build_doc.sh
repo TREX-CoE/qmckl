@@ -7,9 +7,9 @@
 #   First define readonly global variables.
 
 
-readonly DOCS=${QMCKL_ROOT}/docs/
+readonly DOCS=${QMCKL_ROOT}/share/doc/qmckl/
 readonly SRC=${QMCKL_ROOT}/src/
-readonly HTMLIZE=${DOCS}/htmlize.el
+readonly HTMLIZE=${DOCS}/html/htmlize.el
 readonly CONFIG_DOC=${QMCKL_ROOT}/tools/config_doc.el
 readonly CONFIG_TANGLE=${QMCKL_ROOT}/tools/config_tangle.el
 
@@ -26,7 +26,7 @@ function check_preconditions()
         exit 1
     fi
 
-    for dir in ${DOCS} ${SRC}
+    for dir in ${DOCS}/html ${DOCS}/text ${SRC}
     do
         if [[ ! -d ${dir} ]]
         then
@@ -57,7 +57,7 @@ function install_htmlize()
     local repo="emacs-htmlize"
 
     [[ -f ${HTMLIZE} ]] || (
-        cd ${DOCS}
+        cd ${DOCS}/html
         git clone ${url} \
             && cp ${repo}/htmlize.el ${HTMLIZE} \
             && rm -rf ${repo}
@@ -79,7 +79,8 @@ function extract_doc()
     local org=$1
     local local_html=${SRC}/${org%.org}.html
     local local_text=${SRC}/${org%.org}.txt
-    local html=${DOCS}/${org%.org}.html
+    local html=${DOCS}/html/${org%.org}.html
+    local text=${DOCS}/text/${org%.org}.txt
 
     if [[ -f ${html} && ${org} -ot ${html} ]]
     then
@@ -92,7 +93,8 @@ function extract_doc()
           --load ${CONFIG_TANGLE}    \
           -f org-html-export-to-html \
           -f org-ascii-export-to-ascii
-    mv ${local_html} ${local_text} ${DOCS}
+    mv ${local_html} ${DOCS}/html
+    mv ${local_text} ${DOCS}/text
 
 }
 
@@ -121,7 +123,7 @@ function main() {
 
     if [[ $? -eq 0 ]]
     then
-        cd ${DOCS}
+        cd ${DOCS}/html
         rm -f index.html
         ln README.html index.html
         exit 0
