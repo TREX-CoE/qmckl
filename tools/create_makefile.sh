@@ -59,7 +59,7 @@ done >> $OUTPUT
 
 
 
-# Finally, we append the rules to the Makefile
+# Finally, we append the variables to the Makefile
 
 
 cat << EOF > ${OUTPUT}
@@ -79,87 +79,88 @@ TESTS=$TESTS
 TESTS_F=$TESTS_F
 
 LIBS=$LIBS
+EOF
 
-QMCKL_ROOT=\$(shell dirname \$(CURDIR))
-shared_lib=\$(QMCKL_ROOT)/lib/libqmckl.so
-static_lib=\$(QMCKL_ROOT)/lib/libqmckl.a
-qmckl_h=\$(QMCKL_ROOT)/include/qmckl.h
-qmckl_f=\$(QMCKL_ROOT)/share/qmckl/fortran/qmckl_f.f90
-munit=\$(QMCKL_ROOT)/munit/munit.c
+echo '
+QMCKL_ROOT=$(shell dirname $(CURDIR))
+shared_lib=$(QMCKL_ROOT)/lib/libqmckl.so
+static_lib=$(QMCKL_ROOT)/lib/libqmckl.a
+qmckl_h=$(QMCKL_ROOT)/include/qmckl.h
+qmckl_f=$(QMCKL_ROOT)/share/qmckl/fortran/qmckl_f.f90
+munit=$(QMCKL_ROOT)/munit/munit.c
 
 package=qmckl
-datarootdir=\$(prefix)/share
-datadir=\$(datarootdir)
-docdir=\$(datarootdir)/doc/\$(package)
-htmldir=\$(docdir)/html
-libdir=\$(prefix)/lib
-includedir=\$(prefix)/include
-fortrandir=\$(datarootdir)/\$(package)/fortran
-        
+datarootdir=$(prefix)/share
+datadir=$(datarootdir)
+docdir=$(datarootdir)/doc/$(package)
+htmldir=$(docdir)/html
+libdir=$(prefix)/lib
+includedir=$(prefix)/include
+fortrandir=$(datarootdir)/$(package)/fortran
 
-shared: \$(shared_lib)
-static: \$(static_lib)
 
-        
+shared: $(shared_lib)
+static: $(static_lib)
+
+
 all: shared static
 
-\$(shared_lib): \$(OBJECT_FILES)
-	\$(CC) -shared \$(OBJECT_FILES) -o \$(shared_lib)
+$(shared_lib): $(OBJECT_FILES)
+	$(CC) -shared $(OBJECT_FILES) -o $(shared_lib)
 
-\$(static_lib): \$(OBJECT_FILES)
-	\$(AR) rcs \$(static_lib) \$(OBJECT_FILES)
+$(static_lib): $(OBJECT_FILES)
+	$(AR) rcs $(static_lib) $(OBJECT_FILES)
 
 
 # Test
 
-qmckl_f.o: \$(qmckl_f)
-	\$(FC) \$(FFLAGS) -c \$(qmckl_f) -o \$@
+qmckl_f.o: $(qmckl_f)
+	$(FC) $(FFLAGS) -c $(qmckl_f) -o $@
 
-test_qmckl: test_qmckl.c \$(qmckl_h) \$(static_lib) \$(TESTS) \$(TESTS_F)
-	\$(CC) \$(CFLAGS) \
-	\$(munit) \$(TESTS) \$(TESTS_F) \$(static_lib) \$(LIBS) test_qmckl.c -o \$@
+test_qmckl: test_qmckl.c $(qmckl_h) $(static_lib) $(TESTS) $(TESTS_F)
+	$(CC) $(CFLAGS) $(munit) $(TESTS) $(TESTS_F) $(static_lib) $(LIBS) test_qmckl.c -o $@
 
-test_qmckl_shared: test_qmckl.c \$(qmckl_h) \$(shared_lib) \$(TESTS) \$(TESTS_F)
-	\$(CC) \$(CFLAGS) -Wl,-rpath,\$(QMCKL_ROOT)/lib -L\$(QMCKL_ROOT)/lib \
-	\$(munit) \$(TESTS) \$(TESTS_F) -lqmckl \$(LIBS) test_qmckl.c -o \$@
+test_qmckl_shared: test_qmckl.c $(qmckl_h) $(shared_lib) $(TESTS) $(TESTS_F)
+	$(CC) $(CFLAGS) -Wl,-rpath,$(QMCKL_ROOT)/lib -L$(QMCKL_ROOT)/lib  \
+		$(munit) $(TESTS) $(TESTS_F) -lqmckl $(LIBS) test_qmckl.c -o $@
 
 check: test_qmckl test_qmckl_shared
 	./test_qmckl
 
 clean:
-	\$(RM) -- *.o *.mod \$(shared_lib) \$(static_lib) test_qmckl
+	$(RM) -- *.o *.mod $(shared_lib) $(static_lib) test_qmckl
 
 
 
 
 install:
-	install -d \$(DESTDIR)\$(prefix)/lib
-	install -d \$(DESTDIR)\$(prefix)/include
-	install -d \$(DESTDIR)\$(prefix)/share/qmckl/fortran
-	install -d \$(DESTDIR)\$(prefix)/share/doc/qmckl/html/
-	install -d \$(DESTDIR)\$(prefix)/share/doc/qmckl/text/
-	install    \$(shared_lib) \$(DESTDIR)\$(libdir)/
-	install    \$(static_lib) \$(DESTDIR)\$(libdir)/
-	install    \$(qmckl_h) \$(DESTDIR)\$(includedir)
-	install    \$(qmckl_f) \$(DESTDIR)\$(fortrandir)
-	install    \$(QMCKL_ROOT)/share/doc/qmckl/html/*.html \$(DESTDIR)\$(docdir)/html/
-	install    \$(QMCKL_ROOT)/share/doc/qmckl/html/*.css  \$(DESTDIR)\$(docdir)/html/
-	install    \$(QMCKL_ROOT)/share/doc/qmckl/text/*.txt  \$(DESTDIR)\$(docdir)/text/
+	install -d $(DESTDIR)$(prefix)/lib
+	install -d $(DESTDIR)$(prefix)/include
+	install -d $(DESTDIR)$(prefix)/share/qmckl/fortran
+	install -d $(DESTDIR)$(prefix)/share/doc/qmckl/html/
+	install -d $(DESTDIR)$(prefix)/share/doc/qmckl/text/
+	install    $(shared_lib) $(DESTDIR)$(libdir)/
+	install    $(static_lib) $(DESTDIR)$(libdir)/
+	install    $(qmckl_h) $(DESTDIR)$(includedir)
+	install    $(qmckl_f) $(DESTDIR)$(fortrandir)
+	install    $(QMCKL_ROOT)/share/doc/qmckl/html/*.html $(DESTDIR)$(docdir)/html/
+	install    $(QMCKL_ROOT)/share/doc/qmckl/html/*.css  $(DESTDIR)$(docdir)/html/
+	install    $(QMCKL_ROOT)/share/doc/qmckl/text/*.txt  $(DESTDIR)$(docdir)/text/
 
 uninstall:
-	rm \$(DESTDIR)\$(libdir)/libqmckl.so
-	rm \$(DESTDIR)\$(libdir)/libqmckl.a
-	rm \$(DESTDIR)\$(includedir)/qmckl.h
-	rm -rf \$(DESTDIR)\$(datarootdir)/\$(package)
-	rm -rf \$(DESTDIR)\$(docdir)
+	rm $(DESTDIR)$(libdir)/libqmckl.so
+	rm $(DESTDIR)$(libdir)/libqmckl.a
+	rm $(DESTDIR)$(includedir)/qmckl.h
+	rm -rf $(DESTDIR)$(datarootdir)/$(package)
+	rm -rf $(DESTDIR)$(docdir)
 
 .SUFFIXES: .c .f90 .o
 
 .c.o:
-	\$(CC) \$(CFLAGS) -c \$*.c -o \$*.o
+	$(CC) $(CFLAGS) -c $*.c -o $*.o
 
 .f90.o: qmckl_f.o
-	\$(FC) \$(FFLAGS) -c \$*.f90 -o \$*.o
+	$(FC) $(FFLAGS) -c $*.f90 -o $*.o
 
-.PHONY: check cppcheck clean all
-EOF
+.PHONY: check cppcheck clean all        
+' >> ${OUTPUT}
