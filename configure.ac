@@ -99,49 +99,6 @@ fi
 ## LAPACK
 #AX_LAPACK([], [AC_MSG_ERROR([LAPACK was not found.])])
 
-# Checks for header files.
-
-## qmckl
-AC_CHECK_HEADERS([inttypes.h malloc.h stdint.h stdlib.h string.h strings.h unistd.h])
-
-## munit
-AC_CHECK_FILE([munit/munit.h], [],
-  AC_MSG_ERROR([
-  -------------------------------------------------
-  Error: Git submodule for munit is not downloaded.
-  $ git submodule update --init
-  -------------------------------------------------
-]) )
-
-AC_CHECK_HEADERS([fcntl.h langinfo.h limits.h locale.h mach/mach.h sys/time.h])
-
-# Checks for typedefs, structures, and compiler characteristics.
-
-## qmckl
-AC_CHECK_HEADER_STDBOOL
-AC_TYPE_INT32_T
-AC_TYPE_INT64_T
-AC_TYPE_SIZE_T
-AC_TYPE_UINT32_T
-AC_TYPE_UINT64_T
-
-## munit
-AC_TYPE_PID_T
-AC_C_INLINE
-AC_TYPE_SSIZE_T
-
-# Checks for library functions.
-
-## qmckl
-AC_FUNC_MALLOC
-AC_CHECK_FUNCS([memset strerror])
-
-## munit
-AC_FUNC_REALLOC
-AC_FUNC_STRERROR_R
-AC_FUNC_FORK
-AC_CHECK_FUNCS([clock_gettime dup2 gettimeofday nl_langinfo setlocale strcasecmp strtoul])
-
 # Options.
 
 AC_ARG_ENABLE(debug, [AC_HELP_STRING([--enable-debug],[compile for debugging])], ok=$enableval, ok=no)
@@ -180,6 +137,57 @@ AC_ARG_WITH(efence, [AC_HELP_STRING([--with-efence],[use ElectricFence library])
 if test "$ok" = "yes"; then
 	AC_CHECK_LIB(efence, malloc)
 fi
+
+AC_ARG_WITH(munit, [AC_HELP_STRING([--without-munit],[use munit for testing])], ok=yes, ok=no)
+if test "$ok" = "no"; then
+AC_CHECK_FILE([munit/munit.h], [],
+  AC_MSG_ERROR([
+  -------------------------------------------------
+  Error: Git submodule for munit is not downloaded.
+  $ git submodule update --init
+  -------------------------------------------------
+]) )
+
+  AC_DEFINE(ENABLE_MUNIT,1,[Define when using munit])
+  HAVE_MUNIT=1
+fi
+
+
+# Checks for header files.
+
+## qmckl
+AC_CHECK_HEADERS([inttypes.h malloc.h stdint.h stdlib.h string.h strings.h unistd.h])
+
+## munit
+AC_CHECK_HEADERS([fcntl.h langinfo.h limits.h locale.h mach/mach.h sys/time.h])
+
+# Checks for typedefs, structures, and compiler characteristics.
+
+## qmckl
+AC_CHECK_HEADER_STDBOOL
+AC_TYPE_INT32_T
+AC_TYPE_INT64_T
+AC_TYPE_SIZE_T
+AC_TYPE_UINT32_T
+AC_TYPE_UINT64_T
+
+## munit
+AC_TYPE_PID_T
+AC_C_INLINE
+AC_TYPE_SSIZE_T
+
+# Checks for library functions.
+
+## qmckl
+AC_FUNC_MALLOC
+AC_CHECK_FUNCS([memset strerror])
+
+## munit
+AC_FUNC_REALLOC
+AC_FUNC_STRERROR_R
+AC_FUNC_FORK
+AC_CHECK_FUNCS([clock_gettime dup2 gettimeofday nl_langinfo setlocale strcasecmp strtoul])
+
 
 
 #PKG-CONFIG
