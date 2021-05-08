@@ -63,8 +63,8 @@ AC_COMPILE_IFELSE([AC_LANG_PROGRAM([], [return 0;])],
      CFLAGS="${SAVED_CFLAGS}"])
 
 AC_MSG_CHECKING(whether fPIC compiler option is accepted in Fortran)
-FCFLAGS="${FCFLAGS} -fPIC -Werror"
 SAVED_FCFLAGS="${FCFLAGS}"
+FCFLAGS="${FCFLAGS} -fPIC -Werror"
 AC_LANG_PUSH(Fortran)
 AC_COMPILE_IFELSE([AC_LANG_PROGRAM([], [])],
     [AC_MSG_RESULT(yes)
@@ -84,13 +84,13 @@ AC_CHECK_HEADERS([assert.h errno.h malloc.h math.h pthread.h stdbool.h stdint.h 
 AC_CHECK_LIB([pthread], [pthread_create])
 
 # OpenMP
-AC_ARG_WITH(openmp, [AC_HELP_STRING([--with-openmp],[enable OpenMP])], with_omp=$withval, with_omp=no)
-if test "x$with_omp" = xyes; then
-   AC_DEFINE([USE_OPENMP], [1], [Define to use OpenMP threading.])
-   AX_OPENMP([],
-    [AC_MSG_ERROR([Could not find OpenMP flags; configure with --without-openmp])])
-   CFLAGS="${CFLAGS} ${OPENMP_CFLAGS}"
-fi
+#AC_ARG_WITH(openmp, [AC_HELP_STRING([--with-openmp],[enable OpenMP])], with_omp=$withval, with_omp=no)
+#if test "x$with_omp" = xyes; then
+#   AC_DEFINE([USE_OPENMP], [1], [Define to use OpenMP threading.])
+#   AX_OPENMP([],
+#    [AC_MSG_ERROR([Could not find OpenMP flags; configure with --without-openmp])])
+#   CFLAGS="${CFLAGS} ${OPENMP_CFLAGS}"
+#fi
 
 
 ## BLAS
@@ -206,3 +206,29 @@ AC_CONFIG_FILES([Makefile
 
 
 AC_OUTPUT
+
+echo \
+"-------------------------------------------------
+
+${PACKAGE_NAME} Version ${PACKAGE_VERSION}
+
+Prefix: '${prefix}'.
+
+CC:           ${CC}
+CPPFLAGS:     ${CPPFLAGS}
+CFLAGS:       ${CFLAGS}
+FC:           ${FC}
+FCLAGS:       ${FCFLAGS}
+LDFLAGS:      ${LDFLAGS}
+LIBS:         ${LIBS}
+
+Package features:
+  Compilation with HDF5: ${hdf5}
+
+Now type 'make @<:@<target>@:>@'
+where the optional <target> is:
+  all           - build the library
+  check         - run tests
+  install       - install ${PACKAGE_NAME}
+--------------------------------------------------"
+
