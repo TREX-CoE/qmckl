@@ -10,7 +10,7 @@ AC_INIT([QMCkl],[0.1.1],
         [https://trex-coe.github.io/qmckl/index.html])
 
 AC_CONFIG_SRCDIR([src/README.org])
-AC_CONFIG_HEADERS([config.h])
+AC_CONFIG_HEADERS([include/config.h])
 AC_CONFIG_MACRO_DIR([m4])
 #AM_MAINTAINER_MODE
 
@@ -40,6 +40,7 @@ AC_PROG_INSTALL
 AC_PROG_LN_S
 AC_PROG_CC_C99
 AC_CHECK_PROGS([EMACS],[emacs26 emacs],[no])
+AC_CHECK_PROGS([HAS_CPPCHECK],[cppcheck],[no])
 PKG_PROG_PKG_CONFIG()
 PKG_LIBS=""
 PKG_CFLAGS=""
@@ -51,6 +52,13 @@ if test x${EMACS} == xno ; then
   --------------------------------------
   ])
 fi
+
+if test x${HAS_CPPCHECK} == xno ; then
+        HAS_CPPCHECK=0
+else
+        HAS_CPPCHECK=1
+fi
+AC_SUBST([HAS_CPPCHECK])
 
 # fPIC option
 AC_MSG_CHECKING(whether fPIC compiler option is accepted in C)
@@ -120,22 +128,26 @@ if test "$ok" = "yes"; then
 -traceback -check all -debug all -fpe-all=0  -implicitnone"
         fi
 	AC_DEFINE(DEBUG,1,[Define to turn on debugging checks])
+        ARGS="${ARGS} debug"
 fi
 
-AC_ARG_ENABLE(debug-malloc, [AC_HELP_STRING([--enable-debug-malloc],[use debug malloc/free])], ok=$enableval, ok=no)
+AC_ARG_ENABLE(malloc-trace, [AC_HELP_STRING([--enable-malloc-trace],[use debug malloc/free])], ok=$enableval, ok=no)
 if test "$ok" = "yes"; then
-	AC_DEFINE(DEBUG_MALLOC,1,[Define to use debugging malloc/free])
+	AC_DEFINE(MALLOC_TRACE,"malloc_trace.dat",[Define to use debugging malloc/free])
+        ARGS="${ARGS} malloc-trace"
 fi
 
 AC_ARG_ENABLE(prof, [AC_HELP_STRING([--enable-prof],[compile for profiling])], ok=$enableval, ok=no)
 if test "$ok" = "yes"; then
 	CFLAGS="${CFLAGS} -pg"
 	AC_DEFINE(ENABLE_PROF,1,[Define when using the profiler tool])
+        ARGS="${ARGS} prof"
 fi
 
 AC_ARG_WITH(efence, [AC_HELP_STRING([--with-efence],[use ElectricFence library])], ok=$withval, ok=no)
 if test "$ok" = "yes"; then
 	AC_CHECK_LIB(efence, malloc)
+        ARGS="${ARGS} efence"
 fi
 
 AC_ARG_WITH(munit, [AC_HELP_STRING([--without-munit],[use munit for testing])], ok=yes, ok=no)
@@ -147,9 +159,9 @@ AC_CHECK_FILE([munit/munit.h], [],
   $ git submodule update --init
   -------------------------------------------------
 ]) )
-
-  AC_DEFINE(ENABLE_MUNIT,1,[Define when using munit])
-  HAVE_MUNIT=1
+else
+  ARGS="${ARGS} munit"
+  AC_DEFINE(HAVE_MUNIT,1,[Define when using munit])
 fi
 
 
@@ -223,7 +235,7 @@ LDFLAGS:      ${LDFLAGS}
 LIBS:         ${LIBS}
 
 Package features:
-  Compilation with HDF5: ${hdf5}
+  ${ARGS}
 
 Now type 'make @<:@<target>@:>@'
 where the optional <target> is:

@@ -71,8 +71,11 @@ version = @PACKAGE_VERSION@
 
 prefix   = @prefix@
 
-CC    = @CC@
-CFLAGS= @CFLAGS@ -I../munit/ -I../include
+CC       = @CC@
+DEFS     = @DEFS@
+CFLAGS   = @CFLAGS@ -I../munit/ -I../include -I. -I\$(srcdir)
+CPPFLAGS = @CPPFLAGS@
+LIBS     = @LIBS@
 
 FC     = @FC@
 FCFLAGS= @FCFLAGS@ 
@@ -87,7 +90,7 @@ FCLIBS = @FCLIBS@
 EOF
 
 echo '
-QMCKL_ROOT=$(shell dirname $(CURDIR))
+QMCKL_ROOT=..
 shared_lib=$(QMCKL_ROOT)/lib/libqmckl.so
 static_lib=$(QMCKL_ROOT)/lib/libqmckl.a
 qmckl_h=$(QMCKL_ROOT)/include/qmckl.h
@@ -122,12 +125,13 @@ qmckl_f.o: $(qmckl_f)
 	$(FC) $(FCFLAGS) -c $(qmckl_f) -o $@
 
 test_qmckl: test_qmckl.c $(qmckl_h) $(static_lib) $(TESTS) $(TESTS_F)
-	$(CC) $(CFLAGS) $(munit) $(TESTS) $(TESTS_F) $(static_lib) $(LIBS) \
-	$(FCLIBS) test_qmckl.c -o $@
+	$(CC) $(CFLAGS) $(CPPFLAGS) $(DEFS) $(munit) $(TESTS) $(TESTS_F) \
+	$(static_lib) $(LIBS) $(FCLIBS) test_qmckl.c -o $@
 
 test_qmckl_shared: test_qmckl.c $(qmckl_h) $(shared_lib) $(TESTS) $(TESTS_F)
-	$(CC) $(CFLAGS) -Wl,-rpath,$(QMCKL_ROOT)/lib -L$(QMCKL_ROOT)/lib  \
-		$(munit) $(TESTS) $(TESTS_F) -lqmckl $(LIBS) $(FCLIBS) test_qmckl.c -o $@
+	$(CC) $(CFLAGS) $(CPPFLAGS) $(DEFS) \
+	-Wl,-rpath,$(QMCKL_ROOT)/lib -L$(QMCKL_ROOT)/lib $(munit) $(TESTS) \
+	$(TESTS_F) -lqmckl $(LIBS) $(FCLIBS) test_qmckl.c -o $@
 
 check: test_qmckl test_qmckl_shared
 	./test_qmckl
@@ -162,7 +166,7 @@ uninstall:
 .SUFFIXES: .c .f90 .o
 
 .c.o:
-	$(CC) $(CFLAGS) -c $*.c -o $*.o
+	$(CC) $(CFLAGS) $(CPPFLAGS) $(DEFS) -c $*.c -o $*.o
 
 .f90.o: qmckl_f.o
 	$(FC) $(FCFLAGS) -c $*.f90 -o $*.o
