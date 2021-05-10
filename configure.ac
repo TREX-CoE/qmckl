@@ -1,14 +1,46 @@
 #                                               -*- Autoconf -*-
 # Process this file with autoconf to produce a configure script.
 #
-# configure script for maintainers.
+# QMCkl - Quantum Monte Carlo kernel library
+#
+# BSD 3-Clause License
+# 
+# Copyright (c) 2020, TREX Center of Excellence
+# All rights reserved.
+# 
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+# 
+# 1. Redistributions of source code must retain the above copyright notice, this
+#    list of conditions and the following disclaimer.
+# 
+# 2. Redistributions in binary form must reproduce the above copyright notice,
+#    this list of conditions and the following disclaimer in the documentation
+#    and/or other materials provided with the distribution.
+# 
+# 3. Neither the name of the copyright holder nor the names of its
+#    contributors may be used to endorse or promote products derived from
+#    this software without specific prior written permission.
+# 
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 AC_PREREQ([2.69])
 
 AC_INIT([QMCkl],[0.1.1],
         [https://github.com/TREX-CoE/qmckl/issues], [],
         [https://trex-coe.github.io/qmckl/index.html])
-
+AM_INIT_AUTOMAKE([color-tests parallel-tests silent-rules 1.11])
+AM_MAINTAINER_MODE()
+LT_INIT
 AC_CONFIG_SRCDIR([src/README.org])
 AC_CONFIG_HEADERS([include/config.h])
 AC_CONFIG_MACRO_DIR([m4])
@@ -20,12 +52,13 @@ VERSION_PATCH=`echo ${PACKAGE_VERSION} | cut -d. -f3 | cut -d- -f1`
 AC_DEFINE_UNQUOTED(QMCKL_VERSION_MAJOR, [$VERSION_MAJOR], [major version])
 AC_DEFINE_UNQUOTED(QMCKL_VERSION_MINOR, [$VERSION_MINOR], [minor version])
 AC_DEFINE_UNQUOTED(QMCKL_VERSION_PATCH, [$VERSION_PATCH], [patch version])
+AC_SUBST([VERSION_MAJOR])
+AC_SUBST([VERSION_MINOR])
+AC_SUBST([VERSION_PATCH])
 
-#AM_INIT_AUTOMAKE([foreign color-tests parallel-tests silent-rules 1.11])
 #AM_SILENT_RULES(yes)
 #AC_SUBST(SHARED_VERSION_INFO)
 #AM_ENABLE_SHARED(no) dnl shared libs cause too many headaches to be default
-#AC_PROG_LIBTOOL
 
 AC_LANG(C)
 
@@ -36,50 +69,15 @@ AC_PROG_FC
 AC_PROG_FC_C_O
 AC_FC_SRCEXT([f90])
 AC_FC_FREEFORM
+AC_PROG_LIBTOOL
 AC_PROG_INSTALL
 AC_PROG_LN_S
 AC_PROG_CC_C99
-AC_CHECK_PROGS([EMACS],[emacs26 emacs],[no])
-AC_CHECK_PROGS([HAS_CPPCHECK],[cppcheck],[no])
-PKG_PROG_PKG_CONFIG()
+PKG_PROG_PKG_CONFIG([])
 PKG_LIBS=""
 PKG_CFLAGS=""
 
-if test x${EMACS} == xno ; then
-  AC_MSG_ERROR([
-  --------------------------------------
-  Error: Emacs is required for org-mode.
-  --------------------------------------
-  ])
-fi
-
-if test x${HAS_CPPCHECK} == xno ; then
-        HAS_CPPCHECK=0
-else
-        HAS_CPPCHECK=1
-fi
 AC_SUBST([HAS_CPPCHECK])
-
-# fPIC option
-AC_MSG_CHECKING(whether fPIC compiler option is accepted in C)
-SAVED_CFLAGS="${CFLAGS}"
-CFLAGS="${CFLAGS} -fPIC -Werror"
-AC_COMPILE_IFELSE([AC_LANG_PROGRAM([], [return 0;])],
-    [AC_MSG_RESULT(yes)
-     CFLAGS="${SAVED_CFLAGS} -fPIC"],
-    [AC_MSG_RESULT(no)
-     CFLAGS="${SAVED_CFLAGS}"])
-
-AC_MSG_CHECKING(whether fPIC compiler option is accepted in Fortran)
-SAVED_FCFLAGS="${FCFLAGS}"
-FCFLAGS="${FCFLAGS} -fPIC -Werror"
-AC_LANG_PUSH(Fortran)
-AC_COMPILE_IFELSE([AC_LANG_PROGRAM([], [])],
-    [AC_MSG_RESULT(yes)
-     FCFLAGS="${SAVED_FCFLAGS} -fPIC"],
-    [AC_MSG_RESULT(no)
-     FCFLAGS="${SAVED_FCFLAGS}"])
-AC_LANG_POP()
 
 # Checks for libraries.
 
@@ -200,7 +198,35 @@ AC_FUNC_STRERROR_R
 AC_FUNC_FORK
 AC_CHECK_FUNCS([clock_gettime dup2 gettimeofday nl_langinfo setlocale strcasecmp strtoul])
 
+if test "x${MAINT}" = "x${MAINTAINER_MODE_TRUE}"; then
 
+  AC_PROG_AWK
+  cd src && ../tools/create_makefile.sh && cd ..
+
+  AC_CHECK_PROGS([EMACS],[emacs26 emacs],[no])
+  if test x${EMACS} == xno ; then
+    AC_MSG_ERROR([
+    --------------------------------------
+    Error: Emacs is required for org-mode.
+    --------------------------------------
+    ])
+  fi
+
+  AC_CHECK_PROGS([HAS_CPPCHECK],[cppcheck],[no])
+  if test x${HAS_CPPCHECK} != xno ; then
+        HAS_CPPCHECK=1
+  fi
+fi
+
+AC_SUBST([ORG_FILES])
+AC_SUBST([C_FILES])
+AC_SUBST([F_FILES])
+AC_SUBST([FH_FUNC_FILES])
+AC_SUBST([FH_TYPE_FILES])
+AC_SUBST([H_FUNC_FILES])
+AC_SUBST([H_TYPE_FILES])
+AC_SUBST([H_PRIVATE_FUNC_FILES])
+AC_SUBST([H_PRIVATE_TYPE_FILES])
 
 #PKG-CONFIG
 #mkl-dynamic-lp64-seq
@@ -212,8 +238,6 @@ AC_SUBST([PKG_CFLAGS])
 
 AC_CONFIG_FILES([Makefile
                 qmckl.pc
-                configure.ac.dist
-		src/Makefile.generated
                 src/Makefile])
 
 
@@ -226,13 +250,13 @@ ${PACKAGE_NAME} Version ${PACKAGE_VERSION}
 
 Prefix: '${prefix}'.
 
-CC:           ${CC}
-CPPFLAGS:     ${CPPFLAGS}
-CFLAGS:       ${CFLAGS}
-FC:           ${FC}
-FCLAGS:       ${FCFLAGS}
-LDFLAGS:      ${LDFLAGS}
-LIBS:         ${LIBS}
+CC..........: ${CC}
+CPPFLAGS....: ${CPPFLAGS}
+CFLAGS......: ${CFLAGS}
+FC..........: ${FC}
+FCLAGS......: ${FCFLAGS}
+LDFLAGS:....: ${LDFLAGS}
+LIBS........: ${LIBS}
 
 Package features:
   ${ARGS}

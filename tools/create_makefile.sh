@@ -1,180 +1,146 @@
 #!/bin/bash
-# Script to generate auto-generated Makefile
-#   :PROPERTIES:
-#   :header-args: :tangle create_makefile.sh :noweb  yes :shebang #!/bin/bash :comments org
-#   :END:
-
-#   This script generates the Makefile that compiles the library.
-#   The ~OUTPUT~ variable contains the name of the generated Makefile,typically
-#   =Makefile.generated=.
 
 
-# This file was created by tools/Building.org
+function org_files() {
+    echo ORG_FILES=$(echo *.org)
+}
+
+declare -A DEPS
+
+C_FILES=
+F_FILES=
+FH_FUNC_FILES=
+FH_TYPE_FILES=
+H_FUNC_FILES=
+H_TYPE_FILES=
+H_PRIVATE_FUNC_FILES=
+H_PRIVATE_TYPE_FILES=
+C_TEST_FILES=
+F_TEST_FILES=
+
+for org in qmckl_*.org ; do
+    i=${org%.org}
+    c=${i}.c
+    h_func=${i}_func.h
+    h_type=${i}_type.h
+    h_private_func=${i}_private_func.h
+    h_private_type=${i}_private_type.h
+    f90=${i}_f.f90
+    fh_func=${i}_fh_func.f90
+    fh_type=${i}_fh_type.f90
+
+    grep -q "(eval c)" $org
+    if [[ $? -eq 0 ]] ; then
+        DEPS["$c"]+=" $org"
+        C_FILES+=" $c"
+    fi
+
+    grep -q "(eval h_func)" $org
+    if [[ $? -eq 0 ]] ; then
+        DEPS[$h_func]+=" $org"
+        DEPS[$c]+=" $h_func"
+        H_FUNC_FILES+=" $h_func"
+    fi
+
+    grep -q "(eval h_type)" $org
+    if [[ $? -eq 0 ]] ; then
+        DEPS[$h_type]+=" $org"
+        DEPS[$c]+=" $h_type"
+        H_TYPE_FILES+=" $h_type"
+    fi
+
+    grep -q "(eval h_private_type)" $org
+    if [[ $? -eq 0 ]] ; then
+        DEPS[$h_private_type]+=" $org"
+        DEPS[$c]+=" $h_private_type"
+        H_PRIVATE_TYPE_FILES+=" $h_private_type"
+    fi
+
+    grep -q "(eval h_private_func)" $org
+    if [[ $? -eq 0 ]] ; then
+        DEPS[$h_private_func]+=" $org"
+        DEPS[$c]+=" $h_private_func"
+        H_PRIVATE_FUNC_FILES+=" $h_private_func"
+    fi
+
+    grep -q "(eval f)" $org
+    if [[ $? -eq 0 ]] ; then
+        DEPS[$f90]+=" $org"
+        F_FILES+=" $f90"
+    fi
+
+    grep -q "(eval fh_func)" $org
+    if [[ $? -eq 0 ]] ; then
+        DEPS[$fh_func]+=" $org"
+        DEPS[$f90]+=" $fh_func"
+        FH_FUNC_FILES+=" $fh_func"
+    fi
+
+    grep -q "(eval fh_type)" $org
+    if [[ $? -eq 0 ]] ; then
+        DEPS[$fh_type]+=" $org"
+        DEPS[$f90]+=" $fh_type"
+        FH_TYPE_FILES+=" $fh_type"
+    fi
+done
+
+for org in qmckl_*.org ; do
+    i=${org%.org}
+    c=${i}.c
+    f90=${i}.f90
+    c_test=test_${i}.c
+    f_test=test_${i}_f.f90
+    grep -q "(eval c_test)" $org
+    if [[ $? -eq 0 ]] ; then
+        DEPS[$c_test]+=" $org ${DEPS[$c]}"
+        C_TEST_FILES+=" $c_test"
+    fi
+
+    grep -q "(eval f_test)" $org
+    if [[ $? -eq 0 ]] ; then
+        DEPS[$f_test]+=" $org ${DEPS[$f90]}"
+        F_TEST_FILES+=" $f_test"
+    fi
+done
+
+for org in ${ORG_FILES} ; do
+    i=${org%.org}
+    c=${i}.c
+    f90=${i}.f90
+    for f in ${!DEPS[@]} ; do
+        extension="${f##*.}"
+        grep -q "$f" $org
+        if [[ $? -ne 0 ]] ; then
+            if [[ extension == ".h" ]] ; then
+                DEPS[$c]+=" $f"
+            elif [[ extension == ".f90" ]] ; then
+                DEPS[$f90]+=" $f"
+            fi
+        fi
+    done
+done
+
+for f in ${!DEPS[@]} ; do
+    if [[ "${f/_f.f90/_f.f90x}" == "${f}x" ]] ; then
+        DEPS["$f"]+=" qmckl_f.o"
+    fi
+done
+
+echo > generated.mk
+echo "C_FILES=${C_FILES}" >> generated.mk
+echo "F_FILES=${F_FILES}" >> generated.mk
+echo "FH_FUNC_FILES=${FH_FUNC_FILES}" >> generated.mk
+echo "FH_TYPE_FILES=${FH_TYPE_FILES}" >> generated.mk
+echo "H_FUNC_FILES=${H_FUNC_FILES}" >> generated.mk
+echo "H_TYPE_FILES=${H_TYPE_FILES}" >> generated.mk
+echo "H_PRIVATE_FUNC_FILES=${H_PRIVATE_FUNC_FILES}" >> generated.mk
+echo "H_PRIVATE_TYPE_FILES=${H_PRIVATE_TYPE_FILES}" >> generated.mk
+echo "C_TEST_FILES=${C_TEST_FILES}" >> generated.mk
+echo "F_TEST_FILES=${F_TEST_FILES}" >> generated.mk
+echo >> generated.mk
+
+for f in ${!DEPS[@]} ; do
+    echo ${f}: ${DEPS[$f]}
+done | sort >> generated.mk
 
 
-
-OUTPUT=Makefile.generated.in
-
-
-
-# We start by tangling all the org-mode files.
-
-
-${top_srcdir}/tools/tangle.sh *.org
-${top_srcdir}/tools/build_qmckl_h.sh
-
-
-
-# Then we create the list of ~*.o~ files to be created, for library
-# functions:
-
-
-OBJECTS="qmckl_f.o"
-for i in $(ls qmckl_*.c qmckl_*f.f90) ; do
-    FILE=${i%.*}
-    OBJECTS+=" ${FILE}.o"
-done >> $OUTPUT
-
-
-
-# for tests in C:
-
-
-TESTS=""
-for i in $(ls test_qmckl_*.c) ; do
-    FILE=${i%.c}
-    TESTS+=" ${FILE}.o"
-done >> $OUTPUT
-
-
-
-# and for tests in Fortran:
-
-
-TESTS_F=""
-for i in $(ls test_qmckl_*_f.f90) ; do
-    FILE=${i%.f90}
-    TESTS_F+=" ${FILE}.o"
-done >> $OUTPUT
-
-
-
-# Finally, we append the variables to the Makefile
-
-
-cat << EOF > ${OUTPUT}
-.POSIX:
-.SUFFIXES:
-
-package  = @PACKAGE_TARNAME@
-version  = @PACKAGE_VERSION@
-
-# VPATH-related substitution variables
-srcdir   = @srcdir@
-VPATH    = @srcdir@
-
-prefix   = @prefix@
-
-CC       = @CC@
-DEFS     = @DEFS@
-CFLAGS   = @CFLAGS@ -I\$(top_srcdir)/munit/ -I\$(top_srcdir)/include -I.
-CPPFLAGS = @CPPFLAGS@
-LIBS     = @LIBS@
-
-FC     = @FC@
-FCFLAGS= @FCFLAGS@ 
-
-OBJECT_FILES=$OBJECTS
-
-TESTS   = $TESTS
-TESTS_F = $TESTS_F
-
-LIBS   = @LIBS@
-FCLIBS = @FCLIBS@
-EOF
-
-export
-echo '
-top_srcdir=$(srcdir)/..
-shared_lib=$(top_srcdir)/lib/libqmckl.so
-static_lib=$(top_srcdir)/lib/libqmckl.a
-qmckl_h=$(top_srcdir)/include/qmckl.h
-qmckl_f=$(top_srcdir)/share/qmckl/fortran/qmckl_f.f90
-munit=$(top_srcdir)/munit/munit.c
-
-datarootdir=$(prefix)/share
-datadir=$(datarootdir)
-docdir=$(datarootdir)/doc/$(package)
-htmldir=$(docdir)/html
-libdir=$(prefix)/lib
-includedir=$(prefix)/include
-fortrandir=$(datarootdir)/$(package)/fortran
-
-
-shared: $(shared_lib)
-static: $(static_lib)
-
-
-all: shared static
-
-$(shared_lib): $(OBJECT_FILES)
-	$(CC) -shared $(OBJECT_FILES) -o $(shared_lib)
-
-$(static_lib): $(OBJECT_FILES)
-	$(AR) rcs $(static_lib) $(OBJECT_FILES)
-
-
-# Test
-
-qmckl_f.o: $(qmckl_f)
-	$(FC) $(FCFLAGS) -c $(qmckl_f) -o $@
-
-test_qmckl: test_qmckl.c $(qmckl_h) $(static_lib) $(TESTS) $(TESTS_F)
-	$(CC) $(CFLAGS) $(CPPFLAGS) $(DEFS) $(munit) $(TESTS) $(TESTS_F) \
-	$(static_lib) $(LIBS) $(FCLIBS) test_qmckl.c -o $@
-
-test_qmckl_shared: test_qmckl.c $(qmckl_h) $(shared_lib) $(TESTS) $(TESTS_F)
-	$(CC) $(CFLAGS) $(CPPFLAGS) $(DEFS) \
-	-Wl,-rpath,$(top_srcdir)/lib -L$(top_srcdir)/lib $(munit) $(TESTS) \
-	$(TESTS_F) -lqmckl $(LIBS) $(FCLIBS) test_qmckl.c -o $@
-
-check: test_qmckl test_qmckl_shared
-	./test_qmckl
-
-clean:
-	$(RM) -- *.o *.mod $(shared_lib) $(static_lib) test_qmckl
-
-
-
-
-install:
-	install -d $(DESTDIR)$(prefix)/lib
-	install -d $(DESTDIR)$(prefix)/include
-	install -d $(DESTDIR)$(prefix)/share/qmckl/fortran
-	install -d $(DESTDIR)$(prefix)/share/doc/qmckl/html/
-	install -d $(DESTDIR)$(prefix)/share/doc/qmckl/text/
-	install    $(shared_lib) $(DESTDIR)$(libdir)/
-	install    $(static_lib) $(DESTDIR)$(libdir)/
-	install    $(qmckl_h) $(DESTDIR)$(includedir)
-	install    $(qmckl_f) $(DESTDIR)$(fortrandir)
-	install    $(top_srcdir)/share/doc/qmckl/html/*.html $(DESTDIR)$(docdir)/html/
-	install    $(top_srcdir)/share/doc/qmckl/html/*.css  $(DESTDIR)$(docdir)/html/
-	install    $(top_srcdir)/share/doc/qmckl/text/*.txt  $(DESTDIR)$(docdir)/text/
-
-uninstall:
-	rm $(DESTDIR)$(libdir)/libqmckl.so
-	rm $(DESTDIR)$(libdir)/libqmckl.a
-	rm $(DESTDIR)$(includedir)/qmckl.h
-	rm -rf $(DESTDIR)$(datarootdir)/$(package)
-	rm -rf $(DESTDIR)$(docdir)
-
-.SUFFIXES: .c .f90 .o
-
-.c.o:
-	$(CC) $(CFLAGS) $(CPPFLAGS) $(DEFS) -c $*.c -o $*.o
-
-.f90.o: qmckl_f.o
-	$(FC) $(FCFLAGS) -c $*.f90 -o $*.o
-
-.PHONY: check cppcheck clean all
-' >> ${OUTPUT}

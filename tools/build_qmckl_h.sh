@@ -1,13 +1,5 @@
 #!/bin/bash
 # Script to build the final qmckl.h file
-#   :PROPERTIES:
-#   :header-args:bash: :tangle build_qmckl_h.sh :noweb  yes :shebang #!/bin/bash :comments org
-#   :END:
-
-
-# This file was created by tools/Building.org
-
-
 
 # All the produced header files are concatenated in the =qmckl.h=
 # file, located in the include directory. The =*_private.h= files
@@ -32,7 +24,7 @@ done
 # Generate C header file
 
 
-OUTPUT="${top_srcdir}/include/qmckl.h"
+OUTPUT="qmckl.h"
 
 cat << EOF > ${OUTPUT}
 /*
@@ -105,7 +97,7 @@ EOF
 HEADERS_TYPE="qmckl_*_fh_type.f90"
 HEADERS="qmckl_*_fh_func.f90"
 
-OUTPUT="${top_srcdir}/share/qmckl/fortran/qmckl_f.f90"
+OUTPUT="qmckl_f.f90"
 cat << EOF > ${OUTPUT}
 !
 !    ------------------------------------------

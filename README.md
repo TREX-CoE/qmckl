@@ -21,6 +21,33 @@ to dowload also the [munit](https://github.com/nemequ/munit) unit testing
 framework.
 
 
+# Installation
+
+The simplest way to obtain the source files of QMCkl is to download a source
+distribution. This particular repository is for maintainers, who write the kernels
+in org-mode files and produce the source code and the documentation from these files.
+
+## For maintainers
+
+```
+autoreconf 
+./configure --enable-maintainer-mode --enable-debug
+make
+make check
+```
+
+## For users
+
+Obtain a source distribution and run
+
+```
+./configure 
+make
+make check
+sudo make install
+sudo make installcheck
+```
+
 ------------------------------
 
 ![European flag](https://trex-coe.eu/sites/default/files/inline-images/euflag.jpg)

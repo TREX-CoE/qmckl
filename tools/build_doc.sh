@@ -1,10 +1,5 @@
 #!/bin/bash
 # Script to build the documentation
-#   :PROPERTIES:
-#   :header-args:bash: :tangle build_doc.sh :noweb  yes :shebang #!/bin/bash :comments org
-#   :END:
-
-#   First define readonly global variables.
 
 
 readonly DOCS=${top_srcdir}/share/doc/qmckl/
@@ -15,11 +10,12 @@ readonly CONFIG_TANGLE=${top_srcdir}/tools/config_tangle.el
 
 
 
-# Check that all the defined global variables correspond to files.
 
 
 function check_preconditions()
 {
+#   Checks that all the defined global variables correspond to files.
+
     if [[ -z ${top_srcdir} ]]
     then
         print "top_srcdir is not defined"
@@ -47,12 +43,11 @@ function check_preconditions()
 
 
 
-# ~install_htmlize~ installs the htmlize Emacs plugin if the
-# =htmlize.el= file is not present.
-
 
 function install_htmlize()
 {
+#   Installs the htmlize Emacs plugin if the  =htmlize.el= file is not present.
+
     local url="https://github.com/hniksic/emacs-htmlize"
     local repo="emacs-htmlize"
 
@@ -71,11 +66,10 @@ function install_htmlize()
 
 
 
-# Extract documentation from an org-mode file.
-
-
 function extract_doc()
 {
+#   Extracts documentation from an org-mode file.
+
     local org=$1
     local local_html=${SRC}/${org%.org}.html
     local local_text=${SRC}/${org%.org}.txt
@@ -99,8 +93,6 @@ function extract_doc()
 }
 
 
-
-# The main function of the script.
 
 
 function main() {
