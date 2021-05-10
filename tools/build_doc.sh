@@ -7,11 +7,11 @@
 #   First define readonly global variables.
 
 
-readonly DOCS=${QMCKL_ROOT}/share/doc/qmckl/
-readonly SRC=${QMCKL_ROOT}/src/
+readonly DOCS=${top_srcdir}/share/doc/qmckl/
+readonly SRC=${top_srcdir}/src/
 readonly HTMLIZE=${DOCS}/html/htmlize.el
-readonly CONFIG_DOC=${QMCKL_ROOT}/tools/config_doc.el
-readonly CONFIG_TANGLE=${QMCKL_ROOT}/tools/config_tangle.el
+readonly CONFIG_DOC=${top_srcdir}/tools/config_doc.el
+readonly CONFIG_TANGLE=${top_srcdir}/tools/config_tangle.el
 
 
 
@@ -20,9 +20,9 @@ readonly CONFIG_TANGLE=${QMCKL_ROOT}/tools/config_tangle.el
 
 function check_preconditions()
 {
-    if [[ -z ${QMCKL_ROOT} ]]
+    if [[ -z ${top_srcdir} ]]
     then
-        print "QMCKL_ROOT is not defined"
+        print "top_srcdir is not defined"
         exit 1
     fi
 

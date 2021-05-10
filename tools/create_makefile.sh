@@ -20,8 +20,8 @@ OUTPUT=Makefile.generated.in
 # We start by tangling all the org-mode files.
 
 
-${QMCKL_ROOT}/tools/tangle.sh *.org
-${QMCKL_ROOT}/tools/build_qmckl_h.sh
+${top_srcdir}/tools/tangle.sh *.org
+${top_srcdir}/tools/build_qmckl_h.sh
 
 
 
@@ -66,14 +66,18 @@ cat << EOF > ${OUTPUT}
 .POSIX:
 .SUFFIXES:
 
-package = @PACKAGE_TARNAME@
-version = @PACKAGE_VERSION@
+package  = @PACKAGE_TARNAME@
+version  = @PACKAGE_VERSION@
+
+# VPATH-related substitution variables
+srcdir   = @srcdir@
+VPATH    = @srcdir@
 
 prefix   = @prefix@
 
 CC       = @CC@
 DEFS     = @DEFS@
-CFLAGS   = @CFLAGS@ -I../munit/ -I../include -I. -I\$(srcdir)
+CFLAGS   = @CFLAGS@ -I\$(top_srcdir)/munit/ -I\$(top_srcdir)/include -I.
 CPPFLAGS = @CPPFLAGS@
 LIBS     = @LIBS@
 
@@ -89,13 +93,14 @@ LIBS   = @LIBS@
 FCLIBS = @FCLIBS@
 EOF
 
+export
 echo '
-QMCKL_ROOT=..
-shared_lib=$(QMCKL_ROOT)/lib/libqmckl.so
-static_lib=$(QMCKL_ROOT)/lib/libqmckl.a
-qmckl_h=$(QMCKL_ROOT)/include/qmckl.h
-qmckl_f=$(QMCKL_ROOT)/share/qmckl/fortran/qmckl_f.f90
-munit=$(QMCKL_ROOT)/munit/munit.c
+top_srcdir=$(srcdir)/..
+shared_lib=$(top_srcdir)/lib/libqmckl.so
+static_lib=$(top_srcdir)/lib/libqmckl.a
+qmckl_h=$(top_srcdir)/include/qmckl.h
+qmckl_f=$(top_srcdir)/share/qmckl/fortran/qmckl_f.f90
+munit=$(top_srcdir)/munit/munit.c
 
 datarootdir=$(prefix)/share
 datadir=$(datarootdir)
@@ -130,7 +135,7 @@ test_qmckl: test_qmckl.c $(qmckl_h) $(static_lib) $(TESTS) $(TESTS_F)
 
 test_qmckl_shared: test_qmckl.c $(qmckl_h) $(shared_lib) $(TESTS) $(TESTS_F)
 	$(CC) $(CFLAGS) $(CPPFLAGS) $(DEFS) \
-	-Wl,-rpath,$(QMCKL_ROOT)/lib -L$(QMCKL_ROOT)/lib $(munit) $(TESTS) \
+	-Wl,-rpath,$(top_srcdir)/lib -L$(top_srcdir)/lib $(munit) $(TESTS) \
 	$(TESTS_F) -lqmckl $(LIBS) $(FCLIBS) test_qmckl.c -o $@
 
 check: test_qmckl test_qmckl_shared
@@ -152,9 +157,9 @@ install:
 	install    $(static_lib) $(DESTDIR)$(libdir)/
 	install    $(qmckl_h) $(DESTDIR)$(includedir)
 	install    $(qmckl_f) $(DESTDIR)$(fortrandir)
-	install    $(QMCKL_ROOT)/share/doc/qmckl/html/*.html $(DESTDIR)$(docdir)/html/
-	install    $(QMCKL_ROOT)/share/doc/qmckl/html/*.css  $(DESTDIR)$(docdir)/html/
-	install    $(QMCKL_ROOT)/share/doc/qmckl/text/*.txt  $(DESTDIR)$(docdir)/text/
+	install    $(top_srcdir)/share/doc/qmckl/html/*.html $(DESTDIR)$(docdir)/html/
+	install    $(top_srcdir)/share/doc/qmckl/html/*.css  $(DESTDIR)$(docdir)/html/
+	install    $(top_srcdir)/share/doc/qmckl/text/*.txt  $(DESTDIR)$(docdir)/text/
 
 uninstall:
 	rm $(DESTDIR)$(libdir)/libqmckl.so

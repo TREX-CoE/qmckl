@@ -31,7 +31,7 @@ function tangle()
     elif [[ ${org_file} -ot ${f_file} ]] ; then
         return
     fi
-    emacs --batch ${org_file} --load=../tools/config_tangle.el -f org-babel-tangle
+    emacs --batch ${org_file} --load=${top_srcdir}/tools/config_tangle.el -f org-babel-tangle
 }
 
 for i in $@

@@ -32,7 +32,7 @@ done
 # Generate C header file
 
 
-OUTPUT="../include/qmckl.h"
+OUTPUT="${top_srcdir}/include/qmckl.h"
 
 cat << EOF > ${OUTPUT}
 /*
@@ -105,7 +105,7 @@ EOF
 HEADERS_TYPE="qmckl_*_fh_type.f90"
 HEADERS="qmckl_*_fh_func.f90"
 
-OUTPUT="../share/qmckl/fortran/qmckl_f.f90"
+OUTPUT="${top_srcdir}/share/qmckl/fortran/qmckl_f.f90"
 cat << EOF > ${OUTPUT}
 !
 !    ------------------------------------------
