@@ -3,11 +3,7 @@
 
 set -e
 
-if [[ -z ${srcdir} ]] ; then
-   echo "Error: srcdir environment variable is not defined"
-   exit 1
-fi
-
+srcdir=$PWD
 
 readonly DOCS=${srcdir}/share/doc/qmckl/
 readonly ORG=${srcdir}/org/
@@ -95,7 +91,7 @@ function main() {
     install_htmlize || exit 2
 
     # Create documentation
-    cd ${SRC} \
+    cd ${ORG} \
         || exit 3
 
     for i in *.org

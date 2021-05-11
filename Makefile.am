@@ -55,6 +55,7 @@ fortrandir = $(datadir)/$(PACKAGE_NAME)/fortran/
 fortran_DATA = $(qmckl_f)
 
 AM_CPPFLAGS = -I$(srcdir)/src -I$(srcdir)/include
+EXTRA_DIST = share/doc/qmckl/
 
 lib_LTLIBRARIES = src/libqmckl.la
 src_libqmckl_la_SOURCES = $(qmckl_h) $(src_qmckl_f) $(C_FILES) $(F_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES)
