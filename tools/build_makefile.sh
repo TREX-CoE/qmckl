@@ -15,7 +15,7 @@ function make_src()
 
     cd ${srcdir}
 
-    declare -A DEPS DEPS_ORG DEPS_TEST TESTS
+    declare -A DEPS DEPS_ORG DEPS_TEST TESTS HTML TEXT DEPS_DOC
 
     C_FILES=
     F_FILES=
@@ -32,11 +32,14 @@ function make_src()
     for org in org/*.org ; do
         i=$(basename ${org%.org})
         tangled="\$(srcdir)/org/${i}.tangled"
+        exported="\$(srcdir)/org/${i}.exported"
         c_test_x="\$(srcdir)/tests/test_${i}"
         c_test_o="\$(srcdir)/tests/test_${i}.o"
         f_test_o="\$(srcdir)/tests/test_${i}_f.o"
         c_test="\$(srcdir)/tests/test_${i}.c"
         f_test="\$(srcdir)/tests/test_${i}_f.f90"
+        html="\$(srcdir)/share/doc/qmckl/html/${i}.html"
+        text="\$(srcdir)/share/doc/qmckl/text/${i}.txt"
 
         i="\$(srcdir)/src/${i}"
 
@@ -53,7 +56,11 @@ function make_src()
 
         ORG_FILES+="\$(srcdir)/$org "
         TANGLED_FILES+="$tangled "
+        EXPORTED_FILES+="$exported "
         DEPS_ORG["\$(srcdir)/$org"]=$tangled
+        DEPS_DOC["\$(srcdir)/$org"]=$exported
+        TEXT["\$(srcdir)/$org"]=$text
+        HTML["\$(srcdir)/$org"]=$html
 
         grep -q "(eval c)" $org
         if [[ $? -eq 0 ]] ; then
@@ -129,6 +136,7 @@ function make_src()
     echo 
     echo "ORG_FILES=${ORG_FILES}" 
     echo "TANGLED_FILES=${TANGLED_FILES}" 
+    echo "EXPORTED_FILES=${EXPORTED_FILES}" 
     echo "C_FILES=${C_FILES}" 
     echo "F_FILES=${F_FILES}" 
     echo "C_O_FILES=${C_O_FILES}" 
@@ -142,6 +150,8 @@ function make_src()
     echo "C_TEST_FILES=${C_TEST_FILES}" 
     echo "F_TEST_FILES=${F_TEST_FILES}" 
     echo "TESTS=${!TESTS[@]}" | sed "s|\$(srcdir)/||g"
+    echo "HTML_FILES"=${HTML[@]}
+    echo "TEXT_FILES"=${TEXT[@]} 
     echo 
 
     echo 
@@ -172,7 +182,22 @@ function make_src()
     for f in ${!TESTS[@]} ; do
         echo "tests_$(basename $f)_SOURCES = ${TESTS[$f]}" #| sed "s|\$(srcdir)/||"
         echo "tests_$(basename $f)_LDADD   = src/libqmckl.la"
+        echo "tests_$(basename $f)_LDFLAGS = -no-install"
     done | sort 
+
+    echo 
+    echo "## Documentation" 
+    echo 
+    for f in ${ORG_FILES} ; do
+        echo "${HTML[$f]}: ${DEPS_DOC[$f]} \$(htmlize_el)"
+        echo "${TEXT[$f]}: ${DEPS_DOC[$f]}"
+        echo ""
+    done 
+    for f in ${!DEPS_DOC[@]} ; do
+        echo "${DEPS_DOC[$f]}: $f"
+        echo "	\$(export_verbose)\$(srcdir)/tools/build_doc.sh $f"
+        echo ""
+    done 
 }
 
 

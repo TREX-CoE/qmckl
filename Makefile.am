@@ -39,15 +39,16 @@ VERSION_PATCH   = @VERSION_PATCH@
 
 SUBDIRS =
 CLEANFILES =
+EXTRA_DIST =
 
 pkgconfigdir = $(libdir)/pkgconfig
-pkgconfig_DATA = $(srcdir)/qmckl.pc
+pkgconfig_DATA = pkgconfig/qmckl.pc
 
 qmckl_h = $(srcdir)/include/qmckl.h
 include_HEADERS = $(qmckl_h)
 
-qmckl_f  = $(srcdir)/share/qmckl/fortran/qmckl_f.f90
-qmckl_fo = $(srcdir)/share/qmckl/fortran/qmckl_f.$(OBJEXT)
+qmckl_f  = share/qmckl/fortran/qmckl_f.f90
+qmckl_fo = share/qmckl/fortran/qmckl_f.$(OBJEXT)
 test_qmckl_f = $(srcdir)/tests/qmckl_f.f90
 src_qmckl_f = $(srcdir)/src/qmckl_f.f90
 
@@ -55,14 +56,15 @@ fortrandir = $(datadir)/$(PACKAGE_NAME)/fortran/
 fortran_DATA = $(qmckl_f)
 
 AM_CPPFLAGS = -I$(srcdir)/src -I$(srcdir)/include
-EXTRA_DIST = share/doc/qmckl/
 
 lib_LTLIBRARIES = src/libqmckl.la
 src_libqmckl_la_SOURCES = $(qmckl_h) $(src_qmckl_f) $(C_FILES) $(F_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES)
 
 export srcdir qmckl_f qmckl_h
 
-CLEANFILES+=$(test_qmckl_f)
+CLEANFILES+=$(test_qmckl_f) $(src_qmckl_f) $(qmckl_h) $(qmckl_f)
+
+htmlize_el=$(srcdir)/share/doc/qmckl/html/htmlize.el
 
 include $(srcdir)/generated.mk
 
@@ -72,6 +74,13 @@ else
 include Makefile.dist.mk
 endif
 
+
+htmldir = $(docdir)/html
+html_DATA = $(HTML_FILES) $(htmlize_el) $(srcdir)/share/doc/qmckl/html/index.html
+
+textdir = $(docdir)/text
+text_DATA = $(TEXT_FILES)
+
 $(srcdir)/generated.mk: $(ORG_FILES)
 	$(srcdir)/tools/build_makefile.sh
 
@@ -80,6 +89,10 @@ $(test_qmckl_f): $(qmckl_f)
 
 $(src_qmckl_f): $(qmckl_f)
 	cp $(qmckl_f) $(src_qmckl_f)
+
+$(srcdir)/share/doc/qmckl/html/index.html: $(srcdir)/share/doc/qmckl/html/README.html
+	mv -f	$(srcdir)/share/doc/qmckl/html/README.html \
+		$(srcdir)/share/doc/qmckl/html/index.html
 
 rpms srcrpm:
 	for dir in $(SUBDIRS); do \

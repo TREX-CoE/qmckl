@@ -33,11 +33,29 @@
 dist_src_DATA = $(ORG_FILES)
 
 BUILT_SOURCES = $(C_FILES) $(F_FILES) $(FH_FUNC_FILES) $(FH_TYPE_FILES) $(H_FUNC_FILES) $(H_TYPE_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES) $(qmckl_f) $(qmckl_h)
-CLEANFILES += $(BUILT_SOURCES) $(C_TEST_FILES) $(F_TEST_FILES) $(TANGLED_FILES) $(C_TEST_FILES) $(F_TEST_FILES) $(qmckl_f) $(qmckl_h)
+
+CLEANFILES += $(BUILT_SOURCES) $(C_TEST_FILES) $(F_TEST_FILES) $(TANGLED_FILES) $(C_TEST_FILES) $(F_TEST_FILES) $(qmckl_f) $(qmckl_h) $(HTML_FILES) $(TEXT_FILES) $(srcdir)/share/doc/qmckl/html/index.html
+
+EXTRA_DIST +=                 \
+    tools/build_doc.sh        \
+    tools/build_makefile.sh   \
+    tools/build_qmckl_f.sh    \
+    tools/build_qmckl_h.sh    \
+    tools/config_doc.el       \
+    tools/config_tangle.el    \
+    tools/init.el             \
+    tools/install_htmlize.sh  \
+    tools/lib.org             \
+    tools/tangle.sh           \
+    tools/theme.setup
 
 
 ## Silent
 ## ======
+
+export_verbose   = $(export_verbose_@AM_V@)
+export_verbose_  = $(export_verbose_@AM_DEFAULT_V@)
+export_verbose_0 = @echo "  DOC      $<";
 
 tangle_verbose   = $(tangle_verbose_@AM_V@)
 tangle_verbose_  = $(tangle_verbose_@AM_DEFAULT_V@)
@@ -58,6 +76,9 @@ $(qmckl_h): $(H_FUNC_FILES) $(H_TYPE_FILES)
 
 $(qmckl_f): $(FH_FUNC_FILES) $(FH_TYPE_FILES)
 	$(cat_h_verbose)$(srcdir)/tools/build_qmckl_f.sh
+
+$(htmlize_el):
+	$(srcdir)/tools/install_htmlize.sh $(htmlize_el)
 
 # vim: syntax=automake noet
 

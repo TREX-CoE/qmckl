@@ -204,7 +204,7 @@ AC_SUBST([PKG_LIBS])
 AC_SUBST([PKG_CFLAGS])
 
 AC_CONFIG_FILES([Makefile
-                qmckl.pc
+                 pkgconfig/qmckl.pc
                 ])
 
 
