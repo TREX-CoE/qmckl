@@ -35,7 +35,7 @@
 
 AC_PREREQ([2.69])
 
-AC_INIT([QMCkl],[0.1.1],
+AC_INIT([qmckl],[0.1.1],
         [https://github.com/TREX-CoE/qmckl/issues], [],
         [https://trex-coe.github.io/qmckl/index.html])
 AM_INIT_AUTOMAKE([subdir-objects color-tests parallel-tests silent-rules 1.11])

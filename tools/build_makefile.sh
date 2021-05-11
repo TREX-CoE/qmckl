@@ -3,8 +3,7 @@
 # Creates all the dependencies from the org-mode files
 
 if [[ -z ${srcdir} ]] ; then
-   echo "Error: srcdir environment variable is not defined"
-   exit 1
+   srcdir=.
 fi
 
 
@@ -34,8 +33,8 @@ function make_src()
         tangled="\$(srcdir)/org/${i}.tangled"
         exported="\$(srcdir)/org/${i}.exported"
         c_test_x="\$(srcdir)/tests/test_${i}"
-        c_test_o="\$(srcdir)/tests/test_${i}.o"
-        f_test_o="\$(srcdir)/tests/test_${i}_f.o"
+        c_test_o="\$(srcdir)/tests/test_${i}.\$(OBJEXT)"
+        f_test_o="\$(srcdir)/tests/test_${i}_f.\$(OBJEXT)"
         c_test="\$(srcdir)/tests/test_${i}.c"
         f_test="\$(srcdir)/tests/test_${i}_f.f90"
         html="\$(srcdir)/share/doc/qmckl/html/${i}.html"
@@ -44,13 +43,13 @@ function make_src()
         i="\$(srcdir)/src/${i}"
 
         c="${i}.c"
-        o="${i}.o"
+        o="${i}.\$(OBJEXT)"
         h_func="${i}_func.h"
         h_type="${i}_type.h"
         h_private_func="${i}_private_func.h"
         h_private_type="${i}_private_type.h"
         f90="${i}_f.f90"
-        fo="${i}_f.o"
+        fo="${i}_f.\$(OBJEXT)"
         fh_func="${i}_fh_func.f90"
         fh_type="${i}_fh_type.f90"
 
@@ -98,8 +97,8 @@ function make_src()
 
         grep -q "(eval f)" $org
         if [[ $? -eq 0 ]] ; then
-            DEPS[$f90]+="$tangled "
-            DEPS[$fo]+="$f90 \$(qmckl_fo)"
+            DEPS[$f90]+=" $tangled \$(src_qmckl_fo)"
+            DEPS[$fo]+="$f90 \$(src_qmckl_fo)"
             F_FILES+=" $f90"
         fi
 
@@ -117,16 +116,16 @@ function make_src()
 
         grep -q "(eval c_test)" $org
         if [[ $? -eq 0 ]] ; then
-            DEPS_TEST["${c_test}"]="${tangled} "
+            DEPS_TEST["${c_test}"]=" ${tangled}"
             C_TEST_FILES+=" ${c_test}"
             TESTS["${c_test_x}"]+="${c_test} \$(qmckl_h)"
         fi
 
         grep -q "(eval f_test)" $org
         if [[ $? -eq 0 ]] ; then
-            DEPS_TEST["${f_test}"]+="${tangled} "
+            DEPS_TEST["${f_test}"]+=" ${tangled} \$(test_qmckl_fo)"
             F_TEST_FILES+=" ${f_test}"
-            TESTS["${c_test_x}"]+=" ${f_test} \$(test_qmckl_f)"
+            TESTS["${c_test_x}"]+=" ${f_test} \$(test_qmckl_fo)"
         fi
     done
 
@@ -140,7 +139,6 @@ function make_src()
     echo "C_FILES=${C_FILES}" 
     echo "F_FILES=${F_FILES}" 
     echo "C_O_FILES=${C_O_FILES}" 
-    echo "F_O_FILES=${F_O_FILES}" 
     echo "FH_FUNC_FILES=${FH_FUNC_FILES}" 
     echo "FH_TYPE_FILES=${FH_TYPE_FILES}" 
     echo "H_FUNC_FILES=${H_FUNC_FILES}" 
@@ -155,28 +153,46 @@ function make_src()
     echo 
 
     echo 
+
     echo "## Org-mode inherited dependencies" 
     echo 
+    echo "if QMCKL_DEVEL"
     for f in ${!DEPS_ORG[@]} ; do
         echo ${DEPS_ORG[$f]}: $f
         echo "	\$(tangle_verbose)\$(srcdir)/tools/tangle.sh $f"
         echo ""
     done 
+    echo "endif"
     echo 
 
     echo 
     echo "## Source dependencies" 
     echo 
+    echo "if QMCKL_DEVEL"
     for f in ${!DEPS[@]} ; do
-        echo "${f}: ${DEPS[$f]}"
+        x="${DEPS[$f]}" 
+        if [[ "${x%.tangled}x" != ${x}x ]] ; then
+           echo "${f}: ${DEPS[$f]}"
+        fi
+    done | sort 
+    echo "endif"
+    echo "${src_qmckl_fo}: ${src_qmckl_f}"
+    for f in ${!DEPS[@]} ; do
+        x="${DEPS[$f]}" 
+        if [[ "${x%.tangled}x" == ${x}x ]] ; then
+           echo "${f}: ${DEPS[$f]}"
+        fi
     done | sort 
 
     echo 
     echo "## Test files" 
     echo 
+    echo "\$(test_qmckl_fo): \$(test_qmckl_f)"
+    echo "if QMCKL_DEVEL"
     for f in ${!DEPS_TEST[@]} ; do
         echo "${f}: ${DEPS_TEST[$f]}"
     done | sort 
+    echo "endif"
     echo
     echo "check_PROGRAMS = \$(TESTS)" 
     for f in ${!TESTS[@]} ; do
@@ -188,6 +204,7 @@ function make_src()
     echo 
     echo "## Documentation" 
     echo 
+    echo "if QMCKL_DEVEL"
     for f in ${ORG_FILES} ; do
         echo "${HTML[$f]}: ${DEPS_DOC[$f]} \$(htmlize_el)"
         echo "${TEXT[$f]}: ${DEPS_DOC[$f]}"
@@ -198,6 +215,7 @@ function make_src()
         echo "	\$(export_verbose)\$(srcdir)/tools/build_doc.sh $f"
         echo ""
     done 
+    echo "endif"
 }
 
 
