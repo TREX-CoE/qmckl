@@ -41,7 +41,7 @@ AC_INIT([QMCkl],[0.1.1],
 AM_INIT_AUTOMAKE([color-tests parallel-tests silent-rules 1.11])
 AM_MAINTAINER_MODE()
 LT_INIT
-AC_CONFIG_SRCDIR([src/README.org])
+AC_CONFIG_SRCDIR([Makefile.in])
 AC_CONFIG_HEADERS([include/config.h])
 AC_CONFIG_MACRO_DIR([m4])
 #AM_MAINTAINER_MODE
@@ -148,28 +148,11 @@ if test "$ok" = "yes"; then
         ARGS="${ARGS} efence"
 fi
 
-AC_ARG_WITH(munit, [AC_HELP_STRING([--without-munit],[use munit for testing])], ok=yes, ok=no)
-if test "$ok" = "no"; then
-AC_CHECK_FILE([munit/munit.h], [],
-  AC_MSG_ERROR([
-  -------------------------------------------------
-  Error: Git submodule for munit is not downloaded.
-  $ git submodule update --init
-  -------------------------------------------------
-]) )
-else
-  ARGS="${ARGS} munit"
-  AC_DEFINE(HAVE_MUNIT,1,[Define when using munit])
-fi
-
 
 # Checks for header files.
 
 ## qmckl
 AC_CHECK_HEADERS([inttypes.h malloc.h stdint.h stdlib.h string.h strings.h unistd.h])
-
-## munit
-AC_CHECK_HEADERS([fcntl.h langinfo.h limits.h locale.h mach/mach.h sys/time.h])
 
 # Checks for typedefs, structures, and compiler characteristics.
 
@@ -181,10 +164,6 @@ AC_TYPE_SIZE_T
 AC_TYPE_UINT32_T
 AC_TYPE_UINT64_T
 
-## munit
-AC_TYPE_PID_T
-AC_C_INLINE
-AC_TYPE_SSIZE_T
 
 # Checks for library functions.
 
@@ -192,16 +171,13 @@ AC_TYPE_SSIZE_T
 AC_FUNC_MALLOC
 AC_CHECK_FUNCS([memset strerror])
 
-## munit
-AC_FUNC_REALLOC
-AC_FUNC_STRERROR_R
-AC_FUNC_FORK
-AC_CHECK_FUNCS([clock_gettime dup2 gettimeofday nl_langinfo setlocale strcasecmp strtoul])
+# Development mode
+AM_CONDITIONAL([QMCKL_DEVEL],[test "x$QMCKL_DEVEL" != x])
 
-if test "x${MAINT}" = "x${MAINTAINER_MODE_TRUE}"; then
+if test "x${QMCKL_DEVEL}" != "x"; then
 
   AC_PROG_AWK
-  cd src && ../tools/create_makefile.sh && cd ..
+  ${srcdir}/tools/build_makefile.sh
 
   AC_CHECK_PROGS([EMACS],[emacs26 emacs],[no])
   if test x${EMACS} == xno ; then
@@ -216,17 +192,31 @@ if test "x${MAINT}" = "x${MAINTAINER_MODE_TRUE}"; then
   if test x${HAS_CPPCHECK} != xno ; then
         HAS_CPPCHECK=1
   fi
-fi
 
-AC_SUBST([ORG_FILES])
-AC_SUBST([C_FILES])
-AC_SUBST([F_FILES])
-AC_SUBST([FH_FUNC_FILES])
-AC_SUBST([FH_TYPE_FILES])
-AC_SUBST([H_FUNC_FILES])
-AC_SUBST([H_TYPE_FILES])
-AC_SUBST([H_PRIVATE_FUNC_FILES])
-AC_SUBST([H_PRIVATE_TYPE_FILES])
+  ## munit
+  AC_ARG_WITH(munit, [AC_HELP_STRING([--without-munit],[use munit for testing])], ok=yes, ok=no)
+  if test "$ok" = "no"; then
+  AC_CHECK_FILE([munit/munit.h], [],
+    AC_MSG_ERROR([
+    -------------------------------------------------
+    Error: Git submodule for munit is not downloaded.
+    $ git submodule update --init
+    -------------------------------------------------
+  ]) )
+  else
+    ARGS="${ARGS} munit"
+    AC_DEFINE(HAVE_MUNIT,1,[Define when using munit])
+  fi
+  AC_CHECK_HEADERS([fcntl.h langinfo.h limits.h locale.h mach/mach.h sys/time.h])
+  AC_TYPE_PID_T
+  AC_C_INLINE
+  AC_TYPE_SSIZE_T
+  AC_FUNC_REALLOC
+  AC_FUNC_STRERROR_R
+  AC_FUNC_FORK
+  AC_CHECK_FUNCS([clock_gettime dup2 gettimeofday nl_langinfo setlocale strcasecmp strtoul])
+
+fi
 
 #PKG-CONFIG
 #mkl-dynamic-lp64-seq
@@ -238,7 +228,7 @@ AC_SUBST([PKG_CFLAGS])
 
 AC_CONFIG_FILES([Makefile
                 qmckl.pc
-                src/Makefile])
+                ])
 
 
 AC_OUTPUT

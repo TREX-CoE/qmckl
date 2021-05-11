@@ -31,7 +31,7 @@ in org-mode files and produce the source code and the documentation from these f
 
 ```
 autoreconf 
-./configure --enable-maintainer-mode --enable-debug
+QMCKL_DEVEL=1 ./configure --enable-debug
 make
 make check
 ```

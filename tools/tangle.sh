@@ -8,11 +8,10 @@
 # date of the org file is older than one of the tangled files.
 # The =missing= script is used to check if emacs is present on the system.
 
-if [[ $(basename $PWD) != "src" ]] ; then
-        print "Error: $0 needs to be run from src directory"
-        exit 1
+if [[ -z ${srcdir} ]] ; then
+  print "Error: srcdir environment variable is not defined"
+  exit 1
 fi
-
 
 function tangle()
 {
@@ -25,9 +24,9 @@ function tangle()
     elif [[ ${org_file} -ot ${f_file} ]] ; then
         return
     fi
-    ../missing \
+    ./missing \
         emacs --batch ${org_file} \
-         --load=${top_srcdir}/tools/config_tangle.el \
+         --load=${PWD}/tools/config_tangle.el \
         -f org-babel-tangle
 }
 

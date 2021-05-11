@@ -1,24 +1,24 @@
 # QMCkl - Quantum Monte Carlo kernel library
 #
 # BSD 3-Clause License
-# 
+#
 # Copyright (c) 2020, TREX Center of Excellence
 # All rights reserved.
-# 
+#
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are met:
-# 
+#
 # 1. Redistributions of source code must retain the above copyright notice, this
 #    list of conditions and the following disclaimer.
-# 
+#
 # 2. Redistributions in binary form must reproduce the above copyright notice,
 #    this list of conditions and the following disclaimer in the documentation
 #    and/or other materials provided with the distribution.
-# 
+#
 # 3. Neither the name of the copyright holder nor the names of its
 #    contributors may be used to endorse or promote products derived from
 #    this software without specific prior written permission.
-# 
+#
 # THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
 # AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
 # IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -37,10 +37,66 @@ VERSION_MAJOR   = @VERSION_MAJOR@
 VERSION_MINOR   = @VERSION_MINOR@
 VERSION_PATCH   = @VERSION_PATCH@
 
-SUBDIRS = src
+SUBDIRS =
+CLEANFILES = 
 
 pkgconfigdir = $(libdir)/pkgconfig
-pkgconfig_DATA = qmckl.pc
+pkgconfig_DATA = $(srcdir)/qmckl.pc
+
+qmckl_h = $(srcdir)/include/qmckl.h
+include_HEADERS = $(qmckl_h)
+
+qmckl_f = $(srcdir)/share/qmckl/fortran/qmckl_f.f90
+fortrandir = $(datadir)/$(PACKAGE_NAME)/fortran/
+fortran_DATA = $(qmckl_f)
+
+export srcdir qmckl_f qmckl_h
+
+sources_tangled = src/qmckl_ao.c
+
+
+if QMCKL_DEVEL
+# <-----
+dist_src_DATA = $(ORG_FILES)
+
+BUILT_SOURCES = $(C_FILES) $(F_FILES) $(FH_FUNC_FILES) $(FH_TYPE_FILES) $(H_FUNC_FILES) $(H_TYPE_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES)
+CLEANFILES += $(BUILT_SOURCES) $(C_TEST_FILES) $(F_TEST_FILES)
+
+# ----->
+endif
+
+## Silent
+
+tangle_verbose   = $(tangle_verbose_@AM_V@)
+tangle_verbose_  = $(tangle_verbose_@AM_DEFAULT_V@)
+tangle_verbose_0 = @echo "  TANGLE   $@";
+
+cat_h_verbose   = $(cat_h_verbose_@AM_V@)
+cat_h_verbose_  = $(cat_h_verbose_@AM_DEFAULT_V@)
+cat_h_verbose_0 = @echo "  HEADER   $@";
+
+## Rules
+include $(srcdir)/generated.mk
+
+SUFFIXES = .f90 .h .org .c _f.f90 _func.h _type.h _private_func.h _private_type.h
+
+$(srcdir)/generated.mk: $(ORG_FILES)
+	$(srcdir)/tools/build_makefile.sh
+
+$(qmckl_h): $(H_FUNC_FILES) $(H_TYPE_FILES)
+	$(cat_h_verbose)$(srcdir)/tools/build_qmckl_h.sh
+
+$(qmckl_f): $(FH_FUNC_FILES) $(FH_TYPE_FILES)
+	$(cat_h_verbose)$(srcdir)/tools/build_qmckl_f.sh
+
+$(srcdir)/src/qmckl_f.f90: $(qmckl_f)
+	cp $(qmckl_f) $(srcdir)/src/qmckl_f.f90
+
+#lib_LTLIBRARIES = $(top_srcdir)/src/libqmckl.la
+#
+#$(top_srcdir)/src/libqmckl.la;
+#	$(MAKE) -C src libqmckl.la
+#
 
 rpms srcrpm:
 	for dir in $(SUBDIRS); do \
@@ -49,6 +105,4 @@ rpms srcrpm:
 
 .PHONY: rpms srcrpm
 
-README: README.md
-COPYING: LICENSE
 
