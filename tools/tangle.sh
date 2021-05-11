@@ -32,6 +32,10 @@ function tangle()
 
 for i in $@
 do
-#    echo "--- ${i} ----"
-    tangle ${i}
+    tangled=${i%.org}.tangled
+    NOW=$(date +"%m%d%H%M.%S")
+    tangle ${i} &> $tangled
+
+    # Make log file older than the tangled files
+    touch -t ${NOW} $tangled
 done

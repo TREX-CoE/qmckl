@@ -52,15 +52,13 @@ fortran_DATA = $(qmckl_f)
 
 export srcdir qmckl_f qmckl_h
 
-sources_tangled = src/qmckl_ao.c
-
 
 if QMCKL_DEVEL
 # <-----
 dist_src_DATA = $(ORG_FILES)
 
 BUILT_SOURCES = $(C_FILES) $(F_FILES) $(FH_FUNC_FILES) $(FH_TYPE_FILES) $(H_FUNC_FILES) $(H_TYPE_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES)
-CLEANFILES += $(BUILT_SOURCES) $(C_TEST_FILES) $(F_TEST_FILES)
+CLEANFILES += $(BUILT_SOURCES) $(C_TEST_FILES) $(F_TEST_FILES) $(TANGLED_FILES)
 
 # ----->
 endif

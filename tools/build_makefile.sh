@@ -2,12 +2,11 @@
 #
 # Creates all the dependencies from the org-mode files
 
-set -e
-
 if [[ -z ${srcdir} ]] ; then
    echo "Error: srcdir environment variable is not defined"
    exit 1
 fi
+
 
 WD=$PWD
 
@@ -28,10 +27,17 @@ function make_src()
     H_PRIVATE_TYPE_FILES=
     C_TEST_FILES=
     F_TEST_FILES=
+    TANGLED_FILES=
 
     for org in org/*.org ; do
-        ORG_FILES+="\$(srcdir)/$org "
+        tangled="\$(srcdir)/${org%.org}.tangled"
+
         i=${org%.org}
+        c_test_o="\$(srcdir)/src/test_${i}.o"
+        f_test_o="\$(srcdir)/src/test_${i}_f.o"
+        c_test="\$(srcdir)/src/test_${i}.c"
+        f_test="\$(srcdir)/src/test_${i}_f.f90"
+
         i="\$(srcdir)/src/${i#org/}"
         c="${i}.c"
         o="${i}.o"
@@ -44,9 +50,13 @@ function make_src()
         fh_func="${i}_fh_func.f90"
         fh_type="${i}_fh_type.f90"
 
+        ORG_FILES+="\$(srcdir)/$org "
+        TANGLED_FILES+="$tangled "
+        DEPS_ORG["\$(srcdir)/$org"]=$tangled
+
         grep -q "(eval c)" $org
         if [[ $? -eq 0 ]] ; then
-            DEPS_ORG[$org]+="$c "
+            DEPS[$c]+=" $tangled"
             DEPS[$o]+=" $c "
             C_FILES+=" $c"
             C_O_FILES+=" $o"
@@ -54,76 +64,64 @@ function make_src()
 
         grep -q "(eval h_func)" $org
         if [[ $? -eq 0 ]] ; then
-            DEPS_ORG[$org]+="$h_func "
             DEPS[$o]+=" $h_func"
+            DEPS[$h_func]+=" $tangled"
             H_FUNC_FILES+=" $h_func"
         fi
 
         grep -q "(eval h_type)" $org
         if [[ $? -eq 0 ]] ; then
-            DEPS_ORG[$org]+="$h_type "
             DEPS[$o]+=" $h_type"
+            DEPS[$h_type]+=" $tangled"
             H_TYPE_FILES+=" $h_type"
         fi
 
         grep -q "(eval h_private_type)" $org
         if [[ $? -eq 0 ]] ; then
-            DEPS_ORG[$org]+="$h_private_type "
             DEPS[$o]+=" $h_private_type"
+            DEPS[$h_private_type]+=" $tangled"
             H_PRIVATE_TYPE_FILES+=" $h_private_type"
         fi
 
         grep -q "(eval h_private_func)" $org
         if [[ $? -eq 0 ]] ; then
-            DEPS_ORG[$org]+="$h_private_func "
             DEPS[$o]+=" $h_private_func"
+            DEPS[$h_private_func]+=" $tangled"
             H_PRIVATE_FUNC_FILES+=" $h_private_func"
         fi
 
         grep -q "(eval f)" $org
         if [[ $? -eq 0 ]] ; then
-            DEPS_ORG[$org]+="$f90 "
+            DEPS[$f90]+="$tangled "
             DEPS[$fo]+="$f90 "
             F_FILES+=" $f90"
         fi
 
         grep -q "(eval fh_func)" $org
         if [[ $? -eq 0 ]] ; then
-            DEPS_ORG[$org]+="$fh_func "
             DEPS[$fo]+=" $fh_func"
+            DEPS[$fh_func]+=" $tangled"
             FH_FUNC_FILES+=" $fh_func"
         fi
 
         grep -q "(eval fh_type)" $org
         if [[ $? -eq 0 ]] ; then
-            DEPS_ORG[$org]+="$fh_type "
             DEPS[$fo]+=" $fh_type"
+            DEPS[$fh_type]+=" $tangled"
             FH_TYPE_FILES+=" $fh_type"
         fi
-    done
 
-    for org in org/*.org ; do
-        i=${org%.org}
-        i=${i#org/}
-        o="\$(srcdir)/src/${i}.o"
-        fo="\$(srcdir)/src/${i}_f.o"
-        c="\$(srcdir)/src/${i}.c"
-        f90="\$(srcdir)/src/${i}_f.f90"
-        c_test_o="\$(srcdir)/src/test_${i}.o"
-        f_test_o="\$(srcdir)/src/test_${i}_f.o"
-        c_test="\$(srcdir)/src/test_${i}.c"
-        f_test="\$(srcdir)/src/test_${i}_f.f90"
         grep -q "(eval c_test)" $org
         if [[ $? -eq 0 ]] ; then
-            DEPS_ORG[$org]+="$c_test "
-            DEPS[$c_test_o]+=" $c_test $o"
+            DEPS["$c_test"]="${tangled} "
+            DEPS["$c_test_o"]+=" $c_test $o"
             C_TEST_FILES+=" $c_test"
         fi
 
         grep -q "(eval f_test)" $org
         if [[ $? -eq 0 ]] ; then
-            DEPS_ORG[$org]+="$f_test "
-            DEPS[$f_test_o]+=" $f_test $fo"
+            DEPS["$f_test"]+="${tangled} "
+            DEPS["$f_test_o"]+=" $f_test $fo"
             F_TEST_FILES+=" $f_test"
         fi
     done
@@ -160,6 +158,7 @@ function make_src()
     echo "## Source files" > ${OUTPUT}
     echo >> ${OUTPUT}
     echo "ORG_FILES=${ORG_FILES}" >> ${OUTPUT}
+    echo "TANGLED_FILES=${TANGLED_FILES}" >> ${OUTPUT}
     echo "C_FILES=${C_FILES}" >> ${OUTPUT}
     echo "F_FILES=${F_FILES}" >> ${OUTPUT}
     echo "C_O_FILES=${C_O_FILES}" >> ${OUTPUT}
