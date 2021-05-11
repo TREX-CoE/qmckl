@@ -35,6 +35,7 @@
 ; The following is required to compute the file names
 (setq pwd (file-name-directory buffer-file-name))
 (setq wd (concat pwd "/../src/"))
+(setq td (concat pwd "/../tests/"))
 (setq name (file-name-nondirectory (substring buffer-file-name 0 -4)))
 (setq f  (concat wd name "_f.f90"))
 (setq fh_func (concat wd name "_fh_func.f90"))
@@ -44,7 +45,7 @@
 (setq h_type  (concat wd name "_type.h"))
 (setq h_private_type  (concat wd name "_private_type.h"))
 (setq h_private_func  (concat wd name "_private_func.h"))
-(setq c_test  (concat wd "test_" name ".c"))
-(setq f_test  (concat wd "test_" name "_f.f90"))
+(setq c_test  (concat td "test_" name ".c"))
+(setq f_test  (concat td "test_" name "_f.f90"))
 (org-babel-lob-ingest "../tools/lib.org")
 

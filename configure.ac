@@ -193,29 +193,6 @@ if test "x${QMCKL_DEVEL}" != "x"; then
         HAS_CPPCHECK=1
   fi
 
-  ## munit
-  AC_ARG_WITH(munit, [AC_HELP_STRING([--without-munit],[use munit for testing])], ok=yes, ok=no)
-  if test "$ok" = "no"; then
-  AC_CHECK_FILE([munit/munit.h], [],
-    AC_MSG_ERROR([
-    -------------------------------------------------
-    Error: Git submodule for munit is not downloaded.
-    $ git submodule update --init
-    -------------------------------------------------
-  ]) )
-  else
-    ARGS="${ARGS} munit"
-    AC_DEFINE(HAVE_MUNIT,1,[Define when using munit])
-  fi
-  AC_CHECK_HEADERS([fcntl.h langinfo.h limits.h locale.h mach/mach.h sys/time.h])
-  AC_TYPE_PID_T
-  AC_C_INLINE
-  AC_TYPE_SSIZE_T
-  AC_FUNC_REALLOC
-  AC_FUNC_STRERROR_R
-  AC_FUNC_FORK
-  AC_CHECK_FUNCS([clock_gettime dup2 gettimeofday nl_langinfo setlocale strcasecmp strtoul])
-
 fi
 
 #PKG-CONFIG

@@ -30,61 +30,34 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+dist_src_DATA = $(ORG_FILES)
 
-ACLOCAL_AMFLAGS = -I m4
+BUILT_SOURCES = $(C_FILES) $(F_FILES) $(FH_FUNC_FILES) $(FH_TYPE_FILES) $(H_FUNC_FILES) $(H_TYPE_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES) $(qmckl_f) $(qmckl_h)
+CLEANFILES += $(BUILT_SOURCES) $(C_TEST_FILES) $(F_TEST_FILES) $(TANGLED_FILES) $(C_TEST_FILES) $(F_TEST_FILES) $(qmckl_f) $(qmckl_h)
 
-VERSION_MAJOR   = @VERSION_MAJOR@
-VERSION_MINOR   = @VERSION_MINOR@
-VERSION_PATCH   = @VERSION_PATCH@
 
-SUBDIRS =
-CLEANFILES =
+## Silent
+## ======
 
-pkgconfigdir = $(libdir)/pkgconfig
-pkgconfig_DATA = $(srcdir)/qmckl.pc
+tangle_verbose   = $(tangle_verbose_@AM_V@)
+tangle_verbose_  = $(tangle_verbose_@AM_DEFAULT_V@)
+tangle_verbose_0 = @echo "  TANGLE   $<";
 
-qmckl_h = $(srcdir)/include/qmckl.h
-include_HEADERS = $(qmckl_h)
+cat_h_verbose   = $(cat_h_verbose_@AM_V@)
+cat_h_verbose_  = $(cat_h_verbose_@AM_DEFAULT_V@)
+cat_h_verbose_0 = @echo "  HEADER   $@";
 
-qmckl_f  = $(srcdir)/share/qmckl/fortran/qmckl_f.f90
-qmckl_fo = $(srcdir)/share/qmckl/fortran/qmckl_f.$(OBJEXT)
-test_qmckl_f = $(srcdir)/tests/qmckl_f.f90
-src_qmckl_f = $(srcdir)/src/qmckl_f.f90
 
-fortrandir = $(datadir)/$(PACKAGE_NAME)/fortran/
-fortran_DATA = $(qmckl_f)
+## Rules
+## =====
 
-AM_CPPFLAGS = -I$(srcdir)/src -I$(srcdir)/include
+SUFFIXES = .f90 .h .org .c _f.f90 _func.h _type.h _private_func.h _private_type.h
 
-lib_LTLIBRARIES = src/libqmckl.la
-src_libqmckl_la_SOURCES = $(qmckl_h) $(src_qmckl_f) $(C_FILES) $(F_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES)
+$(qmckl_h): $(H_FUNC_FILES) $(H_TYPE_FILES)
+	$(cat_h_verbose)$(srcdir)/tools/build_qmckl_h.sh
 
-export srcdir qmckl_f qmckl_h
+$(qmckl_f): $(FH_FUNC_FILES) $(FH_TYPE_FILES)
+	$(cat_h_verbose)$(srcdir)/tools/build_qmckl_f.sh
 
-CLEANFILES+=$(test_qmckl_f)
-
-include $(srcdir)/generated.mk
-
-if QMCKL_DEVEL
-include Makefile.dev.mk
-else
-include Makefile.dist.mk
-endif
-
-$(srcdir)/generated.mk: $(ORG_FILES)
-	$(srcdir)/tools/build_makefile.sh
-
-$(test_qmckl_f): $(qmckl_f)
-	cp $(qmckl_f) $(test_qmckl_f)
-
-$(src_qmckl_f): $(qmckl_f)
-	cp $(qmckl_f) $(src_qmckl_f)
-
-rpms srcrpm:
-	for dir in $(SUBDIRS); do \
-	  (cd $$dir && $(MAKE) $(AM_MAKEFLAGS) $@) || exit 1; \
-	done
-
-.PHONY: rpms srcrpm
-
+# vim: syntax=automake noet
 

@@ -15,11 +15,8 @@ to read the documentation.
 
 To clone the repository, use:
 ```
-git clone --recursive https://github.com/TREX-CoE/qmckl.git
+git clone https://github.com/TREX-CoE/qmckl.git
 ```
-to dowload also the [munit](https://github.com/nemequ/munit) unit testing
-framework.
-
 
 # Installation
 

@@ -15,7 +15,7 @@ function make_src()
 
     cd ${srcdir}
 
-    declare -A DEPS DEPS_ORG DEPS_TEST
+    declare -A DEPS DEPS_ORG DEPS_TEST TESTS
 
     C_FILES=
     F_FILES=
@@ -29,15 +29,14 @@ function make_src()
     F_TEST_FILES=
     TANGLED_FILES=
 
-    qmckl_f=" \$(srcdir)/src/qmckl_f.o"
-
     for org in org/*.org ; do
         i=$(basename ${org%.org})
         tangled="\$(srcdir)/org/${i}.tangled"
-        c_test_o="\$(srcdir)/src/test_${i}.o"
-        f_test_o="\$(srcdir)/src/test_${i}_f.o"
-        c_test="\$(srcdir)/src/test_${i}.c"
-        f_test="\$(srcdir)/src/test_${i}_f.f90"
+        c_test_x="\$(srcdir)/tests/test_${i}"
+        c_test_o="\$(srcdir)/tests/test_${i}.o"
+        f_test_o="\$(srcdir)/tests/test_${i}_f.o"
+        c_test="\$(srcdir)/tests/test_${i}.c"
+        f_test="\$(srcdir)/tests/test_${i}_f.f90"
 
         i="\$(srcdir)/src/${i}"
 
@@ -93,7 +92,7 @@ function make_src()
         grep -q "(eval f)" $org
         if [[ $? -eq 0 ]] ; then
             DEPS[$f90]+="$tangled "
-            DEPS[$fo]+="$f90 \$(qmckl_f)"
+            DEPS[$fo]+="$f90 \$(qmckl_fo)"
             F_FILES+=" $f90"
         fi
 
@@ -112,64 +111,71 @@ function make_src()
         grep -q "(eval c_test)" $org
         if [[ $? -eq 0 ]] ; then
             DEPS_TEST["${c_test}"]="${tangled} "
-            DEPS_TEST["${c_test_o}"]+=" ${c_test} $o \$(qmckl_h)"
             C_TEST_FILES+=" ${c_test}"
+            TESTS["${c_test_x}"]+="${c_test} \$(qmckl_h)"
         fi
 
         grep -q "(eval f_test)" $org
         if [[ $? -eq 0 ]] ; then
             DEPS_TEST["${f_test}"]+="${tangled} "
-            DEPS_TEST["${f_test_o}"]+=" ${f_test} $fo \$(qmckl_f)"
             F_TEST_FILES+=" ${f_test}"
+            TESTS["${c_test_x}"]+=" ${f_test} \$(test_qmckl_f)"
         fi
     done
 
 
-    OUTPUT=${WD}/generated.mk
-    echo > ${OUTPUT}
-    echo "## Source files" > ${OUTPUT}
-    echo >> ${OUTPUT}
-    echo "ORG_FILES=${ORG_FILES}" >> ${OUTPUT}
-    echo "TANGLED_FILES=${TANGLED_FILES}" >> ${OUTPUT}
-    echo "C_FILES=${C_FILES}" >> ${OUTPUT}
-    echo "F_FILES=${F_FILES}" >> ${OUTPUT}
-    echo "C_O_FILES=${C_O_FILES}" >> ${OUTPUT}
-    echo "F_O_FILES=${F_O_FILES}" >> ${OUTPUT}
-    echo "FH_FUNC_FILES=${FH_FUNC_FILES}" >> ${OUTPUT}
-    echo "FH_TYPE_FILES=${FH_TYPE_FILES}" >> ${OUTPUT}
-    echo "H_FUNC_FILES=${H_FUNC_FILES}" >> ${OUTPUT}
-    echo "H_TYPE_FILES=${H_TYPE_FILES}" >> ${OUTPUT}
-    echo "H_PRIVATE_FUNC_FILES=${H_PRIVATE_FUNC_FILES}" >> ${OUTPUT}
-    echo "H_PRIVATE_TYPE_FILES=${H_PRIVATE_TYPE_FILES}" >> ${OUTPUT}
-    echo "C_TEST_FILES=${C_TEST_FILES}" >> ${OUTPUT}
-    echo "F_TEST_FILES=${F_TEST_FILES}" >> ${OUTPUT}
-    echo >> ${OUTPUT}
+    echo 
+    echo "## Source files" 
+    echo 
+    echo "ORG_FILES=${ORG_FILES}" 
+    echo "TANGLED_FILES=${TANGLED_FILES}" 
+    echo "C_FILES=${C_FILES}" 
+    echo "F_FILES=${F_FILES}" 
+    echo "C_O_FILES=${C_O_FILES}" 
+    echo "F_O_FILES=${F_O_FILES}" 
+    echo "FH_FUNC_FILES=${FH_FUNC_FILES}" 
+    echo "FH_TYPE_FILES=${FH_TYPE_FILES}" 
+    echo "H_FUNC_FILES=${H_FUNC_FILES}" 
+    echo "H_TYPE_FILES=${H_TYPE_FILES}" 
+    echo "H_PRIVATE_FUNC_FILES=${H_PRIVATE_FUNC_FILES}" 
+    echo "H_PRIVATE_TYPE_FILES=${H_PRIVATE_TYPE_FILES}" 
+    echo "C_TEST_FILES=${C_TEST_FILES}" 
+    echo "F_TEST_FILES=${F_TEST_FILES}" 
+    echo "TESTS=${!TESTS[@]}" | sed "s|\$(srcdir)/||g"
+    echo 
 
-    echo >> ${OUTPUT}
-    echo "## Org-mode inherited dependencies" >> ${OUTPUT}
-    echo >> ${OUTPUT}
+    echo 
+    echo "## Org-mode inherited dependencies" 
+    echo 
     for f in ${!DEPS_ORG[@]} ; do
         echo ${DEPS_ORG[$f]}: $f
         echo "	\$(tangle_verbose)\$(srcdir)/tools/tangle.sh $f"
         echo ""
-    done >> ${OUTPUT}
-    echo >> ${OUTPUT}
+    done 
+    echo 
 
-    echo >> ${OUTPUT}
-    echo "## Source dependencies" >> ${OUTPUT}
-    echo >> ${OUTPUT}
+    echo 
+    echo "## Source dependencies" 
+    echo 
     for f in ${!DEPS[@]} ; do
         echo "${f}: ${DEPS[$f]}"
-    done | sort >> ${OUTPUT}
+    done | sort 
 
-    echo >> ${OUTPUT}
-    echo "## Test files" >> ${OUTPUT}
-    echo >> ${OUTPUT}
+    echo 
+    echo "## Test files" 
+    echo 
     for f in ${!DEPS_TEST[@]} ; do
-        echo "${f}: ${DEPS_TEST[$f]} \$(qmckl_h) \$(srcdir)/src/libqmckl.la"
-    done | sort >> ${OUTPUT}
+        echo "${f}: ${DEPS_TEST[$f]}"
+    done | sort 
+    echo
+    echo "check_PROGRAMS = \$(TESTS)" 
+    for f in ${!TESTS[@]} ; do
+        echo "tests_$(basename $f)_SOURCES = ${TESTS[$f]}" #| sed "s|\$(srcdir)/||"
+        echo "tests_$(basename $f)_LDADD   = src/libqmckl.la"
+    done | sort 
 }
 
 
-make_src
+OUTPUT=${WD}/generated.mk
+make_src > ${OUTPUT}
 
