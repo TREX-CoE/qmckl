@@ -72,7 +72,7 @@ endif
 
 tangle_verbose   = $(tangle_verbose_@AM_V@)
 tangle_verbose_  = $(tangle_verbose_@AM_DEFAULT_V@)
-tangle_verbose_0 = @echo "  TANGLE   $@";
+tangle_verbose_0 = @echo "  TANGLE   $<";
 
 cat_h_verbose   = $(cat_h_verbose_@AM_V@)
 cat_h_verbose_  = $(cat_h_verbose_@AM_DEFAULT_V@)

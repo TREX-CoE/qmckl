@@ -94,6 +94,7 @@ for i in ${HEADERS}
 do
     header=${srcdir}/src/$i 
     if [[ -f $header ]] ; then
+        echo "/* $header */" >> ${OUTPUT}
         cat $header >> ${OUTPUT}
     fi
 done

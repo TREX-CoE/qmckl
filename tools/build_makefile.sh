@@ -29,6 +29,8 @@ function make_src()
     F_TEST_FILES=
     TANGLED_FILES=
 
+    qmckl_f=" \$(srcdir)/src/qmckl_f.o"
+
     for org in org/*.org ; do
         i=$(basename ${org%.org})
         tangled="\$(srcdir)/org/${i}.tangled"
@@ -57,21 +59,19 @@ function make_src()
         grep -q "(eval c)" $org
         if [[ $? -eq 0 ]] ; then
             DEPS[$c]+=" $tangled"
-            DEPS[$o]+=" $c "
+            DEPS[$o]+=" $c \$(qmckl_h)"
             C_FILES+=" $c"
             C_O_FILES+=" $o"
         fi
 
         grep -q "(eval h_func)" $org
         if [[ $? -eq 0 ]] ; then
-            DEPS[$o]+=" $h_func"
             DEPS[$h_func]+=" $tangled"
             H_FUNC_FILES+=" $h_func"
         fi
 
         grep -q "(eval h_type)" $org
         if [[ $? -eq 0 ]] ; then
-            DEPS[$o]+=" $h_type"
             DEPS[$h_type]+=" $tangled"
             H_TYPE_FILES+=" $h_type"
         fi
@@ -93,20 +93,18 @@ function make_src()
         grep -q "(eval f)" $org
         if [[ $? -eq 0 ]] ; then
             DEPS[$f90]+="$tangled "
-            DEPS[$fo]+="$f90 "
+            DEPS[$fo]+="$f90 \$(qmckl_f)"
             F_FILES+=" $f90"
         fi
 
         grep -q "(eval fh_func)" $org
         if [[ $? -eq 0 ]] ; then
-            DEPS[$fo]+=" $fh_func"
             DEPS[$fh_func]+=" $tangled"
             FH_FUNC_FILES+=" $fh_func"
         fi
 
         grep -q "(eval fh_type)" $org
         if [[ $? -eq 0 ]] ; then
-            DEPS[$fo]+=" $fh_type"
             DEPS[$fh_type]+=" $tangled"
             FH_TYPE_FILES+=" $fh_type"
         fi
@@ -114,44 +112,18 @@ function make_src()
         grep -q "(eval c_test)" $org
         if [[ $? -eq 0 ]] ; then
             DEPS_TEST["${c_test}"]="${tangled} "
-            DEPS_TEST["${c_test_o}"]+=" ${c_test} $o"
+            DEPS_TEST["${c_test_o}"]+=" ${c_test} $o \$(qmckl_h)"
             C_TEST_FILES+=" ${c_test}"
         fi
 
         grep -q "(eval f_test)" $org
         if [[ $? -eq 0 ]] ; then
             DEPS_TEST["${f_test}"]+="${tangled} "
-            DEPS_TEST["${f_test_o}"]+=" ${f_test} $fo"
+            DEPS_TEST["${f_test_o}"]+=" ${f_test} $fo \$(qmckl_f)"
             F_TEST_FILES+=" ${f_test}"
         fi
     done
 
-    for org in org/*.org ; do
-        i=${org%.org}
-        i="\$(srcdir)/src/${i#org/}"
-        c="${i}.c"
-        o="${i}.o"
-        fo="${i}_f.o"
-        for i in ${!DEPS[@]} ; do
-            extension="${i##*.}"
-            grep -q "$i" $org
-            if [[ $? -ne 0 ]] ; then
-                if [[ "$extension" == h ]] ; then
-                    DEPS[$o]+=" $i"
-                elif [[ "$extension" == f90 ]] ; then
-                    DEPS[$fo]+=" $i"
-                fi
-            fi
-        done
-    done
-
-    for f in ${!DEPS[@]} ; do
-        if [[ "${f/_f.o/_f.ox}" == ${f}x ]] ; then
-            DEPS["${f}"]+=" qmckl_f.o"
-        elif [[ "${f/.o/.ox}" == ${f}x ]] ; then
-            DEPS["$f"]+=" \$(qmckl_h)"
-        fi
-    done
 
     OUTPUT=${WD}/generated.mk
     echo > ${OUTPUT}
