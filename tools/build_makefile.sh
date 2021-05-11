@@ -15,7 +15,7 @@ function make_src()
 
     cd ${srcdir}
 
-    declare -A DEPS DEPS_ORG
+    declare -A DEPS DEPS_ORG DEPS_TEST
 
     C_FILES=
     F_FILES=
@@ -30,15 +30,15 @@ function make_src()
     TANGLED_FILES=
 
     for org in org/*.org ; do
-        tangled="\$(srcdir)/${org%.org}.tangled"
-
-        i=${org%.org}
+        i=$(basename ${org%.org})
+        tangled="\$(srcdir)/org/${i}.tangled"
         c_test_o="\$(srcdir)/src/test_${i}.o"
         f_test_o="\$(srcdir)/src/test_${i}_f.o"
         c_test="\$(srcdir)/src/test_${i}.c"
         f_test="\$(srcdir)/src/test_${i}_f.f90"
 
-        i="\$(srcdir)/src/${i#org/}"
+        i="\$(srcdir)/src/${i}"
+
         c="${i}.c"
         o="${i}.o"
         h_func="${i}_func.h"
@@ -113,16 +113,16 @@ function make_src()
 
         grep -q "(eval c_test)" $org
         if [[ $? -eq 0 ]] ; then
-            DEPS["$c_test"]="${tangled} "
-            DEPS["$c_test_o"]+=" $c_test $o"
-            C_TEST_FILES+=" $c_test"
+            DEPS_TEST["${c_test}"]="${tangled} "
+            DEPS_TEST["${c_test_o}"]+=" ${c_test} $o"
+            C_TEST_FILES+=" ${c_test}"
         fi
 
         grep -q "(eval f_test)" $org
         if [[ $? -eq 0 ]] ; then
-            DEPS["$f_test"]+="${tangled} "
-            DEPS["$f_test_o"]+=" $f_test $fo"
-            F_TEST_FILES+=" $f_test"
+            DEPS_TEST["${f_test}"]+="${tangled} "
+            DEPS_TEST["${f_test_o}"]+=" ${f_test} $fo"
+            F_TEST_FILES+=" ${f_test}"
         fi
     done
 
@@ -187,7 +187,14 @@ function make_src()
     echo "## Source dependencies" >> ${OUTPUT}
     echo >> ${OUTPUT}
     for f in ${!DEPS[@]} ; do
-        echo ${f}: ${DEPS[$f]}
+        echo "${f}: ${DEPS[$f]}"
+    done | sort >> ${OUTPUT}
+
+    echo >> ${OUTPUT}
+    echo "## Test files" >> ${OUTPUT}
+    echo >> ${OUTPUT}
+    for f in ${!DEPS_TEST[@]} ; do
+        echo "${f}: ${DEPS_TEST[$f]} \$(qmckl_h) \$(srcdir)/src/libqmckl.la"
     done | sort >> ${OUTPUT}
 }
 
