@@ -176,6 +176,7 @@ AM_CONDITIONAL([QMCKL_DEVEL],[test "x$QMCKL_DEVEL" != x])
 
 if test "x${QMCKL_DEVEL}" != "x"; then
 
+  QMCKL_DEVEL=" -- Developer mode"
   AC_PROG_AWK
   AC_CHECK_PROGS([PYTHON],[python python3 python2],[no])
   if test x${PYTHON} == xno ; then
@@ -221,7 +222,7 @@ AC_OUTPUT
 echo \
 "-------------------------------------------------
 
-${PACKAGE_NAME} Version ${PACKAGE_VERSION}
+${PACKAGE_NAME} Version ${PACKAGE_VERSION} ${QMCKL_DEVEL}
 
 Prefix: '${prefix}'.
 

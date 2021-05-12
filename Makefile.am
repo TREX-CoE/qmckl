@@ -47,11 +47,11 @@ pkgconfig_DATA = pkgconfig/qmckl.pc
 qmckl_h = $(srcdir)/include/qmckl.h
 include_HEADERS = $(qmckl_h)
 
-qmckl_f  = share/qmckl/fortran/qmckl_f.f90
-test_qmckl_f = tests/qmckl_f.f90
+qmckl_f       = share/qmckl/fortran/qmckl_f.f90
+test_qmckl_f  = tests/qmckl_f.f90
 test_qmckl_fo = tests/qmckl_f.o
-src_qmckl_f = src/qmckl_f.f90
-src_qmckl_fo = src/qmckl_f.o
+src_qmckl_f   = src/qmckl_f.f90
+src_qmckl_fo  = src/qmckl_f.o
 
 fortrandir = $(datadir)/$(PACKAGE_NAME)/fortran/
 dist_fortran_DATA = $(qmckl_f)
@@ -104,9 +104,6 @@ doc: html text
 
 if QMCKL_DEVEL
 
-generated.mk: $(ORG_FILES)
-	python $(srcdir)/tools/build_makefile.py
-
 dist_src_DATA = $(ORG_FILES) $(TANGLED_FILES) $(EXPORTED_FILES)
 
 BUILT_SOURCES = $(C_FILES) $(F_FILES) $(FH_FUNC_FILES) $(FH_TYPE_FILES) $(H_FUNC_FILES) $(H_TYPE_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES) $(qmckl_f) $(qmckl_h)
@@ -115,7 +112,7 @@ CLEANFILES += $(BUILT_SOURCES) $(C_TEST_FILES) $(F_TEST_FILES) $(TANGLED_FILES) 
 
 EXTRA_DIST +=                 \
     tools/build_doc.sh        \
-    tools/build_makefile.sh   \
+    tools/build_makefile.py   \
     tools/build_qmckl_f.sh    \
     tools/build_qmckl_h.sh    \
     tools/config_doc.el       \
@@ -156,5 +153,8 @@ $(qmckl_f): $(FH_FUNC_FILES) $(FH_TYPE_FILES)
 
 $(htmlize_el):
 	$(srcdir)/tools/install_htmlize.sh $(htmlize_el)
+
+generated.mk: $(ORG_FILES)
+	python $(srcdir)/tools/build_makefile.py
 
 endif

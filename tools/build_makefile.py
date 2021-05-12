@@ -228,13 +228,12 @@ def main():
               "## Test files",
               "",
               "$(test_qmckl_fo): $(test_qmckl_f)"]
-    for f in sorted(TESTS.keys()):
-        output += [ f + "$(EXEEXT): " + " ".join(TESTS[f]) ]
     output += ["",
                 "check_PROGRAMS = $(TESTS)" ]
     for f in sorted(TESTS.keys()):
         prefix = "tests_" + f.rsplit("/",1)[-1]
-        output += [ prefix + "_SOURCES = " + " ".join(TESTS[f]).replace("$(srcdir)",""),
+        output += [ prefix + "_SOURCES = " + \
+                    " ".join(TESTS[f]).replace("$(srcdir)",""),
                     prefix + "_LDADD   = src/libqmckl.la", 
                     prefix + "_LDFLAGS = -no-install",
                     "" ]
