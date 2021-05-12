@@ -206,12 +206,12 @@ function make_src()
     echo 
     echo "if QMCKL_DEVEL"
     for f in ${ORG_FILES} ; do
-        echo "${HTML[$f]}: ${DEPS_DOC[$f]} \$(htmlize_el)"
+        echo "${HTML[$f]}: ${DEPS_DOC[$f]}"
         echo "${TEXT[$f]}: ${DEPS_DOC[$f]}"
         echo ""
     done 
     for f in ${!DEPS_DOC[@]} ; do
-        echo "${DEPS_DOC[$f]}: $f"
+        echo "${DEPS_DOC[$f]}:  \$(htmlize_el) $f"
         echo "	\$(export_verbose)\$(srcdir)/tools/build_doc.sh $f"
         echo ""
     done 
