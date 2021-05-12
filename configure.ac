@@ -177,7 +177,15 @@ AM_CONDITIONAL([QMCKL_DEVEL],[test "x$QMCKL_DEVEL" != x])
 if test "x${QMCKL_DEVEL}" != "x"; then
 
   AC_PROG_AWK
-  ${srcdir}/tools/build_makefile.sh
+  AC_CHECK_PROGS([PYTHON],[python python3 python2],[no])
+  if test x${PYTHON} == xno ; then
+    AC_MSG_ERROR([
+    --------------------------------------------
+    Error: Python is required to build makefiles
+    --------------------------------------------
+    ])
+  fi
+  python ${srcdir}/tools/build_makefile.py
 
   AC_CHECK_PROGS([EMACS],[emacs26 emacs],[no])
   if test x${EMACS} == xno ; then

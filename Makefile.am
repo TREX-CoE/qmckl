@@ -83,9 +83,6 @@ dist_html_DATA = $(HTML_FILES) \
 textdir = $(docdir)/text
 dist_text_DATA = $(TEXT_FILES)
 
-generated.mk: $(ORG_FILES)
-	$(srcdir)/tools/build_makefile.sh
-
 $(test_qmckl_fo): $(test_qmckl_f)
 $(test_qmckl_f): $(srcdir)/$(qmckl_f)
 	cp $(srcdir)/$(qmckl_f) $(test_qmckl_f)
@@ -106,6 +103,9 @@ doc: html text
 
 
 if QMCKL_DEVEL
+
+generated.mk: $(ORG_FILES)
+	python $(srcdir)/tools/build_makefile.py
 
 dist_src_DATA = $(ORG_FILES) $(TANGLED_FILES) $(EXPORTED_FILES)
 
