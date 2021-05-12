@@ -76,7 +76,9 @@ ln_s_verbose_  = $(ln_s_verbose_@AM_DEFAULT_V@)
 ln_s_verbose_0 = @echo "  LN_S     $<";
 
 htmldir = $(docdir)/html
-dist_html_DATA = $(HTML_FILES) share/doc/qmckl/html/index.html
+dist_html_DATA = $(HTML_FILES) \
+        share/doc/qmckl/html/index.html \
+        $(srcdir)/share/doc/qmckl/html/qmckl.css
 
 textdir = $(docdir)/text
 dist_text_DATA = $(TEXT_FILES)
@@ -97,8 +99,8 @@ share/doc/qmckl/html/index.html: share/doc/qmckl/html/README.html
 	$(LN_S) --force README.html index.html
 
 
-html: $(HTML_FILES) share/doc/qmckl/html/index.html
-text: $(TEXT_FILES)
+html: $(dist_html_DATA)
+text: $(dist_text_DATA)
 doc: html text
 
 
