@@ -30,17 +30,17 @@ function make_src()
 
     for org in org/*.org ; do
         i=$(basename ${org%.org})
-        tangled="\$(srcdir)/org/${i}.tangled"
-        exported="\$(srcdir)/org/${i}.exported"
-        c_test_x="\$(srcdir)/tests/test_${i}"
-        c_test_o="\$(srcdir)/tests/test_${i}.\$(OBJEXT)"
-        f_test_o="\$(srcdir)/tests/test_${i}_f.\$(OBJEXT)"
-        c_test="\$(srcdir)/tests/test_${i}.c"
-        f_test="\$(srcdir)/tests/test_${i}_f.f90"
-        html="\$(srcdir)/share/doc/qmckl/html/${i}.html"
-        text="\$(srcdir)/share/doc/qmckl/text/${i}.txt"
+        tangled="org/${i}.tangled"
+        exported="org/${i}.exported"
+        c_test_x="tests/test_${i}"
+        c_test_o="tests/test_${i}.\$(OBJEXT)"
+        f_test_o="tests/test_${i}_f.\$(OBJEXT)"
+        c_test="tests/test_${i}.c"
+        f_test="tests/test_${i}_f.f90"
+        html="share/doc/qmckl/html/${i}.html"
+        text="share/doc/qmckl/text/${i}.txt"
 
-        i="\$(srcdir)/src/${i}"
+        i="src/${i}"
 
         c="${i}.c"
         o="${i}.\$(OBJEXT)"

@@ -47,11 +47,11 @@ pkgconfig_DATA = pkgconfig/qmckl.pc
 qmckl_h = $(srcdir)/include/qmckl.h
 include_HEADERS = $(qmckl_h)
 
-qmckl_f  = $(srcdir)/share/qmckl/fortran/qmckl_f.f90
-test_qmckl_f = $(srcdir)/tests/qmckl_f.f90
-test_qmckl_fo = $(srcdir)/tests/qmckl_f.o
-src_qmckl_f = $(srcdir)/src/qmckl_f.f90
-src_qmckl_fo = $(srcdir)/src/qmckl_f.o
+qmckl_f  = share/qmckl/fortran/qmckl_f.f90
+test_qmckl_f = tests/qmckl_f.f90
+test_qmckl_fo = tests/qmckl_f.o
+src_qmckl_f = src/qmckl_f.f90
+src_qmckl_fo = src/qmckl_f.o
 
 fortrandir = $(datadir)/$(PACKAGE_NAME)/fortran/
 dist_fortran_DATA = $(qmckl_f)
@@ -61,14 +61,14 @@ AM_CPPFLAGS = -I$(srcdir)/src -I$(srcdir)/include
 lib_LTLIBRARIES = src/libqmckl.la
 src_libqmckl_la_SOURCES = $(qmckl_h) $(src_qmckl_f) $(C_FILES) $(F_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES)
 
-export srcdir qmckl_f qmckl_h
+export qmckl_f qmckl_h srcdir
 
 CLEANFILES+=$(test_qmckl_f) $(src_qmckl_f) $(test_qmckl_o) $(src_qmckl_o) \
             $(qmckl_h) $(qmckl_f)
 
-htmlize_el=$(srcdir)/share/doc/qmckl/html/htmlize.el
+htmlize_el=share/doc/qmckl/html/htmlize.el
 
-include $(srcdir)/generated.mk
+include generated.mk
 
 
 ln_s_verbose   = $(ln_s_verbose_@AM_V@)
@@ -76,32 +76,31 @@ ln_s_verbose_  = $(ln_s_verbose_@AM_DEFAULT_V@)
 ln_s_verbose_0 = @echo "  LN_S     $<";
 
 htmldir = $(docdir)/html
-dist_html_DATA = $(HTML_FILES) $(srcdir)/share/doc/qmckl/html/index.html
+dist_html_DATA = $(HTML_FILES) share/doc/qmckl/html/index.html
 
 textdir = $(docdir)/text
 dist_text_DATA = $(TEXT_FILES)
 
-$(srcdir)/generated.mk: $(ORG_FILES)
+generated.mk: $(ORG_FILES)
 	$(srcdir)/tools/build_makefile.sh
 
 $(test_qmckl_fo): $(test_qmckl_f)
-$(test_qmckl_f): $(qmckl_f)
-	cp $(qmckl_f) $(test_qmckl_f)
+$(test_qmckl_f): $(srcdir)/$(qmckl_f)
+	cp $(srcdir)/$(qmckl_f) $(test_qmckl_f)
 
 $(src_qmckl_fo): $(src_qmckl_f)
-$(src_qmckl_f): $(qmckl_f)
-	cp $(qmckl_f) $(src_qmckl_f)
+$(src_qmckl_f): $(srcdir)/$(qmckl_f)
+	cp $(srcdir)/$(qmckl_f) $(src_qmckl_f)
 
-$(srcdir)/share/doc/qmckl/html/index.html: $(srcdir)/share/doc/qmckl/html/README.html
-	$(ln_s_verbose)cd $(srcdir)/share/doc/qmckl/html/ && \
+share/doc/qmckl/html/index.html: share/doc/qmckl/html/README.html
+	$(ln_s_verbose)cd share/doc/qmckl/html/ && \
 	$(LN_S) --force README.html index.html
 
-rpms srcrpm:
-	for dir in $(SUBDIRS); do \
-	  (cd $$dir && $(MAKE) $(AM_MAKEFLAGS) $@) || exit 1; \
-	done
 
-.PHONY: rpms srcrpm
+html: $(HTML_FILES)
+text: $(TEXT_FILES)
+doc: html text
+
 
 
 if QMCKL_DEVEL
@@ -110,7 +109,7 @@ dist_src_DATA = $(ORG_FILES) $(TANGLED_FILES) $(EXPORTED_FILES)
 
 BUILT_SOURCES = $(C_FILES) $(F_FILES) $(FH_FUNC_FILES) $(FH_TYPE_FILES) $(H_FUNC_FILES) $(H_TYPE_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES) $(qmckl_f) $(qmckl_h)
 
-CLEANFILES += $(BUILT_SOURCES) $(C_TEST_FILES) $(F_TEST_FILES) $(TANGLED_FILES) $(C_TEST_FILES) $(F_TEST_FILES) $(qmckl_f) $(qmckl_h) $(HTML_FILES) $(TEXT_FILES) $(srcdir)/share/doc/qmckl/html/index.html $(EXPORTED_FILES)
+CLEANFILES += $(BUILT_SOURCES) $(C_TEST_FILES) $(F_TEST_FILES) $(TANGLED_FILES) $(C_TEST_FILES) $(F_TEST_FILES) $(qmckl_f) $(qmckl_h) $(HTML_FILES) $(TEXT_FILES) share/doc/qmckl/html/index.html $(EXPORTED_FILES)
 
 EXTRA_DIST +=                 \
     tools/build_doc.sh        \
