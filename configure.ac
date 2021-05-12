@@ -84,7 +84,7 @@ AC_SUBST([HAS_CPPCHECK])
 AC_FC_LIBRARY_LDFLAGS
 
 AC_CHECK_LIB([m], [sqrt])
-AC_CHECK_HEADERS([assert.h errno.h malloc.h math.h pthread.h stdbool.h stdint.h stdio.h stdlib.h string.h])
+AC_CHECK_HEADERS([assert.h errno.h math.h pthread.h stdbool.h stdint.h stdio.h stdlib.h string.h])
 
 ## pthread
 AC_CHECK_LIB([pthread], [pthread_create])
