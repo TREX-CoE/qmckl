@@ -93,7 +93,8 @@ $(src_qmckl_f): $(srcdir)/$(qmckl_f)
 
 share/doc/qmckl/html/index.html: share/doc/qmckl/html/README.html
 	$(ln_s_verbose)cd share/doc/qmckl/html/ && \
-	$(LN_S) --force README.html index.html
+        rm -rf index.html && \
+	$(LN_S) README.html index.html
 
 
 html: $(dist_html_DATA)
