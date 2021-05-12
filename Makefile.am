@@ -97,7 +97,7 @@ share/doc/qmckl/html/index.html: share/doc/qmckl/html/README.html
 	$(LN_S) --force README.html index.html
 
 
-html: $(HTML_FILES)
+html: $(HTML_FILES) share/doc/qmckl/html/index.html
 text: $(TEXT_FILES)
 doc: html text
 
@@ -122,7 +122,7 @@ EXTRA_DIST +=                 \
     tools/install_htmlize.sh  \
     tools/lib.org             \
     tools/tangle.sh           \
-    tools/theme.setup         
+    tools/theme.setup
 
 
 ## Silent
@@ -130,7 +130,7 @@ EXTRA_DIST +=                 \
 
 export_verbose   = $(export_verbose_@AM_V@)
 export_verbose_  = $(export_verbose_@AM_DEFAULT_V@)
-export_verbose_0 = @echo "  DOC      $<";
+export_verbose_0 = @echo "  DOC      $@";
 
 tangle_verbose   = $(tangle_verbose_@AM_V@)
 tangle_verbose_  = $(tangle_verbose_@AM_DEFAULT_V@)

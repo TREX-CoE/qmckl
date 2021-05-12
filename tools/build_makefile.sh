@@ -211,7 +211,7 @@ function make_src()
         echo ""
     done 
     for f in ${!DEPS_DOC[@]} ; do
-        echo "${DEPS_DOC[$f]}:  \$(htmlize_el) $f"
+        echo "${DEPS_DOC[$f]}: $f \$(htmlize_el)"
         echo "	\$(export_verbose)\$(srcdir)/tools/build_doc.sh $f"
         echo ""
     done 
