@@ -1,3 +1,4 @@
-check all clean :
-	make -j 8 -C ../ $@
+default:
+	make -j 8 -C ../ 
+	make -C ../ check
 

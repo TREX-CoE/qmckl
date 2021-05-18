@@ -20,7 +20,8 @@ up-spin and down-spin electrons, and the electron coordinates.
 
   #+begin_src c :tangle (eval c_test) :noweb yes
 #include "qmckl.h"
-#include "assert.h"
+#include <assert.h>
+#include <math.h>
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -59,17 +60,19 @@ int main() {
 
   The following data stored in the context:
 
-   | ~uninitialized~    | int32_t                    | Keeps bit set for uninitialized data                      |
-   | ~num~              | int64_t                    | Total number of electrons                                 |
-   | ~up_num~           | int64_t                    | Number of up-spin electrons                               |
-   | ~down_num~         | int64_t                    | Number of down-spin electrons                             |
-   | ~walk_num~         | int64_t                    | Number of walkers                                         |
-   | ~provided~         | bool                       | If true, ~electron~ is valid                              |
-   | ~coord_new~        | double[walk_num][3][num]   | New set of electron coordinates                           |
-   | ~coord_old~        | double[walk_num][3][num]   | Old set of electron coordinates                           |
-   | ~coord_new_date~   | uint64_t                   | Last modification date of the coordinates                 |
-   | ~ee_distance~      | double[walk_num][num][num] | Electron-electron distances                               |
-   | ~ee_distance_date~ | uint64_t                   | Last modification date of the electron-electron distances |
+   | ~uninitialized~    | int32_t                         | Keeps bit set for uninitialized data                      |
+   | ~num~              | int64_t                         | Total number of electrons                                 |
+   | ~up_num~           | int64_t                         | Number of up-spin electrons                               |
+   | ~down_num~         | int64_t                         | Number of down-spin electrons                             |
+   | ~walk_num~         | int64_t                         | Number of walkers                                         |
+   | ~provided~         | bool                            | If true, ~electron~ is valid                              |
+   | ~coord_new~        | double[walk_num][3][num]        | New set of electron coordinates                           |
+   | ~coord_old~        | double[walk_num][3][num]        | Old set of electron coordinates                           |
+   | ~coord_new_date~   | uint64_t                        | Last modification date of the coordinates                 |
+   | ~ee_distance~      | double[walk_num][num][num]      | Electron-electron distances                               |
+   | ~ee_distance_date~ | uint64_t                        | Last modification date of the electron-electron distances |
+   | ~en_distance~      | double[walk_num][nucl_num][num] | Electron-nucleus distances                                |
+   | ~en_distance_date~ | uint64_t                        | Last modification date of the electron-electron distances |
 
 ** Data structure
 
@@ -81,9 +84,11 @@ typedef struct qmckl_electron_struct {
   int64_t   walk_num;
   int64_t   coord_new_date;
   int64_t   ee_distance_date;
+  int64_t   en_distance_date;
   double*   coord_new;
   double*   coord_old;
   double*   ee_distance;
+  double*   en_distance;
   int32_t   uninitialized;
   bool      provided;
 } qmckl_electron_struct;
@@ -94,7 +99,28 @@ typedef struct qmckl_electron_struct {
    to zero after all initialization functions have been called. The
    struct is then initialized and ~provided == true~.
 
-** TODO Access functions
+   When all the data relative to electrons have been set, the
+   following function returns ~true~.
+
+      #+begin_src c :comments org :tangle (eval h_func)
+bool qmckl_electron_provided (const qmckl_context context);
+      #+end_src
+
+      #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
+bool qmckl_electron_provided(const qmckl_context context) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return false;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  return ctx->electron.provided;
+}
+      #+end_src
+
+** Access functions
 
    Access functions return ~QMCKL_SUCCESS~ when the data has been
    successfully retrieved. It returnes ~QMCKL_INVALID_CONTEXT~ when
@@ -103,23 +129,22 @@ typedef struct qmckl_electron_struct {
    successfully, the variable pointed by the pointer given in argument
    contains the requested data. Otherwise, this variable is untouched.
    
-   #+begin_src c :comments org :tangle (eval h_func) :exports none
-qmckl_exit_code qmckl_get_electron_num        (const qmckl_context context, int64_t* num);
-qmckl_exit_code qmckl_get_electron_up_num     (const qmckl_context context, int64_t* up_num);
-qmckl_exit_code qmckl_get_electron_down_num   (const qmckl_context context, int64_t* down_num);
-qmckl_exit_code qmckl_get_electron_walk_num   (const qmckl_context context, int64_t* walk_num);
-//qmckl_exit_code qmckl_get_electron_coord_new  (const qmckl_context context, double* coord);
-//qmckl_exit_code qmckl_get_electron_coord_old  (const qmckl_context context, double* coord);
-   #+end_src
-
-   #+NAME:post
-   #+begin_src c  :exports none
+      #+NAME:post
+      #+begin_src c  :exports none
 if ( (ctx->electron.uninitialized & mask) != 0) {
   return NULL;
 }
-   #+end_src
+      #+end_src
 
-   #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
+*** Number of electrons
+    
+      #+begin_src c :comments org :tangle (eval h_func) :exports none
+qmckl_exit_code qmckl_get_electron_num        (const qmckl_context context, int64_t* num);
+qmckl_exit_code qmckl_get_electron_up_num     (const qmckl_context context, int64_t* up_num);
+qmckl_exit_code qmckl_get_electron_down_num   (const qmckl_context context, int64_t* down_num);
+      #+end_src
+
+      #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
 qmckl_exit_code
 qmckl_get_electron_num (const qmckl_context context, int64_t* num) {
 
@@ -183,7 +208,18 @@ qmckl_get_electron_down_num (const qmckl_context context, int64_t* down_num) {
   return QMCKL_SUCCESS;
 }
 
+      #+end_src
 
+*** Number of walkers
+    
+    A walker is a set of electron coordinates that are arguments of
+    the wave function. ~walk_num~ is the number of walkers.
+    
+      #+begin_src c :comments org :tangle (eval h_func) :exports none
+qmckl_exit_code qmckl_get_electron_walk_num   (const qmckl_context context, int64_t* walk_num);
+      #+end_src
+
+      #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
 qmckl_exit_code
 qmckl_get_electron_walk_num (const qmckl_context context, int64_t* walk_num) {
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
@@ -203,30 +239,41 @@ qmckl_get_electron_walk_num (const qmckl_context context, int64_t* walk_num) {
   ,*walk_num = ctx->electron.walk_num;
   return QMCKL_SUCCESS;
 }
+      #+end_src
 
-   #+end_src
-   
-   When all the data relative to electrons have been set, the
-   following function returns ~true~.
+*** Electron coordinates
+    
+    Returns the current electron coordinates. The pointer is assumed
+    to point on a memory block of size ~3 * elec_num * walk_num~. In C
+    the order of the indices is ~[walk_num][3][elec_num]~ and in
+    Fortran it is ~(elec_num,3,walk_num)~.
+    
+      #+begin_src c :comments org :tangle (eval h_func) :exports none
+qmckl_exit_code qmckl_get_electron_coord (const qmckl_context context, double* coord);
+      #+end_src
 
-   #+begin_src c :comments org :tangle (eval h_func)
-bool qmckl_electron_provided (const qmckl_context context);
-   #+end_src
-
-
-   #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
-bool qmckl_electron_provided(const qmckl_context context) {
-
+      #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
+qmckl_exit_code
+qmckl_get_electron_coord (const qmckl_context context, double* elec_coord) {
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return false;
+    return QMCKL_INVALID_CONTEXT;
   }
 
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
   assert (ctx != NULL);
 
-  return ctx->electron.provided;
+  if ( !(ctx->electron.provided) ) {
+    return QMCKL_NOT_PROVIDED;
+  }
+
+  assert (ctx->electron.coord_new != NULL);
+
+  memcpy(elec_coord, ctx->electron.coord_new, ctx->electron.num * ctx->electron.walk_num * 3 * sizeof(double));
+  return QMCKL_SUCCESS;
 }
-   #+end_src
+
+      #+end_src
+   
 
 ** Initialization functions
 
@@ -345,7 +392,6 @@ qmckl_set_electron_walk_num(qmckl_context context, const int64_t walk_num) {
   <<post2>>
 }
     #+end_src
-
 
     The following function sets the electron coordinates of all the
     walkers. When this is done, the pointers to the old and new sets
@@ -476,15 +522,13 @@ assert(qmckl_electron_provided(context));
 rc = qmckl_set_electron_coord (context, coord);
 assert(rc == QMCKL_SUCCESS);
 
-/*
 double coord2[walk_num*3*num];
 
-rc = qmckl_get_electron_coord_new (context, coord2);
+rc = qmckl_get_electron_coord (context, coord2);
 assert(rc == QMCKL_SUCCESS);
 for (size_t i=0 ; i<3*num ; ++i) {
   assert( coord[i] == coord2[i] );
  }
- */
 
     #+end_src
 
@@ -509,12 +553,13 @@ qmckl_exit_code qmckl_get_electron_ee_distance(qmckl_context context, double* di
     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
 qmckl_exit_code qmckl_get_electron_ee_distance(qmckl_context context, double* distance)
 {
-  /* Check input parameters */
+  qmckl_exit_code rc;
+
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return (char) 0;
+    return QMCKL_NULL_CONTEXT;
   }
 
-  qmckl_exit_code rc = qmckl_provide_ee_distance(context);
+  rc = qmckl_provide_ee_distance(context);
   if (rc != QMCKL_SUCCESS) return rc;
 
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
@@ -526,6 +571,7 @@ qmckl_exit_code qmckl_get_electron_ee_distance(qmckl_context context, double* di
   return QMCKL_SUCCESS;
 }
     #+end_src
+
 *** Provide                                                        :noexport:
 
     #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
@@ -535,9 +581,10 @@ qmckl_exit_code qmckl_provide_ee_distance(qmckl_context context);
     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
 qmckl_exit_code qmckl_provide_ee_distance(qmckl_context context)
 {
-  /* Check input parameters */
+  qmckl_exit_code rc;
+
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return (char) 0;
+    return QMCKL_NULL_CONTEXT;
   }
 
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
@@ -679,12 +726,219 @@ qmckl_exit_code qmckl_compute_ee_distance (
 
 assert(qmckl_electron_provided(context));
 
-double distance[walk_num*num*num];
-rc = qmckl_get_electron_ee_distance(context, distance);
-rc = qmckl_get_electron_ee_distance(context, distance);
-assert(distance[0] == 0.);
-assert(distance[1] == distance[num]);
-assert(abs(distance[1]-8.6114953086801) < 1.e-12);
+double ee_distance[walk_num*num*num];
+rc = qmckl_get_electron_ee_distance(context, ee_distance);
+assert(ee_distance[0] == 0.);
+assert(ee_distance[1] == ee_distance[num]);
+assert(fabs(ee_distance[1]-8.6114953086801) < 1.e-12);
+
+     #+end_src
+
+** Electron-nucleus  distances
+
+*** Get
+
+    #+begin_src c :comments org :tangle (eval h_func) :noweb yes
+qmckl_exit_code qmckl_get_electron_en_distance(qmckl_context context, double* distance);
+    #+end_src
+
+    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code qmckl_get_electron_en_distance(qmckl_context context, double* distance)
+{
+  qmckl_exit_code rc;
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  rc = qmckl_provide_en_distance(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  size_t sze = ctx->electron.num * ctx->nucleus.num * ctx->electron.walk_num;
+  memcpy(distance, ctx->electron.en_distance, sze * sizeof(double));
+
+  return QMCKL_SUCCESS;
+}
+    #+end_src
+
+*** Provide                                                        :noexport:
+
+    #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_provide_en_distance(qmckl_context context);
+    #+end_src
+
+    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code qmckl_provide_en_distance(qmckl_context context)
+{
+  qmckl_exit_code rc;
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  if (!(ctx->nucleus.provided)) {
+    return QMCKL_NOT_PROVIDED;
+  }
+
+  /* Compute if necessary */
+  if (ctx->electron.coord_new_date > ctx->electron.en_distance_date) {
+
+    /* Allocate array */
+    if (ctx->electron.en_distance == NULL) {
+
+      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+      mem_info.size = ctx->electron.num * ctx->nucleus.num *
+        ctx->electron.walk_num * sizeof(double);
+      double* en_distance = (double*) qmckl_malloc(context, mem_info);
+
+      if (en_distance == NULL) {
+        return qmckl_failwith( context,
+                               QMCKL_ALLOCATION_FAILED,
+                               "qmckl_en_distance",
+                               NULL);
+      }
+      ctx->electron.en_distance = en_distance;
+    }
+
+    qmckl_exit_code rc =
+      qmckl_compute_en_distance(context,
+                                ctx->electron.num,
+                                ctx->nucleus.num,
+                                ctx->electron.walk_num,
+                                ctx->electron.coord_new,
+                                ctx->nucleus.coord,
+                                ctx->electron.en_distance);
+    if (rc != QMCKL_SUCCESS) {
+      return rc;
+    }
+
+    ctx->electron.en_distance_date = ctx->date;
+  }
+
+  return QMCKL_SUCCESS;
+}
+    #+end_src
+
+*** Compute
+   :PROPERTIES:
+   :Name:     qmckl_compute_en_distance
+   :CRetType: qmckl_exit_code
+   :FRetType: qmckl_exit_code
+   :END:
+
+    #+NAME: qmckl_en_distance_args
+   | qmckl_context | context                                   | in  | Global state               |
+   | int64_t       | elec_num                                  | in  | Number of electrons        |
+   | int64_t       | nucl_num                                  | in  | Number of nuclei           |
+   | int64_t       | walk_num                                  | in  | Number of walkers          |
+   | double        | elec_coord[walk_num][3][elec_num]         | in  | Electron coordinates       |
+   | double        | nucl_coord[walk_num][3][elec_num]         | in  | Nuclear coordinates        |
+   | double        | en_distance[walk_num][nucl_num][elec_num] | out | Electron-nucleus distances |
+
+    #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+integer function qmckl_compute_en_distance_f(context, elec_num, nucl_num, walk_num, elec_coord, nucl_coord, en_distance) &
+     result(info)
+  use qmckl
+  implicit none
+  integer(qmckl_context), intent(in)  :: context
+  integer*8             , intent(in)  :: elec_num
+  integer*8             , intent(in)  :: nucl_num
+  integer*8             , intent(in)  :: walk_num
+  double precision      , intent(in)  :: elec_coord(elec_num,3,walk_num)
+  double precision      , intent(in)  :: nucl_coord(nucl_num,3,walk_num)
+  double precision      , intent(out) :: en_distance(elec_num,nucl_num,walk_num)
+
+  integer*8 :: k
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (elec_num <= 0) then
+     info = QMCKL_INVALID_ARG_2
+     return
+  endif
+
+  if (nucl_num <= 0) then
+     info = QMCKL_INVALID_ARG_3
+     return
+  endif
+
+  if (walk_num <= 0) then
+     info = QMCKL_INVALID_ARG_4
+     return
+  endif
+
+  !$OMP PARALLEL DO DEFAULT(NONE) &
+  !$OMP SHARED(elec_num, nucl_num, walk_num, elec_coord, nucl_coord, en_distance)
+  !$OMP PRIVATE(k)
+  do k=1,walk_num
+     info = qmckl_distance(context, 'T', 'T', elec_num, nucl_num, &
+          elec_coord(1,1,k), elec_num, &
+          nucl_coord, nucl_num, &
+          en_distance(1,1,k), elec_num)
+  end do
+  !$OMP END PARALLEL DO
+
+end function qmckl_compute_en_distance_f
+    #+end_src
+
+    #+begin_src c :tangle (eval h_private_func) :comments org :exports none
+qmckl_exit_code qmckl_compute_en_distance (
+          const qmckl_context context,
+          const int64_t elec_num,
+          const int64_t nucl_num,
+          const int64_t walk_num,
+          const double* elec_coord,
+          const double* nucl_coord,
+          double* const en_distance );
+    #+end_src
+
+    #+CALL: generate_c_interface(table=qmckl_en_distance_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+
+    #+RESULTS:
+    #+begin_src f90 :tangle (eval f) :comments org :exports none
+    integer(c_int32_t) function qmckl_compute_en_distance &
+        (context, elec_num, nucl_num, walk_num, elec_coord, nucl_coord, en_distance) &
+        bind(C) result(info)
+
+      use, intrinsic :: iso_c_binding
+      implicit none
+
+      integer (c_int64_t) , intent(in)  , value :: context
+      integer (c_int64_t) , intent(in)  , value :: elec_num
+      integer (c_int64_t) , intent(in)  , value :: nucl_num
+      integer (c_int64_t) , intent(in)  , value :: walk_num
+      real    (c_double ) , intent(in)          :: elec_coord(elec_num,3,walk_num)
+      real    (c_double ) , intent(in)          :: nucl_coord(elec_num,3,walk_num)
+      real    (c_double ) , intent(out)         :: en_distance(elec_num,nucl_num,walk_num)
+
+      integer(c_int32_t), external :: qmckl_compute_en_distance_f
+      info = qmckl_compute_en_distance_f &
+             (context, elec_num, nucl_num, walk_num, elec_coord, nucl_coord, en_distance)
+
+    end function qmckl_compute_en_distance
+    #+end_src
+
+*** Test
+
+     #+begin_src c :tangle (eval c_test)
+/* Reference input data */
+
+assert(qmckl_electron_provided(context));
+
+double en_distance[walk_num*num*num];
+rc = qmckl_get_electron_en_distance(context, en_distance);
+assert(rc == QMCKL_NOT_PROVIDED);
 
      #+end_src
 
