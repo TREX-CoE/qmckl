@@ -161,4 +161,16 @@ tests/chbrclf.h: $(qmckl_h)
 generated.mk: $(ORG_FILES)
 	python $(srcdir)/tools/build_makefile.py
 
+cppcheck: cppcheck.out
+	
+cppcheck.out: $(qmckl_h)
+	cd src/ && \
+	cppcheck --addon=cert -q --error-exitcode=0  \
+          --enable=all \
+          --language=c --std=c99 -rp --platform=unix64  \
+          -I../include *.c *.h 2>../$@
+
+
+.PHONY: cppcheck
+
 endif
