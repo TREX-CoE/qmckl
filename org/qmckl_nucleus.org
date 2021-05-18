@@ -1,10 +1,10 @@
-#i+TITLE: Nucleus
-# +SETUPFILE: ../tools/theme.setup
-# +INCLUDE: ../tools/lib.org
+#+TITLE: Nucleus
+#+SETUPFILE: ../tools/theme.setup
+#+INCLUDE: ../tools/lib.org
 
-A ll the data relative to the molecular geometry is described here.
+All the data relative to the molecular geometry is described here.
 
-*  Headers                                                          :noexport:
+* Headers                                                          :noexport:
    #+begin_src elisp :noexport :results none
 ( org-babel-lob-ingest "../tools/lib.org")
 #+end_src
@@ -24,6 +24,9 @@ A ll the data relative to the molecular geometry is described here.
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
+
+#include "chbrclf.h"
+
 int main() {
   qmckl_context context;
   context = qmckl_context_create();
@@ -63,7 +66,7 @@ int main() {
    | ~num~              | int64_t          | Total number of nuclei                              |
    | ~provided~         | bool             | If true, ~nucleus~ is valid                         |
    | ~charge~           | double[num]      | Nuclear charges                                     |
-   | ~coord~            | double[3][num]   | Nuclear coordinates                                 |
+   | ~coord~            | double[3][num]   | Nuclear coordinates, in transposed format           |
    | ~nn_distance~      | double[num][num] | Nucleus-nucleus distances                           |
    | ~nn_distance_date~ | int64_t          | Date when Nucleus-nucleus distances were computed   |
    | ~repulsion~        | double           | Nuclear repulsion energy                            |
@@ -93,9 +96,9 @@ typedef struct qmckl_nucleus_struct {
 ** Access functions
 
    #+begin_src c :comments org :tangle (eval h_func) :exports none
-qmckl_exit_code qmckl_get_nucleus_num         (const qmckl_context context, int64_t* num);
-qmckl_exit_code qmckl_get_nucleus_charge      (const qmckl_context context, double* charge);
-qmckl_exit_code qmckl_get_nucleus_coord       (const qmckl_context context, double* coord);
+qmckl_exit_code qmckl_get_nucleus_num         (const qmckl_context context, int64_t* const num);
+qmckl_exit_code qmckl_get_nucleus_charge      (const qmckl_context context, double* const charge);
+qmckl_exit_code qmckl_get_nucleus_coord       (const qmckl_context context, const char transp, double* const coord);
    #+end_src
 
    #+NAME:post
@@ -107,10 +110,17 @@ if ( (ctx->nucleus.uninitialized & mask) != 0) {
 
    #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
 qmckl_exit_code
-qmckl_get_nucleus_num (const qmckl_context context, int64_t* num) {
+qmckl_get_nucleus_num (const qmckl_context context, int64_t* const num) {
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return QMCKL_INVALID_CONTEXT;
+  }
+
+  if (num == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_get_nucleus_num",
+                           "num is a null pointer");
   }
 
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
@@ -119,7 +129,10 @@ qmckl_get_nucleus_num (const qmckl_context context, int64_t* num) {
   int32_t mask = 1 << 0;
 
   if ( (ctx->nucleus.uninitialized & mask) != 0) {
-    return QMCKL_NOT_PROVIDED;
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_get_nucleus_num",
+                           "nucleus data is not provided");
   }
 
   assert (ctx->nucleus.num >= (int64_t) 0);
@@ -130,10 +143,17 @@ qmckl_get_nucleus_num (const qmckl_context context, int64_t* num) {
 
 
 qmckl_exit_code
-qmckl_get_nucleus_charge (const qmckl_context context, double* charge) {
+qmckl_get_nucleus_charge (const qmckl_context context, double* const charge) {
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return QMCKL_INVALID_CONTEXT;
+  }
+
+  if (charge == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_get_nucleus_charge",
+                           "charge is a null pointer");
   }
 
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
@@ -142,7 +162,10 @@ qmckl_get_nucleus_charge (const qmckl_context context, double* charge) {
   int32_t mask = 1 << 1;
 
   if ( (ctx->nucleus.uninitialized & mask) != 0) {
-    return QMCKL_NOT_PROVIDED;
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_get_nucleus_charge",
+                           "nucleus data is not provided");
   }
 
   assert (ctx->nucleus.charge != NULL);
@@ -151,24 +174,37 @@ qmckl_get_nucleus_charge (const qmckl_context context, double* charge) {
   qmckl_exit_code rc;
   rc = qmckl_get_nucleus_num(context, &nucl_num);
   if (rc != QMCKL_SUCCESS) return rc;
-  
-  double* result = memcpy(charge, ctx->nucleus.charge, nucl_num*sizeof(double));
-  if (result == NULL) return QMCKL_FAILURE;
-  
+
+  memcpy(charge, ctx->nucleus.charge, nucl_num*sizeof(double));
+
   return QMCKL_SUCCESS;
 }
 
 
 qmckl_exit_code
-qmckl_get_nucleus_coord (const qmckl_context context, double* coord) {
-
+qmckl_get_nucleus_coord (const qmckl_context context, const char transp, double* const coord) {
+  
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return QMCKL_INVALID_CONTEXT;
   }
   
+  if (transp != 'N' && transp != 'T') {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_get_nucleus_coord",
+                           "transp should be 'N' or 'T'");
+  }
+
+  if (coord == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_3,
+                           "qmckl_get_nucleus_coord",
+                           "coord is a null pointer");
+  }
+
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
   assert (ctx != NULL);
-  
+
   int32_t mask = 1 << 2;
 
   if ( (ctx->nucleus.uninitialized & mask) != 0) {
@@ -179,12 +215,18 @@ qmckl_get_nucleus_coord (const qmckl_context context, double* coord) {
   qmckl_exit_code rc;
   rc = qmckl_get_nucleus_num(context, &nucl_num);
   if (rc != QMCKL_SUCCESS) return rc;
-  
+
   assert (ctx->nucleus.coord != NULL);
 
-  double* result = memcpy(coord, ctx->nucleus.coord, 3*nucl_num*sizeof(double));
-  if (result == NULL) return QMCKL_FAILURE;
-  
+  if (transp == 'N') {
+    rc = qmckl_transpose(context, nucl_num, 3,
+                         ctx->nucleus.coord, nucl_num,
+                         coord, 3);
+    if (rc != QMCKL_SUCCESS) return rc;
+  } else {
+    memcpy(coord, ctx->nucleus.coord, 3*nucl_num*sizeof(double));
+  }
+
   return QMCKL_SUCCESS;
 }
    #+end_src
@@ -218,7 +260,7 @@ bool qmckl_nucleus_provided(const qmckl_context context) {
    #+begin_src c :comments org :tangle (eval h_func)
 qmckl_exit_code  qmckl_set_nucleus_num    (qmckl_context context, const int64_t num);
 qmckl_exit_code  qmckl_set_nucleus_charge (qmckl_context context, const double* charge);
-qmckl_exit_code  qmckl_set_nucleus_coord  (qmckl_context context, const double* coord);
+qmckl_exit_code  qmckl_set_nucleus_coord  (qmckl_context context, const char transp, const double* coord);
    #+end_src
 
    #+NAME:pre2
@@ -240,7 +282,7 @@ return QMCKL_SUCCESS;
 
 
    To set the number of nuclei, use
-   
+
    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
 qmckl_exit_code
 qmckl_set_nucleus_num(qmckl_context context, const int64_t num) {
@@ -261,12 +303,19 @@ qmckl_set_nucleus_num(qmckl_context context, const int64_t num) {
 }
    #+end_src
 
-    The following function sets the nuclear charges of all the atoms. 
+    The following function sets the nuclear charges of all the atoms.
 
    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
 qmckl_exit_code
 qmckl_set_nucleus_charge(qmckl_context context, const double* charge) {
   <<pre2>>
+
+  if (charge == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_set_nucleus_charge",
+                           "charge is a null pointer");
+  }
 
   int64_t num;
   qmckl_exit_code rc;
@@ -275,7 +324,7 @@ qmckl_set_nucleus_charge(qmckl_context context, const double* charge) {
 
   rc = qmckl_get_nucleus_num(context, &num);
   if (rc != QMCKL_SUCCESS) return rc;
-  
+
   if (ctx->nucleus.charge != NULL) {
     qmckl_free(context, ctx->nucleus.charge);
     ctx->nucleus.charge= NULL;
@@ -294,7 +343,7 @@ qmckl_set_nucleus_charge(qmckl_context context, const double* charge) {
   }
   ctx->nucleus.charge= memcpy(ctx->nucleus.charge, charge, num*sizeof(double));
   assert (ctx->nucleus.charge != NULL);
-  
+
   <<post2>>
 }
     #+end_src
@@ -304,24 +353,24 @@ qmckl_set_nucleus_charge(qmckl_context context, const double* charge) {
 
    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
 qmckl_exit_code
-qmckl_set_nucleus_coord(qmckl_context context, const double* coord) {
+qmckl_set_nucleus_coord(qmckl_context context, const char transp, const double* coord) {
   <<pre2>>
 
-  int64_t num;
+  int64_t nucl_num;
   qmckl_exit_code rc;
 
   int32_t mask = 1 << 2;
 
-  rc = qmckl_get_nucleus_num(context, &num);
+  rc = qmckl_get_nucleus_num(context, &nucl_num);
   if (rc != QMCKL_SUCCESS) return rc;
-  
+
   if (ctx->nucleus.coord != NULL) {
     qmckl_free(context, ctx->nucleus.coord);
     ctx->nucleus.coord = NULL;
   }
 
   qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-  mem_info.size = 3*num*sizeof(double);
+  mem_info.size = 3*nucl_num*sizeof(double);
 
   assert(ctx->nucleus.coord == NULL);
 
@@ -332,9 +381,15 @@ qmckl_set_nucleus_coord(qmckl_context context, const double* coord) {
                            "qmckl_set_nucleus_coord",
                            NULL);
   }
-  ctx->nucleus.coord = memcpy(ctx->nucleus.coord, coord, 3*num*sizeof(double));
-  assert (ctx->nucleus.coord != NULL);
-  
+  if (transp == 'N') {
+    rc = qmckl_transpose(context, 3, nucl_num,
+                         coord, 3,
+                         ctx->nucleus.coord, nucl_num);
+    if (rc != QMCKL_SUCCESS) return rc;
+  } else {
+    memcpy(ctx->nucleus.coord, coord, 3*nucl_num*sizeof(double));
+  }
+
   <<post2>>
 }
     #+end_src
@@ -342,23 +397,10 @@ qmckl_set_nucleus_coord(qmckl_context context, const double* coord) {
 ** Test
 
     #+begin_src c :tangle (eval c_test)
-/* Reference input data */
+const int64_t   nucl_num      = chbrclf_nucl_num;
+const double*   nucl_charge   = chbrclf_charge;
+const double*   nucl_coord    = &(chbrclf_nucl_coord[0][0]);
 
-#define num ((int64_t) 9)
-
-double charge[num] = { 6., 6., 6., 7., 7., 1., 1., 1., 1. };
-
-double coord[3*num] =
-    { 4.166279566732572e-01,  -1.526183863767697e+00,   1.041604719335635e+00,
-     -1.903457631371503e+00,   2.242154435363994e+00,   6.550163404813796e-01,
-     -3.575005445908036e+00,  -3.063638942318878e+00,   2.086739409279095e+00,
-      2.060062599100338e+00,  -1.623431626827498e+00,  -1.930074272670425e+00,
-      9.491495662916423e-01,   3.808343139803397e-01,   4.077482772289367e+00,
-      1.841031662652821e+00,  -2.945591662994877e+00,  -3.670011011125464e+00,
-      0.000000000000000e+00,   0.000000000000000e+00,   0.000000000000000e+00,
-      0.000000000000000e+00,   0.000000000000000e+00,   0.000000000000000e+00,
-      0.000000000000000e+00,   0.000000000000000e+00,   0.000000000000000e+00};
-   
 /* --- */
 
 qmckl_exit_code rc;
@@ -370,42 +412,50 @@ rc = qmckl_get_nucleus_num (context, &n);
 assert(rc == QMCKL_NOT_PROVIDED);
 
 
-rc = qmckl_set_nucleus_num (context, num);
+rc = qmckl_set_nucleus_num (context, nucl_num);
 assert(rc == QMCKL_SUCCESS);
 assert(!qmckl_nucleus_provided(context));
 
 rc = qmckl_get_nucleus_num (context, &n);
 assert(rc == QMCKL_SUCCESS);
-assert(n == num);
+assert(n == nucl_num);
 
-double coord2[3*num];
+double nucl_coord2[3*nucl_num];
 
-rc = qmckl_get_nucleus_coord (context, coord2);
+rc = qmckl_get_nucleus_coord (context, 'T', nucl_coord2);
 assert(rc == QMCKL_NOT_PROVIDED);
 
-rc = qmckl_set_nucleus_coord (context, coord);
+rc = qmckl_set_nucleus_coord (context, 'T', &(nucl_coord[0]));
 assert(rc == QMCKL_SUCCESS);
-
-rc = qmckl_get_nucleus_coord (context, coord2);
-assert(rc == QMCKL_SUCCESS);
-for (size_t i=0 ; i<3*num ; ++i) {
-  assert( coord[i] == coord2[i] );
- }
 
 assert(!qmckl_nucleus_provided(context));
 
-double charge2[num];
+rc = qmckl_get_nucleus_coord (context, 'N', nucl_coord2);
+assert(rc == QMCKL_SUCCESS);
+for (size_t k=0 ; k<3 ; ++k) {
+  for (size_t i=0 ; i<nucl_num ; ++i) {
+    assert( nucl_coord[nucl_num*k+i] == nucl_coord2[3*i+k] );
+  }
+}
 
-rc = qmckl_get_nucleus_charge(context, charge2);
+rc = qmckl_get_nucleus_coord (context, 'T', nucl_coord2);
+assert(rc == QMCKL_SUCCESS);
+for (size_t i=0 ; i<3*nucl_num ; ++i) {
+  assert( nucl_coord[i] == nucl_coord2[i] );
+}
+
+double nucl_charge2[nucl_num];
+
+rc = qmckl_get_nucleus_charge(context, nucl_charge2);
 assert(rc == QMCKL_NOT_PROVIDED);
 
-rc = qmckl_set_nucleus_charge(context, charge);
+rc = qmckl_set_nucleus_charge(context, nucl_charge);
 assert(rc == QMCKL_SUCCESS);
 
-rc = qmckl_get_nucleus_charge(context, charge2);
+rc = qmckl_get_nucleus_charge(context, nucl_charge2);
 assert(rc == QMCKL_SUCCESS);
-for (size_t i=0 ; i<num ; ++i) {
-  assert( charge[i] == charge2[i] );
+for (size_t i=0 ; i<nucl_num ; ++i) {
+  assert( nucl_charge[i] == nucl_charge2[i] );
  }
 assert(qmckl_nucleus_provided(context));
     #+end_src
@@ -462,19 +512,19 @@ qmckl_exit_code qmckl_provide_nn_distance(qmckl_context context)
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return (char) 0;
   }
-  
+
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
   assert (ctx != NULL);
-  
+
   if (!ctx->nucleus.provided) return QMCKL_NOT_PROVIDED;
-  
+
   /* Allocate array */
   if (ctx->nucleus.nn_distance == NULL) {
-    
+
     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
     mem_info.size = ctx->nucleus.num * ctx->nucleus.num * sizeof(double);
     double* nn_distance = (double*) qmckl_malloc(context, mem_info);
-    
+
     if (nn_distance == NULL) {
       return qmckl_failwith( context,
                              QMCKL_ALLOCATION_FAILED,
@@ -547,7 +597,7 @@ qmckl_exit_code qmckl_compute_nn_distance (
           double* const nn_distance );
     #+end_src
 
-   
+
     #+CALL: generate_c_interface(table=qmckl_nn_distance_args,rettyp="qmckl_exit_code",fname="qmckl_compute_nn_distance")
 
     #+RESULTS:
@@ -578,12 +628,11 @@ qmckl_exit_code qmckl_compute_nn_distance (
 
 assert(qmckl_nucleus_provided(context));
 
-double distance[num*num];
-rc = qmckl_get_nucleus_nn_distance(context, distance);
+double distance[nucl_num*nucl_num];
 rc = qmckl_get_nucleus_nn_distance(context, distance);
 assert(distance[0] == 0.);
-assert(distance[1] == distance[num]);
-assert(fabs(distance[1]-4.164450441785663) < 1.e-12);
+assert(distance[1] == distance[nucl_num]);
+assert(fabs(distance[1]-2.070304721365169) < 1.e-12);
 
      #+end_src
 
@@ -642,7 +691,7 @@ qmckl_exit_code qmckl_provide_nucleus_repulsion(qmckl_context context)
 
   rc = qmckl_provide_nn_distance(context);
   if (rc != QMCKL_SUCCESS) return rc;
-    
+
   rc = qmckl_compute_nucleus_repulsion(context,
                                 ctx->nucleus.num,
                                 ctx->nucleus.charge,
@@ -651,7 +700,7 @@ qmckl_exit_code qmckl_provide_nucleus_repulsion(qmckl_context context)
   if (rc != QMCKL_SUCCESS) {
     return rc;
     }
-  
+
   ctx->nucleus.repulsion_date = ctx->date;
 
   return QMCKL_SUCCESS;
@@ -695,10 +744,9 @@ integer function qmckl_compute_nucleus_repulsion_f(context, nucl_num, charge, nn
   energy = 0.d0
   do j=2, nucl_num
      do i=1, j-1
-        energy = energy + charge(i) * charge(j) / nn_distance(i,j) 
+        energy = energy + charge(i) * charge(j) / nn_distance(i,j)
      end do
   end do
-  print *, energy
 
 end function qmckl_compute_nucleus_repulsion_f
     #+end_src
@@ -746,7 +794,7 @@ assert(qmckl_nucleus_provided(context));
 
 double rep;
 rc = qmckl_get_nucleus_repulsion(context, &rep);
-assert(rep - 163.50434957121263 < 1.e-10);
+assert(rep - 318.2309879436158 < 1.e-10);
 
      #+end_src
 
@@ -787,8 +835,6 @@ assert(rep - 163.50434957121263 < 1.e-10);
     #+end_src
 
     #+RESULTS:
-    |   | color    |
-    |   | listings |
 
 
 # -*- mode: org -*-

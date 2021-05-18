@@ -52,6 +52,7 @@ test_qmckl_f  = tests/qmckl_f.f90
 test_qmckl_fo = tests/qmckl_f.o
 src_qmckl_f   = src/qmckl_f.f90
 src_qmckl_fo  = src/qmckl_f.o
+header_tests  = tests/chbrclf.h
 
 fortrandir = $(datadir)/$(PACKAGE_NAME)/fortran/
 dist_fortran_DATA = $(qmckl_f)
@@ -59,12 +60,11 @@ dist_fortran_DATA = $(qmckl_f)
 AM_CPPFLAGS = -I$(srcdir)/src -I$(srcdir)/include
 
 lib_LTLIBRARIES = src/libqmckl.la
-src_libqmckl_la_SOURCES = $(qmckl_h) $(src_qmckl_f) $(C_FILES) $(F_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES)
+src_libqmckl_la_SOURCES = $(qmckl_h) $(src_qmckl_f) $(C_FILES) $(F_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES) $(header_tests)
 
 export qmckl_f qmckl_h srcdir
 
-CLEANFILES+=$(test_qmckl_f) $(src_qmckl_f) $(test_qmckl_o) $(src_qmckl_o) \
-            $(qmckl_h) $(qmckl_f)
+CLEANFILES+=$(test_qmckl_f) $(src_qmckl_f) $(test_qmckl_o) $(src_qmckl_o) 
 
 htmlize_el=share/doc/qmckl/html/htmlize.el
 
@@ -107,9 +107,9 @@ if QMCKL_DEVEL
 
 dist_src_DATA = $(ORG_FILES) $(TANGLED_FILES) $(EXPORTED_FILES)
 
-BUILT_SOURCES = $(C_FILES) $(F_FILES) $(FH_FUNC_FILES) $(FH_TYPE_FILES) $(H_FUNC_FILES) $(H_TYPE_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES) $(qmckl_f) $(qmckl_h)
+BUILT_SOURCES = $(C_FILES) $(F_FILES) $(FH_FUNC_FILES) $(FH_TYPE_FILES) $(H_FUNC_FILES) $(H_TYPE_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES) $(qmckl_f) $(qmckl_h) $(header_tests)
 
-CLEANFILES += $(BUILT_SOURCES) $(C_TEST_FILES) $(F_TEST_FILES) $(TANGLED_FILES) $(C_TEST_FILES) $(F_TEST_FILES) $(qmckl_f) $(qmckl_h) $(HTML_FILES) $(TEXT_FILES) share/doc/qmckl/html/index.html $(EXPORTED_FILES)
+CLEANFILES += $(BUILT_SOURCES) $(C_TEST_FILES) $(F_TEST_FILES) $(TANGLED_FILES) $(C_TEST_FILES) $(F_TEST_FILES) $(qmckl_f) $(qmckl_h) $(HTML_FILES) $(TEXT_FILES) share/doc/qmckl/html/index.html $(EXPORTED_FILES) $(header_tests)
 
 EXTRA_DIST +=                 \
     tools/build_doc.sh        \
