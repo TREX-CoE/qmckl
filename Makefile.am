@@ -155,6 +155,9 @@ $(qmckl_f): $(FH_FUNC_FILES) $(FH_TYPE_FILES)
 $(htmlize_el):
 	$(srcdir)/tools/install_htmlize.sh $(htmlize_el)
 
+tests/chbrclf.h: $(qmckl_h)
+	
+
 generated.mk: $(ORG_FILES)
 	python $(srcdir)/tools/build_makefile.py
 
