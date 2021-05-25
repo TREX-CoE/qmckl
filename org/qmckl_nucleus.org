@@ -79,9 +79,11 @@ typedef struct qmckl_nucleus_struct {
   int64_t   num;
   int64_t   repulsion_date;
   int64_t   nn_distance_date;
+  int64_t   nn_distance_rescaled_date;
   double*   coord;
   double*   charge;
   double*   nn_distance;
+  double*   nn_distance_rescaled;
   double    repulsion;
   int32_t   uninitialized;
   bool      provided;
@@ -636,6 +638,174 @@ rc = qmckl_get_nucleus_nn_distance(context, distance);
 assert(distance[0] == 0.);
 assert(distance[1] == distance[nucl_num]);
 assert(fabs(distance[1]-2.070304721365169) < 1.e-12);
+
+     #+end_src
+
+
+** Nucleus-nucleus rescaled distances
+
+*** Get
+
+    #+begin_src c :comments org :tangle (eval h_func) :noweb yes
+qmckl_exit_code qmckl_get_nucleus_nn_distance_rescaled(qmckl_context context, double* distance_rescaled);
+    #+end_src
+
+    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code qmckl_get_nucleus_nn_distance_rescaled(qmckl_context context, double* distance_rescaled)
+{
+  /* Check input parameters */
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return (char) 0;
+  }
+
+  qmckl_exit_code rc = qmckl_provide_nn_distance_rescaled(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  size_t sze = ctx->nucleus.num * ctx->nucleus.num;
+  memcpy(distance_rescaled, ctx->nucleus.nn_distance_rescaled, sze * sizeof(double));
+
+  return QMCKL_SUCCESS;
+}
+    #+end_src
+
+*** Provide                                                        :noexport:
+
+    #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_provide_nn_distance_rescaled(qmckl_context context);
+    #+end_src
+
+    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code qmckl_provide_nn_distance_rescaled(qmckl_context context)
+{
+  /* Check input parameters */
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return (char) 0;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  if (!ctx->nucleus.provided) return QMCKL_NOT_PROVIDED;
+
+  /* Allocate array */
+  if (ctx->nucleus.nn_distance_rescaled == NULL) {
+
+    qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+    mem_info.size = ctx->nucleus.num * ctx->nucleus.num * sizeof(double);
+    double* nn_distance_rescaled = (double*) qmckl_malloc(context, mem_info);
+
+    if (nn_distance_rescaled == NULL) {
+      return qmckl_failwith( context,
+                             QMCKL_ALLOCATION_FAILED,
+                             "qmckl_nn_distance_rescaled",
+                             NULL);
+    }
+    ctx->nucleus.nn_distance_rescaled = nn_distance_rescaled;
+  }
+
+  qmckl_exit_code rc =
+    qmckl_compute_nn_distance_rescaled(context,
+                              ctx->nucleus.num,
+                              ctx->nucleus.coord,
+                              ctx->nucleus.nn_distance_rescaled);
+  if (rc != QMCKL_SUCCESS) {
+    return rc;
+  }
+
+  ctx->nucleus.nn_distance_rescaled_date = ctx->date;
+
+  return QMCKL_SUCCESS;
+}
+    #+end_src
+
+*** Compute
+
+    #+NAME: qmckl_nn_distance_rescaled_args
+   | qmckl_context | context                                  | in  | Global state                            |
+   | int64_t       | nucl_num                                 | in  | Number of nuclei                        |
+   | double        | coord[3][nucl_num]                       | in  | Nuclear coordinates (au)                |
+   | double        | nn_distance_rescaled[nucl_num][nucl_num] | out | Nucleus-nucleus rescaled distances (au) |
+
+    #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+integer function qmckl_compute_nn_distance_rescaled_f(context, nucl_num, coord, nn_distance_rescaled) &
+     result(info)
+  use qmckl
+  implicit none
+  integer(qmckl_context), intent(in)  :: context
+  integer*8             , intent(in)  :: nucl_num
+  double precision      , intent(in)  :: coord(nucl_num,3)
+  double precision      , intent(out) :: nn_distance_rescaled(nucl_num,nucl_num)
+
+  integer*8 :: k
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (nucl_num <= 0) then
+     info = QMCKL_INVALID_ARG_2
+     return
+  endif
+
+  info = qmckl_distance_rescaled(context, 'T', 'T', nucl_num, nucl_num, &
+          coord, nucl_num, &
+          coord, nucl_num, &
+          nn_distance_rescaled, nucl_num)
+
+end function qmckl_compute_nn_distance_rescaled_f
+    #+end_src
+
+    #+begin_src c :tangle (eval h_private_func) :comments org :exports none
+qmckl_exit_code qmckl_compute_nn_distance_rescaled (
+          const qmckl_context context,
+          const int64_t nucl_num,
+          const double* coord,
+          double* const nn_distance_rescaled );
+    #+end_src
+
+
+    #+CALL: generate_c_interface(table=qmckl_nn_distance_rescaled_args,rettyp="qmckl_exit_code",fname="qmckl_compute_nn_distance")
+
+    #+RESULTS:
+    #+begin_src f90 :tangle (eval f) :comments org :exports none
+    integer(c_int32_t) function qmckl_compute_nn_distance_rescaled &
+        (context, nucl_num, coord, nn_distance_rescaled) &
+        bind(C) result(info)
+
+      use, intrinsic :: iso_c_binding
+      implicit none
+
+      integer (c_int64_t) , intent(in)  , value :: context
+      integer (c_int64_t) , intent(in)  , value :: nucl_num
+      real    (c_double ) , intent(in)          :: coord(nucl_num,3)
+      real    (c_double ) , intent(out)         :: nn_distance_rescaled(nucl_num,nucl_num)
+
+      integer(c_int32_t), external :: qmckl_compute_nn_distance_rescaled_f
+      info = qmckl_compute_nn_distance_rescaled_f &
+             (context, nucl_num, coord, nn_distance_rescaled)
+
+    end function qmckl_compute_nn_distance_rescaled
+    #+end_src
+
+*** Test
+
+     #+begin_src c :tangle (eval c_test)
+/* Reference input data */
+/* TODO */
+
+//assert(qmckl_nucleus_provided(context));
+//
+//double distance[nucl_num*nucl_num];
+//rc = qmckl_get_nucleus_nn_distance(context, distance);
+//assert(distance[0] == 0.);
+//assert(distance[1] == distance[nucl_num]);
+//assert(fabs(distance[1]-2.070304721365169) < 1.e-12);
 
      #+end_src
 
