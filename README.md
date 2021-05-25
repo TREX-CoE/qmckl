@@ -27,7 +27,8 @@ in org-mode files and produce the source code and the documentation from these f
 ## For maintainers
 
 ```
-autoreconf 
+python tools/build_makefile.py
+autoreconf -i
 QMCKL_DEVEL=1 ./configure --enable-debug
 make
 make check
