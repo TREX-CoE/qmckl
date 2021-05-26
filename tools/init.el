@@ -51,6 +51,9 @@
    (makefile . t)
    ))
 
+;; Use python3 instead of python2.7 
+(setq org-babel-python-command "python3")
+
 (add-hook 'org-babel-after-execute-hook 'org-display-inline-images)
 '(indent-tabs-mode nil)
 
