@@ -27,9 +27,9 @@ in org-mode files and produce the source code and the documentation from these f
 ## For maintainers
 
 ```
-python tools/build_makefile.py
-autoreconf -i
-QMCKL_DEVEL=1 ./configure --enable-debug
+./autogen.sh
+QMCKL_DEVEL=1 ./configure --prefix=$PWD/_install --enable-silent-rules --enable-maintainer-mode
+
 make
 make check
 ```
