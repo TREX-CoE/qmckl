@@ -63,19 +63,25 @@ int main() {
 
   The following data stored in the context:
 
-   | ~uninitialized~    | int32_t                         | Keeps bit set for uninitialized data                      |
-   | ~num~              | int64_t                         | Total number of electrons                                 |
-   | ~up_num~           | int64_t                         | Number of up-spin electrons                               |
-   | ~down_num~         | int64_t                         | Number of down-spin electrons                             |
-   | ~walk_num~         | int64_t                         | Number of walkers                                         |
-   | ~provided~         | bool                            | If true, ~electron~ is valid                              |
-   | ~coord_new~        | double[walk_num][3][num]        | New set of electron coordinates                           |
-   | ~coord_old~        | double[walk_num][3][num]        | Old set of electron coordinates                           |
-   | ~coord_new_date~   | uint64_t                        | Last modification date of the coordinates                 |
-   | ~ee_distance~      | double[walk_num][num][num]      | Electron-electron distances                               |
-   | ~ee_distance_date~ | uint64_t                        | Last modification date of the electron-electron distances |
-   | ~en_distance~      | double[walk_num][nucl_num][num] | Electron-nucleus distances                                |
-   | ~en_distance_date~ | uint64_t                        | Last modification date of the electron-electron distances |
+   | ~uninitialized~             | int32_t                         | Keeps bit set for uninitialized data                      |
+   | ~num~                       | int64_t                         | Total number of electrons                                 |
+   | ~up_num~                    | int64_t                         | Number of up-spin electrons                               |
+   | ~down_num~                  | int64_t                         | Number of down-spin electrons                             |
+   | ~walk_num~                  | int64_t                         | Number of walkers                                         |
+   | ~kappa_ee~                  | double                          | The distance scaling factor                               |
+   | ~kappa_en~                  | double                          | The distance scaling factor                               |
+   | ~provided~                  | bool                            | If true, ~electron~ is valid                              |
+   | ~coord_new~                 | double[walk_num][3][num]        | New set of electron coordinates                           |
+   | ~coord_old~                 | double[walk_num][3][num]        | Old set of electron coordinates                           |
+   | ~coord_new_date~            | uint64_t                        | Last modification date of the coordinates                 |
+   | ~ee_distance~               | double[walk_num][num][num]      | Electron-electron distances                               |
+   | ~ee_distance_date~          | uint64_t                        | Last modification date of the electron-electron distances |
+   | ~en_distance~               | double[walk_num][nucl_num][num] | Electron-nucleus distances                                |
+   | ~en_distance_date~          | uint64_t                        | Last modification date of the electron-electron distances |
+   | ~ee_distance_rescaled~      | double[walk_num][num][num]      | Electron-electron distances                               |
+   | ~ee_distance_rescaled_date~ | uint64_t                        | Last modification date of the electron-electron distances |
+   | ~en_distance_rescaled~      | double[walk_num][nucl_num][num] | Electron-nucleus distances                                |
+   | ~en_distance_rescaled_date~ | uint64_t                        | Last modification date of the electron-electron distances |
 
 ** Data structure
 
@@ -85,13 +91,19 @@ typedef struct qmckl_electron_struct {
   int64_t   up_num;
   int64_t   down_num;
   int64_t   walk_num;
+  double    kappa_ee;
+  double    kappa_en;
   int64_t   coord_new_date;
   int64_t   ee_distance_date;
   int64_t   en_distance_date;
+  int64_t   ee_distance_rescaled_date;
+  int64_t   en_distance_rescaled_date;
   double*   coord_new;
   double*   coord_old;
   double*   ee_distance;
   double*   en_distance;
+  double*   ee_distance_rescaled;
+  double*   en_distance_rescaled;
   int32_t   uninitialized;
   bool      provided;
 } qmckl_electron_struct;
@@ -165,7 +177,7 @@ qmckl_get_electron_num (const qmckl_context context, int64_t* const num) {
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
   assert (ctx != NULL);
 
-  int32_t mask = 1;
+  int32_t mask = 1 << 0;
 
   if ( (ctx->electron.uninitialized & mask) != 0) {
     return QMCKL_NOT_PROVIDED;
@@ -193,7 +205,7 @@ qmckl_get_electron_up_num (const qmckl_context context, int64_t* const up_num) {
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
   assert (ctx != NULL);
 
-  int32_t mask = 1;
+  int32_t mask = 1 << 0;
 
   if ( (ctx->electron.uninitialized & mask) != 0) {
     return QMCKL_NOT_PROVIDED;
@@ -221,7 +233,7 @@ qmckl_get_electron_down_num (const qmckl_context context, int64_t* const down_nu
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
   assert (ctx != NULL);
 
-  int32_t mask = 1;
+  int32_t mask = 1 << 0;
 
   if ( (ctx->electron.uninitialized & mask) != 0) {
     return QMCKL_NOT_PROVIDED;
@@ -260,7 +272,7 @@ qmckl_get_electron_walk_num (const qmckl_context context, int64_t* const walk_nu
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
   assert (ctx != NULL);
 
-  int32_t mask = 2;
+  int32_t mask = 1 << 1;
 
   if ( (ctx->electron.uninitialized & mask) != 0) {
     return QMCKL_NOT_PROVIDED;
@@ -268,6 +280,71 @@ qmckl_get_electron_walk_num (const qmckl_context context, int64_t* const walk_nu
 
   assert (ctx->electron.walk_num > (int64_t) 0);
   ,*walk_num = ctx->electron.walk_num;
+  return QMCKL_SUCCESS;
+}
+      #+end_src
+
+*** Scaling factors Kappa
+
+      #+begin_src c :comments org :tangle (eval h_func) :exports none
+qmckl_exit_code qmckl_get_kappa_ee   (const qmckl_context context, double* const kappa_ee);
+qmckl_exit_code qmckl_get_kappa_en   (const qmckl_context context, double* const kappa_en);
+      #+end_src
+
+      #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
+qmckl_exit_code
+qmckl_get_kappa_ee (const qmckl_context context, double* const kappa_ee) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_INVALID_CONTEXT;
+  }
+
+  if (kappa_ee == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_get_kappa_ee",
+                           "kappa_ee is a null pointer");
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  int32_t mask = 1 << 2;
+
+  if ( (ctx->electron.uninitialized & mask) != 0) {
+    return QMCKL_NOT_PROVIDED;
+  }
+
+  // TODO: assert (ctx->electron.kappa_ee > (double) 0);
+  ,*kappa_ee = ctx->electron.kappa_ee;
+  return QMCKL_SUCCESS;
+}
+
+
+qmckl_exit_code
+qmckl_get_kappa_en (const qmckl_context context, double* const kappa_en) {
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_INVALID_CONTEXT;
+  }
+
+  if (kappa_en == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_get_kappa_en",
+                           "kappa_en is a null pointer");
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  int32_t mask = 1 << 2;
+
+  if ( (ctx->electron.uninitialized & mask) != 0) {
+    return QMCKL_NOT_PROVIDED;
+  }
+
+  // TODO: assert (ctx->electron.kappa_en > (double) 0);
+  ,*kappa_en = ctx->electron.kappa_en;
   return QMCKL_SUCCESS;
 }
       #+end_src
@@ -359,6 +436,7 @@ qmckl_get_electron_coord (const qmckl_context context, const char transp, double
 
    #+begin_src c :comments org :tangle (eval h_func)
 qmckl_exit_code  qmckl_set_electron_num        (qmckl_context context, const int64_t up_num, const int64_t down_num);
+qmckl_exit_code  qmckl_set_kappa               (qmckl_context context, const double kappa_ee, const double kappa_en);
 qmckl_exit_code  qmckl_set_electron_walk_num   (qmckl_context context, const int64_t walk_num);
 qmckl_exit_code  qmckl_set_electron_coord      (qmckl_context context, const char transp, const double* coord);
    #+end_src
@@ -437,7 +515,7 @@ qmckl_set_electron_num(qmckl_context context,
                            "down_num <= 0");
   }
 
-  int32_t mask = 1;
+  int32_t mask = 1 << 0;
 
   ctx->electron.up_num = up_num;
   ctx->electron.down_num = down_num;
@@ -447,6 +525,7 @@ qmckl_set_electron_num(qmckl_context context,
 }
    #+end_src
 
+    The following function sets the number of walkers.
 
    #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
 qmckl_exit_code
@@ -461,12 +540,45 @@ qmckl_set_electron_walk_num(qmckl_context context, const int64_t walk_num) {
                            "walk_num <= 0");
   }
 
-  int32_t mask = 2;
+  int32_t mask = 1 << 1;
   ctx->electron.walk_num = walk_num;
 
   <<post2>>
 }
     #+end_src
+
+   Next we set the rescale parameter for the rescaled distance metric.
+
+   #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code
+qmckl_set_kappa(qmckl_context context,
+                const double kappa_ee,
+                const double kappa_en) {
+  <<pre2>>
+
+  // TODO: Check for 0 values
+  //if (kappa_ee != 0) {
+  //  return qmckl_failwith( context,
+  //                         QMCKL_INVALID_ARG_2,
+  //                         "qmckl_set_kappa",
+  //                         "kappa_ee == 0");
+  //}
+
+  //if (kappa_en <= 0) {
+  //  return qmckl_failwith( context,
+  //                         QMCKL_INVALID_ARG_3,
+  //                         "qmckl_set_kappa",
+  //                         "kappa_en == 0");
+  //}
+
+  int32_t mask = 1 << 2;
+
+  ctx->electron.kappa_ee = kappa_ee;
+  ctx->electron.kappa_en = kappa_en;
+
+  <<post2>>
+}
+   #+end_src
 
     The following function sets the electron coordinates of all the
     walkers. When this is done, the pointers to the old and new sets
@@ -568,11 +680,14 @@ int64_t walk_num      = chbrclf_walk_num;
 int64_t elec_num      = chbrclf_elec_num;
 int64_t elec_up_num   = chbrclf_elec_up_num;
 int64_t elec_dn_num   = chbrclf_elec_dn_num;
+double  kappa_ee      = 1.0; // TODO Get kappa_ee from chbrclf
+double  kappa_en      = 1.0; // TODO Get kappa_en from chbrclf
 double* elec_coord    = &(chbrclf_elec_coord[0][0][0]);
 
 int64_t  nucl_num      = chbrclf_nucl_num;
 double*  charge        = chbrclf_charge;
 double*  nucl_coord    = &(chbrclf_nucl_coord[0][0]);
+double   nucl_kappa    = 1.0; // TODO Change get kappa from chbrclf example
 
 /* --- */
 
@@ -606,6 +721,26 @@ assert(n == elec_dn_num);
 rc = qmckl_get_electron_num (context, &n);
 assert(rc == QMCKL_SUCCESS);
 assert(n == elec_num);
+
+double k_ee;
+double k_en;
+rc = qmckl_get_kappa_ee (context, &k_ee);
+assert(rc == QMCKL_NOT_PROVIDED);
+
+rc = qmckl_get_kappa_en (context, &k_en);
+assert(rc == QMCKL_NOT_PROVIDED);
+
+rc = qmckl_set_kappa (context, kappa_ee, kappa_en);
+assert(rc == QMCKL_SUCCESS);
+assert(!qmckl_electron_provided(context));
+
+rc = qmckl_get_kappa_ee (context, &k_ee);
+assert(rc == QMCKL_SUCCESS);
+assert(k_ee == kappa_ee);
+
+rc = qmckl_get_kappa_en (context, &k_en);
+assert(rc == QMCKL_SUCCESS);
+assert(k_en == kappa_en);
 
 
 int64_t w;
@@ -1104,6 +1239,9 @@ assert(qmckl_electron_provided(context));
 rc = qmckl_set_nucleus_num (context, nucl_num);
 assert(rc == QMCKL_SUCCESS);
 
+rc = qmckl_set_nucleus_kappa (context, nucl_kappa);
+assert(rc == QMCKL_SUCCESS);
+
 rc = qmckl_set_nucleus_charge (context, charge);
 assert (rc == QMCKL_SUCCESS);
 
@@ -1152,7 +1290,7 @@ assert(fabs(en_distance[1][0][1] - 3.1804527583077356) < 1.e-12);
 }
   #+end_src
 
-**✸ Compute file names
+*** Compute file names
     #+begin_src emacs-lisp
 ; The following is required to compute the file names
 
