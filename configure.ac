@@ -38,13 +38,13 @@ AC_PREREQ([2.69])
 AC_INIT([qmckl],[0.1.1],
         [https://github.com/TREX-CoE/qmckl/issues], [],
         [https://trex-coe.github.io/qmckl/index.html])
+AC_CONFIG_AUX_DIR(tools)
 AM_INIT_AUTOMAKE([subdir-objects color-tests parallel-tests silent-rules 1.11])
 AM_MAINTAINER_MODE()
 LT_INIT
 AC_CONFIG_SRCDIR([Makefile.in])
 AC_CONFIG_HEADERS([include/config.h])
 AC_CONFIG_MACRO_DIR([m4])
-#AM_MAINTAINER_MODE
 
 VERSION_MAJOR=`echo ${PACKAGE_VERSION} | cut -d. -f1`
 VERSION_MINOR=`echo ${PACKAGE_VERSION} | cut -d. -f2`
@@ -64,6 +64,9 @@ AC_LANG(C)
 
 # Checks for programs.
 AC_PROG_CC
+# Make sure the c compiler supports C99
+m4_version_prereq([2.70],[], [AC_PROG_CC_C99])
+AS_IF([test "$ac_cv_prog_cc_c99" = "no"], [AC_MSG_ERROR([The compiler does not support C99])])
 AC_PROG_CC_C_O
 AC_PROG_FC
 AC_PROG_FC_C_O
@@ -72,12 +75,9 @@ AC_FC_FREEFORM
 AC_PROG_LIBTOOL
 AC_PROG_INSTALL
 AC_PROG_LN_S
-AC_PROG_CC_C99
 PKG_PROG_PKG_CONFIG([])
 PKG_LIBS=""
 PKG_CFLAGS=""
-
-AC_SUBST([HAS_CPPCHECK])
 
 # Checks for libraries.
 
@@ -178,15 +178,8 @@ if test "x${QMCKL_DEVEL}" != "x"; then
 
   QMCKL_DEVEL=" -- Developer mode"
   AC_PROG_AWK
-  AC_CHECK_PROGS([PYTHON],[python python3 python2],[no])
-  if test x${PYTHON} == xno ; then
-    AC_MSG_ERROR([
-    --------------------------------------------
-    Error: Python is required to build makefiles
-    --------------------------------------------
-    ])
-  fi
-  python ${srcdir}/tools/build_makefile.py
+  AM_PATH_PYTHON
+  ${PYTHON} ${srcdir}/tools/build_makefile.py
 
   AC_CHECK_PROGS([EMACS],[emacs26 emacs],[no])
   if test x${EMACS} == xno ; then
@@ -211,6 +204,8 @@ LIBS="${LAPACK_LIBS} ${BLAS_LIBS} ${LIBS}"
 PKG_LIBS="${PKG_LIBS} ${LIBS}"
 AC_SUBST([PKG_LIBS])
 AC_SUBST([PKG_CFLAGS])
+AC_SUBST([HAS_CPPCHECK])
+
 
 AC_CONFIG_FILES([Makefile
                  pkgconfig/qmckl.pc

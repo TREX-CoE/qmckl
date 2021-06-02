@@ -159,7 +159,7 @@ tests/chbrclf.h: $(qmckl_h)
 	
 
 generated.mk: $(ORG_FILES)
-	python $(srcdir)/tools/build_makefile.py
+	$(PYTHON) $(srcdir)/tools/build_makefile.py
 
 cppcheck: cppcheck.out
 	
