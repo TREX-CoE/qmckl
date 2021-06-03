@@ -10,27 +10,30 @@ Gaussian ($p=2$):
 
 \[
   R_s(\mathbf{r}) = \mathcal{N}_s |\mathbf{r}-\mathbf{R}_A|^{n_s}
-  \sum_{k=1}^{N_{\text{prim}}} a_{ks}
+  \sum_{k=1}^{N_{\text{prim}}} a_{ks}\, f_{ks}
  \exp \left( - \gamma_{ks} | \mathbf{r}-\mathbf{R}_A | ^p \right).
 \]
 
 In the case of Gaussian functions, $n_s$ is always zero.
 The normalization factor $\mathcal{N}_s$ ensures that all the functions
-of the shell are normalized to unity. As this normalization requires
-the ability to compute overlap integrals, it should be written in the
-file to ensure that the file is self-contained and does not require
-the client program to have the ability to compute such integrals.
+of the shell are normalized to unity. Usually, basis sets are given
+a combination of normalized primitives, so the normalization
+coefficients of the primitives, $f_{ks}$, need also to be provided.
 
 Atomic orbitals (AOs) are defined as
 
 \[
-\chi_i (\mathbf{r}) = P_{\eta(i)}(\mathbf{r})\, R_{\theta(i)} (\mathbf{r})
+\chi_i (\mathbf{r}) = \mathcal{M}_i\, P_{\eta(i)}(\mathbf{r})\, R_{\theta(i)} (\mathbf{r})
 \]
 
 where $\theta(i)$ returns the shell on which the AO is expanded,
 and $\eta(i)$ denotes which angular function is chosen.
+Here, the parameter $\mathcal{M}_i$ is an extra parameter which allows
+the normalization of the different functions of the same shell to be
+different, as in GAMESS for example.
 
-In this section we describe the kernels used to compute the values,
+In this section we describe first how the basis set is stored in the
+context, and then we present the kernels used to compute the values,
 gradients and Laplacian of the atomic basis functions.
 
 * Headers                                                          :noexport:
@@ -125,16 +128,23 @@ type = 'G'
 shell_num = 12
 prim_num = 20
 shell_center = [1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2]
-shell_ang_mom = ['S', 'S', 'S', 'P', 'P', 'D', 'S', 'S', 'S', 'P', 'P', 'D']
+shell_ang_mom = [0, 0, 0, 1, 1, 2, 0, 0, 0, 1, 1, 2]
 shell_factor  = [ 1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.]
 shell_prim_num = [5, 1, 1, 1, 1, 1, 5, 1, 1, 1, 1, 1]
 shell_prim_index = [1, 6, 7, 8, 9, 10, 11, 16, 17, 18, 19, 20]
-exponent = [ 33.87, 5.095, 1.159, 0.3258, 0.1027, 0.3258, 0.1027,
-             1.407, 0.388, 1.057, 33.87, 5.095, 1.159, 0.3258, 0.1027,
-             0.3258, 0.1027, 1.407, 0.388, 1.057]
-coefficient = [ 0.006068, 0.045308, 0.202822, 0.503903, 0.383421,
-                1.0, 1.0, 1.0, 1.0, 1.0, 0.006068, 0.045308, 0.202822,
-                0.503903, 0.383421, 1.0, 1.0, 1.0, 1.0, 1.0]
+exponent = [ 33.87, 5.095, 1.159, 0.3258, 0.1027, 0.3258, 0.1027, 1.407,
+  0.388, 1.057, 33.87, 5.095, 1.159, 0.3258, 0.1027, 0.3258, 0.1027, 1.407,
+  0.388, 1.057]
+coefficient = [ 0.006068, 0.045308, 0.202822, 0.503903, 0.383421, 1.0, 1.0,
+  1.0, 1.0, 1.0, 0.006068, 0.045308, 0.202822, 0.503903, 0.383421, 1.0, 1.0,
+  1.0, 1.0, 1.0]
+prim_factor = [ 1.0006253235944540e+01, 2.4169531573445120e+00, 7.9610924849766440e-01
+  3.0734305383061117e-01, 1.2929684417481876e-01, 3.0734305383061117e-01,
+  1.2929684417481876e-01, 2.1842769845268308e+00, 4.3649547399719840e-01,
+  1.8135965626177861e+00, 1.0006253235944540e+01, 2.4169531573445120e+00,
+  7.9610924849766440e-01, 3.0734305383061117e-01, 1.2929684417481876e-01,
+  3.0734305383061117e-01, 1.2929684417481876e-01, 2.1842769845268308e+00,
+  4.3649547399719840e-01, 1.8135965626177861e+00 ]
    #+END_EXAMPLE
 
 ** Data structure
@@ -151,6 +161,7 @@ typedef struct qmckl_ao_basis_struct {
   double  * shell_factor;
   double  * exponent    ;
   double  * coefficient ;
+  double  * prim_factor ;
   bool      provided;
   char      type;
 } qmckl_ao_basis_struct;
@@ -174,6 +185,7 @@ int64_t*  qmckl_get_ao_basis_shell_prim_index (const qmckl_context context);
 double*   qmckl_get_ao_basis_shell_factor     (const qmckl_context context);
 double*   qmckl_get_ao_basis_exponent         (const qmckl_context context);
 double*   qmckl_get_ao_basis_coefficient      (const qmckl_context context);
+double*   qmckl_get_ao_basis_prim_factor      (const qmckl_context context);
    #+end_src
 
    When all the data for the AOs have been provided, the following
@@ -383,6 +395,25 @@ double* qmckl_get_ao_basis_coefficient (const qmckl_context context) {
 }
 
 
+double* qmckl_get_ao_basis_prim_factor (const qmckl_context context) {
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return NULL;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  int32_t mask = 1 << 8;
+
+  if ( (ctx->ao_basis.uninitialized & mask) != 0) {
+    return NULL;
+  }
+
+  assert (ctx->ao_basis.prim_factor != NULL);
+  return ctx->ao_basis.prim_factor;
+}
+
+
 bool qmckl_ao_basis_provided(const qmckl_context context) {
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
@@ -412,6 +443,7 @@ qmckl_exit_code  qmckl_set_ao_basis_shell_prim_num   (qmckl_context context, con
 qmckl_exit_code  qmckl_set_ao_basis_shell_factor     (qmckl_context context, const double  * shell_factor);
 qmckl_exit_code  qmckl_set_ao_basis_exponent         (qmckl_context context, const double  * exponent);
 qmckl_exit_code  qmckl_set_ao_basis_coefficient      (qmckl_context context, const double  * coefficient);
+qmckl_exit_code  qmckl_set_ao_basis_prim_factor      (qmckl_context context, const double  * prim_factor);
    #+end_src
 
    #+NAME:pre2
@@ -785,6 +817,47 @@ qmckl_exit_code  qmckl_set_ao_basis_coefficient(qmckl_context context, const dou
   memcpy(new_array, coefficient, mem_info.size);
 
   ctx->ao_basis.coefficient = new_array;
+
+  <<post2>>
+}
+
+qmckl_exit_code  qmckl_set_ao_basis_prim_factor(qmckl_context context, const double* prim_factor) {
+  <<pre2>>
+
+  int32_t mask = 1 << 7;
+
+  const int64_t prim_num = qmckl_get_ao_basis_prim_num(context);
+  if (prim_num == 0L) {
+    return qmckl_failwith( context,
+                           QMCKL_FAILURE,
+                           "qmckl_set_ao_basis_prim_factor",
+                           "prim_num is not set");
+  }
+
+
+  if (ctx->ao_basis.prim_factor != NULL) {
+    qmckl_exit_code rc = qmckl_free(context, ctx->ao_basis.prim_factor);
+    if (rc != QMCKL_SUCCESS) {
+      return qmckl_failwith( context, rc,
+                             "qmckl_set_ao_basis_prim_factor",
+                             NULL);
+    }
+  }
+
+  qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+  mem_info.size = prim_num * sizeof(double);
+  double* new_array = (double*) qmckl_malloc(context, mem_info);
+
+  if (new_array == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_ALLOCATION_FAILED,
+                           "qmckl_set_ao_basis_prim_factor",
+                           NULL);
+  }
+
+  memcpy(new_array, prim_factor, mem_info.size);
+
+  ctx->ao_basis.prim_factor = new_array;
 
   <<post2>>
 }
