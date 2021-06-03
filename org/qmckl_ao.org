@@ -56,6 +56,8 @@ gradients and Laplacian of the atomic basis functions.
 #include "config.h"
 #endif
 
+#include "chbrclf.h"
+
 int main() {
     qmckl_context context;
     context = qmckl_context_create();
@@ -155,7 +157,7 @@ typedef struct qmckl_ao_basis_struct {
   int64_t   shell_num;
   int64_t   prim_num;
   int64_t * shell_center;
-  char    * shell_ang_mom;
+  int32_t * shell_ang_mom;
   int64_t * shell_prim_num;
   int64_t * shell_prim_index;
   double  * shell_factor;
@@ -179,7 +181,7 @@ char      qmckl_get_ao_basis_type             (const qmckl_context context);
 int64_t   qmckl_get_ao_basis_shell_num        (const qmckl_context context);
 int64_t   qmckl_get_ao_basis_prim_num         (const qmckl_context context);
 int64_t*  qmckl_get_ao_basis_shell_center     (const qmckl_context context);
-char*     qmckl_get_ao_basis_shell_ang_mom    (const qmckl_context context);
+int32_t*  qmckl_get_ao_basis_shell_ang_mom    (const qmckl_context context);
 int64_t*  qmckl_get_ao_basis_shell_prim_num   (const qmckl_context context);
 int64_t*  qmckl_get_ao_basis_shell_prim_index (const qmckl_context context);
 double*   qmckl_get_ao_basis_shell_factor     (const qmckl_context context);
@@ -280,7 +282,7 @@ int64_t* qmckl_get_ao_basis_shell_center (const qmckl_context context) {
 }
 
 
-char* qmckl_get_ao_basis_shell_ang_mom (const qmckl_context context) {
+int32_t* qmckl_get_ao_basis_shell_ang_mom (const qmckl_context context) {
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return NULL;
   }
@@ -403,7 +405,7 @@ double* qmckl_get_ao_basis_prim_factor (const qmckl_context context) {
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
   assert (ctx != NULL);
 
-  int32_t mask = 1 << 8;
+  int32_t mask = 1 << 10;
 
   if ( (ctx->ao_basis.uninitialized & mask) != 0) {
     return NULL;
@@ -438,7 +440,7 @@ qmckl_exit_code  qmckl_set_ao_basis_shell_num        (qmckl_context context, con
 qmckl_exit_code  qmckl_set_ao_basis_prim_num         (qmckl_context context, const int64_t   prim_num);
 qmckl_exit_code  qmckl_set_ao_basis_shell_prim_index (qmckl_context context, const int64_t * shell_prim_index);
 qmckl_exit_code  qmckl_set_ao_basis_shell_center     (qmckl_context context, const int64_t * shell_center);
-qmckl_exit_code  qmckl_set_ao_basis_shell_ang_mom    (qmckl_context context, const char    * shell_ang_mom);
+qmckl_exit_code  qmckl_set_ao_basis_shell_ang_mom    (qmckl_context context, const int32_t * shell_ang_mom);
 qmckl_exit_code  qmckl_set_ao_basis_shell_prim_num   (qmckl_context context, const int64_t * shell_prim_num);
 qmckl_exit_code  qmckl_set_ao_basis_shell_factor     (qmckl_context context, const double  * shell_factor);
 qmckl_exit_code  qmckl_set_ao_basis_exponent         (qmckl_context context, const double  * exponent);
@@ -462,7 +464,6 @@ ctx->ao_basis.provided = (ctx->ao_basis.uninitialized == 0);
 
 return QMCKL_SUCCESS;
    #+end_src
-
 
    #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
 qmckl_exit_code qmckl_set_ao_basis_type(qmckl_context context, const char t) {
@@ -575,7 +576,7 @@ qmckl_exit_code  qmckl_set_ao_basis_shell_center(qmckl_context context, const in
 }
 
 
-qmckl_exit_code  qmckl_set_ao_basis_shell_ang_mom(qmckl_context context, const char* shell_ang_mom) {
+qmckl_exit_code  qmckl_set_ao_basis_shell_ang_mom(qmckl_context context, const int32_t* shell_ang_mom) {
   <<pre2>>
 
   int32_t mask = 1 << 4;
@@ -600,7 +601,7 @@ qmckl_exit_code  qmckl_set_ao_basis_shell_ang_mom(qmckl_context context, const c
 
   qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
   mem_info.size = shell_num * sizeof(char);
-  char* new_array = (char*) qmckl_malloc(context, mem_info);
+  int32_t * new_array = (int32_t*) qmckl_malloc(context, mem_info);
 
   if (new_array == NULL) {
     return qmckl_failwith( context,
@@ -824,7 +825,7 @@ qmckl_exit_code  qmckl_set_ao_basis_coefficient(qmckl_context context, const dou
 qmckl_exit_code  qmckl_set_ao_basis_prim_factor(qmckl_context context, const double* prim_factor) {
   <<pre2>>
 
-  int32_t mask = 1 << 7;
+  int32_t mask = 1 << 10;
 
   const int64_t prim_num = qmckl_get_ao_basis_prim_num(context);
   if (prim_num == 0L) {
@@ -868,88 +869,73 @@ qmckl_exit_code  qmckl_set_ao_basis_prim_factor(qmckl_context context, const dou
 
 ** Test                                                            :noexport:
 
-    #+begin_src c :tangle (eval c_test) :exports none :exports none
-    /* Reference input data */
+   #+begin_src c :tangle (eval c_test) :exports none :exports none
+const int64_t    shell_num         = chbrclf_shell_num;
+const int64_t    prim_num          = chbrclf_prim_num;
+const int64_t *  shell_center      =  &(chbrclf_basis_shell_center[0]);
+const int32_t *  shell_ang_mom     =  &(chbrclf_basis_shell_ang_mom[0]);
+const int64_t *  shell_prim_num    =  &(chbrclf_basis_shell_prim_num[0]);
+const int64_t *  shell_prim_index  =  &(chbrclf_basis_shell_prim_index[0]);
+const double  *  shell_factor      =  &(chbrclf_basis_shell_factor[0]);
+const double  *  exponent          =  &(chbrclf_basis_exponent[0]);
+const double  *  coefficient       =  &(chbrclf_basis_coefficient[0]);
+const double  *  prim_factor       =  &(chbrclf_basis_prim_factor[0]);
 
-    char    typ = 'G';
-    #define shell_num   ((int64_t) 12)
-    #define prim_num    ((int64_t) 20)
+char    typ = 'G';
 
-    int64_t shell_center [shell_num] =
-    { 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2 };
+qmckl_exit_code rc;
 
-    char shell_ang_mom [shell_num] =
-    { 'S', 'S', 'S', 'P', 'P', 'D', 'S', 'S', 'S', 'P', 'P', 'D' };
+assert(!qmckl_ao_basis_provided(context));
 
-    double shell_factor [shell_num] =
-    { 1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.,  1. };
+rc = qmckl_set_ao_basis_type (context, typ);
+assert(rc == QMCKL_SUCCESS);
+assert(!qmckl_ao_basis_provided(context));
 
-    int64_t shell_prim_num [shell_num] =
-    {5, 1, 1, 1, 1, 1, 5, 1, 1, 1, 1, 1};
+rc = qmckl_set_ao_basis_shell_num (context, shell_num);
+assert(rc == QMCKL_SUCCESS);
+assert(!qmckl_ao_basis_provided(context));
 
-    int64_t shell_prim_index [shell_num] =
-    {1, 6, 7, 8, 9, 10, 11, 16, 17, 18, 19, 20};
+rc = qmckl_set_ao_basis_prim_num (context, prim_num);
+assert(rc == QMCKL_SUCCESS);
+assert(!qmckl_ao_basis_provided(context));
 
-    double exponent [prim_num] =
-    { 33.87, 5.095, 1.159, 0.3258, 0.1027, 0.3258, 0.1027,
-        1.407, 0.388, 1.057, 33.87, 5.095, 1.159, 0.3258, 0.1027,
-        0.3258, 0.1027, 1.407, 0.388, 1.057 };
+rc = qmckl_set_ao_basis_shell_center (context, shell_center);
+assert(rc == QMCKL_SUCCESS);
+assert(!qmckl_ao_basis_provided(context));
 
-    double coefficient [prim_num] =
-    { 0.006068, 0.045308, 0.202822, 0.503903, 0.383421,
-        1.0, 1.0, 1.0, 1.0, 1.0, 0.006068, 0.045308, 0.202822,
-        0.503903, 0.383421, 1.0, 1.0, 1.0, 1.0, 1.0 };
-    /* --- */
+rc = qmckl_set_ao_basis_shell_ang_mom (context, shell_ang_mom);
+assert(rc == QMCKL_SUCCESS);
+assert(!qmckl_ao_basis_provided(context));
 
-    qmckl_exit_code rc;
+rc = qmckl_set_ao_basis_shell_factor  (context, shell_factor);
+assert(rc == QMCKL_SUCCESS);
+assert(!qmckl_ao_basis_provided(context));
 
-    assert(!qmckl_ao_basis_provided(context));
+rc = qmckl_set_ao_basis_shell_center  (context, shell_prim_num);
+assert(rc == QMCKL_SUCCESS);
+assert(!qmckl_ao_basis_provided(context));
 
-    rc = qmckl_set_ao_basis_type (context, typ);
-    assert(rc == QMCKL_SUCCESS);
-    assert(!qmckl_ao_basis_provided(context));
+rc = qmckl_set_ao_basis_shell_prim_num (context, shell_prim_num);
+assert(rc == QMCKL_SUCCESS);
+assert(!qmckl_ao_basis_provided(context));
 
-    rc = qmckl_set_ao_basis_shell_num (context, shell_num);
-    assert(rc == QMCKL_SUCCESS);
-    assert(!qmckl_ao_basis_provided(context));
+rc = qmckl_set_ao_basis_shell_prim_index (context, shell_prim_index);
+assert(rc == QMCKL_SUCCESS);
+assert(!qmckl_ao_basis_provided(context));
 
-    rc = qmckl_set_ao_basis_prim_num (context, prim_num);
-    assert(rc == QMCKL_SUCCESS);
-    assert(!qmckl_ao_basis_provided(context));
+rc = qmckl_set_ao_basis_exponent      (context, exponent);
+assert(rc == QMCKL_SUCCESS);
+assert(!qmckl_ao_basis_provided(context));
 
-    rc = qmckl_set_ao_basis_shell_center (context, shell_center);
-    assert(rc == QMCKL_SUCCESS);
-    assert(!qmckl_ao_basis_provided(context));
+rc = qmckl_set_ao_basis_coefficient   (context, coefficient);
+assert(rc == QMCKL_SUCCESS);
+assert(!qmckl_ao_basis_provided(context));
 
-    rc = qmckl_set_ao_basis_shell_ang_mom (context, shell_ang_mom);
-    assert(rc == QMCKL_SUCCESS);
-    assert(!qmckl_ao_basis_provided(context));
+rc = qmckl_set_ao_basis_prim_factor (context, prim_factor);
+assert(rc == QMCKL_SUCCESS);
+assert(qmckl_ao_basis_provided(context));
 
-    rc = qmckl_set_ao_basis_shell_factor  (context, shell_factor);
-    assert(rc == QMCKL_SUCCESS);
-    assert(!qmckl_ao_basis_provided(context));
-
-    rc = qmckl_set_ao_basis_shell_center  (context, shell_prim_num);
-    assert(rc == QMCKL_SUCCESS);
-    assert(!qmckl_ao_basis_provided(context));
-
-    rc = qmckl_set_ao_basis_shell_prim_num (context, shell_prim_num);
-    assert(rc == QMCKL_SUCCESS);
-    assert(!qmckl_ao_basis_provided(context));
-
-    rc = qmckl_set_ao_basis_shell_prim_index (context, shell_prim_index);
-    assert(rc == QMCKL_SUCCESS);
-    assert(!qmckl_ao_basis_provided(context));
-
-    rc = qmckl_set_ao_basis_exponent      (context, exponent);
-    assert(rc == QMCKL_SUCCESS);
-    assert(!qmckl_ao_basis_provided(context));
-
-    rc = qmckl_set_ao_basis_coefficient   (context, coefficient);
-    assert(rc == QMCKL_SUCCESS);
-    assert(qmckl_ao_basis_provided(context));
-
-    #+end_src
+   #+end_src
 
 * Polynomial part
 ** Powers of $x-X_i$
