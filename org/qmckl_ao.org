@@ -89,17 +89,25 @@ int main() {
 
   The following arrays are stored in the context:
 
-   | ~type~             |               | Gaussian (~'G'~) or Slater (~'S'~)                                   |
-   | ~shell_num~        |               | Number of shells                                                     |
-   | ~prim_num~         |               | Total number of primitives                                           |
-   | ~shell_center~     | ~[shell_num]~ | Id of the nucleus on which each shell is centered                    |
-   | ~shell_ang_mom~    | ~[shell_num]~ | Angular momentum of each shell                                       |
-   | ~shell_prim_num~   | ~[shell_num]~ | Number of primitives in each shell                                   |
-   | ~shell_prim_index~ | ~[shell_num]~ | Address of the first primitive of each shell in the ~EXPONENT~ array |
-   | ~shell_factor~     | ~[shell_num]~ | Normalization factor for each shell                                  |
-   | ~exponent~         | ~[prim_num]~  | Array of exponents                                                   |
-   | ~coefficient~      | ~[prim_num]~  | Array of coefficients                                                |
-   | ~prim_factor~      | ~[prim_num]~  | Normalization factors of the primtives                               |
+  |----------------------+---------------+----------------------------------------------------------------------|
+  | ~type~               |               | Gaussian (~'G'~) or Slater (~'S'~)                                   |
+  | ~shell_num~          |               | Number of shells                                                     |
+  | ~prim_num~           |               | Total number of primitives                                           |
+  | ~nucleus_index~      | ~[nucl_num]~  | Index of the first shell of each nucleus                             |
+  | ~shell_ang_mom~      | ~[shell_num]~ | Angular momentum of each shell                                       |
+  | ~shell_prim_num~     | ~[shell_num]~ | Number of primitives in each shell                                   |
+  | ~shell_prim_index~   | ~[shell_num]~ | Address of the first primitive of each shell in the ~EXPONENT~ array |
+  | ~shell_factor~       | ~[shell_num]~ | Normalization factor for each shell                                  |
+  | ~exponent~           | ~[prim_num]~  | Array of exponents                                                   |
+  | ~coefficient~        | ~[prim_num]~  | Array of coefficients                                                |
+  | ~prim_factor~        | ~[prim_num]~  | Normalization factors of the primtives                               |
+  |----------------------+---------------+----------------------------------------------------------------------|
+  | ~nucl_shell_index~   | ~[nucl_num]~  | Index of the first shell for each nucleus                            |
+  | ~exponent_sorted~    | ~[prim_num]~  | Array of exponents for sorted primitives                             |
+  | ~coeff_norm_sorted~  | ~[prim_num]~  | Array of normalized coefficients for sorted primitives               |
+  | ~prim_factor_sorted~ | ~[prim_num]~  | Normalization factors of the sorted primtives                        |
+  | ~nuclear_radius~     | ~[nucl_num]~  | Distance beyond which all the AOs are zero                           |
+  |----------------------+---------------+----------------------------------------------------------------------|
 
    For H_2 with the following basis set,
 
@@ -129,11 +137,11 @@ D   1
 type = 'G'
 shell_num = 12
 prim_num = 20
-shell_center = [1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2]
+nucleus_index = [0 , 6]
 shell_ang_mom = [0, 0, 0, 1, 1, 2, 0, 0, 0, 1, 1, 2]
 shell_factor  = [ 1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.]
 shell_prim_num = [5, 1, 1, 1, 1, 1, 5, 1, 1, 1, 1, 1]
-shell_prim_index = [1, 6, 7, 8, 9, 10, 11, 16, 17, 18, 19, 20]
+shell_prim_index = [0 , 5 , 6 , 7 , 8 , 9 , 10, 15, 16, 17, 18, 19]
 exponent = [ 33.87, 5.095, 1.159, 0.3258, 0.1027, 0.3258, 0.1027, 1.407,
   0.388, 1.057, 33.87, 5.095, 1.159, 0.3258, 0.1027, 0.3258, 0.1027, 1.407,
   0.388, 1.057]
@@ -156,7 +164,8 @@ typedef struct qmckl_ao_basis_struct {
   int32_t   uninitialized;
   int64_t   shell_num;
   int64_t   prim_num;
-  int64_t * shell_center;
+  int64_t * nucleus_index;
+  int64_t * nucleus_shell_num;
   int32_t * shell_ang_mom;
   int64_t * shell_prim_num;
   int64_t * shell_prim_index;
@@ -180,7 +189,7 @@ typedef struct qmckl_ao_basis_struct {
 char      qmckl_get_ao_basis_type             (const qmckl_context context);
 int64_t   qmckl_get_ao_basis_shell_num        (const qmckl_context context);
 int64_t   qmckl_get_ao_basis_prim_num         (const qmckl_context context);
-int64_t*  qmckl_get_ao_basis_shell_center     (const qmckl_context context);
+int64_t*  qmckl_get_ao_basis_nucleus_index    (const qmckl_context context);
 int32_t*  qmckl_get_ao_basis_shell_ang_mom    (const qmckl_context context);
 int64_t*  qmckl_get_ao_basis_shell_prim_num   (const qmckl_context context);
 int64_t*  qmckl_get_ao_basis_shell_prim_index (const qmckl_context context);
@@ -263,7 +272,7 @@ int64_t qmckl_get_ao_basis_prim_num (const qmckl_context context) {
 }
 
 
-int64_t* qmckl_get_ao_basis_shell_center (const qmckl_context context) {
+int64_t* qmckl_get_ao_basis_nucleus_shell_num (const qmckl_context context) {
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return NULL;
   }
@@ -277,8 +286,26 @@ int64_t* qmckl_get_ao_basis_shell_center (const qmckl_context context) {
     return NULL;
   }
 
-  assert (ctx->ao_basis.shell_center != NULL);
-  return ctx->ao_basis.shell_center;
+  assert (ctx->ao_basis.nucleus_shell_num != NULL);
+  return ctx->ao_basis.nucleus_shell_num ;
+}
+
+int64_t* qmckl_get_ao_basis_nucleus_index (const qmckl_context context) {
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return NULL;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  int32_t mask = 1 << 4;
+
+  if ( (ctx->ao_basis.uninitialized & mask) != 0) {
+    return NULL;
+  }
+
+  assert (ctx->ao_basis.nucleus_index != NULL);
+  return ctx->ao_basis.nucleus_index ;
 }
 
 
@@ -290,7 +317,7 @@ int32_t* qmckl_get_ao_basis_shell_ang_mom (const qmckl_context context) {
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
   assert (ctx != NULL);
 
-  int32_t mask = 1 << 4;
+  int32_t mask = 1 << 5;
 
   if ( (ctx->ao_basis.uninitialized & mask) != 0) {
     return NULL;
@@ -309,7 +336,7 @@ int64_t* qmckl_get_ao_basis_shell_prim_num (const qmckl_context context) {
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
   assert (ctx != NULL);
 
-  int32_t mask = 1 << 5;
+  int32_t mask = 1 << 6;
 
   if ( (ctx->ao_basis.uninitialized & mask) != 0) {
     return NULL;
@@ -328,7 +355,7 @@ int64_t* qmckl_get_ao_basis_shell_prim_index (const qmckl_context context) {
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
   assert (ctx != NULL);
 
-  int32_t mask = 1 << 6;
+  int32_t mask = 1 << 7;
 
   if ( (ctx->ao_basis.uninitialized & mask) != 0) {
     return NULL;
@@ -347,7 +374,7 @@ double* qmckl_get_ao_basis_shell_factor (const qmckl_context context) {
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
   assert (ctx != NULL);
 
-  int32_t mask = 1 << 7;
+  int32_t mask = 1 << 8;
 
   if ( (ctx->ao_basis.uninitialized & mask) != 0) {
     return NULL;
@@ -367,7 +394,7 @@ double* qmckl_get_ao_basis_exponent (const qmckl_context context) {
   assert (ctx != NULL);
 
 
-  int32_t mask = 1 << 8;
+  int32_t mask = 1 << 9;
 
   if ( (ctx->ao_basis.uninitialized & mask) != 0) {
     return NULL;
@@ -386,7 +413,7 @@ double* qmckl_get_ao_basis_coefficient (const qmckl_context context) {
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
   assert (ctx != NULL);
 
-  int32_t mask = 1 << 9;
+  int32_t mask = 1 << 10;
 
   if ( (ctx->ao_basis.uninitialized & mask) != 0) {
     return NULL;
@@ -405,7 +432,7 @@ double* qmckl_get_ao_basis_prim_factor (const qmckl_context context) {
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
   assert (ctx != NULL);
 
-  int32_t mask = 1 << 10;
+  int32_t mask = 1 << 11;
 
   if ( (ctx->ao_basis.uninitialized & mask) != 0) {
     return NULL;
@@ -432,16 +459,17 @@ bool qmckl_ao_basis_provided(const qmckl_context context) {
 ** Initialization functions
 
    To set the basis set, all the following functions need to be
-   called. When
+   called.
 
    #+begin_src c :comments org :tangle (eval h_func)
 qmckl_exit_code  qmckl_set_ao_basis_type             (qmckl_context context, const char      t);
 qmckl_exit_code  qmckl_set_ao_basis_shell_num        (qmckl_context context, const int64_t   shell_num);
 qmckl_exit_code  qmckl_set_ao_basis_prim_num         (qmckl_context context, const int64_t   prim_num);
-qmckl_exit_code  qmckl_set_ao_basis_shell_prim_index (qmckl_context context, const int64_t * shell_prim_index);
-qmckl_exit_code  qmckl_set_ao_basis_shell_center     (qmckl_context context, const int64_t * shell_center);
+qmckl_exit_code  qmckl_set_ao_basis_nucleus_index    (qmckl_context context, const int64_t * nucleus_index);
+qmckl_exit_code  qmckl_set_ao_basis_nucleus_shell_num(qmckl_context context, const int64_t * nucleus_shell_num);
 qmckl_exit_code  qmckl_set_ao_basis_shell_ang_mom    (qmckl_context context, const int32_t * shell_ang_mom);
 qmckl_exit_code  qmckl_set_ao_basis_shell_prim_num   (qmckl_context context, const int64_t * shell_prim_num);
+qmckl_exit_code  qmckl_set_ao_basis_shell_prim_index (qmckl_context context, const int64_t * shell_prim_index);
 qmckl_exit_code  qmckl_set_ao_basis_shell_factor     (qmckl_context context, const double  * shell_factor);
 qmckl_exit_code  qmckl_set_ao_basis_exponent         (qmckl_context context, const double  * exponent);
 qmckl_exit_code  qmckl_set_ao_basis_coefficient      (qmckl_context context, const double  * coefficient);
@@ -535,7 +563,7 @@ qmckl_exit_code  qmckl_set_ao_basis_prim_num(qmckl_context context, const int64_
 }
 
 
-qmckl_exit_code  qmckl_set_ao_basis_shell_center(qmckl_context context, const int64_t* shell_center) {
+qmckl_exit_code  qmckl_set_ao_basis_nucleus_shell_num(qmckl_context context, const int64_t* nucleus_shell_num) {
   <<pre2>>
 
   int32_t mask = 1 << 3;
@@ -544,15 +572,15 @@ qmckl_exit_code  qmckl_set_ao_basis_shell_center(qmckl_context context, const in
   if (shell_num == 0L) {
     return qmckl_failwith( context,
                            QMCKL_FAILURE,
-                           "qmckl_set_ao_basis_shell_center",
+                           "qmckl_set_ao_basis_nucleus_shell_num",
                            "shell_num is not set");
   }
 
-  if (ctx->ao_basis.shell_center != NULL) {
-    qmckl_exit_code rc = qmckl_free(context, ctx->ao_basis.shell_center);
+  if (ctx->ao_basis.nucleus_shell_num != NULL) {
+    qmckl_exit_code rc = qmckl_free(context, ctx->ao_basis.nucleus_shell_num);
     if (rc != QMCKL_SUCCESS) {
       return qmckl_failwith( context, rc,
-                             "qmckl_set_ao_basis_shell_center",
+                             "qmckl_set_ao_basis_nucleus_shell_num",
                              NULL);
     }
   }
@@ -564,13 +592,53 @@ qmckl_exit_code  qmckl_set_ao_basis_shell_center(qmckl_context context, const in
   if (new_array == NULL) {
     return qmckl_failwith( context,
                            QMCKL_ALLOCATION_FAILED,
-                           "qmckl_set_ao_basis_shell_center",
+                           "qmckl_set_ao_basis_nucleus_shell_num",
                            NULL);
   }
 
-  memcpy(new_array, shell_center, mem_info.size);
+  memcpy(new_array, nucleus_shell_num, mem_info.size);
 
-  ctx->ao_basis.shell_center = new_array;
+  ctx->ao_basis.nucleus_shell_num = new_array;
+
+  <<post2>>
+}
+
+qmckl_exit_code  qmckl_set_ao_basis_nucleus_index(qmckl_context context, const int64_t* nucleus_index) {
+  <<pre2>>
+
+  int32_t mask = 1 << 4;
+
+  const int64_t shell_num = qmckl_get_ao_basis_shell_num(context);
+  if (shell_num == 0L) {
+    return qmckl_failwith( context,
+                           QMCKL_FAILURE,
+                           "qmckl_set_ao_basis_nucleus_index",
+                           "shell_num is not set");
+  }
+
+  if (ctx->ao_basis.nucleus_index != NULL) {
+    qmckl_exit_code rc = qmckl_free(context, ctx->ao_basis.nucleus_index);
+    if (rc != QMCKL_SUCCESS) {
+      return qmckl_failwith( context, rc,
+                             "qmckl_set_ao_basis_nucleus_index",
+                             NULL);
+    }
+  }
+
+  qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+  mem_info.size = shell_num * sizeof(int64_t);
+  int64_t* new_array = (int64_t*) qmckl_malloc(context, mem_info);
+
+  if (new_array == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_ALLOCATION_FAILED,
+                           "qmckl_set_ao_basis_nucleus_index",
+                           NULL);
+  }
+
+  memcpy(new_array, nucleus_index, mem_info.size);
+
+  ctx->ao_basis.nucleus_index = new_array;
 
   <<post2>>
 }
@@ -579,7 +647,7 @@ qmckl_exit_code  qmckl_set_ao_basis_shell_center(qmckl_context context, const in
 qmckl_exit_code  qmckl_set_ao_basis_shell_ang_mom(qmckl_context context, const int32_t* shell_ang_mom) {
   <<pre2>>
 
-  int32_t mask = 1 << 4;
+  int32_t mask = 1 << 5;
 
   const int64_t shell_num = qmckl_get_ao_basis_shell_num(context);
   if (shell_num == 0L) {
@@ -621,7 +689,7 @@ qmckl_exit_code  qmckl_set_ao_basis_shell_ang_mom(qmckl_context context, const i
 qmckl_exit_code  qmckl_set_ao_basis_shell_prim_num(qmckl_context context, const int64_t* shell_prim_num) {
   <<pre2>>
 
-  int32_t mask = 1 << 5;
+  int32_t mask = 1 << 6;
 
   const int64_t shell_num = qmckl_get_ao_basis_shell_num(context);
   if (shell_num == 0L) {
@@ -663,7 +731,7 @@ qmckl_exit_code  qmckl_set_ao_basis_shell_prim_num(qmckl_context context, const 
 qmckl_exit_code  qmckl_set_ao_basis_shell_prim_index(qmckl_context context, const int64_t* shell_prim_index) {
   <<pre2>>
 
-  int32_t mask = 1 << 6;
+  int32_t mask = 1 << 7;
 
   const int64_t shell_num = qmckl_get_ao_basis_shell_num(context);
   if (shell_num == 0L) {
@@ -704,7 +772,7 @@ qmckl_exit_code  qmckl_set_ao_basis_shell_prim_index(qmckl_context context, cons
 qmckl_exit_code  qmckl_set_ao_basis_shell_factor(qmckl_context context, const double* shell_factor) {
   <<pre2>>
 
-  int32_t mask = 1 << 7;
+  int32_t mask = 1 << 8;
 
   const int64_t shell_num = qmckl_get_ao_basis_shell_num(context);
   if (shell_num == 0L) {
@@ -745,7 +813,7 @@ qmckl_exit_code  qmckl_set_ao_basis_shell_factor(qmckl_context context, const do
 qmckl_exit_code  qmckl_set_ao_basis_exponent(qmckl_context context, const double* exponent) {
   <<pre2>>
 
-  int32_t mask = 1 << 8;
+  int32_t mask = 1 << 9;
 
   const int64_t prim_num = qmckl_get_ao_basis_prim_num(context);
   if (prim_num == 0L) {
@@ -785,7 +853,7 @@ qmckl_exit_code  qmckl_set_ao_basis_exponent(qmckl_context context, const double
 qmckl_exit_code  qmckl_set_ao_basis_coefficient(qmckl_context context, const double* coefficient) {
   <<pre2>>
 
-  int32_t mask = 1 << 9;
+  int32_t mask = 1 << 10;
 
   const int64_t prim_num = qmckl_get_ao_basis_prim_num(context);
   if (prim_num == 0L) {
@@ -825,7 +893,7 @@ qmckl_exit_code  qmckl_set_ao_basis_coefficient(qmckl_context context, const dou
 qmckl_exit_code  qmckl_set_ao_basis_prim_factor(qmckl_context context, const double* prim_factor) {
   <<pre2>>
 
-  int32_t mask = 1 << 10;
+  int32_t mask = 1 << 11;
 
   const int64_t prim_num = qmckl_get_ao_basis_prim_num(context);
   if (prim_num == 0L) {
@@ -865,6 +933,41 @@ qmckl_exit_code  qmckl_set_ao_basis_prim_factor(qmckl_context context, const dou
 
    #+end_src
 
+ When the basis set is completely entered, other data structures are
+ computed to accelerate the calculations. The primitives within each
+ contraction are sorted in ascending order of their exponents, such
+ that as soon as a primitive is zero all the following functions
+ vanish. Also, it is possible to compute a nuclear radius beyond which
+ all the primitives are zero up to the numerical accuracy defined in
+ the context.
+
+ # TODO : sort the basis set here
+ 
+   #+begin_src c :comments org :tangle (eval h_private_type) :noweb yes :exports none
+qmckl_exit_code qmckl_finalize_basis(qmckl_context context);
+   #+end_src
+
+   #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
+qmckl_exit_code qmckl_finalize_basis(qmckl_context context) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_INVALID_CONTEXT;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  int64_t nucl_num = 0;
+  qmckl_exit_code rc = QMCKL_FAILURE;
+
+  rc = qmckl_get_nucleus_num(context, &nucl_num);
+  if (rc != QMCKL_SUCCESS) return rc;
+  
+ /* TODO : sort the basis set here */
+  return QMCKL_SUCCESS;
+}
+   #+end_src
+   
 ** TODO Fortran interfaces
 
 ** Test                                                            :noexport:
@@ -872,7 +975,8 @@ qmckl_exit_code  qmckl_set_ao_basis_prim_factor(qmckl_context context, const dou
    #+begin_src c :tangle (eval c_test) :exports none :exports none
 const int64_t    shell_num         = chbrclf_shell_num;
 const int64_t    prim_num          = chbrclf_prim_num;
-const int64_t *  shell_center      =  &(chbrclf_basis_shell_center[0]);
+const int64_t *  nucleus_index     =  &(chbrclf_basis_nucleus_index[0]);
+const int64_t *  nucleus_shell_num =  &(chbrclf_basis_nucleus_shell_num[0]);
 const int32_t *  shell_ang_mom     =  &(chbrclf_basis_shell_ang_mom[0]);
 const int64_t *  shell_prim_num    =  &(chbrclf_basis_shell_prim_num[0]);
 const int64_t *  shell_prim_index  =  &(chbrclf_basis_shell_prim_index[0]);
@@ -899,7 +1003,11 @@ rc = qmckl_set_ao_basis_prim_num (context, prim_num);
 assert(rc == QMCKL_SUCCESS);
 assert(!qmckl_ao_basis_provided(context));
 
-rc = qmckl_set_ao_basis_shell_center (context, shell_center);
+rc = qmckl_set_ao_basis_nucleus_index (context, nucleus_index);
+assert(rc == QMCKL_SUCCESS);
+assert(!qmckl_ao_basis_provided(context));
+
+rc = qmckl_set_ao_basis_nucleus_shell_num (context, nucleus_shell_num);
 assert(rc == QMCKL_SUCCESS);
 assert(!qmckl_ao_basis_provided(context));
 
@@ -908,10 +1016,6 @@ assert(rc == QMCKL_SUCCESS);
 assert(!qmckl_ao_basis_provided(context));
 
 rc = qmckl_set_ao_basis_shell_factor  (context, shell_factor);
-assert(rc == QMCKL_SUCCESS);
-assert(!qmckl_ao_basis_provided(context));
-
-rc = qmckl_set_ao_basis_shell_center  (context, shell_prim_num);
 assert(rc == QMCKL_SUCCESS);
 assert(!qmckl_ao_basis_provided(context));
 
@@ -1523,6 +1627,7 @@ end function test_qmckl_ao_polynomial_vgl
     \[ \nabla_z v_i = -2 a_i (X_z -  R_z) v_i \]
     \[ \Delta v_i = a_i (4 |X-R|^2 a_i - 6) v_i \]
 
+     |--------------+--------+------------------------------------------------------|
      | ~context~    | input  | Global state                                         |
      | ~X(3)~       | input  | Array containing the coordinates of the points       |
      | ~R(3)~       | input  | Array containing the x,y,z coordinates of the center |
@@ -1530,6 +1635,7 @@ end function test_qmckl_ao_polynomial_vgl
      | ~A(n)~       | input  | Exponents of the Gaussians                           |
      | ~VGL(ldv,5)~ | output | Value, gradients and Laplacian of the Gaussians      |
      | ~ldv~        | input  | Leading dimension of array ~VGL~                     |
+     |--------------+--------+------------------------------------------------------|
 
      Requirements
 
