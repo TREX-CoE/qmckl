@@ -9,7 +9,7 @@ simple language and provide a standard API and tests to enable the
 development of high-performance QMCkl implementations taking
 advantage of modern hardware.
 
-See the [source code](https://github.com/TREX-CoE/qmckl/tree/main/src)
+See the [source code](https://github.com/TREX-CoE/qmckl/blob/master/org/qmckl.org)
 to read the documentation.
 
 
