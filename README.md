@@ -1,6 +1,6 @@
 # QMCkl: Quantum Monte Carlo Kernel Library
 
-![Build Status](https://github.com/TREX-CoE/qmckl/workflows/test-build/badge.svg?branch=main)
+![Build Status](https://github.com/TREX-CoE/qmckl/workflows/test-build/badge.svg?branch=master)
 
 The domain of quantum chemistry needs a library in which the main
 kernels of Quantum Monte Carlo (QMC) methods are implemented. In the
