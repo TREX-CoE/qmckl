@@ -277,13 +277,14 @@ ${PACKAGE_NAME} Version ${PACKAGE_VERSION} ${QMCKL_DEVEL}
 
 Prefix: '${prefix}'.
 
-CC..........: ${CC}
-CPPFLAGS....: ${CPPFLAGS}
-CFLAGS......: ${CFLAGS}
-FC..........: ${FC}
-FCLAGS......: ${FCFLAGS}
-LDFLAGS:....: ${LDFLAGS}
-LIBS........: ${LIBS}
+CC..............: ${CC}
+CPPFLAGS........: ${CPPFLAGS}
+CFLAGS..........: ${CFLAGS}
+FC..............: ${FC}
+FCLAGS..........: ${FCFLAGS}
+LDFLAGS:........: ${LDFLAGS}
+LIBS............: ${LIBS}
+USE CHAMELEON...: ${with_chameleon}
 
 Package features:
   ${ARGS}
