@@ -38,7 +38,7 @@ make check
 
 ```
 ./autogen.sh
-LIBCHAMELEON_LIBS="-L/home/vijay/.local/lib -lchameleon -lchameleon_starpu -lhqr -lcoreblas" LIBCHAMELEON_CFLAGS="-I/home/vijay/.local/include -I/opt/starpu-1.3.7/build/include/starpu/1.3" QMCKL_DEVEL=1 ./configure --prefix=/home/vijay/.local --enable-silent-rules --enable-maintainer-mode --with-chameleon=yes
+LIBCHAMELEON_LIBS="$(shell pkg-config --libs chameleon)" LIBCHAMELEON_CFLAGS="$(shell pkg-config --cflags chameleon)" QMCKL_DEVEL=1 ./configure --prefix=$PWD/_install --enable-silent-rules --enable-maintainer-mode --with-chameleon=yes
 
 make
 make check
