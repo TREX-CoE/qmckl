@@ -34,6 +34,16 @@ make
 make check
 ```
 
+### Building with Chameleon Library
+
+```
+./autogen.sh
+LIBCHAMELEON_LIBS="-L/home/vijay/.local/lib -lchameleon -lchameleon_starpu -lhqr -lcoreblas" LIBCHAMELEON_CFLAGS="-I/home/vijay/.local/include -I/opt/starpu-1.3.7/build/include/starpu/1.3" QMCKL_DEVEL=1 ./configure --prefix=/home/vijay/.local --enable-silent-rules --enable-maintainer-mode --with-chameleon=yes
+
+make
+make check
+```
+
 ## For users
 
 Obtain a source distribution and run
