@@ -124,8 +124,8 @@ if test "x$with_chameleon" != "xno"; then
     AC_MSG_ERROR([Required Chameleon library not found])
   fi
   if test "x$LIBCHAMELEON_LIBS" != "x" ; then
-    CXXFLAGS="$LIBCHAMELEON_CFLAGS $CXXFLAGS"
     CFLAGS="$LIBCHAMELEON_CFLAGS $CFLAGS"
+    CXXFLAGS="$LIBCHAMELEON_CFLAGS $CXXFLAGS"
     CPPFLAGS="$LIBCHAMELEON_CFLAGS $CPPFLAGS"
     CHAMELEONLIB="$LIBCHAMELEON_PATH $LIBCHAMELEON_LIBS"
     AC_DEFINE(USE_CHAMELEON,1,[CHAMELEON support is available])
@@ -136,19 +136,19 @@ if test "x$with_chameleon" != "xno"; then
 fi
 AC_MSG_NOTICE([CHAMELEON library support: ${with_CHAMELEON:=auto} ${LIBCHAMELEON_PATH} ${LIBCHAMELEON_LIBS}])
 AC_SUBST(CHAMELEONLIB)
-  # auto-detect using pkg-config
-  PKG_CHECK_MODULES([LIBCHAMELEON],[chameleon >= 1.0.0],,[
+# auto-detect using pkg-config
+PKG_CHECK_MODULES([LIBCHAMELEON],[chameleon >= 1.0.0],,[
 
-    ## something went wrong.
-    ## try to find the package without pkg-config
+  ## something went wrong.
+  ## try to find the package without pkg-config
 
-    ## check that the library is actually new enough.
-    ## by testing for a 1.0.0+ function which we use
-    AC_CHECK_LIB(chameleon,CHAMELEON_finalize,[LIBCHAMELEON_LIBS="-lchameleon"])
-  ])
-  if test "x$LIBCHAMELEON_LIBS" != "x" ; then
-    AC_CHECK_HEADERS(chameleon.h)
-  fi
+  ## check that the library is actually new enough.
+  ## by testing for a 1.0.0+ function which we use
+  AC_CHECK_LIB(chameleon,CHAMELEON_finalize,[LIBCHAMELEON_LIBS="-lchameleon"])
+])
+if test "x$LIBCHAMELEON_LIBS" != "x" ; then
+  AC_CHECK_HEADERS(chameleon.h)
+fi
 
 ## BLAS
 #AX_BLAS([], [AC_MSG_ERROR([BLAS was not found.])])
