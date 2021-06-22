@@ -87,6 +87,7 @@ int main() {
    | ~en_distance_rescaled_deriv_e~      | ~double[walk_num][4][num][num]~   | Electron-electron rescaled distances derivatives                     |
    | ~en_distance_rescaled_deriv_e_date~ | ~uint64_t~                        | Last modification date of the electron-electron distance derivatives |
 
+
 ** Data structure
 
    #+begin_src c :comments org :tangle (eval h_private_type)
@@ -115,16 +116,41 @@ typedef struct qmckl_electron_struct {
   int32_t   uninitialized;
   bool      provided;
 } qmckl_electron_struct;
+
    #+end_src
 
    The ~uninitialized~ integer contains one bit set to one for each
-   initialization function which has not bee called. It becomes equal
+   initialization function which has not been called. It becomes equal
    to zero after all initialization functions have been called. The
    struct is then initialized and ~provided == true~.
+   Some values are initialized by default, and are not concerned by
+   this mechanism.
 
-   When all the data relative to electrons have been set, the
-   following function returns ~true~.
+   #+begin_src c :comments org :tangle (eval h_private_func) 
+qmckl_exit_code qmckl_init_electron(qmckl_context context);
+   #+end_src
+   
+   #+begin_src c :comments org :tangle (eval c)
+qmckl_exit_code qmckl_init_electron(qmckl_context context) {
 
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return false;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  ctx->electron.uninitialized = (1 << 2) - 1;
+
+  /* Default values */
+  ctx->electron.rescale_factor_kappa_ee = 1.0;
+  ctx->electron.rescale_factor_kappa_en = 1.0;
+
+  return QMCKL_SUCCESS;
+}
+   #+end_src
+   
+   
       #+begin_src c :comments org :tangle (eval h_func)
 bool qmckl_electron_provided (const qmckl_context context);
       #+end_src
@@ -295,13 +321,13 @@ qmckl_get_electron_walk_num (const qmckl_context context, int64_t* const walk_nu
 *** Scaling factors Kappa
 
       #+begin_src c :comments org :tangle (eval h_func) :exports none
-qmckl_exit_code qmckl_get_kappa_ee   (const qmckl_context context, double* const rescale_factor_kappa_ee);
-qmckl_exit_code qmckl_get_kappa_en   (const qmckl_context context, double* const rescale_factor_kappa_en);
+qmckl_exit_code qmckl_get_electron_rescale_factor_ee (const qmckl_context context, double* const rescale_factor_kappa_ee);
+qmckl_exit_code qmckl_get_electron_rescale_factor_en (const qmckl_context context, double* const rescale_factor_kappa_en);
       #+end_src
 
       #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
 qmckl_exit_code
-qmckl_get_kappa_ee (const qmckl_context context, double* const rescale_factor_kappa_ee) {
+qmckl_get_electron_rescale_factor_ee (const qmckl_context context, double* const rescale_factor_kappa_ee) {
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return QMCKL_INVALID_CONTEXT;
@@ -310,27 +336,22 @@ qmckl_get_kappa_ee (const qmckl_context context, double* const rescale_factor_ka
   if (rescale_factor_kappa_ee == NULL) {
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_2,
-                           "qmckl_get_kappa_ee",
+                           "qmckl_get_electron_rescale_factor_ee",
                            "rescale_factor_kappa_ee is a null pointer");
   }
 
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
   assert (ctx != NULL);
 
-  int32_t mask = 1 << 2;
+  assert (ctx->electron.rescale_factor_kappa_ee > 0.0);
 
-  if ( (ctx->electron.uninitialized & mask) != 0) {
-    return QMCKL_NOT_PROVIDED;
-  }
-
-  // TODO: assert (ctx->electron.rescale_factor_kappa_ee > (double) 0);
-  ,*rescale_factor_kappa_ee = ctx->electron.rescale_factor_kappa_ee;
+  *rescale_factor_kappa_ee = ctx->electron.rescale_factor_kappa_ee;
   return QMCKL_SUCCESS;
 }
 
 
 qmckl_exit_code
-qmckl_get_kappa_en (const qmckl_context context, double* const rescale_factor_kappa_en) {
+qmckl_get_electron_rescale_factor_en (const qmckl_context context, double* const rescale_factor_kappa_en) {
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return QMCKL_INVALID_CONTEXT;
   }
@@ -338,21 +359,15 @@ qmckl_get_kappa_en (const qmckl_context context, double* const rescale_factor_ka
   if (rescale_factor_kappa_en == NULL) {
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_2,
-                           "qmckl_get_kappa_en",
+                           "qmckl_get_electron_rescale_factor_en",
                            "rescale_factor_kappa_en is a null pointer");
   }
 
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
   assert (ctx != NULL);
 
-  int32_t mask = 1 << 2;
-
-  if ( (ctx->electron.uninitialized & mask) != 0) {
-    return QMCKL_NOT_PROVIDED;
-  }
-
-  // TODO: assert (ctx->electron.rescale_factor_kappa_en > (double) 0);
-  ,*rescale_factor_kappa_en = ctx->electron.rescale_factor_kappa_en;
+  assert (ctx->electron.rescale_factor_kappa_en > 0.0);
+  *rescale_factor_kappa_en = ctx->electron.rescale_factor_kappa_en;
   return QMCKL_SUCCESS;
 }
       #+end_src
@@ -443,10 +458,12 @@ qmckl_get_electron_coord (const qmckl_context context, const char transp, double
    both allocated.
 
    #+begin_src c :comments org :tangle (eval h_func)
-qmckl_exit_code  qmckl_set_electron_num        (qmckl_context context, const int64_t up_num, const int64_t down_num);
-qmckl_exit_code  qmckl_set_kappa               (qmckl_context context, const double rescale_factor_kappa_ee, const double rescale_factor_kappa_en);
-qmckl_exit_code  qmckl_set_electron_walk_num   (qmckl_context context, const int64_t walk_num);
-qmckl_exit_code  qmckl_set_electron_coord      (qmckl_context context, const char transp, const double* coord);
+qmckl_exit_code qmckl_set_electron_num      (qmckl_context context, const int64_t up_num, const int64_t down_num);
+qmckl_exit_code qmckl_set_electron_walk_num (qmckl_context context, const int64_t walk_num);
+qmckl_exit_code qmckl_set_electron_coord    (qmckl_context context, const char transp, const double* coord);
+
+qmckl_exit_code qmckl_set_electron_rescale_factor_ee (qmckl_context context, const double kappa_ee);
+qmckl_exit_code qmckl_set_electron_rescale_factor_en (qmckl_context context, const double kappa_en);
    #+end_src
 
    #+NAME:pre2
@@ -559,32 +576,37 @@ qmckl_set_electron_walk_num(qmckl_context context, const int64_t walk_num) {
 
    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
 qmckl_exit_code
-qmckl_set_kappa(qmckl_context context,
-                const double rescale_factor_kappa_ee,
+qmckl_set_electron_rescale_factor_ee(qmckl_context context,
+                const double rescale_factor_kappa_ee) {
+  <<pre2>>
+
+  if (rescale_factor_kappa_ee <= 0.0) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_set_electron_rescale_factor_ee",
+                           "rescale_factor_kappa_ee <= 0.0");
+  }
+
+  ctx->electron.rescale_factor_kappa_ee = rescale_factor_kappa_ee;
+
+  return QMCKL_SUCCESS;
+}
+
+qmckl_exit_code
+qmckl_set_electron_rescale_factor_en(qmckl_context context,
                 const double rescale_factor_kappa_en) {
   <<pre2>>
 
-  // TODO: Check for 0 values
-  //if (rescale_factor_kappa_ee != 0) {
-  //  return qmckl_failwith( context,
-  //                         QMCKL_INVALID_ARG_2,
-  //                         "qmckl_set_kappa",
-  //                         "rescale_factor_kappa_ee == 0");
-  //}
+  if (rescale_factor_kappa_en <= 0.0) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_set_electron_rescale_factor_en",
+                           "rescale_factor_kappa_en <= 0.0");
+  }
 
-  //if (rescale_factor_kappa_en <= 0) {
-  //  return qmckl_failwith( context,
-  //                         QMCKL_INVALID_ARG_3,
-  //                         "qmckl_set_kappa",
-  //                         "rescale_factor_kappa_en == 0");
-  //}
-
-  int32_t mask = 1 << 2;
-
-  ctx->electron.rescale_factor_kappa_ee = rescale_factor_kappa_ee;
   ctx->electron.rescale_factor_kappa_en = rescale_factor_kappa_en;
 
-  <<post2>>
+  return QMCKL_SUCCESS;
 }
    #+end_src
 
@@ -688,14 +710,13 @@ int64_t walk_num      = chbrclf_walk_num;
 int64_t elec_num      = chbrclf_elec_num;
 int64_t elec_up_num   = chbrclf_elec_up_num;
 int64_t elec_dn_num   = chbrclf_elec_dn_num;
-double  rescale_factor_kappa_ee      = 1.0; // TODO Get rescale_factor_kappa_ee from chbrclf
-double  rescale_factor_kappa_en      = 1.0; // TODO Get rescale_factor_kappa_en from chbrclf
+double  rescale_factor_kappa_ee = 2.0;
+double  rescale_factor_kappa_en = 3.0;
 double* elec_coord    = &(chbrclf_elec_coord[0][0][0]);
 
 int64_t  nucl_num      = chbrclf_nucl_num;
 double*  charge        = chbrclf_charge;
 double*  nucl_coord    = &(chbrclf_nucl_coord[0][0]);
-double   nucl_rescale_factor_kappa    = 1.0; // TODO Change get rescale_factor_kappa from chbrclf example
 
 /* --- */
 
@@ -730,23 +751,27 @@ rc = qmckl_get_electron_num (context, &n);
 assert(rc == QMCKL_SUCCESS);
 assert(n == elec_num);
 
-double k_ee;
-double k_en;
-rc = qmckl_get_kappa_ee (context, &k_ee);
-assert(rc == QMCKL_NOT_PROVIDED);
-
-rc = qmckl_get_kappa_en (context, &k_en);
-assert(rc == QMCKL_NOT_PROVIDED);
-
-rc = qmckl_set_kappa (context, rescale_factor_kappa_ee, rescale_factor_kappa_en);
+double k_ee = 0.;
+double k_en = 0.;
+rc = qmckl_get_electron_rescale_factor_ee (context, &k_ee);
 assert(rc == QMCKL_SUCCESS);
-assert(!qmckl_electron_provided(context));
+assert(k_ee == 1.0);
 
-rc = qmckl_get_kappa_ee (context, &k_ee);
+rc = qmckl_get_electron_rescale_factor_en (context, &k_en);
+assert(rc == QMCKL_SUCCESS);
+assert(k_en == 1.0);
+
+rc = qmckl_set_electron_rescale_factor_en(context, rescale_factor_kappa_en);
+assert(rc == QMCKL_SUCCESS);
+
+rc = qmckl_set_electron_rescale_factor_ee(context, rescale_factor_kappa_ee);
+assert(rc == QMCKL_SUCCESS);
+
+rc = qmckl_get_electron_rescale_factor_ee (context, &k_ee);
 assert(rc == QMCKL_SUCCESS);
 assert(k_ee == rescale_factor_kappa_ee);
 
-rc = qmckl_get_kappa_en (context, &k_en);
+rc = qmckl_get_electron_rescale_factor_en (context, &k_en);
 assert(rc == QMCKL_SUCCESS);
 assert(k_en == rescale_factor_kappa_en);
 
@@ -1538,7 +1563,10 @@ qmckl_exit_code qmckl_provide_en_distance(qmckl_context context)
   assert (ctx != NULL);
 
   if (!(ctx->nucleus.provided)) {
-    return QMCKL_NOT_PROVIDED;
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_provide_en_distance",
+                           NULL);
   }
 
   /* Compute if necessary */
@@ -1717,9 +1745,6 @@ assert(!qmckl_nucleus_provided(context));
 assert(qmckl_electron_provided(context));
 
 rc = qmckl_set_nucleus_num (context, nucl_num);
-assert(rc == QMCKL_SUCCESS);
-
-rc = qmckl_set_nucleus_kappa (context, nucl_rescale_factor_kappa);
 assert(rc == QMCKL_SUCCESS);
 
 rc = qmckl_set_nucleus_charge (context, charge);
@@ -2009,9 +2034,6 @@ assert(qmckl_electron_provided(context));
 rc = qmckl_set_nucleus_num (context, nucl_num);
 assert(rc == QMCKL_SUCCESS);
 
-rc = qmckl_set_nucleus_kappa (context, nucl_rescale_factor_kappa);
-assert(rc == QMCKL_SUCCESS);
-
 rc = qmckl_set_nucleus_charge (context, charge);
 assert (rc == QMCKL_SUCCESS);
 
@@ -2023,6 +2045,7 @@ assert(qmckl_nucleus_provided(context));
 double en_distance_rescaled[walk_num][nucl_num][elec_num];
 
 rc = qmckl_get_electron_en_distance_rescaled(context, &(en_distance_rescaled[0][0][0]));
+
 assert (rc == QMCKL_SUCCESS);
 
 // (e,n,w) in Fortran notation
@@ -2290,27 +2313,28 @@ assert(qmckl_nucleus_provided(context));
 double en_distance_rescaled_deriv_e[walk_num][4][nucl_num][elec_num];
 
 rc = qmckl_get_electron_en_distance_rescaled_deriv_e(context, &(en_distance_rescaled_deriv_e[0][0][0][0]));
+
 assert (rc == QMCKL_SUCCESS);
 
 // TODO: check exact values
 //// (e,n,w) in Fortran notation
 //// (1,1,1)
-//assert(fabs(en_distance[0][0][0] - 7.546738741619978) < 1.e-12);
+//assert(fabs(en_distance_rescaled[0][0][0] - 7.546738741619978) < 1.e-12);
 //
 //// (1,2,1)
-//assert(fabs(en_distance[0][1][0] - 8.77102435246984) < 1.e-12);
+//assert(fabs(en_distance_rescaled[0][1][0] - 8.77102435246984) < 1.e-12);
 //
 //// (2,1,1)
-//assert(fabs(en_distance[0][0][1] - 3.698922010513608) < 1.e-12);
+//assert(fabs(en_distance_rescaled[0][0][1] - 3.698922010513608) < 1.e-12);
 //
 //// (1,1,2)
-//assert(fabs(en_distance[1][0][0] - 5.824059436060509) < 1.e-12);
+//assert(fabs(en_distance_rescaled[1][0][0] - 5.824059436060509) < 1.e-12);
 //
 //// (1,2,2)
-//assert(fabs(en_distance[1][1][0] - 7.080482110317645) < 1.e-12);
+//assert(fabs(en_distance_rescaled[1][1][0] - 7.080482110317645) < 1.e-12);
 //
 //// (2,1,2)
-//assert(fabs(en_distance[1][0][1] - 3.1804527583077356) < 1.e-12);
+//assert(fabs(en_distance_rescaled[1][0][1] - 3.1804527583077356) < 1.e-12);
 
      #+end_src
 

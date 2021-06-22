@@ -19,7 +19,7 @@ function extract_doc()
   html=${DOCS}/html/$(basename ${org%.org}.html)
   text=${DOCS}/text/$(basename ${org%.org}.txt)
 
-  ./missing emacs --batch  \
+  ./tools/missing emacs --batch  \
         --load ${HTMLIZE}          \
         --load ${CONFIG_DOC}       \
         ${org}                     \
@@ -34,8 +34,9 @@ function extract_doc()
 for i in $@
 do
     exported=${i%.org}.exported
+    exported=$(dirname $exported)/.$(basename $exported)
     NOW=$(date +"%m%d%H%M.%S")
-    extract_doc ${i} &> $exported
+    extract_doc ${i} > $exported
 
     # Make log file older than the exported files
     touch -t ${NOW} $exported
