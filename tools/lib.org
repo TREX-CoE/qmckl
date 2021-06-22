@@ -20,18 +20,18 @@
 ** Table of function arguments
 
    #+NAME: test
-   | qmckl_context | context   | in  | Global state                                  |
-   | char          | transa    | in  | Array ~A~ is ~'N'~: Normal, ~'T'~: Transposed |
-   | char          | transb    | in  | Array ~B~ is ~'N'~: Normal, ~'T'~: Transposed |
-   | int64_t       | m         | in  | Number of points in the first set             |
-   | int64_t       | n         | in  | Number of points in the second set            |
-   | double        | A[][lda]  | in  | Array containing the $m \times 3$ matrix $A$  |
-   | int64_t       | lda       | in  | Leading dimension of array ~A~                |
-   | double        | B[][ldb]  | in  | Array containing the $n \times 3$ matrix $B$  |
-   | int64_t       | ldb       | in  | Leading dimension of array ~B~                |
-   | double        | C[n][ldc] | out | Array containing the $m \times n$ matrix $C$  |
-   | int64_t       | ldc       | in  | Leading dimension of array ~C~                |
-
+   | ~qmckl_context~ | ~context~   | in  | Global state                                  |
+   | ~char~          | ~transa~    | in  | Array ~A~ is ~'N'~: Normal, ~'T'~: Transposed |
+   | ~char~          | ~transb~    | in  | Array ~B~ is ~'N'~: Normal, ~'T'~: Transposed |
+   | ~int64_t~       | ~m~         | in  | Number of points in the first set             |
+   | ~int64_t~       | ~n~         | in  | Number of points in the second set            |
+   | ~double~        | ~A[][lda]~  | in  | Array containing the $m \times 3$ matrix $A$  |
+   | ~int64_t~       | ~lda~       | in  | Leading dimension of array ~A~                |
+   | ~double~        | ~B[][ldb]~  | in  | Array containing the $n \times 3$ matrix $B$  |
+   | ~int64_t~       | ~ldb~       | in  | Leading dimension of array ~B~                |
+   | ~double~        | ~C[n][ldc]~ | out | Array containing the $m \times n$ matrix $C$  |
+   | ~int64_t~       | ~ldc~       | in  | Leading dimension of array ~C~                |
+   
 
 *** Fortran-C type conversions
 
@@ -48,11 +48,6 @@ f_of_c_d = { '' : ''
  }
     #+END_SRC
 
-    #+RESULTS: f_of_c
-    #+begin_src f90 :tangle (eval f) :comments org :exports none
-    None
-    #+end_src
-
     #+NAME:c_of_f
     #+BEGIN_SRC python :var table=test :var rettyp="integer" :var fname=[] :results value :noweb yes :wrap "src f90 :tangle (eval f) :comments org :exports none"
 ctypeid_d = { '' : ''
@@ -66,11 +61,6 @@ ctypeid_d = { '' : ''
  }
     #+END_SRC
 
-    #+RESULTS: c_of_f
-    #+begin_src f90 :tangle (eval f) :comments org :exports none
-    None
-    #+end_src
-
 *** Parse the table
 
     #+NAME: parse_table
@@ -78,7 +68,7 @@ ctypeid_d = { '' : ''
 def parse_table(table):
     result = []
 
-    for line in table:
+    for line in [ [x.replace('~','') for x in y] for y in table]:
         d = { "c_type"  : line[0],
               "inout"   : line[2].lower(),
               "name"    : line[1],
@@ -106,10 +96,11 @@ def parse_table(table):
     return result
     #+END_SRC
 
+
 *** Generates a C header
 
     #+NAME: generate_c_header
-    #+BEGIN_SRC python :var table=[] :var rettyp=[] :var fname=[] :results drawer :noweb yes :wrap "src c :tangle (eval h_func) :comments org"
+    #+BEGIN_SRC python :var table=test :var rettyp=[] :var fname=[] :results drawer :noweb yes :wrap "src c :tangle (eval h_func) :comments org"
 <<parse_table>>
 
 results = []
@@ -139,21 +130,6 @@ return template
 
     #+END_SRC
 
-    #+RESULTS: generate_c_header
-    #+begin_src c :tangle (eval h_func) :comments org
-    [] [] (
-          const qmckl_context context,
-          const char transa,
-          const char transb,
-          const int64_t m,
-          const int64_t n,
-          const double* const A,
-          const int64_t lda,
-          const double* const B,
-          const int64_t ldb,
-                double* const C,
-          const int64_t ldc ); 
-    #+end_src
 
 *** Generates a C interface to the Fortran function
 
@@ -165,6 +141,9 @@ return template
 d = parse_table(table)
 
 args = ", ".join([ x["name"] for x in d ])
+if len(args) > 100:
+    args = args.replace(",",""", &
+    """)
 
 rettyp_c = ctypeid_d[rettyp.lower()]
 
@@ -207,6 +186,23 @@ results += [ ""
 results='\n'.join(results)
 return results
     #+END_SRC
+
+    #+RESULTS: generate_c_interface
+    #+begin_src f90 :tangle (eval f) :comments org :exports none
+    integer(c_int32_t) function [] &
+        () &
+        bind(C) result(info)
+
+      use, intrinsic :: iso_c_binding
+      implicit none
+
+
+      integer(c_int32_t), external :: []_f
+      info = []_f &
+             ()
+
+    end function []
+    #+end_src
 
 *** Generates a Fortran interface to the C function
 
@@ -261,27 +257,5 @@ return results
 
     #+RESULTS: generate_f_interface
     #+begin_src f90 :tangle (eval fh_func) :comments org :exports none
-    interface
-      integer(c_int32_t) function [] &
-          (context, transa, transb, m, n, A, lda, B, ldb, C, ldc) &
-          bind(C)
-        use, intrinsic :: iso_c_binding
-        import
-        implicit none
-
-        integer (qmckl_context), intent(in)  , value :: context
-        character           , intent(in)  , value :: transa
-        character           , intent(in)  , value :: transb
-        integer (c_int64_t) , intent(in)  , value :: m
-        integer (c_int64_t) , intent(in)  , value :: n
-        real    (c_double ) , intent(in)          :: A(lda,3)
-        integer (c_int64_t) , intent(in)  , value :: lda
-        real    (c_double ) , intent(in)          :: B(ldb,3)
-        integer (c_int64_t) , intent(in)  , value :: ldb
-        real    (c_double ) , intent(out)         :: C(ldc,n)
-        integer (c_int64_t) , intent(in)  , value :: ldc
-
-      end function []
-    end interface
     #+end_src
 
