@@ -38,7 +38,7 @@ make check
 
 ```
 ./autogen.sh
-LIBCHAMELEON_LIBS="$(shell pkg-config --libs chameleon)" LIBCHAMELEON_CFLAGS="$(shell pkg-config --cflags chameleon)" QMCKL_DEVEL=1 ./configure --prefix=$PWD/_install --enable-silent-rules --enable-maintainer-mode --with-chameleon=yes
+LIBCHAMELEON_LIBS="$(pkg-config --libs chameleon)" LIBCHAMELEON_CFLAGS="$(pkg-config --cflags chameleon)" QMCKL_DEVEL=1 ./configure --prefix=$PWD/_install --enable-silent-rules --enable-maintainer-mode --with-chameleon=yes
 
 make
 make check
