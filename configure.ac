@@ -112,7 +112,9 @@ case "$with_chameleon" in
       AC_MSG_ERROR([--with-chameleon path does not point to a directory])
     fi
     LIBCHAMELEON_PATH="-L$with_chameleon/lib"
+    CFLAGS="$LIBCHAMELEON_CFLAGS $CFLAGS"
     CXXFLAGS="-I$with_chameleon/include $CXXFLAGS"
+    CPPFLAGS="$LIBCHAMELEON_CFLAGS $CPPFLAGS"
   esac
 ])
 AH_TEMPLATE(USE_CHAMELEON,[Chameleon support is available])
