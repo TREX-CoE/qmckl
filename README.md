@@ -34,16 +34,6 @@ make
 make check
 ```
 
-### Building with Chameleon Library
-
-```
-./autogen.sh
-LIBCHAMELEON_LIBS="$(pkg-config --libs chameleon)" LIBCHAMELEON_CFLAGS="$(pkg-config --cflags chameleon)" QMCKL_DEVEL=1 ./configure --prefix=$PWD/_install --enable-silent-rules --enable-maintainer-mode --with-chameleon=yes
-
-make
-make check
-```
-
 ## For users
 
 Obtain a source distribution and run
