@@ -33,8 +33,8 @@ def main():
 
     for org in glob("org/*.org"):
         i         =  org.split('/')[-1].rsplit(".",1)[0]
-        tangled   =  "org/"+i+".tangled"
-        exported  =  "org/"+i+".exported"
+        tangled   =  "org/."+i+".tangled"
+        exported  =  "org/."+i+".exported"
         c_test_x  =  "tests/test_"+i
         c_test_o  =  "tests/test_"+i+".$(OBJEXT)"
         f_test_o  =  "tests/test_"+i+"_f.$(OBJEXT)"

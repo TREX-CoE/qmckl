@@ -24,7 +24,7 @@ function tangle()
     elif [[ ${org_file} -ot ${f_file} ]] ; then
         return
     fi
-    ./missing \
+    ./tools/missing \
         emacs --batch ${org_file} \
          --load=${PWD}/tools/config_tangle.el \
         -f org-babel-tangle
@@ -33,8 +33,9 @@ function tangle()
 for i in $@
 do
     tangled=${i%.org}.tangled
+    tangled=$(dirname $tangled)/.$(basename $tangled)
     NOW=$(date +"%m%d%H%M.%S")
-    tangle ${i} &> $tangled
+    tangle ${i} > $tangled
 
     # Make log file older than the tangled files
     touch -t ${NOW} $tangled
