@@ -227,7 +227,6 @@ FC..............: ${FC}
 FCLAGS..........: ${FCFLAGS}
 LDFLAGS:........: ${LDFLAGS}
 LIBS............: ${LIBS}
-USE CHAMELEON...: ${with_chameleon}
 
 Package features:
   ${ARGS}
