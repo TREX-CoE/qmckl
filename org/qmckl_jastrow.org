@@ -81,20 +81,25 @@ int main() {
   | ~double~   | ~bord_vector[bord_num + 1]~               | in  | Order of b polynomial coefficients                                |
   | ~double~   | ~cord_vector[cord_num][type_nuc_num]~     | in  | Order of c polynomial coefficients                                |
   | ~double~   | ~factor_ee~                               | out | Jastrow factor: electron-electron part                            |
+  | ~double~   | ~factor_ee_date~                          | out | Jastrow factor: electron-electron part                            |
   | ~double~   | ~factor_en~                               | out | Jastrow factor: electron-nucleus  part                            |
+  | ~double~   | ~factor_en_date~                          | out | Jastrow factor: electron-nucleus  part                            |
   | ~double~   | ~factor_een~                              | out | Jastrow factor: electron-electron-nucleus  part                   |
+  | ~double~   | ~factor_een_date~                         | out | Jastrow factor: electron-electron-nucleus  part                   |
   | ~double~   | ~factor_ee_deriv_e[4][nelec]~             | out | Derivative of the Jastrow factor: electron-electron-nucleus  part |
   | ~double~   | ~factor_en_deriv_e[4][nelec]~             | out | Derivative of the Jastrow factor: electron-electron-nucleus  part |
   | ~double~   | ~factor_een_deriv_e[4][nelec]~            | out | Derivative of the Jastrow factor: electron-electron-nucleus  part |
 
   computed data:
 
-  |-------------------+--------------------------------------------+-------------------------------------------------|
-  | ~uint64_t~        | ~dim_cord_vec~                             | Number of unique C coefficients                 |
-  | ~coord_vect_full~ | ~[dim_cord_vec][nuc_num]~                  | vector of non-zero coefficients                 |
-  | ~lkpm_of_cindex~  | ~[4][dim_cord_vec]~                        | Transform l,k,p, and m into consecutive indices |
-  | ~tmp_c~           | ~[elec_num][nuc_num][ncord + 1][ncord]~    | vector of non-zero coefficients                 |
-  | ~dtmp_c~          | ~[elec_num][4][nuc_num][ncord + 1][ncord]~ | vector of non-zero coefficients                 |
+  |-----------+--------------------------------------------------+-------------------------------------------------|
+  | ~int64_t~ | ~dim_cord_vec~                                   | Number of unique C coefficients                 |
+  | ~double~  | ~asymp_jasb[2]~                                 | Asymptotic component                            |
+  | ~int64_t~ | ~asymp_jasb_date~                               | Asymptotic component                            |
+  | ~double~  | ~coord_vect_full[dim_cord_vec][nuc_num]~         | vector of non-zero coefficients                 |
+  | ~int64_t~ | ~lkpm_of_cindex[4][dim_cord_vec]~                | Transform l,k,p, and m into consecutive indices |
+  | ~double~  | ~tmp_c[elec_num][nuc_num][ncord + 1][ncord]~     | vector of non-zero coefficients                 |
+  | ~double~  | ~dtmp_c[elec_num][4][nuc_num][ncord + 1][ncord]~ | vector of non-zero coefficients                 |
 
   For H2O we have the following data:
 
@@ -143,8 +148,6 @@ lkpm_of_cindex =
            5, 2 ]
    #+END_EXAMPLE
 
-
-
 ** Data structure
 
    #+begin_src c :comments org :tangle (eval h_private_type)
@@ -154,9 +157,16 @@ typedef struct qmckl_jastrow_struct{
   int64_t  bord_num;
   int64_t  cord_num;
   int64_t  type_nuc_num;
+  int64_t  asymp_jasb_date;
+  int64_t  tmp_c_date;
+  int64_t  dtmp_c_date;
+  int64_t  factor_ee_date;
+  int64_t  factor_en_date;
+  int64_t  factor_een_date;
   double * aord_vector;
   double * bord_vector;
   double * cord_vector;
+  double * asymp_jasb;
   double * factor_ee;
   double * factor_en;
   double * factor_een;
@@ -201,7 +211,6 @@ qmckl_exit_code qmckl_init_jastrow(qmckl_context context) {
   return QMCKL_SUCCESS;
 }
    #+end_src
-   
    
 ** Access functions
 
@@ -718,11 +727,242 @@ qmckl_exit_code qmckl_finalize_jastrow(qmckl_context context) {
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
   assert (ctx != NULL);
 
-  int64_t nucl_num = 0;
+  /* ----------------------------------- */
+  /* Check for the necessary information */
+  /* ----------------------------------- */
+
+  /* Check for the electron data
+     1. elec_num
+     2. ee_distances_rescaled
+  */
+  if (!(ctx->electron.provided)) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_electron",
+                           NULL);
+  }
+
+  /* Check for the nucleus data
+     1. nuc_num
+     2. en_distances_rescaled
+  */
+  if (!(ctx->nucleus.provided)) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_nucleus",
+                           NULL);
+  }
+
   qmckl_exit_code rc = QMCKL_FAILURE;
+
+
+  /* ----------------------------------- */
+  /* Start calculation of data           */
+  /* ----------------------------------- */
+  
 
 }
    #+end_src
+
+* Computation
+
+  The computed data is stored in the context so that it can be reused
+  by different kernels. To ensure that the data is valid, for each
+  computed data the date of the context is stored when it is computed.
+  To know if some data needs to be recomputed, we check if the date of
+  the dependencies are more recent than the date of the data to
+  compute. If it is the case, then the data is recomputed and the
+  current date is stored.
+
+** Asymptotic component for \(J_{ee}\)
+
+  Calculate the asymptotic component ~asymp_jasb~ to be substracted from the final
+  electron-electron jastrow factor \(f_{ee}\). The asymptotic componenet is calculated
+  via the ~bord_vector~ and the electron-electron rescale factor ~rescale_factor_kappa~.
+
+  \[
+  J_{asymp} = \frac{b_1 \kappa^-1}{1 + b_2  \kappa^-1}
+  \]
+  
+*** Get
+    #+begin_src c :comments org :tangle (eval h_func) :noweb yes
+qmckl_exit_code qmckl_get_jastrow_asymp_jasb(qmckl_context context, double* const asymp_jasb);
+    #+end_src
+
+    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code qmckl_get_jastrow_asymp_jasb(qmckl_context context, double* const asymp_jasb)
+{
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_exit_code rc;
+
+  rc = qmckl_provide_asymp_jasb(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  size_t sze = 2;
+  memcpy(asymp_jasb, ctx->jastrow.asymp_jasb, sze * sizeof(double));
+
+  return QMCKL_SUCCESS;
+}
+    #+end_src
+
+*** Provide                                                        :noexport:
+    #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_provide_asymp_jasb(qmckl_context context);
+    #+end_src
+    
+    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code qmckl_provide_asymp_jasb(qmckl_context context)
+{
+
+  qmckl_exit_code rc;
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  /* Check if ee kappa is provided */
+  double rescale_factor_kappa_ee;
+  rc = qmckl_get_electron_rescale_factor_ee(context, &rescale_factor_kappa_ee);
+  if(rc != QMCKL_SUCCESS) return rc;
+
+  /* Compute if necessary */
+  if (ctx->date > ctx->jastrow.asymp_jasb_date) {
+
+    /* Allocate array */
+    if (ctx->jastrow.asymp_jasb == NULL) {
+
+      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+      mem_info.size = 2 * sizeof(double);
+      double* asymp_jasb = (double*) qmckl_malloc(context, mem_info);
+
+      if (asymp_jasb == NULL) {
+        return qmckl_failwith( context,
+                               QMCKL_ALLOCATION_FAILED,
+                               "qmckl_asymp_jasb",
+                               NULL);
+      }
+      ctx->jastrow.asymp_jasb = asymp_jasb;
+    }
+
+    qmckl_exit_code rc =
+      qmckl_compute_asymp_jasb(context,
+                                ctx->jastrow.bord_num,
+                                ctx->jastrow.bord_vector,
+                                rescale_factor_kappa_ee,
+                                ctx->jastrow.asymp_jasb);
+    if (rc != QMCKL_SUCCESS) {
+      return rc;
+    }
+
+    ctx->jastrow.asymp_jasb_date = ctx->date;
+  }
+
+  return QMCKL_SUCCESS;
+}
+    #+end_src
+
+*** Compute
+   :PROPERTIES:
+   :Name:     qmckl_compute_asymp_jasb
+   :CRetType: qmckl_exit_code
+   :FRetType: qmckl_exit_code
+   :END:
+
+    #+NAME: qmckl_asymp_jasb_args
+   | qmckl_context | context                   | in  | Global state                |
+   | int64_t       | bord_num                  | in  | Number of electrons         |
+   | double        | bord_vector[bord_num + 1] | in  | Number of walkers           |
+   | double        | rescale_factor_kappa_ee   | in  | Electron coordinates        |
+   | double        | asymp_jasb[2]            | out | Electron-electron distances |
+
+    #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+integer function qmckl_compute_asymp_jasb_f(context, bord_num, bord_vector, rescale_factor_kappa_ee, asymp_jasb) &
+     result(info)
+  use qmckl
+  implicit none
+  integer(qmckl_context), intent(in)  :: context
+  integer*8             , intent(in)  :: bord_num
+  double precision      , intent(in)  :: bord_vector(bord_num)
+  double precision      , intent(in)  :: rescale_factor_kappa_ee
+  double precision      , intent(out) :: asymp_jasb(2)
+
+  integer*8 :: i, p
+  double precision   :: kappa_inv, x, asym_one
+  kappa_inv = 1.0d0 / rescale_factor_kappa_ee
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (bord_num <= 0) then
+     info = QMCKL_INVALID_ARG_2
+     return
+  endif
+
+  asym_one = bord_vector(1) * kappa_inv / (1.0d0 + bord_vector(2) * kappa_inv)
+  asymp_jasb(:) = (/asym_one, 0.5d0 * asym_one/)
+  
+  do i = 1, 2
+     x = kappa_inv
+     do p = 2, bord_num
+        x = x * kappa_inv
+        asymp_jasb(i) = asymp_jasb(i) + bord_vector(p + 1) * x 
+     end do
+  end do
+
+end function qmckl_compute_asymp_jasb_f
+    #+end_src
+
+    #+CALL: generate_c_header(table=qmckl_asymp_jasb_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+
+    #+RESULTS:
+    #+begin_src c :tangle (eval h_private_func) :comments org
+    qmckl_exit_code qmckl_compute_asymp_jasb (
+	  const qmckl_context context,
+	  const int64_t bord_num,
+	  const double* bord_vector,
+	  const double rescale_factor_kappa_ee,
+	  double* const asymp_jasb ); 
+    #+end_src
+
+
+    #+CALL: generate_c_interface(table=qmckl_asymp_jasb_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+
+    #+RESULTS:
+    #+begin_src f90 :tangle (eval f) :comments org :exports none
+    integer(c_int32_t) function qmckl_compute_asymp_jasb &
+	(context, bord_num, bord_vector, rescale_factor_kappa_ee, asymp_jasb) &
+	bind(C) result(info)
+
+      use, intrinsic :: iso_c_binding
+      implicit none
+
+      integer (c_int64_t) , intent(in)  , value :: context
+      integer (c_int64_t) , intent(in)  , value :: bord_num
+      real    (c_double ) , intent(in)          :: bord_vector(bord_num + 1)
+      real    (c_double ) , intent(in)  , value :: rescale_factor_kappa_ee
+      real    (c_double ) , intent(out)         :: asymp_jasb(2)
+
+      integer(c_int32_t), external :: qmckl_compute_asymp_jasb_f
+      info = qmckl_compute_asymp_jasb_f &
+	     (context, bord_num, bord_vector, rescale_factor_kappa_ee, asymp_jasb)
+
+    end function qmckl_compute_asymp_jasb
+    #+end_src
+
+*** Test
 
 * End of files                                                     :noexport:
 
