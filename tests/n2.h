@@ -1,18 +1,18 @@
-#define b2_nucl_num ((int64_t) 2)
+#define n2_nucl_num ((int64_t) 2)
 
-double b2_charge[b2_nucl_num] = { 5., 5.};
+double n2_charge[n2_nucl_num] = { 5., 5.};
 
-double b2_nucl_coord[3][b2_nucl_num] =
+double n2_nucl_coord[3][n2_nucl_num] =
 { {0.000000,  0.000000 },
   {0.000000,  0.000000 },
   {2.059801,  2.059801 } };
 
-#define b2_elec_up_num  ((int64_t) 5)
-#define b2_elec_dn_num  ((int64_t) 5)
-#define b2_elec_num     ((int64_t) 10)
-#define b2_walk_num     ((int64_t) 1)
+#define n2_elec_up_num  ((int64_t) 5)
+#define n2_elec_dn_num  ((int64_t) 5)
+#define n2_elec_num     ((int64_t) 10)
+#define n2_walk_num     ((int64_t) 1)
 
-double b2_elec_coord[b2_walk_num][b2_elec_num][3] = { {
+double n2_elec_coord[n2_walk_num][n2_elec_num][3] = { {
     {-0.250655104764153      ,  0.503070975550133      ,  -0.166554344502303},      
     {-0.587812193472177      , -0.128751981129274      ,   0.187773606533075},    
     { 1.61335569047166       , -0.615556732874863      ,  -1.43165470979934 },   
@@ -26,13 +26,13 @@ double b2_elec_coord[b2_walk_num][b2_elec_num][3] = { {
 
 /* Jastrow related */
 
-#define b2_type_nucl_num    ((int64_t) 1) 
-#define b2_aord_num         ((int64_t) 5) 
-#define b2_bord_num         ((int64_t) 5) 
-#define b2_cord_num         ((int64_t) 23) 
-#define b2_dim_cord_vec     ((int64_t) 23)
+#define n2_type_nucl_num    ((int64_t) 1) 
+#define n2_aord_num         ((int64_t) 5) 
+#define n2_bord_num         ((int64_t) 5) 
+#define n2_cord_num         ((int64_t) 23) 
+#define n2_dim_cord_vec     ((int64_t) 23)
 
-double b2_aord_vector[b2_aord_num + 1][b2_type_nucl_num] = {  
+double n2_aord_vector[n2_aord_num + 1][n2_type_nucl_num] = {  
   { 0.      }, 
   { 0.      },
   {-0.380512},
@@ -40,7 +40,7 @@ double b2_aord_vector[b2_aord_num + 1][b2_type_nucl_num] = {
   {-0.031558},
   { 0.021512}};
 
-double b2_bord_vector[b2_bord_num + 1] = {
+double n2_bord_vector[n2_bord_num + 1] = {
    0.5       ,
    0.15366   ,
    0.0672262 ,
@@ -48,7 +48,7 @@ double b2_bord_vector[b2_bord_num + 1] = {
    0.0073096 , 
    0.002866  };
 
-double b2_cord_vector[b2_cord_num][b2_type_nucl_num] = {  
+double n2_cord_vector[n2_cord_num][n2_type_nucl_num] = {  
   { 5.717020e-01}, 
   {-5.142530e-01},
   {-5.130430e-01},
@@ -73,7 +73,7 @@ double b2_cord_vector[b2_cord_num][b2_type_nucl_num] = {
   {-4.010475e-02},
   { 6.106710e-03}};
 
-double b2_cord_vector_full[b2_dim_cord_vec][b2_nucl_num] = {
+double n2_cord_vector_full[n2_dim_cord_vec][n2_nucl_num] = {
    { 5.717020e-01,  5.717020e-01},
    {-5.142530e-01, -5.142530e-01},
    {-5.130430e-01, -5.130430e-01},
@@ -98,7 +98,7 @@ double b2_cord_vector_full[b2_dim_cord_vec][b2_nucl_num] = {
    {-4.010475e-02, -4.010475e-02}, 
    { 6.106710e-03,  6.106710e-03}};
 
-double b2_lkpm_of_cindex[4][b2_dim_cord_vec] = {
+double n2_lkpm_of_cindex[4][n2_dim_cord_vec] = {
   {1, 1, 2, 0, 0, 0, 2, 1, 1, 2, 3, 0, 2, 1, 3, 0, 0, 1, 3, 1, 1, 0, 3}, 
   {1, 1, 3, 4, 0, 2, 2, 4, 0, 0, 2, 4, 1, 3, 1, 4, 0, 1, 1, 4, 1, 2, 0},
   {4, 1, 0, 0, 4, 2, 1, 4, 5, 0, 2, 3, 5, 0, 0, 3, 5, 1, 3, 2, 5, 0, 1},
