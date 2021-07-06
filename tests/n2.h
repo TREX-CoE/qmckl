@@ -5,7 +5,7 @@ double n2_charge[n2_nucl_num] = { 5., 5.};
 double n2_nucl_coord[3][n2_nucl_num] =
 { {0.000000,  0.000000 },
   {0.000000,  0.000000 },
-  {2.059801,  2.059801 } };
+  {0.000000,  2.059801 } };
 
 #define n2_elec_up_num  ((int64_t) 5)
 #define n2_elec_dn_num  ((int64_t) 5)
@@ -31,6 +31,10 @@ double n2_elec_coord[n2_walk_num][n2_elec_num][3] = { {
 #define n2_bord_num         ((int64_t) 5) 
 #define n2_cord_num         ((int64_t) 23) 
 #define n2_dim_cord_vec     ((int64_t) 23)
+
+int64_t n2_type_nucl_vector[n2_nucl_num] = {
+  1,
+  1};
 
 double n2_aord_vector[n2_aord_num + 1][n2_type_nucl_num] = {  
   { 0.      }, 
