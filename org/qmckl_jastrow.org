@@ -88,8 +88,11 @@ int main() {
   | ~double~   | ~factor_een[walk_num]~                     | out | Jastrow factor: electron-electron-nucleus  part                   |
   | ~double~   | ~factor_een_date~                          | out | Jastrow factor: electron-electron-nucleus  part                   |
   | ~double~   | ~factor_ee_deriv_e[4][nelec][walk_num]~    | out | Derivative of the Jastrow factor: electron-electron-nucleus  part |
+  | ~double~   | ~factor_ee_deriv_e_date~                   | out | Keep track of the date for the derivative                         |
   | ~double~   | ~factor_en_deriv_e[4][nelec][walk_num]~    | out | Derivative of the Jastrow factor: electron-electron-nucleus  part |
+  | ~double~   | ~factor_en_deriv_e_date~                   | out | Keep track of the date for the en derivative                      |
   | ~double~   | ~factor_een_deriv_e[4][nelec][walk_num]~   | out | Derivative of the Jastrow factor: electron-electron-nucleus  part |
+  | ~double~   | ~factor_een_deriv_e_date~                  | out | Keep track of the date for the een derivative                     |
 
   computed data:
 
@@ -169,6 +172,10 @@ ee_distance_rescaled = [
   0.956034127544344      ,0.931221472309472      ,0.540903688625053     ,
   0.000000000000000E+000]]
 
+# symmetrize it
+for i in range(elec_num):
+  for j in range(elec_num):
+    ee_distance_rescaled[i][j] = ee_distance_rescaled[j][i]
 
 type_nucl_num = 1
 aord_num     = 5
@@ -250,6 +257,9 @@ typedef struct qmckl_jastrow_struct{
   int64_t  factor_ee_date;
   int64_t  factor_en_date;
   int64_t  factor_een_date;
+  int64_t  factor_ee_deriv_e_date;
+  int64_t  factor_en_deriv_e_date;
+  int64_t  factor_een_deriv_e_date;
   double * aord_vector;
   double * bord_vector;
   double * cord_vector;
@@ -1625,7 +1635,8 @@ qmckl_exit_code qmckl_get_jastrow_factor_ee_deriv_e(qmckl_context context, doubl
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
   assert (ctx != NULL);
 
-  memcpy(factor_ee_deriv_e, ctx->jastrow.factor_ee_deriv_e, ctx->electron.walk_num*sizeof(double));
+  int64_t sze = ctx->electron.walk_num * 4 * ctx->electron.num;
+  memcpy(factor_ee_deriv_e, ctx->jastrow.factor_ee_deriv_e, sze * sizeof(double));
 
   return QMCKL_SUCCESS;
 }
@@ -1653,14 +1664,18 @@ qmckl_exit_code qmckl_provide_factor_ee_deriv_e(qmckl_context context)
   rc = qmckl_provide_ee_distance_rescaled(context);
   if(rc != QMCKL_SUCCESS) return rc;
 
+  /* Check if ee rescaled distance deriv e is provided */
+  rc = qmckl_provide_ee_distance_rescaled_deriv_e(context);
+  if(rc != QMCKL_SUCCESS) return rc;
+
   /* Compute if necessary */
-  if (ctx->date > ctx->jastrow.factor_ee_date) {
+  if (ctx->date > ctx->jastrow.factor_ee_deriv_e_date) {
 
     /* Allocate array */
     if (ctx->jastrow.factor_ee_deriv_e == NULL) {
 
       qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-      mem_info.size = ctx->electron.walk_num * sizeof(double);
+      mem_info.size = ctx->electron.walk_num * 4 * ctx->electron.num * sizeof(double);
       double* factor_ee_deriv_e = (double*) qmckl_malloc(context, mem_info);
 
       if (factor_ee_deriv_e == NULL) {
@@ -1709,9 +1724,9 @@ qmckl_exit_code qmckl_provide_factor_ee_deriv_e(qmckl_context context)
    | int64_t       | bord_num                                                      | in  | Number of coefficients      |
    | double        | bord_vector[bord_num + 1]                                     | in  | List of coefficients        |
    | double        | ee_distance_rescaled[walk_num][elec_num][elec_num]            | in  | Electron-electron distances |
-   | double        | ee_distance_rescaled_deriv_e[4][walk_num][elec_num][elec_num] | in  | Electron-electron distances |
+   | double        | ee_distance_rescaled_deriv_e[walk_num][4][elec_num][elec_num] | in  | Electron-electron distances |
    | double        | asymp_jasb[2]                                                 | in  | Electron-electron distances |
-   | double        | factor_ee_deriv_e[walk_num]                                   | out | Electron-electron distances |
+   | double        | factor_ee_deriv_e[walk_num][4][elec_num]                      | out | Electron-electron distances |
 
     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
 integer function qmckl_compute_factor_ee_deriv_e_f(context, walk_num, elec_num, up_num, bord_num,            &
@@ -1726,7 +1741,7 @@ integer function qmckl_compute_factor_ee_deriv_e_f(context, walk_num, elec_num, 
   double precision      , intent(in)  :: ee_distance_rescaled(walk_num, elec_num, elec_num)
   double precision      , intent(in)  :: ee_distance_rescaled_deriv_e(walk_num, 4, elec_num, elec_num)
   double precision      , intent(in)  :: asymp_jasb(2)
-  double precision      , intent(out) :: factor_ee_deriv_e(walk_num, 4, elec_num)
+  double precision      , intent(out) :: factor_ee_deriv_e(elec_num,4,walk_num)
 
   integer*8 :: i, j, p, ipar, nw, ii
   double precision   :: x, spin_fact, y
@@ -1763,18 +1778,19 @@ integer function qmckl_compute_factor_ee_deriv_e_f(context, walk_num, elec_num, 
   do nw =1, walk_num
   do j = 1, elec_num
      do i = 1, elec_num
-        x = ee_distance_rescaled(nw,i,j)
+        x = ee_distance_rescaled(nw, i, j)
+        if(abs(x) < 1.0d-18) cycle
         pow_ser_g   = 0.0d0
         spin_fact   = 1.0d0
-        den         = 1.0d0 + bord_vector(2) * ee_distance_rescaled(nw, i, j)
+        den         = 1.0d0 + bord_vector(2) * x
         invden      = 1.0d0 / den
         invden2     = invden * invden
         invden3     = invden2 * invden
-        xinv        = 1.0d0 / (ee_distance_rescaled(nw, i, j) + 1.0d0-18)
+        xinv        = 1.0d0 / (x + 1.0d-18)
         ipar        = 1
 
         do ii = 1, 4
-          dx(ii) = ee_distance_rescaled_deriv_e(nw, ii, j, i)
+          dx(ii) = ee_distance_rescaled_deriv_e(nw, ii, i, j)
         end do
 
         if((i .LE. up_num .AND. j .LE. up_num ) .OR.  &
@@ -1787,6 +1803,7 @@ integer function qmckl_compute_factor_ee_deriv_e_f(context, walk_num, elec_num, 
         lap3 = 0.0d0
         do ii = 1, 3
           x = ee_distance_rescaled(nw, i, j)
+          if(abs(x) < 1.0d-18) cycle
           do p = 2, bord_num
             y = p * bord_vector(p + 1) * x
             pow_ser_g(ii) = pow_ser_g(ii) + y * dx(ii)
@@ -1797,15 +1814,15 @@ integer function qmckl_compute_factor_ee_deriv_e_f(context, walk_num, elec_num, 
           
           lap3 = lap3 - 2.0d0 * bord_vector(2) * dx(ii) * dx(ii)
 
-          factor_ee_deriv_e(nw, ii, j) = factor_ee_deriv_e(nw, ii, j) + spin_fact * bord_vector(1)  * &
-                                dx(ii) * invden + pow_ser_g(ii)
+          factor_ee_deriv_e( j, ii, nw) = factor_ee_deriv_e( j, ii, nw) + spin_fact * bord_vector(1)  * &
+                                dx(ii) * invden2 + pow_ser_g(ii)
         end do
 
         ii = 4
         lap2 = lap2 * dx(ii) * third
         lap3 = lap3 + den * dx(ii)
-        lap3 = lap3 + spin_fact * bord_vector(1) * invden3
-        factor_ee_deriv_e(nw, ii, j) = factor_ee_deriv_e(nw, ii, j) + lap1 + lap2 + lap3
+        lap3 = lap3 * (spin_fact * bord_vector(1) * invden3)
+        factor_ee_deriv_e( j, ii, nw) = factor_ee_deriv_e( j, ii, nw) + lap1 + lap2 + lap3
 
      end do
   end do
@@ -1859,9 +1876,9 @@ end function qmckl_compute_factor_ee_deriv_e_f
       integer (c_int64_t) , intent(in)  , value :: bord_num
       real    (c_double ) , intent(in)          :: bord_vector(bord_num + 1)
       real    (c_double ) , intent(in)          :: ee_distance_rescaled(elec_num,elec_num,walk_num)
-      real    (c_double ) , intent(in)          :: ee_distance_rescaled_deriv_e(elec_num,elec_num,walk_num,4)
+      real    (c_double ) , intent(in)          :: ee_distance_rescaled_deriv_e(elec_num,elec_num,4,walk_num)
       real    (c_double ) , intent(in)          :: asymp_jasb(2)
-      real    (c_double ) , intent(out)         :: factor_ee_deriv_e(walk_num)
+      real    (c_double ) , intent(out)         :: factor_ee_deriv_e(elec_num,4,walk_num)
 
       integer(c_int32_t), external :: qmckl_compute_factor_ee_deriv_e_f
       info = qmckl_compute_factor_ee_deriv_e_f &
@@ -1893,79 +1910,85 @@ elec_coord = np.array(elec_coord)[0]
 elec_dist = np.zeros(shape=(elec_num, elec_num),dtype=float)
 for i in range(elec_num):
   for j in range(elec_num):
-    elec_dist[i, j] = np.linalg.norm(np.abs(elec_coord[i] - elec_coord[j]))
+    elec_dist[i, j] = np.linalg.norm(elec_coord[i] - elec_coord[j])
 
 elec_dist_deriv_e = np.zeros(shape=(4,elec_num, elec_num),dtype=float)
 for j in range(elec_num):
   for i in range(elec_num):
     rij_inv = 1.0 / elec_dist[i, j]
     for ii in range(3):
-      elec_dist_deriv_e[ii, i, j] = (elec_coord[i][ii] - elec_coord[j][ii]) * rij_inv
+      elec_dist_deriv_e[ii, i, j] = (elec_coord[j][ii] - elec_coord[i][ii]) * rij_inv
     elec_dist_deriv_e[3, i, j] = 2.0 * rij_inv
   elec_dist_deriv_e[:, j, j] = 0.0
 
 ee_distance_rescaled_deriv_e = np.zeros(shape=(4,elec_num,elec_num),dtype=float)
-for i in range(elec_num):
-  for j in range(elec_num):
+for j in range(elec_num):
+  for i in range(elec_num):
     f = 1.0 - kappa * ee_distance_rescaled[i][j]
     for ii in range(4):
       ee_distance_rescaled_deriv_e[ii][i][j] = elec_dist_deriv_e[ii][i][j]
     ee_distance_rescaled_deriv_e[3][i][j] = ee_distance_rescaled_deriv_e[3][i][j] + \
-                              (-kappa * ee_distance_rescaled_deriv_e[0][i][j]**2) + \
-                             (-kappa * ee_distance_rescaled_deriv_e[1][i][j]**2) + \
-                             (-kappa * ee_distance_rescaled_deriv_e[2][i][j]**2)
+                              (-kappa * ee_distance_rescaled_deriv_e[0][i][j] * ee_distance_rescaled_deriv_e[0][i][j]) + \
+                              (-kappa * ee_distance_rescaled_deriv_e[1][i][j] * ee_distance_rescaled_deriv_e[1][i][j]) + \
+                              (-kappa * ee_distance_rescaled_deriv_e[2][i][j] * ee_distance_rescaled_deriv_e[2][i][j])
     for ii in range(4):
       ee_distance_rescaled_deriv_e[ii][i][j] = ee_distance_rescaled_deriv_e[ii][i][j] * f
-  
 
 third = 1.0 / 3.0
 factor_ee_deriv_e = np.zeros(shape=(4,elec_num),dtype=float)
 dx = np.zeros(shape=(4),dtype=float)
 pow_ser_g = np.zeros(shape=(4),dtype=float)
-for i in range(elec_num):
-   for j in range(elec_num):
-      x = ee_distance_rescaled[i][j]
+for j in range(elec_num):
+   for i in range(elec_num):
+      x = ee_distance_rescaled[j][i]
+      if abs(x) < 1e-18:
+        continue
       pow_ser_g = np.zeros(shape=(4),dtype=float)
       spin_fact   = 1.0
-      den         = 1.0 + bord_vector[1] * ee_distance_rescaled[i][j]
+      den         = 1.0 + bord_vector[1] * ee_distance_rescaled[j][i]
       invden      = 1.0 / den
       invden2     = invden * invden
       invden3     = invden2 * invden
-      xinv        = 1.0 / (ee_distance_rescaled[i][j] + 1.0-18)
+      xinv        = 1.0 / (ee_distance_rescaled[j][i] + 1.0E-18)
       ipar        = 1
 
       for ii in range(4):
         dx[ii] = ee_distance_rescaled_deriv_e[ii][j][i]
 
-      if((i <= up_num and j <= up_num ) or  \
-         (i > up_num and j > up_num)):
+      if((i <= (up_num-1) and j <= (up_num-1) ) or  \
+         (i >  (up_num-1) and j >  (up_num-1))):
         spin_fact = 0.5
       
       lap1 = 0.0
       lap2 = 0.0
       lap3 = 0.0
       for ii in range(3):
-        x = ee_distance_rescaled[i][j]
-        for p in range(1,bord_num):
-          y = p * bord_vector[p + 1] * x
+        x = ee_distance_rescaled[j][i]
+        if x < 1e-18:
+          continue
+        for p in range(2,bord_num+1):
+          y = p * bord_vector[(p-1) + 1] * x
           pow_ser_g[ii] = pow_ser_g[ii] + y * dx[ii]
           lap1 = lap1 + (p - 1) * y * xinv * dx[ii] * dx[ii]
           lap2 = lap2 + y
-          x = x * ee_distance_rescaled[i][j]
+          x = x * ee_distance_rescaled[j][i]
         
         lap3 = lap3 - 2.0 * bord_vector[1] * dx[ii] * dx[ii]
 
         factor_ee_deriv_e[ii][j] = factor_ee_deriv_e[ii][j] + spin_fact * bord_vector[0]  * \
-                              dx[ii] * invden + pow_ser_g[ii]
+                              dx[ii] * invden2 + pow_ser_g[ii]
 
       ii = 3
       lap2 = lap2 * dx[ii] * third
       lap3 = lap3 + den * dx[ii]
-      lap3 = lap3 + spin_fact * bord_vector[1] * invden3
+      lap3 = lap3 * (spin_fact * bord_vector[0] * invden3)
       factor_ee_deriv_e[ii][j] = factor_ee_deriv_e[ii][j] + lap1 + lap2 + lap3
 
-print("factor_ee_deriv_e:",factor_ee_deriv_e)
-
+print("factor_ee_deriv_e[0][0]:",factor_ee_deriv_e[0][0])
+print("factor_ee_deriv_e[1][0]:",factor_ee_deriv_e[1][0])
+print("factor_ee_deriv_e[2][0]:",factor_ee_deriv_e[2][0])
+print("factor_ee_deriv_e[3][0]:",factor_ee_deriv_e[3][0])
+print(factor_ee_deriv_e)
 
     #+end_src
 
@@ -1974,14 +1997,18 @@ print("factor_ee_deriv_e:",factor_ee_deriv_e)
     asym_one         :  0.43340325572525706
     asymp_jasb[0]    :  0.5323750557252571
     asymp_jasb[1]    :  0.31567342786262853
-    factor_ee_deriv_e: [[-0.98933561 -1.90335162  1.55808557 -0.4175529   0.61492377 -0.39831866
-      -0.39927944  0.65028576 -0.3615353   0.18529135]
-     [ 1.63379825 -0.20386723 -0.68681515 -0.12852739 -0.26752663 -0.38482884
-      -0.08399636  0.0271138   0.47700861 -0.15444407]
-     [-1.50784905 -0.77857073 -2.65602338  0.47954785  2.47647536 -0.73979109
-      -1.45880891 -0.57274462  0.20895041  0.22564652]
-     [ 3.33386195  2.70852681 -4.1135207   7.24473889 -1.68083113  6.11612348
-       3.74311012  0.3229593   7.21394604  2.7578531 ]]
+    factor_ee_deriv_e[0][0]: 0.16364894652107934
+    factor_ee_deriv_e[1][0]: -0.6927548119830084
+    factor_ee_deriv_e[2][0]: 0.073267755223968
+    factor_ee_deriv_e[3][0]: 1.5111672803213185
+    [[ 0.16364895  0.60354957 -0.19825547  0.02359797 -0.13123153 -0.18789233
+       0.07762515 -0.42459184  0.27920265 -0.2056531 ]
+     [-0.69275481  0.15690393  0.09831069  0.18490587  0.04361723  0.3250686
+       0.12657961 -0.01736522 -0.40149005  0.17622416]
+     [ 0.07326776 -0.27532276  0.22396943  0.18771633 -0.34506246  0.07298062
+       0.63302352 -0.00910198 -0.30238713 -0.25908332]
+     [ 1.51116728  1.5033247   0.00325003  2.89377255  0.1338393   2.15893795
+       1.74732003  0.23561147  2.67455607  0.82810434]]
     #+end_example
     
 
@@ -1989,11 +2016,15 @@ print("factor_ee_deriv_e:",factor_ee_deriv_e)
 /* Check if Jastrow is properly initialized */
 assert(qmckl_jastrow_provided(context));
 
-double factor_ee_deriv_e[walk_num];
-rc = qmckl_get_jastrow_factor_ee_deriv_e(context, factor_ee_deriv_e);
-
 // calculate factor_ee_deriv_e
-assert(fabs(factor_ee_deriv_e[0]+4.282760865958113) < 1.e-12);
+double factor_ee_deriv_e[walk_num][4][elec_num];
+rc = qmckl_get_jastrow_factor_ee_deriv_e(context, &(factor_ee_deriv_e[0][0][0]));
+
+// check factor_ee_deriv_e
+assert(fabs(factor_ee_deriv_e[0][0][0]-0.16364894652107934) < 1.e-12);
+assert(fabs(factor_ee_deriv_e[0][1][0]+0.6927548119830084 ) < 1.e-12);
+assert(fabs(factor_ee_deriv_e[0][2][0]-0.073267755223968  ) < 1.e-12);
+assert(fabs(factor_ee_deriv_e[0][3][0]-1.5111672803213185 ) < 1.e-12);
 
      #+end_src
 
