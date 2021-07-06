@@ -52,7 +52,7 @@ test_qmckl_f  = tests/qmckl_f.f90
 test_qmckl_fo = tests/qmckl_f.o
 src_qmckl_f   = src/qmckl_f.f90
 src_qmckl_fo  = src/qmckl_f.o
-header_tests  = tests/chbrclf.h
+header_tests  = tests/chbrclf.h tests/n2.h
 
 fortrandir = $(datadir)/$(PACKAGE_NAME)/fortran/
 dist_fortran_DATA = $(qmckl_f)
@@ -157,6 +157,7 @@ $(htmlize_el):
 
 tests/chbrclf.h: $(qmckl_h)
 	
+tests/n2.h: $(qmckl_h)
 
 generated.mk: $(ORG_FILES)
 	$(PYTHON) $(srcdir)/tools/build_makefile.py
