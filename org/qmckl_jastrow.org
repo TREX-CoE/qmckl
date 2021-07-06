@@ -116,9 +116,9 @@ elec_num     = 10
 nucl_num     = 2
 up_num       = 5
 down_num     = 5
-nucl_coord = [ [0.000000,  0.000000 ],
+nucl_coord = np.array([ [0.000000,  0.000000 ],
    [0.000000,  0.000000 ],
-   [2.059801,  2.059801 ] ]
+   [0.000000,  2.059801 ] ])
 
 elec_coord =    [[[-0.250655104764153      ,  0.503070975550133      ,  -0.166554344502303],
      [-0.587812193472177      , -0.128751981129274      ,   0.187773606533075], 
@@ -1706,10 +1706,10 @@ double factor_ee[walk_num];
 rc = qmckl_get_jastrow_factor_ee(context, factor_ee);
 
 // calculate factor_ee
-//assert(fabs(factor_ee[0]+4.282760865958113) < 1.e-12);
+assert(fabs(factor_ee[0]+4.282760865958113) < 1.e-12);
 
      #+end_src
-
+     
 ** Electron-electron component derivative \(f'_{ee}\)
 
   Calculate the derivative of the ~factor_ee~ using the ~ee_distance_rescaled~ and
@@ -2126,10 +2126,10 @@ double factor_ee_deriv_e[walk_num][4][elec_num];
 rc = qmckl_get_jastrow_factor_ee_deriv_e(context, &(factor_ee_deriv_e[0][0][0]));
 
 // check factor_ee_deriv_e
-//assert(fabs(factor_ee_deriv_e[0][0][0]-0.16364894652107934) < 1.e-12);
-//assert(fabs(factor_ee_deriv_e[0][1][0]+0.6927548119830084 ) < 1.e-12);
-//assert(fabs(factor_ee_deriv_e[0][2][0]-0.073267755223968  ) < 1.e-12);
-//assert(fabs(factor_ee_deriv_e[0][3][0]-1.5111672803213185 ) < 1.e-12);
+assert(fabs(factor_ee_deriv_e[0][0][0]-0.16364894652107934) < 1.e-12);
+assert(fabs(factor_ee_deriv_e[0][1][0]+0.6927548119830084 ) < 1.e-12);
+assert(fabs(factor_ee_deriv_e[0][2][0]-0.073267755223968  ) < 1.e-12);
+assert(fabs(factor_ee_deriv_e[0][3][0]-1.5111672803213185 ) < 1.e-12);
 
      #+end_src
 
@@ -2421,12 +2421,11 @@ double factor_en[walk_num];
 rc = qmckl_get_jastrow_factor_en(context, factor_en);
 
 // calculate factor_en
-//assert(fabs(factor_en[0]+5.865822569188727) < 1.e-12);
+assert(fabs(factor_en[0]+5.865822569188727) < 1.e-12);
 
      #+end_src
 
 ** Electron-nucleus component derivative \(f'_{en}\)
-
   Calculate the electron-electron jastrow component ~factor_en_deriv_e~ derivative
   with respect to the electron coordinates using the ~en_distance_rescaled~ and
   ~en_distance_rescaled_deriv_e~ which are already calculated previously.
@@ -2453,7 +2452,8 @@ qmckl_exit_code qmckl_get_jastrow_factor_en_deriv_e(qmckl_context context, doubl
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
   assert (ctx != NULL);
 
-  memcpy(factor_en_deriv_e, ctx->jastrow.factor_en_deriv_e, ctx->electron.walk_num*sizeof(double));
+  int64_t sze = ctx->electron.walk_num * 4 * ctx->electron.num;
+  memcpy(factor_en_deriv_e, ctx->jastrow.factor_en_deriv_e, sze*sizeof(double));
 
   return QMCKL_SUCCESS;
 }
@@ -2479,6 +2479,10 @@ qmckl_exit_code qmckl_provide_factor_en_deriv_e(qmckl_context context)
 
   /* Check if en rescaled distance is provided */
   rc = qmckl_provide_en_distance_rescaled(context);
+  if(rc != QMCKL_SUCCESS) return rc;
+
+  /* Check if en rescaled distance derivatives is provided */
+  rc = qmckl_provide_en_distance_rescaled_deriv_e(context);
   if(rc != QMCKL_SUCCESS) return rc;
 
   /* Compute if necessary */
@@ -2556,7 +2560,7 @@ integer function qmckl_compute_factor_en_deriv_e_f(context, walk_num, elec_num, 
   double precision      , intent(in)  :: aord_vector(aord_num, nucl_num)
   double precision      , intent(in)  :: en_distance_rescaled(walk_num, elec_num, nucl_num)
   double precision      , intent(in)  :: en_distance_rescaled_deriv_e(walk_num, 4, elec_num, nucl_num)
-  double precision      , intent(out) :: factor_en_deriv_e(walk_num,4,elec_num)
+  double precision      , intent(out) :: factor_en_deriv_e(elec_num,4,walk_num)
 
   integer*8 :: i, a, p, ipar, nw, ii
   double precision   :: x, spin_fact, den, invden, invden2, invden3, xinv
@@ -2625,7 +2629,7 @@ integer function qmckl_compute_factor_en_deriv_e_f(context, walk_num, elec_num, 
 
           lap3 = lap3 - 2.0d0 * aord_vector(2, type_nucl_vector(a)) * dx(ii) * dx(ii)
 
-          factor_en_deriv_e(nw, ii, i) = factor_en_deriv_e(nw, ii, i) + aord_vector(1, type_nucl_vector(a)) &
+          factor_en_deriv_e(i, ii, nw) = factor_en_deriv_e(i, ii, nw) + aord_vector(1, type_nucl_vector(a)) &
                                   * dx(ii) * invden2                                                        &
                                   + power_ser_g(ii)
 
@@ -2635,7 +2639,7 @@ integer function qmckl_compute_factor_en_deriv_e_f(context, walk_num, elec_num, 
         lap2 = lap2 * dx(ii) * third
         lap3 = lap3 + den * dx(ii)
         lap3 = lap3 * aord_vector(1, type_nucl_vector(a)) * invden3
-        factor_en_deriv_e(nw, ii, i) = factor_en_deriv_e(nw, ii, i) + lap1 + lap2 + lap3
+        factor_en_deriv_e(i, ii, nw) = factor_en_deriv_e(i, ii, nw) + lap1 + lap2 + lap3
 
      end do
   end do
@@ -2719,36 +2723,107 @@ import numpy as np
 
 <<jastrow_data>>
 
-factor_en = 0.0
-for a in range(0,nucl_num):
-  for i in range(0,elec_num):
-    x = en_distance_rescaled[i][a]
-    pow_ser = 0.0
-    
-    for p in range(2,aord_num+1):
-      x = x * en_distance_rescaled[i][a]
-      pow_ser = pow_ser + aord_vector[(p-1) + 1][type_nucl_vector[a]-1] * x
+kappa = 1.0
 
-    factor_en = factor_en + aord_vector[0][type_nucl_vector[a]-1] * en_distance_rescaled[i][a] \
-                          / (1.0 + aord_vector[1][type_nucl_vector[a]-1] * en_distance_rescaled[i][a])     \
-                          + pow_ser
-print("factor_en        :",factor_en)
+elec_coord = np.array(elec_coord)[0]
+nucl_coord = np.array(nucl_coord)
+elnuc_dist = np.zeros(shape=(elec_num, nucl_num),dtype=float)
+for i in range(elec_num):
+  for j in range(nucl_num):
+    elnuc_dist[i, j] = np.linalg.norm(elec_coord[i] - nucl_coord[:,j])
+
+elnuc_dist_deriv_e = np.zeros(shape=(4, elec_num, nucl_num),dtype=float)
+for a in range(nucl_num):
+  for i in range(elec_num):
+    rij_inv = 1.0 / elnuc_dist[i, a]
+    for ii in range(3):
+      elnuc_dist_deriv_e[ii, i, a] = (elec_coord[i][ii] - nucl_coord[ii][a]) * rij_inv
+    elnuc_dist_deriv_e[3, i, a] = 2.0 * rij_inv
+
+en_distance_rescaled_deriv_e = np.zeros(shape=(4,elec_num,nucl_num),dtype=float)
+for a in range(nucl_num):
+  for i in range(elec_num):
+    f = 1.0 - kappa * en_distance_rescaled[i][a]
+    for ii in range(4):
+      en_distance_rescaled_deriv_e[ii][i][a] = elnuc_dist_deriv_e[ii][i][a]
+    en_distance_rescaled_deriv_e[3][i][a] = en_distance_rescaled_deriv_e[3][i][a] + \
+                              (-kappa * en_distance_rescaled_deriv_e[0][i][a] * en_distance_rescaled_deriv_e[0][i][a]) + \
+                              (-kappa * en_distance_rescaled_deriv_e[1][i][a] * en_distance_rescaled_deriv_e[1][i][a]) + \
+                              (-kappa * en_distance_rescaled_deriv_e[2][i][a] * en_distance_rescaled_deriv_e[2][i][a])
+    for ii in range(4):
+      en_distance_rescaled_deriv_e[ii][i][a] = en_distance_rescaled_deriv_e[ii][i][a] * f
+
+third = 1.0 / 3.0
+factor_en_deriv_e = np.zeros(shape=(4,elec_num),dtype=float)
+dx = np.zeros(shape=(4),dtype=float)
+pow_ser_g = np.zeros(shape=(3),dtype=float)
+for a in range(nucl_num):
+   for i in range(elec_num):
+      x = en_distance_rescaled[i][a]
+      if abs(x) < 1e-18:
+        continue
+      pow_ser_g = np.zeros(shape=(3),dtype=float)
+      den         = 1.0 + aord_vector[1][type_nucl_vector[a]-1] * x
+      invden      = 1.0 / den
+      invden2     = invden * invden
+      invden3     = invden2 * invden
+      xinv        = 1.0 / (x + 1.0E-18)
+
+      for ii in range(4):
+        dx[ii] = en_distance_rescaled_deriv_e[ii][i][a]
+
+      lap1 = 0.0
+      lap2 = 0.0
+      lap3 = 0.0
+      for ii in range(3):
+        x = en_distance_rescaled[i][a]
+        if x < 1e-18:
+          continue
+        for p in range(2,aord_num+1):
+          y = p * aord_vector[(p-1) + 1][type_nucl_vector[a]-1] * x
+          pow_ser_g[ii] = pow_ser_g[ii] + y * dx[ii]
+          lap1 = lap1 + (p - 1) * y * xinv * dx[ii] * dx[ii]
+          lap2 = lap2 + y
+          x = x * en_distance_rescaled[i][a]
+        
+        lap3 = lap3 - 2.0 * aord_vector[1][type_nucl_vector[a]-1] * dx[ii] * dx[ii]
+
+        factor_en_deriv_e[ii][i] = factor_en_deriv_e[ii][i] + aord_vector[0][type_nucl_vector[a]-1]  * \
+                              dx[ii] * invden2 + pow_ser_g[ii]
+
+      ii = 3
+      lap2 = lap2 * dx[ii] * third
+      lap3 = lap3 + den * dx[ii]
+      lap3 = lap3 * (aord_vector[0][type_nucl_vector[a]-1] * invden3)
+      factor_en_deriv_e[ii][i] = factor_en_deriv_e[ii][i] + lap1 + lap2 + lap3
+
+print("factor_en_deriv_e[0][0]:",factor_en_deriv_e[0][0])
+print("factor_en_deriv_e[1][0]:",factor_en_deriv_e[1][0])
+print("factor_en_deriv_e[2][0]:",factor_en_deriv_e[2][0])
+print("factor_en_deriv_e[3][0]:",factor_en_deriv_e[3][0])
+
 
     #+end_src
 
     #+RESULTS:
-    : factor_en        : -5.865822569188727
+    : factor_en_deriv_e[0][0]: 0.11609919541763383
+    : factor_en_deriv_e[1][0]: -0.23301394780804574
+    : factor_en_deriv_e[2][0]: 0.17548337641865783
+    : factor_en_deriv_e[3][0]: -0.9667363412285741
     
 
      #+begin_src c :tangle (eval c_test)
 /* Check if Jastrow is properly initialized */
 assert(qmckl_jastrow_provided(context));
 
-//double factor_en[walk_num];
-//rc = qmckl_get_jastrow_factor_en(context, factor_en);
-//
-//// calculate factor_en
-//assert(fabs(factor_en[0]+5.865822569188727) < 1.e-12);
+double factor_en_deriv_e[walk_num][4][elec_num];
+rc = qmckl_get_jastrow_factor_en_deriv_e(context, &(factor_en_deriv_e[0][0][0]));
+
+// calculate factor_en
+assert(fabs(factor_en_deriv_e[0][0][0]-0.11609919541763383) < 1.e-12);
+assert(fabs(factor_en_deriv_e[0][1][0]+0.23301394780804574) < 1.e-12);
+assert(fabs(factor_en_deriv_e[0][2][0]-0.17548337641865783) < 1.e-12);
+assert(fabs(factor_en_deriv_e[0][3][0]+0.9667363412285741 ) < 1.e-12);
 
      #+end_src
 
