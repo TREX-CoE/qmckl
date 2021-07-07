@@ -98,11 +98,14 @@ int main() {
   computed data:
 
   |-----------+-------------------------------------------------------------+-------------------------------------------------------------------------------|
-  | ~int64_t~ | ~dim_cord_vec~                                              | Number of unique C coefficients                                               |
+  | ~int64_t~ | ~dim_cord_vect~                                             | Number of unique C coefficients                                               |
+  | ~int64_t~ | ~dim_cord_vect_date~                                        | Number of unique C coefficients                                               |
   | ~double~  | ~asymp_jasb[2]~                                             | Asymptotic component                                                          |
   | ~int64_t~ | ~asymp_jasb_date~                                           | Asymptotic component                                                          |
-  | ~double~  | ~coord_vect_full[dim_cord_vec][nucl_num]~                   | vector of non-zero coefficients                                               |
-  | ~int64_t~ | ~lkpm_of_cindex[4][dim_cord_vec]~                           | Transform l,k,p, and m into consecutive indices                               |
+  | ~double~  | ~cord_vect_full[dim_cord_vect][nucl_num]~                  | vector of non-zero coefficients                                               |
+  | ~int64_t~ | ~cord_vect_full_date~                                      | Keep track of changes here                                                    |
+  | ~int64_t~ | ~lkpm_combined_index[4][dim_cord_vect]~                     | Transform l,k,p, and m into consecutive indices                               |
+  | ~int64_t~ | ~lkpm_combined_index_date~                                  | Transform l,k,p, and m into consecutive indices                               |
   | ~double~  | ~tmp_c[elec_num][nucl_num][ncord + 1][ncord][walk_num]~     | vector of non-zero coefficients                                               |
   | ~double~  | ~dtmp_c[elec_num][4][nucl_num][ncord + 1][ncord][walk_num]~ | vector of non-zero coefficients                                               |
   | ~double~  | ~een_rescaled_e[walk_num][elec_num][elec_num][0:cord_num]~  | The electron-electron rescaled distances raised to the powers defined by cord |
@@ -196,7 +199,7 @@ type_nucl_num = 1
 aord_num     = 5
 bord_num     = 5
 cord_num     = 23
-dim_cord_vec = 23
+dim_cord_vect= 23
 type_nucl_vector = [ 1, 1]
 aord_vector = [ 
 [0.000000000000000E+000],
@@ -234,7 +237,7 @@ cord_vector_full = [
   2.614000000000000E-003, -1.477000000000000E-003, -1.137000000000000E-003,
  -4.010475000000000E-002,  6.106710000000000E-003 ],
 ]
-lkpm_of_cindex = [[1 , 1 , 2 , 0], 
+lkpm_combined_index = [[1 , 1 , 2 , 0], 
           [0 , 0 , 2 , 1],
           [1 , 2 , 3 , 0],
           [2 , 1 , 3 , 0],
@@ -293,8 +296,12 @@ typedef struct qmckl_jastrow_struct{
   double * factor_ee_deriv_e;
   double * factor_en_deriv_e;
   double * factor_een_deriv_e;
-  int64_t  dim_cord_vec;
-  double * coord_vect_full;
+  int64_t  dim_cord_vect;
+  int64_t  dim_cord_vect_date;
+  double * cord_vect_full;
+  int64_t  cord_vect_full_date;
+  int64_t* lkpm_combined_index;
+  int64_t  lkpm_combined_index_date;
   double * tmp_c;
   double * dtmp_c;
   double * een_rescaled_e;
@@ -974,7 +981,7 @@ qmckl_exit_code qmckl_finalize_jastrow(qmckl_context context) {
 
 }
    #+end_src
-
+   
 ** Test
    #+begin_src c :tangle (eval c_test)
 /* Reference input data */
@@ -2834,7 +2841,6 @@ assert(fabs(factor_en_deriv_e[0][2][0]-0.17548337641865783) < 1.e-12);
 assert(fabs(factor_en_deriv_e[0][3][0]+0.9667363412285741 ) < 1.e-12);
 
      #+end_src
-
      
 ** Electron-electron rescaled distances for each order
 
@@ -3443,6 +3449,598 @@ assert(fabs(een_rescaled_n[0][4][0][1]-0.023391817607642338) < 1.e-12);
 assert(fabs(een_rescaled_n[0][3][1][2]-0.880957224822116)    < 1.e-12);
 assert(fabs(een_rescaled_n[0][4][1][2]-0.027185942659395074) < 1.e-12);
 assert(fabs(een_rescaled_n[0][5][1][2]-0.01343938025140174)  < 1.e-12);
+
+     #+end_src
+
+** Prepare for electron-electron-nucleus Jastrow \(f_{een}\)
+
+  Prepare ~cord_vect_full~ and ~lkpm_combined_index~ tables required for the
+  calculation of the three-body jastrow ~factor_een~. 
+
+*** Get
+
+    #+begin_src c :comments org :tangle (eval h_func) :noweb yes
+qmckl_exit_code qmckl_get_jastrow_dim_cord_vect(qmckl_context context, int64_t* const dim_cord_vect);
+qmckl_exit_code qmckl_get_jastrow_cord_vect_full(qmckl_context context, double* const cord_vect_full);
+qmckl_exit_code qmckl_get_jastrow_lkpm_combined_index(qmckl_context context, int64_t* const lkpm_combined_index);
+    #+end_src
+
+    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code qmckl_get_jastrow_dim_cord_vect(qmckl_context context, int64_t* const dim_cord_vect)
+{
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_exit_code rc;
+
+  rc = qmckl_provide_dim_cord_vect(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  *dim_cord_vect = ctx->jastrow.dim_cord_vect;
+
+  return QMCKL_SUCCESS;
+}
+
+qmckl_exit_code qmckl_get_jastrow_cord_vect_full(qmckl_context context, double* const cord_vect_full)
+{
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_exit_code rc;
+
+  rc = qmckl_provide_dim_cord_vect(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_cord_vect_full(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  size_t sze = ctx->jastrow.dim_cord_vect * ctx->nucleus.num;
+  memcpy(cord_vect_full, ctx->jastrow.cord_vect_full, sze * sizeof(double));
+
+  return QMCKL_SUCCESS;
+}
+
+qmckl_exit_code qmckl_get_jastrow_lkpm_combined_index(qmckl_context context, int64_t* const lkpm_combined_index)
+{
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_exit_code rc;
+
+  rc = qmckl_provide_dim_cord_vect(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_cord_vect_full(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  size_t sze = ctx->jastrow.dim_cord_vect * 4;
+  memcpy(lkpm_combined_index, ctx->jastrow.lkpm_combined_index, sze * sizeof(double));
+
+  return QMCKL_SUCCESS;
+}
+    #+end_src
+    
+*** Provide                                                        :noexport:
+
+    #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_provide_dim_cord_vect(qmckl_context context);
+qmckl_exit_code qmckl_provide_cord_vect_full(qmckl_context context);
+qmckl_exit_code qmckl_provide_lkpm_combined_index(qmckl_context context);
+    #+end_src
+
+    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code qmckl_provide_dim_cord_vect(qmckl_context context)
+{
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  /* Compute if necessary */
+  if (ctx->date > ctx->jastrow.dim_cord_vect_date) {
+
+    qmckl_exit_code rc =
+      qmckl_compute_dim_cord_vect(context,
+                                  ctx->jastrow.cord_num,
+                                  &(ctx->jastrow.dim_cord_vect));
+    if (rc != QMCKL_SUCCESS) {
+      return rc;
+    }
+
+    ctx->jastrow.dim_cord_vect_date = ctx->date;
+  }
+
+  return QMCKL_SUCCESS;
+}
+
+qmckl_exit_code qmckl_provide_cord_vect_full(qmckl_context context)
+{
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  /* Check if dim_cord_vect is provided */
+  qmckl_exit_code rc = qmckl_provide_dim_cord_vect(context);
+  if(rc != QMCKL_SUCCESS) return rc;
+
+  /* Compute if necessary */
+  if (ctx->date > ctx->jastrow.cord_vect_full_date) {
+
+    /* Allocate array */
+    if (ctx->jastrow.cord_vect_full == NULL) {
+
+      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+      mem_info.size = ctx->jastrow.dim_cord_vect * ctx->nucleus.num * sizeof(double);
+      double* cord_vect_full = (double*) qmckl_malloc(context, mem_info);
+
+      if (cord_vect_full == NULL) {
+        return qmckl_failwith( context,
+                               QMCKL_ALLOCATION_FAILED,
+                               "qmckl_provide_cord_vect_full",
+                               NULL);
+      }
+      ctx->jastrow.cord_vect_full = cord_vect_full;
+    }
+
+    qmckl_exit_code rc =
+      qmckl_compute_cord_vect_full(context,
+                                ctx->nucleus.num,
+                                ctx->jastrow.cord_num,
+                                ctx->jastrow.dim_cord_vect,
+                                ctx->jastrow.type_nucl_num,
+                                ctx->jastrow.type_nucl_vector,
+                                ctx->jastrow.cord_vector,
+                                ctx->jastrow.cord_vect_full);
+    if (rc != QMCKL_SUCCESS) {
+      return rc;
+    }
+
+    ctx->jastrow.cord_vect_full_date = ctx->date;
+  }
+
+  return QMCKL_SUCCESS;
+}
+
+qmckl_exit_code qmckl_provide_lkpm_combined_index(qmckl_context context)
+{
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  /* Check if dim_cord_vect is provided */
+  qmckl_exit_code rc = qmckl_provide_dim_cord_vect(context);
+  if(rc != QMCKL_SUCCESS) return rc;
+
+  /* Compute if necessary */
+  if (ctx->date > ctx->jastrow.lkpm_combined_index_date) {
+
+    /* Allocate array */
+    if (ctx->jastrow.lkpm_combined_index == NULL) {
+
+      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+      mem_info.size = 4 * ctx->jastrow.dim_cord_vect * sizeof(double);
+      int64_t* lkpm_combined_index = (int64_t*) qmckl_malloc(context, mem_info);
+
+      if (lkpm_combined_index == NULL) {
+        return qmckl_failwith( context,
+                               QMCKL_ALLOCATION_FAILED,
+                               "qmckl_provide_lkpm_combined_index",
+                               NULL);
+      }
+      ctx->jastrow.lkpm_combined_index = lkpm_combined_index;
+    }
+
+    qmckl_exit_code rc =
+      qmckl_compute_lkpm_combined_index(context,
+                                ctx->jastrow.cord_num,
+                                ctx->jastrow.dim_cord_vect,
+                                ctx->jastrow.lkpm_combined_index);
+    if (rc != QMCKL_SUCCESS) {
+      return rc;
+    }
+
+    ctx->jastrow.lkpm_combined_index_date = ctx->date;
+  }
+
+  return QMCKL_SUCCESS;
+}
+    #+end_src
+
+*** Compute dim_cord_vect
+   :PROPERTIES:
+   :Name:     qmckl_compute_dim_cord_vect
+   :CRetType: qmckl_exit_code
+   :FRetType: qmckl_exit_code
+   :END:
+
+    #+NAME: qmckl_factor_dim_cord_vect_args
+   | qmckl_context | context       | in  | Global state                      |
+   | int64_t       | cord_num      | in  | Order of polynomials              |
+   | int64_t       | dim_cord_vect | out | dimension of cord_vect_full table |
+
+    #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+integer function qmckl_compute_dim_cord_vect_f(context, cord_num, dim_cord_vect) &
+     result(info)
+  use qmckl
+  implicit none
+  integer(qmckl_context), intent(in)  :: context
+  integer*8             , intent(in)  :: cord_num
+  integer*8             , intent(out) :: dim_cord_vect
+  double precision                    :: x
+  integer*8                           :: i, a, k, l, p, lmax
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (cord_num <= 0) then
+     info = QMCKL_INVALID_ARG_2
+     return
+  endif
+
+  dim_cord_vect = 0
+
+  do p = 2, cord_num
+    do k = p - 1, 0, -1
+      if (k .ne. 0) then
+        lmax = p - k
+      else
+        lmax = p - k - 2
+      endif
+      do l = lmax, 0, -1
+        if (iand(p - k - l, 1) == 1) cycle
+        dim_cord_vect = dim_cord_vect + 1
+      end do
+    end do
+  end do
+
+end function qmckl_compute_dim_cord_vect_f
+    #+end_src
+
+    #+CALL: generate_c_header(table=qmckl_factor_dim_cord_vect_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+
+    #+RESULTS:
+    #+begin_src c :tangle (eval h_func) :comments org
+    qmckl_exit_code qmckl_compute_dim_cord_vect (
+	  const qmckl_context context,
+	  const int64_t cord_num,
+	  int64_t* const dim_cord_vect ); 
+    #+end_src
+
+
+    #+CALL: generate_c_interface(table=qmckl_factor_dim_cord_vect_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+
+    #+RESULTS:
+    #+begin_src f90 :tangle (eval f) :comments org :exports none
+    integer(c_int32_t) function qmckl_compute_dim_cord_vect &
+	(context, cord_num, dim_cord_vect) &
+	bind(C) result(info)
+
+      use, intrinsic :: iso_c_binding
+      implicit none
+
+      integer (c_int64_t) , intent(in)  , value :: context
+      integer (c_int64_t) , intent(in)  , value :: cord_num
+      integer (c_int64_t) , intent(out)         :: dim_cord_vect
+
+      integer(c_int32_t), external :: qmckl_compute_dim_cord_vect_f
+      info = qmckl_compute_dim_cord_vect_f &
+	     (context, cord_num, dim_cord_vect)
+
+    end function qmckl_compute_dim_cord_vect
+    #+end_src
+
+*** Compute cord_vect_full
+   :PROPERTIES:
+   :Name:     qmckl_compute_cord_vect_full
+   :CRetType: qmckl_exit_code
+   :FRetType: qmckl_exit_code
+   :END:
+
+    #+NAME: qmckl_factor_cord_vect_full_args
+   | qmckl_context | context                                 | in  | Global state                 |
+   | int64_t       | nucl_num                                | in  | Number of atoms              |
+   | int64_t       | cord_num                                | in  | Order of polynomials         |
+   | int64_t       | dim_cord_vect                           | in  | dimension of cord full table |
+   | int64_t       | type_nucl_num                           | in  | dimension of cord full table |
+   | int64_t       | type_nucl_vector[nucl_num]              | in  | dimension of cord full table |
+   | double        | cord_vector[cord_num][type_nucl_num]    | in  | dimension of cord full table |
+   | double        | cord_vect_full[dim_cord_vect][nucl_num] | out | Full list of coefficients    |
+
+    #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+integer function qmckl_compute_cord_vect_full_f(context, nucl_num, cord_num, dim_cord_vect, type_nucl_num,  &
+     type_nucl_vector, cord_vector, cord_vect_full) &
+     result(info)
+  use qmckl
+  implicit none
+  integer(qmckl_context), intent(in)  :: context
+  integer*8             , intent(in)  :: nucl_num
+  integer*8             , intent(in)  :: cord_num
+  integer*8             , intent(in)  :: dim_cord_vect
+  integer*8             , intent(in)  :: type_nucl_num
+  integer*8             , intent(in)  :: type_nucl_vector(nucl_num)
+  double precision      , intent(in)  :: cord_vector(cord_num, type_nucl_num)
+  double precision      , intent(out) :: cord_vect_full(nucl_num,dim_cord_vect)
+  double precision                    :: x
+  integer*8                           :: i, a, k, l, nw
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (nucl_num <= 0) then
+     info = QMCKL_INVALID_ARG_2
+     return
+  endif
+
+  if (cord_num <= 0) then
+     info = QMCKL_INVALID_ARG_3
+     return
+  endif
+
+  if (type_nucl_num <= 0) then
+     info = QMCKL_INVALID_ARG_4
+     return
+  endif
+
+  if (dim_cord_vect <= 0) then
+     info = QMCKL_INVALID_ARG_5
+     return
+  endif
+
+
+  do a = 1, nucl_num
+    cord_vect_full(1:dim_cord_vect,a) = cord_vector(1:dim_cord_vect,type_nucl_vector(a))
+  end do
+
+end function qmckl_compute_cord_vect_full_f
+    #+end_src
+
+    #+CALL: generate_c_header(table=qmckl_factor_cord_vect_full_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+
+    #+RESULTS:
+    #+begin_src c :tangle (eval h_func) :comments org
+    qmckl_exit_code qmckl_compute_cord_vect_full (
+	  const qmckl_context context,
+	  const int64_t nucl_num,
+	  const int64_t cord_num,
+	  const int64_t dim_cord_vect,
+	  const int64_t type_nucl_num,
+	  const int64_t* type_nucl_vector,
+	  const double* cord_vector,
+	  double* const cord_vect_full ); 
+    #+end_src
+
+
+    #+CALL: generate_c_interface(table=qmckl_factor_cord_vect_full_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+
+    #+RESULTS:
+    #+begin_src f90 :tangle (eval f) :comments org :exports none
+    integer(c_int32_t) function qmckl_compute_cord_vect_full &
+	(context, &
+		 nucl_num, &
+		 cord_num, &
+		 dim_cord_vect, &
+		 type_nucl_num, &
+		 type_nucl_vector, &
+		 cord_vector, &
+		 cord_vect_full) &
+	bind(C) result(info)
+
+      use, intrinsic :: iso_c_binding
+      implicit none
+
+      integer (c_int64_t) , intent(in)  , value :: context
+      integer (c_int64_t) , intent(in)  , value :: nucl_num
+      integer (c_int64_t) , intent(in)  , value :: cord_num
+      integer (c_int64_t) , intent(in)  , value :: dim_cord_vect
+      integer (c_int64_t) , intent(in)  , value :: type_nucl_num
+      integer (c_int64_t) , intent(in)          :: type_nucl_vector(nucl_num)
+      real    (c_double ) , intent(in)          :: cord_vector(type_nucl_num,cord_num)
+      real    (c_double ) , intent(out)         :: cord_vect_full(nucl_num,dim_cord_vect)
+
+      integer(c_int32_t), external :: qmckl_compute_cord_vect_full_f
+      info = qmckl_compute_cord_vect_full_f &
+	     (context, &
+		 nucl_num, &
+		 cord_num, &
+		 dim_cord_vect, &
+		 type_nucl_num, &
+		 type_nucl_vector, &
+		 cord_vector, &
+		 cord_vect_full)
+
+    end function qmckl_compute_cord_vect_full
+    #+end_src
+
+*** Compute lkpm_combined_index
+   :PROPERTIES:
+   :Name:     qmckl_compute_lkpm_combined_index
+   :CRetType: qmckl_exit_code
+   :FRetType: qmckl_exit_code
+   :END:
+
+    #+NAME: qmckl_factor_lkpm_combined_index_args
+   | qmckl_context | context                               | in  | Global state                  |
+   | int64_t       | cord_num                              | in  | Order of polynomials          |
+   | int64_t       | dim_cord_vect                         | in  | dimension of cord full table  |
+   | int64_t       | lpkm_combined_index[4][dim_cord_vect] | out | Full list of combined indices |
+
+    #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+integer function qmckl_compute_lkpm_combined_index_f(context, cord_num, dim_cord_vect,  &
+     lkpm_combined_index) &
+     result(info)
+  use qmckl
+  implicit none
+  integer(qmckl_context), intent(in)  :: context
+  integer*8             , intent(in)  :: cord_num
+  integer*8             , intent(in)  :: dim_cord_vect
+  double precision      , intent(out) :: lkpm_combined_index(dim_cord_vect,4)
+  double precision                    :: x
+  integer*8                           :: i, a, k, l, kk, p, lmax, m
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (cord_num <= 0) then
+     info = QMCKL_INVALID_ARG_2
+     return
+  endif
+
+  if (dim_cord_vect <= 0) then
+     info = QMCKL_INVALID_ARG_3
+     return
+  endif
+
+
+  do p = 2, cord_num
+    do k = p - 1, 0, -1
+      if (k .ne. 0) then
+        lmax = p - k
+      else
+        lmax = p - k - 2
+      end if
+      do l = lmax, 0, -1
+        if (iand(p - k - l, 1) .eq. 1) cycle
+        m = (p - k - l)/2
+        kk = kk + 1
+        lkpm_combined_index(1, kk) = l
+        lkpm_combined_index(2, kk) = k
+        lkpm_combined_index(3, kk) = p
+        lkpm_combined_index(4, kk) = m
+      end do
+    end do
+  end do
+
+end function qmckl_compute_lkpm_combined_index_f
+    #+end_src
+
+    #+CALL: generate_c_header(table=qmckl_factor_lkpm_combined_index_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+
+    #+RESULTS:
+    #+begin_src c :tangle (eval h_func) :comments org
+    qmckl_exit_code qmckl_compute_lkpm_combined_index (
+	  const qmckl_context context,
+	  const int64_t cord_num,
+	  const int64_t dim_cord_vect,
+	  int64_t* const lpkm_combined_index ); 
+    #+end_src
+
+
+    #+CALL: generate_c_interface(table=qmckl_factor_lkpm_combined_index_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+
+    #+RESULTS:
+    #+begin_src f90 :tangle (eval f) :comments org :exports none
+    integer(c_int32_t) function qmckl_compute_lkpm_combined_index &
+	(context, cord_num, dim_cord_vect, lpkm_combined_index) &
+	bind(C) result(info)
+
+      use, intrinsic :: iso_c_binding
+      implicit none
+
+      integer (c_int64_t) , intent(in)  , value :: context
+      integer (c_int64_t) , intent(in)  , value :: cord_num
+      integer (c_int64_t) , intent(in)  , value :: dim_cord_vect
+      integer (c_int64_t) , intent(out)         :: lpkm_combined_index(dim_cord_vect,4)
+
+      integer(c_int32_t), external :: qmckl_compute_lkpm_combined_index_f
+      info = qmckl_compute_lkpm_combined_index_f &
+	     (context, cord_num, dim_cord_vect, lpkm_combined_index)
+
+    end function qmckl_compute_lkpm_combined_index
+    #+end_src
+
+
+*** Test
+
+    #+begin_src python :results output :exports none :noweb yes
+import numpy as np
+
+<<jastrow_data>>
+
+elec_coord = np.array(elec_coord)[0]
+nucl_coord = np.array(nucl_coord)
+elnuc_dist = np.zeros(shape=(elec_num, nucl_num),dtype=float)
+for i in range(elec_num):
+  for a in range(nucl_num):
+    elnuc_dist[i, a] = np.linalg.norm(elec_coord[i] - nucl_coord[:,a])
+
+kappa = 1.0
+
+een_rescaled_n = np.zeros(shape=(nucl_num, elec_num, cord_num + 1), dtype=float)
+een_rescaled_n[:,:,0] = 1.0
+
+for a in range(nucl_num):
+  for i in range(elec_num):
+    een_rescaled_n[a, i, 1] = np.exp(-kappa * elnuc_dist[i, a])
+
+for l in range(2,cord_num+1):
+  for a in range(nucl_num):
+    for i in range(elec_num):
+      een_rescaled_n[a, i, l] = een_rescaled_n[a, i, l - 1] * een_rescaled_n[a, i, 1]
+
+print(" een_rescaled_n[0, 2, 1] = ",een_rescaled_n[0, 2, 1])
+print(" een_rescaled_n[0, 3, 1] = ",een_rescaled_n[0, 3, 1])
+print(" een_rescaled_n[0, 4, 1] = ",een_rescaled_n[0, 4, 1])
+print(" een_rescaled_n[1, 3, 2] = ",een_rescaled_n[1, 3, 2])
+print(" een_rescaled_n[1, 4, 2] = ",een_rescaled_n[1, 4, 2])
+print(" een_rescaled_n[1, 5, 2] = ",een_rescaled_n[1, 5, 2])
+    #+end_src
+
+    #+RESULTS:
+    :  een_rescaled_n[0, 2, 1] =  0.10612983920006765
+    :  een_rescaled_n[0, 3, 1] =  0.135652809635553
+    :  een_rescaled_n[0, 4, 1] =  0.023391817607642338
+    :  een_rescaled_n[1, 3, 2] =  0.880957224822116
+    :  een_rescaled_n[1, 4, 2] =  0.027185942659395074
+    :  een_rescaled_n[1, 5, 2] =  0.01343938025140174
+
+     #+begin_src c :tangle (eval c_test)
+assert(qmckl_electron_provided(context));
+
+//double een_rescaled_n[walk_num][elec_num][nucl_num][(cord_num + 1)];
+//rc = qmckl_get_jastrow_een_rescaled_n(context, &(een_rescaled_n[0][0][0][0]));
+//
+//// value of (0,2,1)
+//assert(fabs(een_rescaled_n[0][2][0][1]-0.10612983920006765)  < 1.e-12);
+//assert(fabs(een_rescaled_n[0][3][0][1]-0.135652809635553)    < 1.e-12);
+//assert(fabs(een_rescaled_n[0][4][0][1]-0.023391817607642338) < 1.e-12);
+//assert(fabs(een_rescaled_n[0][3][1][2]-0.880957224822116)    < 1.e-12);
+//assert(fabs(een_rescaled_n[0][4][1][2]-0.027185942659395074) < 1.e-12);
+//assert(fabs(een_rescaled_n[0][5][1][2]-0.01343938025140174)  < 1.e-12);
 
      #+end_src
 
