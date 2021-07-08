@@ -106,6 +106,9 @@ int main() {
   | ~exponent~          | ~[prim_num]~  | Array of exponents                                                   |
   | ~coefficient~       | ~[prim_num]~  | Array of coefficients                                                |
   | ~prim_factor~       | ~[prim_num]~  | Normalization factors of the primtives                               |
+  | ~ao_num~            |               | Number of AOs                                                        |
+  | ~ao_factor~         | ~[ao_num]~    | Normalization factor of the AO                                       |
+  | ~ao_cartesian~      |               | If true, use polynomials. Otherwise, use spherical harmonics         |
 
   Computed data:
   
@@ -177,18 +180,19 @@ prim_factor = [ 1.0006253235944540e+01, 2.4169531573445120e+00, 7.96109248497664
 
    #+begin_src c :comments org :tangle (eval h_private_type)
 typedef struct qmckl_ao_basis_struct {
-  int32_t   uninitialized;
   int64_t   shell_num;
   int64_t   prim_num;
+  int64_t   ao_num;  
   int64_t * nucleus_index;
   int64_t * nucleus_shell_num;
   int32_t * shell_ang_mom;
   int64_t * shell_prim_num;
   int64_t * shell_prim_index;
   double  * shell_factor;
-  double  * exponent    ;
-  double  * coefficient ;
-  double  * prim_factor ;
+  double  * exponent;
+  double  * coefficient;
+  double  * prim_factor;
+  double  * ao_factor;
 
   int64_t * nucleus_prim_index;
   double  * coefficient_normalized;
@@ -198,7 +202,10 @@ typedef struct qmckl_ao_basis_struct {
   int64_t   primitive_vgl_date;
   double  * shell_vgl;
   int64_t   shell_vgl_date;
+
+  int32_t   uninitialized;
   bool      provided;
+  bool      ao_cartesian;
   char      type;
 } qmckl_ao_basis_struct;
    #+end_src
@@ -224,11 +231,10 @@ qmckl_exit_code qmckl_init_ao_basis(qmckl_context context) {
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
   assert (ctx != NULL);
 
-  ctx->ao_basis.uninitialized = (1 << 12) - 1;
+  ctx->ao_basis.uninitialized = (1 << 14) - 1;
 
   /* Default values */
-  /* ctx->ao_basis.
-     ,*/
+  ctx->ao_basis.ao_cartesian = true;
 
   return QMCKL_SUCCESS;
 }
@@ -240,6 +246,7 @@ qmckl_exit_code qmckl_init_ao_basis(qmckl_context context) {
 char      qmckl_get_ao_basis_type             (const qmckl_context context);
 int64_t   qmckl_get_ao_basis_shell_num        (const qmckl_context context);
 int64_t   qmckl_get_ao_basis_prim_num         (const qmckl_context context);
+int64_t   qmckl_get_ao_basis_ao_num           (const qmckl_context context);
 int64_t*  qmckl_get_ao_basis_nucleus_index    (const qmckl_context context);
 int32_t*  qmckl_get_ao_basis_shell_ang_mom    (const qmckl_context context);
 int64_t*  qmckl_get_ao_basis_shell_prim_num   (const qmckl_context context);
@@ -248,6 +255,7 @@ double*   qmckl_get_ao_basis_shell_factor     (const qmckl_context context);
 double*   qmckl_get_ao_basis_exponent         (const qmckl_context context);
 double*   qmckl_get_ao_basis_coefficient      (const qmckl_context context);
 double*   qmckl_get_ao_basis_prim_factor      (const qmckl_context context);
+double*   qmckl_get_ao_basis_ao_factor        (const qmckl_context context);
    #+end_src
 
    When all the data for the AOs have been provided, the following
@@ -494,6 +502,44 @@ double* qmckl_get_ao_basis_prim_factor (const qmckl_context context) {
 }
 
 
+int64_t qmckl_get_ao_basis_ao_num (const qmckl_context context) {
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return (int64_t) 0;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  int32_t mask = 1 << 12;
+
+  if ( (ctx->ao_basis.uninitialized & mask) != 0) {
+    return (int64_t) 0;
+  }
+
+  assert (ctx->ao_basis.ao_num > (int64_t) 0);
+  return ctx->ao_basis.ao_num;
+}
+
+
+double* qmckl_get_ao_basis_ao_factor (const qmckl_context context) {
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return NULL;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  int32_t mask = 1 << 13;
+
+  if ( (ctx->ao_basis.uninitialized & mask) != 0) {
+    return NULL;
+  }
+
+  assert (ctx->ao_basis.ao_factor != NULL);
+  return ctx->ao_basis.ao_factor;
+}
+
+
 bool qmckl_ao_basis_provided(const qmckl_context context) {
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
@@ -505,6 +551,9 @@ bool qmckl_ao_basis_provided(const qmckl_context context) {
 
   return ctx->ao_basis.provided;
 }
+
+
+
    #+end_src
 
 ** Initialization functions
@@ -516,6 +565,7 @@ bool qmckl_ao_basis_provided(const qmckl_context context) {
 qmckl_exit_code  qmckl_set_ao_basis_type             (qmckl_context context, const char      t);
 qmckl_exit_code  qmckl_set_ao_basis_shell_num        (qmckl_context context, const int64_t   shell_num);
 qmckl_exit_code  qmckl_set_ao_basis_prim_num         (qmckl_context context, const int64_t   prim_num);
+qmckl_exit_code  qmckl_set_ao_basis_ao_num           (qmckl_context context, const int64_t   ao_num);
 qmckl_exit_code  qmckl_set_ao_basis_nucleus_index    (qmckl_context context, const int64_t * nucleus_index);
 qmckl_exit_code  qmckl_set_ao_basis_nucleus_shell_num(qmckl_context context, const int64_t * nucleus_shell_num);
 qmckl_exit_code  qmckl_set_ao_basis_shell_ang_mom    (qmckl_context context, const int32_t * shell_ang_mom);
@@ -525,6 +575,8 @@ qmckl_exit_code  qmckl_set_ao_basis_shell_factor     (qmckl_context context, con
 qmckl_exit_code  qmckl_set_ao_basis_exponent         (qmckl_context context, const double  * exponent);
 qmckl_exit_code  qmckl_set_ao_basis_coefficient      (qmckl_context context, const double  * coefficient);
 qmckl_exit_code  qmckl_set_ao_basis_prim_factor      (qmckl_context context, const double  * prim_factor);
+qmckl_exit_code  qmckl_set_ao_basis_ao_factor        (qmckl_context context, const double  * ao_factor);
+qmckl_exit_code  qmckl_set_ao_basis_cartesian        (qmckl_context context, const bool      cartesian);
    #+end_src
 
    #+NAME:pre2
@@ -945,6 +997,7 @@ qmckl_exit_code  qmckl_set_ao_basis_coefficient(qmckl_context context, const dou
   <<post2>>
 }
 
+
 qmckl_exit_code  qmckl_set_ao_basis_prim_factor(qmckl_context context, const double* prim_factor) {
   <<pre2>>
 
@@ -986,6 +1039,83 @@ qmckl_exit_code  qmckl_set_ao_basis_prim_factor(qmckl_context context, const dou
   <<post2>>
 }
 
+
+qmckl_exit_code  qmckl_set_ao_basis_ao_num(qmckl_context context, const int64_t ao_num) {
+  <<pre2>>
+
+  if (ao_num <= 0) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_set_ao_basis_shell_num",
+                           "ao_num must be positive");
+  }
+
+  int64_t shell_num = qmckl_get_ao_basis_shell_num(context);
+
+  if (ao_num < shell_num) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_set_ao_basis_shell_num",
+                           "ao_num < shell_num");
+  }
+
+  int32_t mask = 1 << 12;
+  ctx->ao_basis.ao_num = ao_num;
+
+  <<post2>>
+}
+
+
+qmckl_exit_code  qmckl_set_ao_basis_ao_factor(qmckl_context context, const double* ao_factor) {
+  <<pre2>>
+
+  int32_t mask = 1 << 13;
+
+  const int64_t ao_num = qmckl_get_ao_basis_ao_num(context);
+  if (ao_num == 0L) {
+    return qmckl_failwith( context,
+                           QMCKL_FAILURE,
+                           "qmckl_set_ao_basis_ao_factor",
+                           "ao_num is not set");
+  }
+
+
+  if (ctx->ao_basis.ao_factor != NULL) {
+    qmckl_exit_code rc = qmckl_free(context, ctx->ao_basis.ao_factor);
+    if (rc != QMCKL_SUCCESS) {
+      return qmckl_failwith( context, rc,
+                             "qmckl_set_ao_basis_ao_factor",
+                             NULL);
+    }
+  }
+
+  qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+  mem_info.size = ao_num * sizeof(double);
+  double* new_array = (double*) qmckl_malloc(context, mem_info);
+
+  if (new_array == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_ALLOCATION_FAILED,
+                           "qmckl_set_ao_basis_ao_factor",
+                           NULL);
+  }
+
+  memcpy(new_array, ao_factor, mem_info.size);
+
+  ctx->ao_basis.ao_factor = new_array;
+
+  <<post2>>
+}
+
+
+qmckl_exit_code qmckl_set_ao_basis_cartesian(qmckl_context context, const bool t) {
+  <<pre2>>
+
+  int32_t mask = 1;
+  ctx->ao_basis.ao_cartesian = t;
+
+  <<post2>>
+}
    #+end_src
 
  When the basis set is completely entered, other data structures are
@@ -1273,8 +1403,9 @@ assert(rc == QMCKL_SUCCESS);
 assert(qmckl_nucleus_provided(context));
 
 
-const int64_t    shell_num         = chbrclf_shell_num;
-const int64_t    prim_num          = chbrclf_prim_num;
+const int64_t    shell_num         =  chbrclf_shell_num;
+const int64_t    prim_num          =  chbrclf_prim_num;
+const int64_t    ao_num            =  chbrclf_ao_num;
 const int64_t *  nucleus_index     =  &(chbrclf_basis_nucleus_index[0]);
 const int64_t *  nucleus_shell_num =  &(chbrclf_basis_nucleus_shell_num[0]);
 const int32_t *  shell_ang_mom     =  &(chbrclf_basis_shell_ang_mom[0]);
@@ -1284,6 +1415,7 @@ const double  *  shell_factor      =  &(chbrclf_basis_shell_factor[0]);
 const double  *  exponent          =  &(chbrclf_basis_exponent[0]);
 const double  *  coefficient       =  &(chbrclf_basis_coefficient[0]);
 const double  *  prim_factor       =  &(chbrclf_basis_prim_factor[0]);
+const double  *  ao_factor         =  &(chbrclf_basis_ao_factor[0]);
 
 char    typ = 'G';
 
@@ -1335,6 +1467,13 @@ assert(!qmckl_ao_basis_provided(context));
 
 rc = qmckl_set_ao_basis_prim_factor (context, prim_factor);
 assert(rc == QMCKL_SUCCESS);
+
+rc = qmckl_set_ao_basis_ao_num(context, ao_num);
+assert(rc == QMCKL_SUCCESS);
+
+rc = qmckl_set_ao_basis_ao_factor (context, ao_factor);
+assert(rc == QMCKL_SUCCESS);
+
 assert(qmckl_ao_basis_provided(context));
 
    #+end_src
