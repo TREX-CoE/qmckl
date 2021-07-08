@@ -108,18 +108,19 @@ int main() {
 
   Computed data:
   
-  |----------------------+-------------------------------------+-----------------------------------------------------------------------------------------------|
-  | ~nucleus_prim_index~ | ~[nucl_num]~                        | Index of the first primitive for each nucleus                                                 |
-  | ~primitive_vgl~      | ~[prim_num][5][walk_num][elec_num]~ | Value, gradients, Laplacian of the primitives at electron positions                           |
-  | ~primitive_vgl_date~ | ~uint64_t~                          | Late modification date of Value, gradients, Laplacian of the primitives at electron positions |
-  | ~shell_vgl~          | ~[prim_num][5][walk_num][elec_num]~ | Value, gradients, Laplacian of the primitives at electron positions                           |
-  | ~shell_vgl_date~     | ~uint64_t~                          | Late modification date of Value, gradients, Laplacian of the shells at electron positions     |
-  |----------------------+-------------------------------------+-----------------------------------------------------------------------------------------------|
-  | ~nucl_shell_index~   | ~[nucl_num]~                        | Index of the first shell for each nucleus                                                     |
-  | ~exponent_sorted~    | ~[prim_num]~                        | Array of exponents for sorted primitives                                                      |
-  | ~coeff_norm_sorted~  | ~[prim_num]~                        | Array of normalized coefficients for sorted primitives                                        |
-  | ~prim_factor_sorted~ | ~[prim_num]~                        | Normalization factors of the sorted primtives                                                 |
-  | ~nuclear_radius~     | ~[nucl_num]~                        | Distance beyond which all the AOs are zero                                                    |
+  |--------------------------+-------------------------------------+-----------------------------------------------------------------------------------------------|
+  | ~coefficient_normalized~ | ~[prim_num]~                        | Normalized primitive coefficients                                                             |
+  | ~nucleus_prim_index~     | ~[nucl_num]~                        | Index of the first primitive for each nucleus                                                 |
+  | ~primitive_vgl~          | ~[prim_num][5][walk_num][elec_num]~ | Value, gradients, Laplacian of the primitives at electron positions                           |
+  | ~primitive_vgl_date~     | ~uint64_t~                          | Late modification date of Value, gradients, Laplacian of the primitives at electron positions |
+  | ~shell_vgl~              | ~[prim_num][5][walk_num][elec_num]~ | Value, gradients, Laplacian of the primitives at electron positions                           |
+  | ~shell_vgl_date~         | ~uint64_t~                          | Late modification date of Value, gradients, Laplacian of the shells at electron positions     |
+  |--------------------------+-------------------------------------+-----------------------------------------------------------------------------------------------|
+  | ~nucl_shell_index~       | ~[nucl_num]~                        | Index of the first shell for each nucleus                                                     |
+  | ~exponent_sorted~        | ~[prim_num]~                        | Array of exponents for sorted primitives                                                      |
+  | ~coeff_norm_sorted~      | ~[prim_num]~                        | Array of normalized coefficients for sorted primitives                                        |
+  | ~prim_factor_sorted~     | ~[prim_num]~                        | Normalization factors of the sorted primtives                                                 |
+  | ~nuclear_radius~         | ~[nucl_num]~                        | Distance beyond which all the AOs are zero                                                    |
 
    For H_2 with the following basis set,
 
@@ -180,12 +181,14 @@ typedef struct qmckl_ao_basis_struct {
   int64_t * nucleus_shell_num;
   int32_t * shell_ang_mom;
   int64_t * shell_prim_num;
-  int64_t * nucleus_prim_index;
   int64_t * shell_prim_index;
   double  * shell_factor;
   double  * exponent    ;
   double  * coefficient ;
   double  * prim_factor ;
+
+  int64_t * nucleus_prim_index;
+  double  * coefficient_normalized ;
   double  * primitive_vgl;
   int64_t   primitive_vgl_date;
   double  * shell_vgl;
@@ -1009,26 +1012,59 @@ qmckl_exit_code qmckl_finalize_basis(qmckl_context context) {
   if (rc != QMCKL_SUCCESS) return rc;
 
   /* nucleus_prim_index */
-  qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-  mem_info.size = (ctx->nucleus.num + (int64_t) 1) * sizeof(int64_t);
+  {
+    qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+    mem_info.size = (ctx->nucleus.num + (int64_t) 1) * sizeof(int64_t);
 
-  ctx->ao_basis.nucleus_prim_index = (int64_t*) qmckl_malloc(context, mem_info);
+    ctx->ao_basis.nucleus_prim_index = (int64_t*) qmckl_malloc(context, mem_info);
 
-  if (ctx->ao_basis.nucleus_prim_index == NULL) {
-    return qmckl_failwith( context,
-                           QMCKL_ALLOCATION_FAILED,
-                           "qmckl_nucleus_prim_index",
-                           NULL);
+    if (ctx->ao_basis.nucleus_prim_index == NULL) {
+      return qmckl_failwith( context,
+                             QMCKL_ALLOCATION_FAILED,
+                             "ao_basis.nucleus_prim_index",
+                             NULL);
+    }
+
+    for (int64_t i=0 ; i<nucl_num ; ++i) {
+      int64_t shell_idx = ctx->ao_basis.nucleus_index[i];
+      ctx->ao_basis.nucleus_prim_index[i] = ctx->ao_basis.shell_prim_index[shell_idx];
+    }
+    ctx->ao_basis.nucleus_prim_index[nucl_num] = ctx->ao_basis.prim_num;
   }
-
-  for (int64_t i=0 ; i<nucl_num ; ++i) {
-    int64_t shell_idx = ctx->ao_basis.nucleus_index[i];
-    ctx->ao_basis.nucleus_prim_index[i] = ctx->ao_basis.shell_prim_index[shell_idx];
-  }
-  ctx->ao_basis.nucleus_prim_index[nucl_num] = ctx->ao_basis.prim_num;
   
 
- /* TODO : sort the basis set here */
+  /* Normalize coefficients */
+  {
+    qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+    mem_info.size = ctx->ao_basis.prim_num * sizeof(double);
+
+    ctx->ao_basis.coefficient_normalized = (double *) qmckl_malloc(context, mem_info);
+
+    if (ctx->ao_basis.coefficient_normalized == NULL) {
+      return qmckl_failwith( context,
+                             QMCKL_ALLOCATION_FAILED,
+                             "ao_basis.coefficient_normalized",
+                             NULL);
+    }
+
+/*
+    for (int64_t i=0 ; i < ctx->ao_basis.prim_num ; ++i) {
+      ctx->ao_basis.coefficient_normalized[i] = 
+        ctx->ao_basis.coefficient[i] * ctx->ao_basis.prim_factor[i];
+   }
+ */
+    for (int64_t ishell=0 ; ishell < ctx->ao_basis.shell_num ; ++ishell) {
+      for (int64_t iprim=ctx->ao_basis.shell_prim_index[ishell] ;
+           iprim < ctx->ao_basis.shell_prim_index[ishell]+ctx->ao_basis.shell_prim_num[ishell] ;
+           ++iprim) {
+        ctx->ao_basis.coefficient_normalized[iprim] = 
+          ctx->ao_basis.coefficient[iprim] * ctx->ao_basis.prim_factor[iprim] *
+          ctx->ao_basis.shell_factor[ishell];
+      }
+    }
+  }
+     
+     /* TODO : sort the basis set here */
   return QMCKL_SUCCESS;
 }
    #+end_src
@@ -1928,7 +1964,7 @@ qmckl_exit_code qmckl_provide_ao_basis_shell_vgl(qmckl_context context)
                                                          ctx->electron.coord_new,
                                                          ctx->nucleus.coord,
                                                          ctx->ao_basis.exponent,
-                                                         ctx->ao_basis.coefficient,
+                                                         ctx->ao_basis.coefficient_normalized,
                                                          ctx->ao_basis.shell_vgl);
     } else {
       return qmckl_failwith( context,
@@ -1968,14 +2004,14 @@ qmckl_exit_code qmckl_provide_ao_basis_shell_vgl(qmckl_context context)
    | ~double~        | ~elec_coord[walk_num][3][elec_num]~           | in  | Electron coordinates                         |
    | ~double~        | ~nucl_coord[3][elec_num]~                     | in  | Nuclear coordinates                          |
    | ~double~        | ~expo[prim_num]~                              | in  | Exponents of the primitives                  |
-   | ~double~        | ~coef[prim_num]~                              | in  | Coefficients of the primitives               |
+   | ~double~        | ~coef_normalized[prim_num]~                   | in  | Coefficients of the primitives               |
    | ~double~        | ~shell_vgl[shell_num][5][walk_num][elec_num]~ | out | Value, gradients and Laplacian of the shells |
     
     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
 integer function qmckl_compute_ao_basis_shell_gaussian_vgl_f(context, &
      prim_num, shell_num, elec_num, nucl_num, walk_num, &
      nucleus_shell_num, nucleus_index, shell_prim_index, shell_prim_num, &
-     elec_coord, nucl_coord, expo, coef, shell_vgl) &
+     elec_coord, nucl_coord, expo, coef_normalized, shell_vgl) &
      result(info)
   use qmckl
   implicit none
@@ -1992,7 +2028,7 @@ integer function qmckl_compute_ao_basis_shell_gaussian_vgl_f(context, &
   double precision      , intent(in)  :: elec_coord(elec_num,3,walk_num)
   double precision      , intent(in)  :: nucl_coord(nucl_num,3)
   double precision      , intent(in)  :: expo(prim_num)
-  double precision      , intent(in)  :: coef(prim_num)
+  double precision      , intent(in)  :: coef_normalized(prim_num)
   double precision      , intent(out) :: shell_vgl(elec_num,walk_num,5,shell_num)
 
   integer*8 :: inucl, iprim, iwalk, ielec, ishell
@@ -2026,7 +2062,7 @@ integer function qmckl_compute_ao_basis_shell_gaussian_vgl_f(context, &
                     cycle
                  end if
 
-                 v = coef(iprim) * dexp(-ar2)
+                 v = coef_normalized(iprim) * dexp(-ar2)
                  two_a = -2.d0 * expo(iprim) * v
                  
                  shell_vgl(ielec, iwalk, 1, ishell) = &
@@ -2071,7 +2107,7 @@ qmckl_exit_code qmckl_compute_ao_basis_shell_gaussian_vgl(
           const double*  elec_coord,
           const double*  nucl_coord,
           const double*  expo,
-          const double*  coef,
+          const double*  coef_normalized,
           double* const shell_vgl);
     #+end_src
 
@@ -2093,7 +2129,7 @@ qmckl_exit_code qmckl_compute_ao_basis_shell_gaussian_vgl(
          elec_coord, &
          nucl_coord, &
          expo, &
-         coef, &
+         coef_normalized, &
          shell_vgl) &
         bind(C) result(info)
 
@@ -2113,7 +2149,7 @@ qmckl_exit_code qmckl_compute_ao_basis_shell_gaussian_vgl(
       real    (c_double ) , intent(in)          :: elec_coord(elec_num,3,walk_num)
       real    (c_double ) , intent(in)          :: nucl_coord(elec_num,3)
       real    (c_double ) , intent(in)          :: expo(prim_num)
-      real    (c_double ) , intent(in)          :: coef(prim_num)
+      real    (c_double ) , intent(in)          :: coef_normalized(prim_num)
       real    (c_double ) , intent(out)         :: shell_vgl(elec_num,walk_num,5,shell_num)
 
       integer(c_int32_t), external :: qmckl_compute_ao_basis_shell_gaussian_vgl_f
@@ -2131,7 +2167,7 @@ qmckl_exit_code qmckl_compute_ao_basis_shell_gaussian_vgl(
          elec_coord, &
          nucl_coord, &
          expo, &
-         coef, &
+         coef_normalized, &
          shell_vgl)
 
     end function qmckl_compute_ao_basis_shell_gaussian_vgl
@@ -2242,11 +2278,11 @@ double shell_vgl[shell_num][5][walk_num][elec_num];
 rc = qmckl_get_ao_basis_shell_vgl(context, &(shell_vgl[0][0][0][0]));
 assert (rc == QMCKL_SUCCESS);
 
-printf(" shell_vgl[1][0][0][26] %25.15e\n", shell_vgl[1][0][0][26]);
-printf(" shell_vgl[1][1][0][26] %25.15e\n", shell_vgl[1][1][0][26]);
-printf(" shell_vgl[1][2][0][26] %25.15e\n", shell_vgl[1][2][0][26]);
-printf(" shell_vgl[1][3][0][26] %25.15e\n", shell_vgl[1][3][0][26]);
-printf(" shell_vgl[1][4][0][26] %25.15e\n", shell_vgl[1][4][0][26]);
+printf(" shell_vgl[1][0][0][26]  %25.15e\n", shell_vgl[1][0][0][26]);
+printf(" shell_vgl[1][1][0][26]  %25.15e\n", shell_vgl[1][1][0][26]);
+printf(" shell_vgl[1][2][0][26]  %25.15e\n", shell_vgl[1][2][0][26]);
+printf(" shell_vgl[1][3][0][26]  %25.15e\n", shell_vgl[1][3][0][26]);
+printf(" shell_vgl[1][4][0][26]  %25.15e\n", shell_vgl[1][4][0][26]);
   
 printf(" shell_vgl[14][0][1][15] %25.15e\n", shell_vgl[14][0][1][15]);
 printf(" shell_vgl[14][1][1][15] %25.15e\n", shell_vgl[14][1][1][15]);
@@ -2254,18 +2290,19 @@ printf(" shell_vgl[14][2][1][15] %25.15e\n", shell_vgl[14][2][1][15]);
 printf(" shell_vgl[14][3][1][15] %25.15e\n", shell_vgl[14][3][1][15]);
 printf(" shell_vgl[14][4][1][15] %25.15e\n", shell_vgl[14][4][1][15]);
 
-assert( fabs(shell_vgl[1][0][0][26] - (  1.875568658202993e-01)) < 1.e-14 );
-assert( fabs(shell_vgl[1][1][0][26] - ( -2.615250164814435e-02)) < 1.e-14 );
-assert( fabs(shell_vgl[1][2][0][26] - ( -1.333535498894419e-01)) < 1.e-14 );
-assert( fabs(shell_vgl[1][3][0][26] - (  1.218482800201208e-01)) < 1.e-14 );
-assert( fabs(shell_vgl[1][4][0][26] - (  3.197054084474042e-02)) < 1.e-14 );
+assert( fabs(shell_vgl[1][0][0][26] - ( 3.564393437193868e-02)) < 1.e-14 );
+assert( fabs(shell_vgl[1][1][0][26] - (-6.030177987072189e-03)) < 1.e-14 );
+assert( fabs(shell_vgl[1][2][0][26] - (-3.074832579537582e-02)) < 1.e-14 );
+assert( fabs(shell_vgl[1][3][0][26] - ( 2.809546963519935e-02)) < 1.e-14 );
+assert( fabs(shell_vgl[1][4][0][26] - ( 1.896046117183968e-02)) < 1.e-14 );
   
-assert( fabs(shell_vgl[14][0][1][15] - ( 4.509748459243634e-02)) < 1.e-14 );
-assert( fabs(shell_vgl[14][1][1][15] - ( 3.203917730584210e-02)) < 1.e-14 );
-assert( fabs(shell_vgl[14][2][1][15] - ( 2.887080725789477e-02)) < 1.e-14 );
-assert( fabs(shell_vgl[14][3][1][15] - ( 5.836910453297223e-03)) < 1.e-14 );
-assert( fabs(shell_vgl[14][4][1][15] - ( 1.572966698871693e-02)) < 1.e-14 );
+assert( fabs(shell_vgl[14][0][1][15] - ( 5.928089771361000e-03)) < 1.e-14 );
+assert( fabs(shell_vgl[14][1][1][15] - ( 4.355862296021654e-03)) < 1.e-14 );
+assert( fabs(shell_vgl[14][2][1][15] - ( 3.925108924923650e-03)) < 1.e-14 );
+assert( fabs(shell_vgl[14][3][1][15] - ( 7.935527784022099e-04)) < 1.e-14 );
+assert( fabs(shell_vgl[14][4][1][15] - ( 2.708246573703548e-03)) < 1.e-14 );
 }  
+ 
      #+end_src
 
 * Polynomial part
