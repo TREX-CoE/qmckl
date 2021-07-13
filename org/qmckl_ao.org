@@ -3188,7 +3188,7 @@ end function test_qmckl_ao_polynomial_vgl
 
 * Combining radial and polynomial parts
 
-*** TODO Get
+*** Get
 
     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
 qmckl_exit_code qmckl_get_ao_vgl(qmckl_context context, double* const ao_vgl);
@@ -3230,7 +3230,7 @@ qmckl_exit_code qmckl_get_ao_vgl(qmckl_context context, double* const ao_vgl) {
     end interface
     #+end_src
 
-*** TODO Provide
+*** Provide
 
     #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
 qmckl_exit_code qmckl_provide_ao_vgl(qmckl_context context);
@@ -3302,6 +3302,7 @@ qmckl_exit_code qmckl_provide_ao_vgl(qmckl_context context)
                               ctx->ao_basis.nucleus_range,
                               ctx->ao_basis.nucleus_max_ang_mom,
                               ctx->ao_basis.shell_ang_mom,
+                              ctx->ao_basis.ao_factor,
                               ctx->ao_basis.shell_vgl,
                               ctx->ao_basis.ao_vgl);
     if (rc != QMCKL_SUCCESS) {
@@ -3315,7 +3316,7 @@ qmckl_exit_code qmckl_provide_ao_vgl(qmckl_context context)
 }
     #+end_src
 
-*** TODO Compute
+*** Compute
    :PROPERTIES:
    :Name:     qmckl_compute_ao_vgl
    :CRetType: qmckl_exit_code
@@ -3336,6 +3337,7 @@ qmckl_exit_code qmckl_provide_ao_vgl(qmckl_context context)
    | ~double~        | ~nucleus_range[nucl_num]~                     | in  | Range beyond which all is zero               |
    | ~int32_t~       | ~nucleus_max_ang_mom[nucl_num]~               | in  | Maximum angular momentum per nucleus         |
    | ~int32_t~       | ~shell_ang_mom[shell_num]~                    | in  | Angular momentum of each shell               |
+   | ~double~        | ~ao_factor[ao_num]~                           | in  | Normalization factor of the AOs              |
    | ~double~        | ~shell_vgl[5][walk_num][elec_num][shell_num]~ | in  | Value, gradients and Laplacian of the shells |
    | ~double~        | ~ao_vgl[5][walk_num][elec_num][ao_num]~       | out | Value, gradients and Laplacian of the AOs    |
     
@@ -3344,7 +3346,7 @@ integer function qmckl_compute_ao_vgl_f(context, &
      ao_num, shell_num, elec_num, nucl_num, walk_num, &
      elec_coord, nucl_coord, nucleus_index, nucleus_shell_num, &
      nucleus_range, nucleus_max_ang_mom, shell_ang_mom, &
-     shell_vgl, ao_vgl) &
+     ao_factor, shell_vgl, ao_vgl) &
      result(info)
   use qmckl
   implicit none
@@ -3361,6 +3363,7 @@ integer function qmckl_compute_ao_vgl_f(context, &
   double precision      , intent(in)  :: nucleus_range(nucl_num)
   integer               , intent(in)  :: nucleus_max_ang_mom(nucl_num)
   integer               , intent(in)  :: shell_ang_mom(shell_num)
+  double precision      , intent(in)  :: ao_factor(ao_num)
   double precision      , intent(in)  :: shell_vgl(shell_num,elec_num,walk_num,5)
   double precision      , intent(out) :: ao_vgl(ao_num,elec_num,walk_num,5)
 
@@ -3422,32 +3425,36 @@ integer function qmckl_compute_ao_vgl_f(context, &
               do il = lstart(l), lstart(l+1)-1
                  ! Value
                  ao_vgl(k,ielec,iwalk,1) = &
-                      poly_vgl(1,il) * shell_vgl(ishell,ielec,iwalk,1)
+                      poly_vgl(1,il) * shell_vgl(ishell,ielec,iwalk,1) * ao_factor(k)
 
                  ! Grad_x
-                 ao_vgl(k,ielec,iwalk,2) =  &
+                 ao_vgl(k,ielec,iwalk,2) = ( &
                       poly_vgl(2,il) * shell_vgl(ishell,ielec,iwalk,1) + &
-                      poly_vgl(1,il) * shell_vgl(ishell,ielec,iwalk,2) 
+                      poly_vgl(1,il) * shell_vgl(ishell,ielec,iwalk,2) &
+                      ) * ao_factor(k)
 
                  ! Grad_y
-                 ao_vgl(k,ielec,iwalk,3) =  &
+                 ao_vgl(k,ielec,iwalk,3) = ( &
                       poly_vgl(3,il) * shell_vgl(ishell,ielec,iwalk,1) + &
-                      poly_vgl(1,il) * shell_vgl(ishell,ielec,iwalk,3) 
+                      poly_vgl(1,il) * shell_vgl(ishell,ielec,iwalk,3) &
+                      ) * ao_factor(k)
 
                  ! Grad_z
-                 ao_vgl(k,ielec,iwalk,4) =  &
+                 ao_vgl(k,ielec,iwalk,4) = ( &
                       poly_vgl(4,il) * shell_vgl(ishell,ielec,iwalk,1) + &
-                      poly_vgl(1,il) * shell_vgl(ishell,ielec,iwalk,4) 
+                      poly_vgl(1,il) * shell_vgl(ishell,ielec,iwalk,4) &
+                      ) * ao_factor(k)
 
                  ! Lapl_z
-                 ao_vgl(k,ielec,iwalk,5) =  &
+                 ao_vgl(k,ielec,iwalk,5) = ( &
                       poly_vgl(5,il) * shell_vgl(ishell,ielec,iwalk,1) + &
                       poly_vgl(1,il) * shell_vgl(ishell,ielec,iwalk,5) + &
                       2.d0 * ( &
                       poly_vgl(2,il) * shell_vgl(ishell,ielec,iwalk,2) + &
                       poly_vgl(3,il) * shell_vgl(ishell,ielec,iwalk,3) + &
-                      poly_vgl(4,il) * shell_vgl(ishell,ielec,iwalk,4) )
-
+                      poly_vgl(4,il) * shell_vgl(ishell,ielec,iwalk,4) ) &
+                      ) * ao_factor(k)
+                      
                  k = k+1
               end do
            end do
@@ -3477,6 +3484,7 @@ end function qmckl_compute_ao_vgl_f
           const double* nucleus_range,
           const int32_t* nucleus_max_ang_mom,
           const int32_t* shell_ang_mom,
+          const double* ao_factor,
           const double* shell_vgl,
           double* const ao_vgl ); 
     #+end_src
@@ -3499,6 +3507,7 @@ end function qmckl_compute_ao_vgl_f
          nucleus_range, &
          nucleus_max_ang_mom, &
          shell_ang_mom, &
+         ao_factor, &
          shell_vgl, &
          ao_vgl) &
         bind(C) result(info)
@@ -3519,6 +3528,7 @@ end function qmckl_compute_ao_vgl_f
       real    (c_double ) , intent(in)          :: nucleus_range(nucl_num)
       integer (c_int32_t) , intent(in)          :: nucleus_max_ang_mom(nucl_num)
       integer (c_int32_t) , intent(in)          :: shell_ang_mom(shell_num)
+      real    (c_double ) , intent(in)          :: ao_factor(ao_num)
       real    (c_double ) , intent(in)          :: shell_vgl(shell_num,elec_num,walk_num,5)
       real    (c_double ) , intent(out)         :: ao_vgl(ao_num,elec_num,walk_num,5)
 
@@ -3537,6 +3547,7 @@ end function qmckl_compute_ao_vgl_f
          nucleus_range, &
          nucleus_max_ang_mom, &
          shell_ang_mom, &
+         ao_factor, &
          shell_vgl, &
          ao_vgl)
 
@@ -3617,7 +3628,7 @@ print ( "[1][0][26][224] : %25.15e"%(df(a,x,y,1)* (x[2] - y[2]) * (x[2] - y[2]))
     [1][0][26][224] :    -3.843880138733679e-09
     #+end_example
 
-*** TODO Test
+*** Test
 
      #+begin_src c :tangle (eval c_test) :exports none
 {
