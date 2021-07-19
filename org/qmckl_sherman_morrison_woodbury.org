@@ -2,7 +2,8 @@
 #+SETUPFILE: ../tools/theme.setup
 #+INCLUDE: ../tools/lib.org
 
-[TODO: FMJC] Please add some intro.
+Low- and high-level functions that use the Sherman-Morrison and Woodbury matrix inversion formulas to update the
+ inverse of a non-singualr matrix
 
 * Headers
   #+begin_src elisp :noexport :results none
@@ -15,15 +16,18 @@
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
+#include <cmath>
+#ifndef THRESHOLD
+#define THRESHOLD 1e-3
+#endif
+
 int main() {
   qmckl_context context;
   context = qmckl_context_create();
 
   #+end_src
   
-* Sherman Morrison
-
-[TODO: FMJC] Add general doc for Naive SM.
+* Naïve   Sherman-Morrison
 
 ** ~qmckl_sherman_morrison~
    :PROPERTIES:
@@ -32,20 +36,92 @@ int main() {
    :FRetType: qmckl_exit_code
    :END:
 
-[TODO: FMJC] Add some detailed description. Including formulae etc.
+   The Sherman-Morrison formula
+   \begin{align}
+	   S_k^{-1} &= (S_l + U_k)^-1 \\
+			      &= S_l^{-1} - \frac{S_l^{-1}U_kS_l}{1+\underline{v}_k^tS_l^{-1}\underline{u}_k}
+   \end{align}
+
 
    #+NAME: qmckl_sherman_morrison_args
    | qmckl_context | context | in | Global state |
+   | double        | Slater_inv[Dim*Dim]    | inout | Array containing the inverse of a Slater-matrix      |
+   | uint          | Dim                    | in    | Leading dimension of Slater_inv                      |
+   | uint          | N_updates              | in    | Number of rank-1 updates to be applied to Slater_inv |
+   | double        | Updates[N_updates*Dim] | in    | Array containing the updates                         |
+   | double        | Updates_index          | in    | Array containing the rank-1 updates                  |
 
 *** Requirements
 
-[TODO: FMJC] Add description of the input variables. (see for e.g. qmckl_distance.org)
+      Add description of the input variables. (see for e.g. qmckl_distance.org)
 
 *** C header
 
     #+CALL: generate_c_header(table=qmckl_sherman_morrison_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
 
+    #+RESULTS:
+    #+begin_src c :tangle (eval h_func) :comments org
+    qmckl_exit_code qmckl_sherman_morrison (
+          const qmckl_context context,
+          double *Slater_inv,
+          unsigned int Dim,
+          unsigned int N_updates,
+          double *Updates,
+          unsigned int *Updates_index );
+    #+end_src
+
 *** Source
+
+    #+begin_src c :tangle (eval c_func) :comments org
+bool qmckl_sherman_morrison(double *Slater_inv, unsigned int Dim, unsigned int N_updates,
+         double *Updates, unsigned int *Updates_index) {
+#ifdef DEBUG
+  std::cerr << "Called qmckl_sherman_morrison with " << N_updates << " updates" << std::endl;
+#endif
+
+  double C[Dim];
+  double D[Dim];
+
+  unsigned int l = 0;
+  // For each update
+  while (l < N_updates) {
+    // C = A^{-1} x U_l
+    for (unsigned int i = 0; i < Dim; i++) {
+      C[i] = 0;
+      for (unsigned int j = 0; j < Dim; j++) {
+        C[i] += Slater_inv[i * Dim + j] * Updates[l * Dim + j];
+      }
+    }
+
+    // Denominator
+    double den = 1 + C[Updates_index[l] - 1];
+    if (std::fabs(den) < threshold()) {
+      return false;
+    }
+    double iden = 1 / den;
+
+    // D = v^T x A^{-1}
+    for (unsigned int j = 0; j < Dim; j++) {
+      D[j] = Slater_inv[(Updates_index[l] - 1) * Dim + j];
+    }
+
+    // A^{-1} = A^{-1} - C x D / den
+    for (unsigned int i = 0; i < Dim; i++) {
+      for (unsigned int j = 0; j < Dim; j++) {
+        double update = C[i] * D[j] * iden;
+        Slater_inv[i * Dim + j] -= update;
+      }
+    }
+
+    l += 1;
+  }
+  return true;
+}
+
+    #+end_src
+
+
+
 *** Performance
 
 ** C interface                                                     :noexport:
