@@ -4,59 +4,59 @@
 #ifndef THRESHOLD
 #define THRESHOLD 1e-3
 #endif
-double threshold();
+static double threshold();
 
 // Naïve Sherman Morrison
-void sherman_morrison(double *Slater_inv, unsigned int Dim, unsigned int N_updates,
+bool qmckl_sherman_morrison(double *Slater_inv, unsigned int Dim, unsigned int N_updates,
          double *Updates, unsigned int *Updates_index);
 
 // Woodbury 2x2 kernel
-bool woodbury_2(double *Slater_inv, const unsigned int Dim, double *Updates,
+bool qmckl_woodbury_2(double *Slater_inv, const unsigned int Dim, double *Updates,
          const unsigned int *Updates_index);
 
 // Woodbury 3x3 kernel
-bool woodbury_3(double *Slater_inv, const unsigned int Dim, double *Updates,
+bool qmckl_woodbury_3(double *Slater_inv, const unsigned int Dim, double *Updates,
          const unsigned int *Updates_index);
 
 // Sherman Morrison, with J. Slagel splitting (caller function)
-void sherman_morrison_splitting_caller(double *Slater_inv, unsigned int Dim, unsigned int N_updates,
+void qmckl_sherman_morrison_splitting(double *Slater_inv, unsigned int Dim, unsigned int N_updates,
          double *Updates, unsigned int *Updates_index);
 
 // Sherman Morrison, with J. Slagel splitting
 // http://hdl.handle.net/10919/52966
-void sherman_morrison_splitting(double *Slater_inv, unsigned int Dim, unsigned int N_updates,
+static void slagel_splitting(double *Slater_inv, unsigned int Dim, unsigned int N_updates,
              double *Updates, unsigned int *Updates_index,
              double *later_updates, unsigned int *later_index,
              unsigned int *later);
 
 // Mixed Sherman-Morrison-Woodbury kernel using
 // Woodbury 2x2 and Sherman-Morrison with update-splitting
-void sherman_morrison_woodbury_2(double *Slater_inv, const unsigned int Dim,
+void qmckl_sherman_morrison_woodbury_2(double *Slater_inv, const unsigned int Dim,
            const unsigned int N_updates, double *Updates,
            unsigned int *Updates_index);
 
 // Mixed Sherman-Morrison-Woodbury kernel using
 // Woodbury 3x3, Woodbury 2x2 and Sherman-Morrison with update-splitting
-void sherman_morrison_woodbury_3(double *Slater_inv, const unsigned int Dim,
+void qmckl_sherman_morrison_woodbury_3(double *Slater_inv, const unsigned int Dim,
            const unsigned int N_updates, double *Updates,
            unsigned int *Updates_index);
 
 
 
 // Sherman-Morrison-Woodbury break-down threshold
-double threshold() {
+static double threshold() {
   const double threshold = THRESHOLD;
-#ifdef DEBUG2
+#ifdef DEBUG
   std::cerr << "Break-down threshold set to: " << threshold << std::endl;
 #endif
   return threshold;
 }
 
 // Naïve Sherman Morrison
-void sherman_morrison(double *Slater_inv, unsigned int Dim, unsigned int N_updates,
+bool qmckl_sherman_morrison(double *Slater_inv, unsigned int Dim, unsigned int N_updates,
          double *Updates, unsigned int *Updates_index) {
-#ifdef DEBUG1
-  std::cerr << "Called sherman_morrison with " << N_updates << " updates" << std::endl;
+#ifdef DEBUG
+  std::cerr << "Called qmckl_sherman_morrison with " << N_updates << " updates" << std::endl;
 #endif
 
   double C[Dim];
@@ -76,10 +76,7 @@ void sherman_morrison(double *Slater_inv, unsigned int Dim, unsigned int N_updat
     // Denominator
     double den = 1 + C[Updates_index[l] - 1];
     if (std::fabs(den) < threshold()) {
-#ifdef DEBUG1
-      std::cerr << "Breakdown condition triggered at " << Updates_index[l]
-                << std::endl;
-#endif
+      return false;
     }
     double iden = 1 / den;
 
@@ -98,17 +95,18 @@ void sherman_morrison(double *Slater_inv, unsigned int Dim, unsigned int N_updat
 
     l += 1;
   }
+  return true;
 }
 
 // Woodbury 2x2 kernel
-bool woodbury_2(double *Slater_inv, const unsigned int Dim, double *Updates,
+bool qmckl_woodbury_2(double *Slater_inv, const unsigned int Dim, double *Updates,
          const unsigned int *Updates_index) {
 /*
     C := S^{-1} * U,    dim x 2
     B := 1 + V * C,     2 x 2
     D := V * S^{-1},    2 x dim
 */
-#ifdef DEBUG1
+#ifdef DEBUG
   std::cerr << "Called Woodbury 2x2 kernel" << std::endl;
 #endif
 
@@ -136,11 +134,6 @@ bool woodbury_2(double *Slater_inv, const unsigned int Dim, double *Updates,
   // Check if determinant of inverted matrix is not zero
   double det = B0 * B3 - B1 * B2;
   if (std::fabs(det) < threshold()) {
-#ifdef DEBUG1
-    std::cerr << "Determinant too close to zero! No inverse found."
-              << std::endl;
-    std::cerr << "Determinant = " << det << std::endl;
-#endif
     return false;
   }
 
@@ -172,14 +165,14 @@ bool woodbury_2(double *Slater_inv, const unsigned int Dim, double *Updates,
 }
 
 // Woodbury 3x3 kernel
-bool woodbury_3(double *Slater_inv, const unsigned int Dim, double *Updates,
+bool qmckl_woodbury_3(double *Slater_inv, const unsigned int Dim, double *Updates,
          const unsigned int *Updates_index) {
 /*
     C := S^{-1} * U,    dim x 3
     B := 1 + V * C,     3 x 3
     D := V * S^{-1},    3 x dim
 */
-#ifdef DEBUG1
+#ifdef DEBUG
   std::cerr << "Called Woodbury 3x3 kernel" << std::endl;
 #endif
 
@@ -199,11 +192,6 @@ bool woodbury_3(double *Slater_inv, const unsigned int Dim, double *Updates,
     }
   }
 
-#ifdef DEBUG2
-  showMatrix2(C, Dim, 3, "C = S_inv * U");
-  showMatrix2(D, 3, Dim, "D = V * S_inv");
-#endif
-
   // Compute B = 1 + V.C
   const double B0 = C[row1 * 3] + 1;
   const double B1 = C[row1 * 3 + 1];
@@ -215,23 +203,12 @@ bool woodbury_3(double *Slater_inv, const unsigned int Dim, double *Updates,
   const double B7 = C[row3 * 3 + 1];
   const double B8 = C[row3 * 3 + 2] + 1;
 
-#ifdef DEBUG2
-  showMatrix2(B, 3, 3, "B = 1 + V * C");
-#endif
-
   // Check if determinant of B is not too close to zero
   double det;
   det = B0 * (B4 * B8 - B5 * B7) - B1 * (B3 * B8 - B5 * B6) +
         B2 * (B3 * B7 - B4 * B6);
-#ifdef DEBUG2
-  std::cerr << "Determinant of B = " << det << std::endl;
-#endif
+
   if (std::fabs(det) < threshold()) {
-#ifdef DEBUG1
-    std::cerr << "Determinant too close to zero! No inverse found."
-              << std::endl;
-    std::cerr << "Determinant = " << det << std::endl;
-#endif
     return false;
   }
 
@@ -247,12 +224,6 @@ bool woodbury_3(double *Slater_inv, const unsigned int Dim, double *Updates,
   Binv[7] = -(B0 * B7 - B6 * B1) * idet;
   Binv[8] = (B0 * B4 - B3 * B1) * idet;
 
-#ifdef DEBUG2
-  std::cerr << "Conditioning number of B = " << condition1(B, Binv, 3)
-            << std::endl;
-  showMatrix2(Binv, 3, 3, "Binv");
-#endif
-
   // Compute tmp = B^{-1} x (V.S^{-1})
   double tmp[3 * Dim];
   for (unsigned int i = 0; i < 3; i++) {
@@ -263,10 +234,6 @@ bool woodbury_3(double *Slater_inv, const unsigned int Dim, double *Updates,
     }
   }
 
-#ifdef DEBUG2
-  showMatrix2(tmp, 3, Dim, "tmp = Binv * D");
-#endif
-
   // Compute (S + U V)^{-1} = S^{-1} - C x tmp
   for (unsigned int i = 0; i < Dim; i++) {
     for (unsigned int j = 0; j < Dim; j++) {
@@ -276,40 +243,37 @@ bool woodbury_3(double *Slater_inv, const unsigned int Dim, double *Updates,
     }
   }
 
-#ifdef DEBUG2
-  showMatrix2(Slater_inv, Dim, Dim, "Slater_inv AFTER update");
-#endif
   return true;
 }
 
 // Sherman Morrison, with J. Slagel splitting (caller function)
 // http://hdl.handle.net/10919/52966
-void sherman_morrison_splitting_caller(double *Slater_inv, unsigned int Dim, unsigned int N_updates,
+void qmckl_sherman_morrison_splitting(double *Slater_inv, unsigned int Dim, unsigned int N_updates,
          double *Updates, unsigned int *Updates_index) {
-#ifdef DEBUG1
-  std::cerr << "Called sherman_morrison_splitting with " << N_updates << " updates" << std::endl;
+#ifdef DEBUG
+  std::cerr << "Called qmckl_sherman_morrison_splitting with " << N_updates << " updates" << std::endl;
 #endif
 
   double later_updates[Dim * N_updates];
   unsigned int later_index[N_updates];
   unsigned int later = 0;
 
-  sherman_morrison_splitting(Slater_inv, Dim, N_updates, Updates, Updates_index, later_updates,
+  slagel_splitting(Slater_inv, Dim, N_updates, Updates, Updates_index, later_updates,
           later_index, &later);
 
   if (later > 0) {
-    sherman_morrison_splitting_caller(Slater_inv, Dim, later, later_updates, later_index);
+    qmckl_sherman_morrison_splitting(Slater_inv, Dim, later, later_updates, later_index);
   }
 }
 
 // Sherman Morrison, with J. Slagel splitting
 // http://hdl.handle.net/10919/52966
-void sherman_morrison_splitting(double *Slater_inv, unsigned int Dim, unsigned int N_updates,
+static void slagel_splitting(double *Slater_inv, unsigned int Dim, unsigned int N_updates,
              double *Updates, unsigned int *Updates_index,
              double *later_updates, unsigned int *later_index,
              unsigned int *later) {
-#ifdef DEBUG1
-  std::cerr << "Called sherman_morrison_splitting* with " << N_updates << " updates" << std::endl;
+#ifdef DEBUG
+  std::cerr << "Called slagel_splitting with " << N_updates << " updates" << std::endl;
 #endif
 
   double C[Dim];
@@ -329,11 +293,6 @@ void sherman_morrison_splitting(double *Slater_inv, unsigned int Dim, unsigned i
     // Denominator
     double den = 1 + C[Updates_index[l] - 1];
     if (std::fabs(den) < threshold()) {
-#ifdef DEBUG1
-      std::cerr << "Breakdown condition triggered at " << Updates_index[l]
-                << std::endl;
-      std::cerr << "Denominator = " << den << std::endl;
-#endif
 
       // U_l = U_l / 2 (do the split)
       for (unsigned int i = 0; i < Dim; i++) {
@@ -363,16 +322,14 @@ void sherman_morrison_splitting(double *Slater_inv, unsigned int Dim, unsigned i
   }
 }
 
-// Sherman-Morrison-Woodbury kernel 2
-// woodbury_2, sherman_morrison_splitting mixing scheme
-void sherman_morrison_woodbury_2(double *Slater_inv, const unsigned int Dim,
+// Sherman-Morrison-Woodbury 2x2 kernel
+// qmckl_woodbury_2, slagel_splitting mixing scheme
+void qmckl_sherman_morrison_woodbury_2(double *Slater_inv, const unsigned int Dim,
            const unsigned int N_updates, double *Updates,
            unsigned int *Updates_index) {
-#ifdef DEBUG2
-  std::cerr << "Called Sherman-Morrison-Woodbury kernel 1 with " << N_updates
+#ifdef DEBUG
+  std::cerr << "Called qmckl_sherman_morrison_woodbury_2 with " << N_updates
             << " updates" << std::endl;
-  showMatrix2(Updates_index, 1, N_updates, "Updates_index");
-  showMatrix2(Updates, N_updates, Dim, "Updates");
 #endif
 
   unsigned int n_of_2blocks = N_updates / 2;
@@ -390,48 +347,38 @@ void sherman_morrison_woodbury_2(double *Slater_inv, const unsigned int Dim,
       double *Updates_2block = &Updates[i * length_2block];
       unsigned int *Updates_index_2block = &Updates_index[i * 2];
       bool ok;
-      ok = woodbury_2(Slater_inv, Dim, Updates_2block, Updates_index_2block);
-      if (!ok) { // Send the entire block to sherman_morrison_splitting
-#ifdef DEBUG1
-        std::cerr << "Woodbury 2x2 kernel failed! Sending block to sherman_morrison_splitting"
-                  << std::endl;
-#endif
-#ifdef DEBUG2
-        showMatrix2(Updates_2block, 2, Dim, "Updates_2block");
-        showMatrix2(Updates_index_2block, 1, 2, "Updates_index_2block");
-#endif
+      ok = qmckl_woodbury_2(Slater_inv, Dim, Updates_2block, Updates_index_2block);
+      if (!ok) { // Send the entire block to slagel_splitting
         unsigned int l = 0;
-        sherman_morrison_splitting(Slater_inv, Dim, 2, Updates_2block, Updates_index_2block,
+        slagel_splitting(Slater_inv, Dim, 2, Updates_2block, Updates_index_2block,
                 later_updates + (Dim * later), later_index + later, &l);
         later = later + l;
       }
     }
   }
 
-  if (remainder == 1) { // Apply last remaining update with sherman_morrison_splitting
+  if (remainder == 1) { // Apply last remaining update with slagel_splitting
     double *Updates_1block = &Updates[n_of_2blocks * length_2block];
     unsigned int *Updates_index_1block = &Updates_index[2 * n_of_2blocks];
     unsigned int l = 0;
-    sherman_morrison_splitting(Slater_inv, Dim, 1, Updates_1block, Updates_index_1block,
+    slagel_splitting(Slater_inv, Dim, 1, Updates_1block, Updates_index_1block,
             later_updates + (Dim * later), later_index + later, &l);
     later = later + l;
   }
 
   if (later > 0) {
-    sherman_morrison_splitting_caller(Slater_inv, Dim, later, later_updates, later_index);
+    qmckl_sherman_morrison_splitting(Slater_inv, Dim, later, later_updates, later_index);
   }
 }
 
-// Sherman-Morrison-Woodbury kernel 3
-// woodbury_2, woodbury_3, sherman_morrison_splitting mixing scheme
-void sherman_morrison_woodbury_3(double *Slater_inv, const unsigned int Dim,
+// Sherman-Morrison-Woodbury 3x3 kernel
+// qmckl_woodbury_2, qmckl_woodbury_3, slagel_splitting mixing scheme
+void qmckl_sherman_morrison_woodbury_3(double *Slater_inv, const unsigned int Dim,
            const unsigned int N_updates, double *Updates,
            unsigned int *Updates_index) {
-#ifdef DEBUG2
-  std::cerr << "Called Sherman-Morrison-Woodbury kernel 1 with " << N_updates
+#ifdef DEBUG
+  std::cerr << "Called qmckl_sherman_morrison_woodbury_3 with " << N_updates
             << " updates" << std::endl;
-  showMatrix2(Updates_index, 1, N_updates, "Updates_index");
-  showMatrix2(Updates, N_updates, Dim, "Updates");
 #endif
 
   unsigned int n_of_3blocks = N_updates / 3;
@@ -450,16 +397,10 @@ void sherman_morrison_woodbury_3(double *Slater_inv, const unsigned int Dim,
       double *Updates_3block = &Updates[i * length_3block];
       unsigned int *Updates_index_3block = &Updates_index[i * 3];
       bool ok;
-      ok = woodbury_3(Slater_inv, Dim, Updates_3block, Updates_index_3block);
-      if (!ok) { // Send the entire block to sherman_morrison_splitting
-#ifdef DEBUG2
-        std::cerr << "Woodbury 3x3 kernel failed! Sending block to sherman_morrison_splitting"
-                  << std::endl;
-        showMatrix2(Updates_3block, 3, Dim, "Updates_3block");
-        showMatrix2(Updates_index_3block, 1, 3, "Updates_index_3block");
-#endif
+      ok = qmckl_woodbury_3(Slater_inv, Dim, Updates_3block, Updates_index_3block);
+      if (!ok) { // Send the entire block to slagel_splitting
         unsigned int l = 0;
-        sherman_morrison_splitting(Slater_inv, Dim, 3, Updates_3block, Updates_index_3block,
+        slagel_splitting(Slater_inv, Dim, 3, Updates_3block, Updates_index_3block,
                 later_updates + (Dim * later), later_index + later, &l);
         later = later + l;
       }
@@ -470,66 +411,24 @@ void sherman_morrison_woodbury_3(double *Slater_inv, const unsigned int Dim,
     double *Updates_2block = &Updates[n_of_3blocks * length_3block];
     unsigned int *Updates_index_2block = &Updates_index[3 * n_of_3blocks];
     bool ok;
-    ok = woodbury_2(Slater_inv, Dim, Updates_2block, Updates_index_2block);
-    if (!ok) { // Send the entire block to sherman_morrison_splitting
-#ifdef DEBUG2
-      std::cerr << "Woodbury 2x2 kernel failed! Sending block to sherman_morrison_splitting"
-                << std::endl;
-#endif
+    ok = qmckl_woodbury_2(Slater_inv, Dim, Updates_2block, Updates_index_2block);
+    if (!ok) { // Send the entire block to slagel_splitting
       unsigned int l = 0;
-      sherman_morrison_splitting(Slater_inv, Dim, 2, Updates_2block, Updates_index_2block,
+      slagel_splitting(Slater_inv, Dim, 2, Updates_2block, Updates_index_2block,
               later_updates + (Dim * later), later_index + later, &l);
       later = later + l;
     }
   }
-  else if (remainder == 1) { // Apply last remaining update with sherman_morrison_splitting
+  else if (remainder == 1) { // Apply last remaining update with slagel_splitting
     double *Updates_1block = &Updates[n_of_3blocks * length_3block];
     unsigned int *Updates_index_1block = &Updates_index[3 * n_of_3blocks];
     unsigned int l = 0;
-    sherman_morrison_splitting(Slater_inv, Dim, 1, Updates_1block, Updates_index_1block,
+    slagel_splitting(Slater_inv, Dim, 1, Updates_1block, Updates_index_1block,
             later_updates + (Dim * later), later_index + later, &l);
     later = later + l;
   }
 
   if (later > 0) {
-    sherman_morrison_splitting_caller(Slater_inv, Dim, later, later_updates, later_index);
-  }
-}
-
-
-
-extern "C" {
-  void sherman_morrison_f(double **linSlater_inv, unsigned int *Dim, unsigned int *N_updates,
-            double **linUpdates, unsigned int **Updates_index) {
-    sherman_morrison(*linSlater_inv, *Dim, *N_updates, *linUpdates, *Updates_index);
-  }
-
-  bool woodbury_2_f(double **linSlater_inv, unsigned int *Dim, double **linUpdates,
-            unsigned int **Updates_index) {
-    bool ok;
-    ok = woodbury_2(*linSlater_inv, *Dim, *linUpdates, *Updates_index);
-    return ok;
-  }
-
-  bool woodbury_3_f(double **linSlater_inv, unsigned int *Dim, double **linUpdates,
-            unsigned int **Updates_index) {
-    bool ok;
-    ok = woodbury_3(*linSlater_inv, *Dim, *linUpdates, *Updates_index);
-    return ok;
-  }
-
-  void sherman_morrison_splitting_caller_f(double **linSlater_inv, unsigned int *Dim, unsigned int *N_updates,
-            double **linUpdates, unsigned int **Updates_index) {
-    sherman_morrison_splitting_caller(*linSlater_inv, *Dim, *N_updates, *linUpdates, *Updates_index);
-  }
-
-  void sherman_morrison_woodbury_3_f(double **linSlater_inv, unsigned int *Dim, unsigned int *N_updates,
-              double **linUpdates, unsigned int **Updates_index) {
-    sherman_morrison_woodbury_3(*linSlater_inv, *Dim, *N_updates, *linUpdates, *Updates_index);
-  }
-
-  void sherman_morrison_woodbury_2_f(double **linSlater_inv, unsigned int *Dim, unsigned int *N_updates,
-              double **linUpdates, unsigned int **Updates_index) {
-    sherman_morrison_woodbury_2(*linSlater_inv, *Dim, *N_updates, *linUpdates, *Updates_index);
+    qmckl_sherman_morrison_splitting(Slater_inv, Dim, later, later_updates, later_index);
   }
 }
