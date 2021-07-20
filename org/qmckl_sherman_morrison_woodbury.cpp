@@ -1,4 +1,4 @@
-#include <cmath>
+#include <math.h>
 
 // Sherman-Morrison-Woodbury break-down threshold
 #ifndef THRESHOLD
@@ -46,18 +46,18 @@ void qmckl_sherman_morrison_woodbury_3(double *Slater_inv, const unsigned int Di
 // Sherman-Morrison-Woodbury break-down threshold
 static double threshold() {
   const double threshold = THRESHOLD;
-#ifdef DEBUG
-  std::cerr << "Break-down threshold set to: " << threshold << std::endl;
-#endif
+// #ifdef DEBUG //  Leave commented out since debugging information is not yet implemented in QMCkl.
+//   std::cerr << "Break-down threshold set to: " << threshold << std::endl;
+// #endif
   return threshold;
 }
 
 // Naïve Sherman Morrison
 bool qmckl_sherman_morrison(double *Slater_inv, unsigned int Dim, unsigned int N_updates,
          double *Updates, unsigned int *Updates_index) {
-#ifdef DEBUG
-  std::cerr << "Called qmckl_sherman_morrison with " << N_updates << " updates" << std::endl;
-#endif
+// #ifdef DEBUG //  Leave commented out since debugging information is not yet implemented in QMCkl.
+//   std::cerr << "Called qmckl_sherman_morrison with " << N_updates << " updates" << std::endl;
+// #endif
 
   double C[Dim];
   double D[Dim];
@@ -75,8 +75,8 @@ bool qmckl_sherman_morrison(double *Slater_inv, unsigned int Dim, unsigned int N
 
     // Denominator
     double den = 1 + C[Updates_index[l] - 1];
-    if (std::fabs(den) < threshold()) {
-      return false;
+    if (fabs(den) < threshold()) {
+      return QMCKL_FAILURE;
     }
     double iden = 1 / den;
 
@@ -95,7 +95,7 @@ bool qmckl_sherman_morrison(double *Slater_inv, unsigned int Dim, unsigned int N
 
     l += 1;
   }
-  return true;
+  return QMCKL_SUCCESS;
 }
 
 // Woodbury 2x2 kernel
@@ -106,9 +106,9 @@ bool qmckl_woodbury_2(double *Slater_inv, const unsigned int Dim, double *Update
     B := 1 + V * C,     2 x 2
     D := V * S^{-1},    2 x dim
 */
-#ifdef DEBUG
-  std::cerr << "Called Woodbury 2x2 kernel" << std::endl;
-#endif
+// #ifdef DEBUG //  Leave commented out since debugging information is not yet implemented in QMCkl.
+//   std::cerr << "Called Woodbury 2x2 kernel" << std::endl;
+// #endif
 
   const unsigned int row1 = (Updates_index[0] - 1);
   const unsigned int row2 = (Updates_index[1] - 1);
@@ -133,8 +133,8 @@ bool qmckl_woodbury_2(double *Slater_inv, const unsigned int Dim, double *Update
 
   // Check if determinant of inverted matrix is not zero
   double det = B0 * B3 - B1 * B2;
-  if (std::fabs(det) < threshold()) {
-    return false;
+  if (fabs(det) < threshold()) {
+    return QMCKL_FAILURE;
   }
 
   // Compute B^{-1} with explicit formula for 2x2 inversion
@@ -161,7 +161,7 @@ bool qmckl_woodbury_2(double *Slater_inv, const unsigned int Dim, double *Update
     }
   }
 
-  return true;
+  return QMCKL_SUCCESS;
 }
 
 // Woodbury 3x3 kernel
@@ -172,9 +172,9 @@ bool qmckl_woodbury_3(double *Slater_inv, const unsigned int Dim, double *Update
     B := 1 + V * C,     3 x 3
     D := V * S^{-1},    3 x dim
 */
-#ifdef DEBUG
-  std::cerr << "Called Woodbury 3x3 kernel" << std::endl;
-#endif
+// #ifdef DEBUG //  Leave commented out since debugging information is not yet implemented in QMCkl.
+//   std::cerr << "Called Woodbury 3x3 kernel" << std::endl;
+// #endif
 
   const unsigned int row1 = (Updates_index[0] - 1);
   const unsigned int row2 = (Updates_index[1] - 1);
@@ -208,8 +208,8 @@ bool qmckl_woodbury_3(double *Slater_inv, const unsigned int Dim, double *Update
   det = B0 * (B4 * B8 - B5 * B7) - B1 * (B3 * B8 - B5 * B6) +
         B2 * (B3 * B7 - B4 * B6);
 
-  if (std::fabs(det) < threshold()) {
-    return false;
+  if (fabs(det) < threshold()) {
+    return QMCKL_FAILURE;
   }
 
   // Compute B^{-1} with explicit formula for 3x3 inversion
@@ -243,16 +243,16 @@ bool qmckl_woodbury_3(double *Slater_inv, const unsigned int Dim, double *Update
     }
   }
 
-  return true;
+  return QMCKL_SUCCESS;
 }
 
 // Sherman Morrison, with J. Slagel splitting (caller function)
 // http://hdl.handle.net/10919/52966
 void qmckl_sherman_morrison_splitting(double *Slater_inv, unsigned int Dim, unsigned int N_updates,
          double *Updates, unsigned int *Updates_index) {
-#ifdef DEBUG
-  std::cerr << "Called qmckl_sherman_morrison_splitting with " << N_updates << " updates" << std::endl;
-#endif
+// #ifdef DEBUG //  Leave commented out since debugging information is not yet implemented in QMCkl.
+//   std::cerr << "Called qmckl_sherman_morrison_splitting with " << N_updates << " updates" << std::endl;
+// #endif
 
   double later_updates[Dim * N_updates];
   unsigned int later_index[N_updates];
@@ -272,9 +272,9 @@ static void slagel_splitting(double *Slater_inv, unsigned int Dim, unsigned int 
              double *Updates, unsigned int *Updates_index,
              double *later_updates, unsigned int *later_index,
              unsigned int *later) {
-#ifdef DEBUG
-  std::cerr << "Called slagel_splitting with " << N_updates << " updates" << std::endl;
-#endif
+// #ifdef DEBUG //  Leave commented out since debugging information is not yet implemented in QMCkl.
+//   std::cerr << "Called slagel_splitting with " << N_updates << " updates" << std::endl;
+// #endif
 
   double C[Dim];
   double D[Dim];
@@ -292,7 +292,7 @@ static void slagel_splitting(double *Slater_inv, unsigned int Dim, unsigned int 
 
     // Denominator
     double den = 1 + C[Updates_index[l] - 1];
-    if (std::fabs(den) < threshold()) {
+    if (fabs(den) < threshold()) {
 
       // U_l = U_l / 2 (do the split)
       for (unsigned int i = 0; i < Dim; i++) {
@@ -327,10 +327,10 @@ static void slagel_splitting(double *Slater_inv, unsigned int Dim, unsigned int 
 void qmckl_sherman_morrison_woodbury_2(double *Slater_inv, const unsigned int Dim,
            const unsigned int N_updates, double *Updates,
            unsigned int *Updates_index) {
-#ifdef DEBUG
-  std::cerr << "Called qmckl_sherman_morrison_woodbury_2 with " << N_updates
-            << " updates" << std::endl;
-#endif
+// #ifdef DEBUG //  Leave commented out since debugging information is not yet implemented in QMCkl.
+//   std::cerr << "Called qmckl_sherman_morrison_woodbury_2 with " << N_updates
+//             << " updates" << std::endl;
+// #endif
 
   unsigned int n_of_2blocks = N_updates / 2;
   unsigned int remainder = N_updates % 2;
@@ -376,10 +376,10 @@ void qmckl_sherman_morrison_woodbury_2(double *Slater_inv, const unsigned int Di
 void qmckl_sherman_morrison_woodbury_3(double *Slater_inv, const unsigned int Dim,
            const unsigned int N_updates, double *Updates,
            unsigned int *Updates_index) {
-#ifdef DEBUG
-  std::cerr << "Called qmckl_sherman_morrison_woodbury_3 with " << N_updates
-            << " updates" << std::endl;
-#endif
+// #ifdef DEBUG //  Leave commented out since debugging information is not yet implemented in QMCkl.
+//   std::cerr << "Called qmckl_sherman_morrison_woodbury_3 with " << N_updates
+//             << " updates" << std::endl;
+// #endif
 
   unsigned int n_of_3blocks = N_updates / 3;
   unsigned int remainder = N_updates % 3;
