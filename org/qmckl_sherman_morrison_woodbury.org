@@ -36,17 +36,17 @@ Helper functions that are used by the Sherman-Morrison-Woodbury
 kernels. These functions should only be used in the context of these
 kernels.
 
-** ~qmckl_sherman_morrison_threshold~
+** ~qmckl_threshold~
    :PROPERTIES:
-   :Name:     qmckl_sherman_morrison_threshold
+   :Name:     qmckl_threshold
    :CRetType: double
    :FRetType: double precision
    :END:
 
    This function is used to set the threshold value that is used in the kernels to determine if a matrix is invertable or not. In the Sherman-Morrison kernels this is determined by comparing the denominator in the Sherman-Morrison formula to the value set in threshold. If the value is smaller than the threshold value it means the matrix is not invertable. In the Woodbury kernels the threshold value is compared with the value of the determinant of the update matrix.
    
-   #+NAME: qmckl_sherman_morrison_threshold_args
-   | double | thresh | out | Threshold |
+   #+NAME: qmckl_threshold_args
+   | double | thresh | inout | Threshold |
 
 *** Requirements
 
@@ -54,7 +54,7 @@ kernels.
 
 *** C header
 
-    #+CALL: generate_c_header(table=qmckl_sherman_morrison_threshold_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+    #+CALL: generate_c_header(table=qmckl_threshold_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
 
     #+RESULTS:
     #+begin_src c :tangle (eval h_func) :comments org
@@ -63,31 +63,20 @@ kernels.
 #define THRESHOLD 1e-3
 #endif
 
-    qmckl_exit_code qmckl_sherman_morrison_threshold_c (
+    qmckl_exit_code qmckl_threshold_c (
 	  double* const thresh ); 
     #+end_src
 
 *** Source Fortran
 
-    #+begin_src f90 :tangle (eval f)
-integer function qmckl_sherman_morrison_threshold_f(thresh) result(info) 
-  use qmckl
-  implicit none
-  real*8     , intent(inout)  :: thresh
-  !logical, external :: qmckl_sherman_morrison_f
-  info = qmckl_sherman_morrison_threshold(thresh)
-end function qmckl_sherman_morrison_threshold_f
-    #+end_src
-
 *** Source C
 
     #+begin_src c :tangle (eval c) :comments org
 #include <stdbool.h>
-#include <math.h>
 #include "qmckl.h"
 
 // Sherman-Morrison-Woodbury break-down threshold
-qmckl_exit_code qmckl_sherman_morrison_threshold_c(double* const threshold) {
+qmckl_exit_code qmckl_threshold_c(double* const threshold) {
   *threshold = THRESHOLD;
 // #ifdef DEBUG
 //   std::cerr << "Break-down threshold set to: " << threshold << std::endl;
@@ -98,45 +87,115 @@ return QMCKL_SUCCESS;
     
 *** Performance
 
+** ~qmckl_slagel_splitting~
+   :PROPERTIES:
+   :Name:     qmckl_slagel_splitting
+   :CRetType: double
+   :FRetType: double precision
+   :END:
+
+   This function is used to set the threshold value that is used in the kernels to determine if a matrix is invertable or not. In the Sherman-Morrison kernels this is determined by comparing the denominator in the Sherman-Morrison formula to the value set in threshold. If the value is smaller than the threshold value it means the matrix is not invertable. In the Woodbury kernels the threshold value is compared with the value of the determinant of the update matrix.
+   
+   #+NAME: qmckl_slagel_splitting_args
+   | uint64_t      | Dim                            | in       | Leading dimension of Slater_inv                               |
+   | uint64_t      | N_updates                      | in       | Number of rank-1 updates to be applied to Slater_inv          |
+   | double        | Updates[N_updates*Dim]         | in       | Array containing the rank-1 updates                           |
+   | uint64_t      | Updates_index[N_updates]       | in       | Array containing positions of the rank-1 updates              |
+   | double        | Slater_inv[Dim*Dim]            | inout    | Array containing the inverse Slater-matrix                    |
+   | double        | later_updates[Dim * N_updates] | inout    | Array containing the split updates for later                  |
+   | uint64_t      | later_index[N_updates]         | inout    | Array containing the positions of the split updates for later |
+   | uint64_t      | later                          | inout    | Number of split updates for later                             |
+  
+
+*** Requirements
+
+      Add description of the input variables. (see for e.g. qmckl_distance.org)
+
+*** C header
+
+    #+CALL: generate_c_header(table=qmckl_slagel_splitting_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+
+*** Source Fortran
+
+*** Source C
+
+    #+begin_src c :tangle (eval c) :comments org
+#include <stdbool.h>
+#include <math.h>
+#include "qmckl.h"
+
+qmckl_exit_code qmckl_slagel_splitting_c(uint64_t Dim,
+                                              uint64_t N_updates,
+                                              double *Updates, 
+                                              uint64_t *Updates_index,
+                                              double *Slater_inv,
+                                              double *later_updates, 
+                                              uint64_t *later_index,
+                                              uint64_t *later) {
+// #ifdef DEBUG //  Leave commented out since debugging information is not yet implemented in QMCkl.
+//   std::cerr << "Called slagel_splitting with " << N_updates << " updates" << std::endl;
+// #endif
+
+  double C[Dim];
+  double D[Dim];
+
+  uint64_t l = 0;
+  // For each update
+  while (l < N_updates) {
+    // C = S^{-1} x U_l
+    for (uint64_t i = 0; i < Dim; i++) {
+      C[i] = 0;
+      for (uint64_t j = 0; j < Dim; j++) {
+        C[i] += Slater_inv[i * Dim + j] * Updates[l * Dim + j];
+      }
+    }
+
+    // Denominator
+    double den = 1 + C[Updates_index[l] - 1];
+    double thresh = 0.0;
+    qmckl_exit_code rc = qmckl_threshold_c(&thresh);
+    if (fabs(den) < thresh) {
+
+      // U_l = U_l / 2 (do the split)
+      for (uint64_t i = 0; i < Dim; i++) {
+        later_updates[*later * Dim + i] = Updates[l * Dim + i] / 2.0;
+        C[i] /= 2.0;
+      }
+      later_index[*later] = Updates_index[l];
+      (*later)++;
+
+      den = 1 + C[Updates_index[l] - 1];
+    }
+    double iden = 1 / den;
+
+    // D = v^T x S^{-1}
+    for (uint64_t j = 0; j < Dim; j++) {
+      D[j] = Slater_inv[(Updates_index[l] - 1) * Dim + j];
+    }
+
+    // S^{-1} = S^{-1} - C x D / den
+    for (uint64_t i = 0; i < Dim; i++) {
+      for (uint64_t j = 0; j < Dim; j++) {
+        double update = C[i] * D[j] * iden;
+        Slater_inv[i * Dim + j] -= update;
+      }
+    }
+    l += 1;
+  }
+
+  return QMCKL_SUCCESS;
+}
+
+    #+end_src
+    
+*** Performance
+
+
 ** C interface                                                     :noexport:
-
-   #+CALL: generate_c_interface(table=qmckl_sherman_morrison_threshold_args,rettyp=get_value("FRetType"),fname=get_value("Name"))
    
-   #+RESULTS:
-   #+begin_src f90 :tangle (eval f) :comments org :exports none
-   integer(c_int32_t) function qmckl_sherman_morrison_threshold &
-       (thresh) &
-       bind(C) result(info)
+   #+CALL: generate_f_interface(table=qmckl_threshold_args,rettyp=get_value("FRetType"),fname=get_value("Name"))
 
-     use, intrinsic :: iso_c_binding
-     implicit none
-
-     real    (c_double ) , intent(out)         :: thresh
-
-     integer(c_int32_t), external :: qmckl_sherman_morrison_threshold_c
-     info = qmckl_sherman_morrison_threshold_c &
-	    (thresh)
-
-   end function qmckl_sherman_morrison_threshold
-   #+end_src
-
-   #+CALL: generate_f_interface(table=qmckl_sherman_morrison_threshold_args,rettyp=get_value("FRetType"),fname=get_value("Name"))
-   
-   #+RESULTS:
-   #+begin_src f90 :tangle (eval fh_func) :comments org :exports none
-   interface
-     integer(c_int32_t) function qmckl_sherman_morrison_threshold &
-	 (thresh) &
-	 bind(C)
-       use, intrinsic :: iso_c_binding
-       import
-       implicit none
-
-       real    (c_double ) , intent(out)         :: thresh
-
-     end function qmckl_sherman_morrison_threshold
-   end interface
-   #+end_src
+   #+CALL: generate_c_interface(table=qmckl_slagel_splitting_args,rettyp=get_value("FRetType"),fname=get_value("Name"))
 
 *** Test                                                           :noexport:
 
@@ -219,9 +278,6 @@ qmckl_exit_code qmckl_sherman_morrison_c(const qmckl_context context,
   double C[Dim];
   double D[Dim];
 
-  double threshold = 0.0;
-  qmckl_exit_code rc = qmckl_sherman_morrison_threshold_c(&threshold);
-
   uint64_t l = 0;
   // For each update
   while (l < N_updates) {
@@ -236,7 +292,7 @@ qmckl_exit_code qmckl_sherman_morrison_c(const qmckl_context context,
     // Denominator
     double den = 1 + C[Updates_index[l] - 1];
     double thresh = 0.0;
-    qmckl_exit_code rc = qmckl_sherman_morrison_threshold_c(&thresh);
+    qmckl_exit_code rc = qmckl_threshold_c(&thresh);
     if (fabs(den) < thresh) {
       return QMCKL_FAILURE;
     }
@@ -438,7 +494,7 @@ qmckl_exit_code qmckl_woodbury_2_c(const qmckl_context context,
   // Check if determinant of inverted matrix is not zero
   double det = B0 * B3 - B1 * B2;
   double thresh = 0.0;
-  qmckl_exit_code rc = qmckl_sherman_morrison_threshold_c(&thresh);
+  qmckl_exit_code rc = qmckl_threshold_c(&thresh);
   if (fabs(det) < thresh) {
     return QMCKL_FAILURE;
   }
@@ -653,7 +709,7 @@ qmckl_exit_code qmckl_woodbury_3_c(const qmckl_context context,
   det = B0 * (B4 * B8 - B5 * B7) - B1 * (B3 * B8 - B5 * B6) +
         B2 * (B3 * B7 - B4 * B6);
   double thresh = 0.0;
-  qmckl_exit_code rc = qmckl_sherman_morrison_threshold_c(&thresh);
+  qmckl_exit_code rc = qmckl_threshold_c(&thresh);
   if (fabs(det) < thresh) {
     return QMCKL_FAILURE;
   }
@@ -760,6 +816,108 @@ double woodbury3_Slater_inv[9] = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
 rc = qmckl_woodbury_3_c(context, woodbury3_Dim, woodbury3_Updates, woodbury3_Updates_index, woodbury3_Slater_inv);
 assert(rc == QMCKL_SUCCESS);
      #+end_src
+
+
+* Sherman-Morrison with update splitting
+
+This is like naïve Sherman-Morrising, but whenever a denominator is found that is too close to zero the update 
+is split in half. Then one half is applied immediately and the other have is ket for later. When all the updates 
+have been processed, the list of split updates that have been kept for later are processed. If again applying an 
+update results in a denominator that is too close to zero, it is split in half again. One half is applied immediately 
+and one half is kept for later. The algorithm is done when no more updates have been kept for later. This recursion 
+will always end in a finite number of steps, unless the last original update causes a singular Slater-matrix.
+  
+** ~qmckl_sherman_morrison_splitting~
+   :PROPERTIES:
+   :Name:     qmckl_sherman_morrison_splitting
+   :CRetType: qmckl_exit_code
+   :FRetType: qmckl_exit_code
+   :END:
+
+   This is the simplest of the available Sherman-Morrison-Woodbury
+   kernels in QMCkl. It applies rank-1 updates one by one in the order
+   that is given. It only checks if the denominator in the
+   Sherman-Morrison formula is not too close to zero (and exit with an
+   error if it does) during the application of an update.
+
+   #+NAME: qmckl_sherman_morrison_splitting_args
+   | qmckl_context | context                     | in    | Global state                                    |
+   | uint64_t      | Dim                         | in    | Leading dimension of Slater_inv                 |
+   | uint64_t      | N_updates                   | in    | Number of rank-1 updates to be applied to Slater_inv |
+   | double        | Updates[N_updates*Dim]      | in    | Array containing the updates                    |
+   | uint64_t      | Updates_index[N_updates]    | in    | Array containing the rank-1 updates             |
+   | double        | Slater_inv[Dim*Dim]         | inout | Array containing the inverse of a Slater-matrix |
+
+*** Requirements
+
+      Add description of the input variables. (see for e.g. qmckl_distance.org)
+
+*** C header
+
+    #+CALL: generate_c_header(table=qmckl_sherman_morrison_splitting_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+
+*** Source Fortran
+
+*** Source C
+
+    #+begin_src c :tangle (eval c) :comments org
+#include <stdbool.h>
+#include "qmckl.h"
+
+qmckl_exit_code qmckl_sherman_morrison_splitting_c(const qmckl_context context, 
+                                const uint64_t Dim,
+                                const uint64_t N_updates,
+                                const double* Updates,
+                                const uint64_t* Updates_index,
+                                double * Slater_inv) {
+// #ifdef DEBUG //  Leave commented out since debugging information is not yet implemented in QMCkl.
+//   std::cerr << "Called qmckl_sherman_morrison_splitting with " << N_updates << " updates" << std::endl;
+// #endif
+
+  double later_updates[Dim * N_updates];
+  uint64_t later_index[N_updates];
+  uint64_t later = 0;
+
+  qmckl_exit_code smss = qmckl_slagel_splitting_c(Dim, N_updates, Updates, Updates_index,
+                            Slater_inv, later_updates, later_index, &later);
+  
+  if (later > 0) {
+    qmckl_context context = qmckl_context_create();
+    qmckl_exit_code sms = qmckl_sherman_morrison_splitting_c(context, Dim, later, 
+                            later_updates, later_index, Slater_inv);
+  }
+
+  return QMCKL_SUCCESS;
+}
+
+    #+end_src
+
+*** Performance...
+
+** C interface                                                     :noexport:
+
+   #+CALL: generate_c_interface(table=qmckl_sherman_morrison_splitting_args,rettyp=get_value("FRetType"),fname=get_value("Name"))
+
+   #+CALL: generate_f_interface(table=qmckl_sherman_morrison_splitting_args,rettyp=get_value("FRetType"),fname=get_value("Name"))
+
+
+*** Test                                                           :noexport:
+
+[TODO: FMJC] Write tests for the Sherman-Morrison part.
+
+
+     #+begin_src c :tangle (eval c_test)
+const uint64_t splitting_Dim = 3;
+const uint64_t splitting_Updates_index[3] = {1, 1, 1};
+const double splitting_Updates[9] = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
+double splitting_Slater_inv[9] = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
+
+// [TODO : FMJC ] add realistic tests
+
+rc = qmckl_sherman_morrison_splitting_c(context, splitting_Dim, splitting_Updates, splitting_Updates_index, splitting_Slater_inv);
+assert(rc == QMCKL_SUCCESS);
+     #+end_src
+
 
 
 * End of files
