@@ -29,6 +29,7 @@ int main() {
   qmckl_exit_code rc;
   #+end_src
 
+
 * Sherman-Morrison Helper Functions
 
 Helper functions that are used by the Sherman-Morrison-Woodbury
@@ -42,8 +43,8 @@ kernels.
    :FRetType: double precision
    :END:
 
-This function is used to set the threshold value that is used in the kernels to determine if a matrix is invertable or not. In the Sherman-Morrison kernels this is determined by comparing the denominator in the Sherman-Morrison formula to the value set in threshold. If the value is smaller than the threshold value it means the matrix is not invertable. In the Woodbury kernels the threshold value is compared with the value of the determinant of the update matrix.
-
+   This function is used to set the threshold value that is used in the kernels to determine if a matrix is invertable or not. In the Sherman-Morrison kernels this is determined by comparing the denominator in the Sherman-Morrison formula to the value set in threshold. If the value is smaller than the threshold value it means the matrix is not invertable. In the Woodbury kernels the threshold value is compared with the value of the determinant of the update matrix.
+   
    #+NAME: qmckl_sherman_morrison_threshold_args
    | double | thresh | out | Threshold |
 
@@ -65,7 +66,6 @@ This function is used to set the threshold value that is used in the kernels to 
     qmckl_exit_code qmckl_sherman_morrison_threshold_c (
 	  double* const thresh ); 
     #+end_src
-
 
 *** Source Fortran
 
@@ -95,14 +95,13 @@ qmckl_exit_code qmckl_sherman_morrison_threshold_c(double* const threshold) {
 return QMCKL_SUCCESS;
 }
     #+end_src
-
-
+    
 *** Performance
 
 ** C interface                                                     :noexport:
 
    #+CALL: generate_c_interface(table=qmckl_sherman_morrison_threshold_args,rettyp=get_value("FRetType"),fname=get_value("Name"))
-
+   
    #+RESULTS:
    #+begin_src f90 :tangle (eval f) :comments org :exports none
    integer(c_int32_t) function qmckl_sherman_morrison_threshold &
@@ -122,7 +121,7 @@ return QMCKL_SUCCESS;
    #+end_src
 
    #+CALL: generate_f_interface(table=qmckl_sherman_morrison_threshold_args,rettyp=get_value("FRetType"),fname=get_value("Name"))
-
+   
    #+RESULTS:
    #+begin_src f90 :tangle (eval fh_func) :comments org :exports none
    interface
@@ -145,7 +144,7 @@ return QMCKL_SUCCESS;
 
 
 
-  
+
 * Naïve Sherman-Morrison
   
 ** ~qmckl_sherman_morrison~
@@ -338,7 +337,7 @@ assert(rc == QMCKL_SUCCESS);
 
 * Woodbury 2x2
 
-[TODO: FMJC] Add main body intro.
+This is the Woodbury 3x3 kernel.
   
 ** ~qmckl_woodbury_2~
    :PROPERTIES:
@@ -543,6 +542,225 @@ assert(rc == QMCKL_SUCCESS);
      #+end_src
 
 
+* Woodbury 3x3
+
+This is the Woodbury 3x3 kernel.
+  
+** ~qmckl_woodbury_3~
+   :PROPERTIES:
+   :Name:     qmckl_woodbury_3
+   :CRetType: qmckl_exit_code
+   :FRetType: qmckl_exit_code
+   :END:
+
+   This is the simplest of the available Sherman-Morrison-Woodbury
+   kernels in QMCkl. It applies rank-1 updates one by one in the order
+   that is given. It only checks if the denominator in the
+   Sherman-Morrison formula is not too close to zero (and exit with an
+   error if it does) during the application of an update.
+
+   #+NAME: qmckl_woodbury_3_args
+   | qmckl_context | context             | in    | Global state                                    |
+   | uint64_t      | Dim                 | in    | Leading dimension of Slater_inv                 |
+   | double        | Updates[3*Dim]      | in    | Array containing the updates                    |
+   | uint64_t      | Updates_index[3]    | in    | Array containing the rank-1 updates             |
+   | double        | Slater_inv[Dim*Dim] | inout | Array containing the inverse of a Slater-matrix |
+
+*** Requirements
+
+      Add description of the input variables. (see for e.g. qmckl_distance.org)
+
+*** C header
+
+    #+CALL: generate_c_header(table=qmckl_woodbury_3_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+
+    #+RESULTS:
+    #+begin_src c :tangle (eval h_func) :comments org
+    qmckl_exit_code qmckl_woodbury_3_c (
+	  const qmckl_context context,
+	  const uint64_t Dim,
+	  const double* Updates,
+	  const uint64_t* Updates_index,
+	  double* Slater_inv ); 
+    #+end_src
+
+*** Source Fortran
+
+    #+begin_src f90 :tangle (eval f)
+integer function qmckl_woodbury_3_f(context, Slater_inv, Dim,    &
+         Updates, Updates_index) result(info) 
+  use qmckl
+  implicit none
+  integer(qmckl_context)  , intent(in)  :: context
+  integer*8  , intent(in), value  :: Dim
+  integer*8  , intent(in)  :: Updates_index(3)
+  real*8     , intent(in) :: Updates(3*Dim)
+  real*8     , intent(inout)  :: Slater_inv(Dim*Dim)
+  !logical, external :: qmckl_woodbury_3_f
+  info = qmckl_woodbury_2(context, Dim, Updates, Updates_index, Slater_inv)
+end function qmckl_woodbury_3_f
+    #+end_src
+
+*** Source C
+
+    #+begin_src c :tangle (eval c) :comments org
+#include <stdbool.h>
+#include "qmckl.h"
+
+qmckl_exit_code qmckl_woodbury_3_c(const qmckl_context context, 
+                                const uint64_t Dim,
+                                const double* Updates,
+                                const uint64_t* Updates_index,
+                                double * Slater_inv) {
+/*
+    C := S^{-1} * U,    dim x 3
+    B := 1 + V * C,     3 x 3
+    D := V * S^{-1},    3 x dim
+,*/
+// #ifdef DEBUG //  Leave commented out since debugging information is not yet implemented in QMCkl.
+//   std::cerr << "Called Woodbury 3x3 kernel" << std::endl;
+// #endif
+
+  const uint64_t row1 = (Updates_index[0] - 1);
+  const uint64_t row2 = (Updates_index[1] - 1);
+  const uint64_t row3 = (Updates_index[2] - 1);
+
+  // Compute C = S_inv * U  !! NON-STANDARD MATRIX MULTIPLICATION BECAUSE
+  // OF LAYOUT OF 'Updates' !!
+  double C[3 * Dim];
+  for (uint64_t i = 0; i < Dim; i++) {
+    for (uint64_t j = 0; j < 3; j++) {
+      C[i * 3 + j] = 0;
+      for (uint64_t k = 0; k < Dim; k++) {
+        C[i * 3 + j] += Slater_inv[i * Dim + k] * Updates[Dim * j + k];
+      }
+    }
+  }
+
+  // Compute B = 1 + V.C
+  const double B0 = C[row1 * 3] + 1;
+  const double B1 = C[row1 * 3 + 1];
+  const double B2 = C[row1 * 3 + 2];
+  const double B3 = C[row2 * 3];
+  const double B4 = C[row2 * 3 + 1] + 1;
+  const double B5 = C[row2 * 3 + 2];
+  const double B6 = C[row3 * 3];
+  const double B7 = C[row3 * 3 + 1];
+  const double B8 = C[row3 * 3 + 2] + 1;
+
+  // Check if determinant of B is not too close to zero
+  double det;
+  det = B0 * (B4 * B8 - B5 * B7) - B1 * (B3 * B8 - B5 * B6) +
+        B2 * (B3 * B7 - B4 * B6);
+  double thresh = 0.0;
+  qmckl_exit_code rc = qmckl_sherman_morrison_threshold_c(&thresh);
+  if (fabs(det) < thresh) {
+    return QMCKL_FAILURE;
+  }
+
+  // Compute B^{-1} with explicit formula for 3x3 inversion
+  double Binv[9], idet = 1.0 / det;
+  Binv[0] = (B4 * B8 - B7 * B5) * idet;
+  Binv[1] = -(B1 * B8 - B7 * B2) * idet;
+  Binv[2] = (B1 * B5 - B4 * B2) * idet;
+  Binv[3] = -(B3 * B8 - B6 * B5) * idet;
+  Binv[4] = (B0 * B8 - B6 * B2) * idet;
+  Binv[5] = -(B0 * B5 - B3 * B2) * idet;
+  Binv[6] = (B3 * B7 - B6 * B4) * idet;
+  Binv[7] = -(B0 * B7 - B6 * B1) * idet;
+  Binv[8] = (B0 * B4 - B3 * B1) * idet;
+
+  // Compute tmp = B^{-1} x (V.S^{-1})
+  double tmp[3 * Dim];
+  for (uint64_t i = 0; i < 3; i++) {
+    for (uint64_t j = 0; j < Dim; j++) {
+      tmp[i * Dim + j] = Binv[i * 3] * Slater_inv[row1 * Dim + j];
+      tmp[i * Dim + j] += Binv[i * 3 + 1] * Slater_inv[row2 * Dim + j];
+      tmp[i * Dim + j] += Binv[i * 3 + 2] * Slater_inv[row3 * Dim + j];
+    }
+  }
+
+  // Compute (S + U V)^{-1} = S^{-1} - C x tmp
+  for (uint64_t i = 0; i < Dim; i++) {
+    for (uint64_t j = 0; j < Dim; j++) {
+      Slater_inv[i * Dim + j] -= C[i * 3] * tmp[j];
+      Slater_inv[i * Dim + j] -= C[i * 3 + 1] * tmp[Dim + j];
+      Slater_inv[i * Dim + j] -= C[i * 3 + 2] * tmp[2 * Dim + j];
+    }
+  }
+
+  return QMCKL_SUCCESS;
+}
+
+    #+end_src
+
+*** Performance...
+
+** C interface                                                     :noexport:
+
+   #+CALL: generate_c_interface(table=qmckl_woodbury_3_args,rettyp=get_value("FRetType"),fname=get_value("Name"))
+
+   #+RESULTS:
+   #+begin_src f90 :tangle (eval f) :comments org :exports none
+   integer(c_int32_t) function qmckl_woodbury_3 &
+       (context, Dim, Updates, Updates_index, Slater_inv) &
+       bind(C) result(info)
+
+     use, intrinsic :: iso_c_binding
+     implicit none
+
+     integer (c_int64_t) , intent(in)  , value :: context
+     integer (c_int64_t) , intent(in)  , value :: Dim
+     real    (c_double ) , intent(in)          :: Updates(3*Dim)
+     integer (c_int64_t) , intent(in)          :: Updates_index(3)
+     real    (c_double ) , intent(inout)        :: Slater_inv(Dim*Dim)
+
+     integer(c_int32_t), external :: qmckl_woodbury_3_c
+     info = qmckl_woodbury_3_c &
+	    (context, Dim, Updates, Updates_index, Slater_inv)
+
+   end function qmckl_woodbury_3
+   #+end_src
+
+   #+CALL: generate_f_interface(table=qmckl_woodbury_3_args,rettyp=get_value("FRetType"),fname=get_value("Name"))
+
+   #+RESULTS:
+   #+begin_src f90 :tangle (eval fh_func) :comments org :exports none
+   interface
+     integer(c_int32_t) function qmckl_woodbury_3 &
+	 (context, Dim, Updates, Updates_index, Slater_inv) &
+	 bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       implicit none
+
+       integer (c_int64_t) , intent(in)  , value :: context
+       integer (c_int64_t) , intent(in)  , value :: Dim
+       real    (c_double ) , intent(in)          :: Updates(3*Dim)
+       integer (c_int64_t) , intent(in)          :: Updates_index(3)
+       real    (c_double ) , intent(inout)        :: Slater_inv(Dim*Dim)
+
+     end function qmckl_woodbury_3
+   end interface
+   #+end_src
+
+*** Test                                                           :noexport:
+
+[TODO: FMJC] Write tests for the Sherman-Morrison part.
+
+
+     #+begin_src c :tangle (eval c_test)
+const uint64_t woodbury3_Dim = 3;
+const uint64_t woodbury3_Updates_index[3] = {1, 1, 1};
+const double woodbury3_Updates[9] = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
+double woodbury3_Slater_inv[9] = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
+
+// [TODO : FMJC ] add realistic tests
+
+rc = qmckl_woodbury_3_c(context, woodbury3_Dim, woodbury3_Updates, woodbury3_Updates_index, woodbury3_Slater_inv);
+assert(rc == QMCKL_SUCCESS);
+     #+end_src
+
 
 * End of files
 
@@ -556,3 +774,4 @@ assert(rc == QMCKL_SUCCESS);
 
 # -*- mode: org -*-
 # vim: syntax=c
+
