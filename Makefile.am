@@ -31,7 +31,6 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
-
 if VFC_CI
 AM_LDFLAGS=-lvfc_probes -lvfc_probes_f
 endif
@@ -97,6 +96,7 @@ $(src_qmckl_fo): $(src_qmckl_f)
 $(src_qmckl_f): $(srcdir)/$(qmckl_f)
 	cp $(srcdir)/$(qmckl_f) $(src_qmckl_f)
 
+
 share/doc/qmckl/html/index.html: share/doc/qmckl/html/README.html
 	$(ln_s_verbose)cd share/doc/qmckl/html/ && \
         rm -rf index.html && \
@@ -115,13 +115,14 @@ dist_src_DATA = $(ORG_FILES) $(TANGLED_FILES) $(EXPORTED_FILES)
 
 BUILT_SOURCES = $(C_FILES) $(F_FILES) $(FH_FUNC_FILES) $(FH_TYPE_FILES) $(H_FUNC_FILES) $(H_TYPE_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES) $(qmckl_f) $(qmckl_h) $(header_tests)
 
-CLEANFILES += $(BUILT_SOURCES) $(C_TEST_FILES) $(F_TEST_FILES) $(TANGLED_FILES) $(C_TEST_FILES) $(F_TEST_FILES) $(qmckl_f) $(qmckl_h) $(HTML_FILES) $(TEXT_FILES) share/doc/qmckl/html/index.html $(EXPORTED_FILES) $(header_tests)
+CLEANFILES += $(BUILT_SOURCES) $(C_TEST_FILES) $(F_TEST_FILES) $(TANGLED_FILES) $(C_TEST_FILES) $(F_TEST_FILES) $(qmckl_f) $(qmckl_h) $(HTML_FILES) $(TEXT_FILES) share/doc/qmckl/html/index.html $(EXPORTED_FILES) $(header_tests) $(qmckl_probes_src) $(qmckl_probes_o) qmckl_probes_f.mod
 
 EXTRA_DIST +=                 \
     tools/build_doc.sh        \
     tools/build_makefile.py   \
     tools/build_qmckl_f.sh    \
     tools/build_qmckl_h.sh    \
+    tools/build_qmckl_probes.sh\
     tools/config_doc.el       \
     tools/config_tangle.el    \
     tools/init.el             \
@@ -150,13 +151,26 @@ cat_h_verbose_0 = @echo "  HEADER   $@";
 ## Rules
 ## =====
 
+qmckl_probes_src = src/qmckl_probes.h qmckl_probes.c qmckl_probes_f.f90
+qmckl_probes_o = src/qmckl_probes.o qmckl_probes_f.o
+
 SUFFIXES = .f90 .h .org .c _f.f90 _func.h _type.h _private_func.h _private_type.h
+src_libqmckl_la_SOURCES += src/qmckl_probes.h src/qmckl_probes.c src/qmckl_probes_f.f90
 
 $(qmckl_h): $(H_FUNC_FILES) $(H_TYPE_FILES)
-	$(cat_h_verbose)$(srcdir)/tools/build_qmckl_h.sh
 
 $(qmckl_f): $(FH_FUNC_FILES) $(FH_TYPE_FILES)
 	$(cat_h_verbose)$(srcdir)/tools/build_qmckl_f.sh
+
+
+src/qmckl_probes.c: $(srcdir)/tools/qmckl_probes.c
+	cp $(srcdir)/tools/qmckl_probes.c $(srcdir)/src/qmckl_probes.c
+
+src/qmckl_probes.h: $(srcdir)/tools/qmckl_probes.h
+	cp $(srcdir)/tools/qmckl_probes.h $(srcdir)/src/qmckl_probes.h
+
+src/qmckl_probes_f.f90:
+	cp $(srcdir)/tools/qmckl_probes_f.f90 $(srcdir)/src/qmckl_probes_f.f90
 
 $(htmlize_el):
 	$(srcdir)/tools/install_htmlize.sh $(htmlize_el)
