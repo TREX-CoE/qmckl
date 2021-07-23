@@ -98,7 +98,6 @@ AC_CHECK_LIB([pthread], [pthread_create])
 #   CFLAGS="${CFLAGS} ${OPENMP_CFLAGS}"
 #fi
 
-
 ## BLAS
 #AX_BLAS([], [AC_MSG_ERROR([BLAS was not found.])])
 
@@ -244,13 +243,13 @@ ${PACKAGE_NAME} Version ${PACKAGE_VERSION} ${QMCKL_DEVEL}
 
 Prefix: '${prefix}'.
 
-CC..........: ${CC}
-CPPFLAGS....: ${CPPFLAGS}
-CFLAGS......: ${CFLAGS}
-FC..........: ${FC}
-FCLAGS......: ${FCFLAGS}
-LDFLAGS:....: ${LDFLAGS}
-LIBS........: ${LIBS}
+CC..............: ${CC}
+CPPFLAGS........: ${CPPFLAGS}
+CFLAGS..........: ${CFLAGS}
+FC..............: ${FC}
+FCLAGS..........: ${FCFLAGS}
+LDFLAGS:........: ${LDFLAGS}
+LIBS............: ${LIBS}
 
 Package features:
   ${ARGS}
