@@ -908,16 +908,19 @@ qmckl_exit_code qmckl_sherman_morrison_splitting_c(const qmckl_context context,
 //   std::cerr << "Called qmckl_sherman_morrison_splitting with " << N_updates << " updates" << std::endl;
 // #endif
 
+  qmckl_context local_context;
+  local_context = qmckl_context_create();
+  qmckl_exit_code rc;
+
   double later_updates[Dim * N_updates];
   uint64_t later_index[N_updates];
   uint64_t later = 0;
 
-  qmckl_exit_code smss = qmckl_slagel_splitting_c(Dim, N_updates, Updates, Updates_index,
+  rc = qmckl_slagel_splitting_c(Dim, N_updates, Updates, Updates_index,
                             Slater_inv, later_updates, later_index, &later);
   
   if (later > 0) {
-    qmckl_context context = qmckl_context_create();
-    qmckl_exit_code sms = qmckl_sherman_morrison_splitting_c(context, Dim, later, 
+    rc = qmckl_sherman_morrison_splitting_c(local_context, Dim, later, 
                             later_updates, later_index, Slater_inv);
   }
 
@@ -994,6 +997,286 @@ double splitting_Slater_inv[9] = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
 // [TODO : FMJC ] add realistic tests
 
 rc = qmckl_sherman_morrison_splitting_c(context, splitting_Dim, splitting_N_updates, splitting_Updates, splitting_Updates_index, splitting_Slater_inv);
+assert(rc == QMCKL_SUCCESS);
+     #+end_src
+
+* Sherman-Morrison with Woodbury 2x2 and update splitting
+
+This is like naïve Sherman-Morrising, but whenever a denominator is
+found that is too close to zero the update is split in half. Then one
+half is applied immediately and the other have is ket for later. When
+all the updates have been processed, the list of split updates that
+have been kept for later are processed. If again applying an update
+results in a denominator that is too close to zero, it is split in
+half again. One half is applied immediately and one half is kept for
+later. The algorithm is done when no more updates have been kept for
+later. This recursion will always end in a finite number of steps,
+unless the last original update causes a singular Slater-matrix.
+  
+** ~qmckl_sherman_morrison_smw2s~
+   :PROPERTIES:
+   :Name:     qmckl_sherman_morrison_smw2s
+   :CRetType: qmckl_exit_code
+   :FRetType: qmckl_exit_code
+   :END:
+
+   This is the simplest of the available Sherman-Morrison-Woodbury
+   kernels in QMCkl. It applies rank-1 updates one by one in the order
+   that is given. It only checks if the denominator in the
+   Sherman-Morrison formula is not too close to zero (and exit with an
+   error if it does) during the application of an update.
+
+   #+NAME: qmckl_sherman_morrison_smw2s_args
+   | qmckl_context | context                  | in    | Global state                                         |
+   | uint64_t      | Dim                      | in    | Leading dimension of Slater_inv                      |
+   | uint64_t      | N_updates                | in    | Number of rank-1 updates to be applied to Slater_inv |
+   | double        | Updates[N_updates*Dim]   | in    | Array containing the updates                         |
+   | uint64_t      | Updates_index[N_updates] | in    | Array containing the rank-1 updates                  |
+   | double        | Slater_inv[Dim*Dim]      | inout | Array containing the inverse of a Slater-matrix      |
+
+*** Requirements
+
+      Add description of the input variables. (see for e.g. qmckl_distance.org)
+
+*** C header
+
+    #+CALL: generate_c_header(table=qmckl_sherman_morrison_smw2s_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+
+
+*** Source Fortran
+
+
+*** Source C
+
+    #+begin_src c :tangle (eval c) :comments org
+#include <stdbool.h>
+#include "qmckl.h"
+
+qmckl_exit_code qmckl_sherman_morrison_smw2s_c(const qmckl_context context, 
+                                const uint64_t Dim,
+                                const uint64_t N_updates,
+                                const double* Updates,
+                                const uint64_t* Updates_index,
+                                double * Slater_inv) {
+// #ifdef DEBUG //  Leave commented out since debugging information is not yet implemented in QMCkl.
+//   std::cerr << "Called qmckl_sherman_morrison_woodbury_2 with " << N_updates
+//             << " updates" << std::endl;
+// #endif
+
+  qmckl_context local_context;
+  local_context = qmckl_context_create();
+  qmckl_exit_code rc;
+
+  uint64_t n_of_2blocks = N_updates / 2;
+  uint64_t remainder = N_updates % 2;
+  uint64_t length_2block = 2 * Dim;
+  uint64_t length_1block = 1 * Dim;
+
+  // Apply first 2*n_of_2blocks updates in n_of_2blocks blocks of 2 updates with
+  // Woodbury 2x2 kernel
+  double later_updates[Dim * N_updates];
+  uint64_t later_index[N_updates];
+  uint64_t later = 0;
+  if (n_of_2blocks > 0) {
+    for (uint64_t i = 0; i < n_of_2blocks; i++) {
+      double *Updates_2block = &Updates[i * length_2block];
+      uint64_t *Updates_index_2block = &Updates_index[i * 2];
+      rc = qmckl_woodbury_2_c(local_context, Dim, Updates_2block, Updates_index_2block, Slater_inv);
+      if (rc != 0) { // Send the entire block to slagel_splitting
+        uint64_t l = 0;
+        rc = qmckl_slagel_splitting_c(Dim, 2, Updates_2block, Updates_index_2block,
+                Slater_inv, later_updates + (Dim * later), later_index + later, &l);
+        later = later + l;
+      }
+    }
+  }
+
+  if (remainder == 1) { // Apply last remaining update with slagel_splitting
+    double *Updates_1block = &Updates[n_of_2blocks * length_2block];
+    uint64_t *Updates_index_1block = &Updates_index[2 * n_of_2blocks];
+    uint64_t l = 0;
+    rc = qmckl_slagel_splitting_c(Dim, 1, Updates_1block, Updates_index_1block,
+            Slater_inv, later_updates + (Dim * later), later_index + later, &l);
+    later = later + l;
+  }
+
+  if (later > 0) {
+    rc = qmckl_sherman_morrison_splitting_c(local_context, Dim, later, later_updates, later_index, Slater_inv);
+  }
+}
+
+    #+end_src
+
+*** Performance...
+
+** C interface                                                     :noexport:
+
+   #+CALL: generate_c_interface(table=qmckl_sherman_morrison_smw2s_args,rettyp=get_value("FRetType"),fname=get_value("Name"))
+
+   #+CALL: generate_f_interface(table=qmckl_sherman_morrison_smw2s_args,rettyp=get_value("FRetType"),fname=get_value("Name"))
+
+*** Test                                                           :noexport:
+
+[TODO: FMJC] Write tests for the Sherman-Morrison part.
+
+
+     #+begin_src c :tangle (eval c_test)
+const uint64_t smw2s_Dim = 3;
+const uint64_t smw2s_N_updates = 3;
+const uint64_t smw2s_Updates_index[3] = {1, 1, 1};
+const double smw2s_Updates[9] = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
+double smw2s_Slater_inv[9] = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
+
+// [TODO : FMJC ] add realistic tests
+
+rc = qmckl_sherman_morrison_smw2s_c(context, smw2s_Dim, smw2s_N_updates,
+                  smw2s_Updates, smw2s_Updates_index, smw2s_Slater_inv);
+assert(rc == QMCKL_SUCCESS);
+     #+end_src
+
+* Sherman-Morrison with Woodbury 3x3, 2x2 and update splitting
+
+This is like naïve Sherman-Morrising, but whenever a denominator is
+found that is too close to zero the update is split in half. Then one
+half is applied immediately and the other have is ket for later. When
+all the updates have been processed, the list of split updates that
+have been kept for later are processed. If again applying an update
+results in a denominator that is too close to zero, it is split in
+half again. One half is applied immediately and one half is kept for
+later. The algorithm is done when no more updates have been kept for
+later. This recursion will always end in a finite number of steps,
+unless the last original update causes a singular Slater-matrix.
+  
+** ~qmckl_sherman_morrison_smw32s~
+   :PROPERTIES:
+   :Name:     qmckl_sherman_morrison_smw32s
+   :CRetType: qmckl_exit_code
+   :FRetType: qmckl_exit_code
+   :END:
+
+   This is the simplest of the available Sherman-Morrison-Woodbury
+   kernels in QMCkl. It applies rank-1 updates one by one in the order
+   that is given. It only checks if the denominator in the
+   Sherman-Morrison formula is not too close to zero (and exit with an
+   error if it does) during the application of an update.
+
+   #+NAME: qmckl_sherman_morrison_smw32s_args
+   | qmckl_context | context                  | in    | Global state                                         |
+   | uint64_t      | Dim                      | in    | Leading dimension of Slater_inv                      |
+   | uint64_t      | N_updates                | in    | Number of rank-1 updates to be applied to Slater_inv |
+   | double        | Updates[N_updates*Dim]   | in    | Array containing the updates                         |
+   | uint64_t      | Updates_index[N_updates] | in    | Array containing the rank-1 updates                  |
+   | double        | Slater_inv[Dim*Dim]      | inout | Array containing the inverse of a Slater-matrix      |
+
+*** Requirements
+
+      Add description of the input variables. (see for e.g. qmckl_distance.org)
+
+*** C header
+
+    #+CALL: generate_c_header(table=qmckl_sherman_morrison_smw32s_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+
+
+*** Source Fortran
+
+
+*** Source C
+
+    #+begin_src c :tangle (eval c) :comments org
+#include <stdbool.h>
+#include "qmckl.h"
+
+qmckl_exit_code qmckl_sherman_morrison_smw32s_c(const qmckl_context context, 
+                                const uint64_t Dim,
+                                const uint64_t N_updates,
+                                const double* Updates,
+                                const uint64_t* Updates_index,
+                                double * Slater_inv) {
+// #ifdef DEBUG //  Leave commented out since debugging information is not yet implemented in QMCkl.
+//   std::cerr << "Called qmckl_sherman_morrison_woodbury_3 with " << N_updates
+//             << " updates" << std::endl;
+// #endif
+
+  qmckl_context local_context;
+  local_context = qmckl_context_create();
+  qmckl_exit_code rc;
+
+  uint64_t n_of_3blocks = N_updates / 3;
+  uint64_t remainder = N_updates % 3;
+  uint64_t length_3block = 3 * Dim;
+  uint64_t length_2block = 2 * Dim;
+  uint64_t length_1block = 1 * Dim;
+
+  // Apply first 3*n_of_3blocks updates in n_of_3blocks blocks of 3 updates with
+  // Woodbury 3x3 kernel
+  double later_updates[Dim * N_updates];
+  uint64_t later_index[N_updates];
+  uint64_t later = 0;
+  if (n_of_3blocks > 0) {
+    for (uint64_t i = 0; i < n_of_3blocks; i++) {
+      double *Updates_3block = &Updates[i * length_3block];
+      uint64_t *Updates_index_3block = &Updates_index[i * 3];
+      rc = qmckl_woodbury_3_c(local_context, Dim, Updates_3block, Updates_index_3block, Slater_inv);
+      if (rc != 0) { // Send the entire block to slagel_splitting
+        uint64_t l = 0;
+        rc = qmckl_slagel_splitting_c(Dim, 3, Updates_3block, Updates_index_3block,
+                Slater_inv, later_updates + (Dim * later), later_index + later, &l);
+        later = later + l;
+      }
+    }
+  }
+
+  if (remainder == 2) { // Apply last remaining block of 2 updates with Woodbury 2x2 kernel
+    double *Updates_2block = &Updates[n_of_3blocks * length_3block];
+    uint64_t *Updates_index_2block = &Updates_index[3 * n_of_3blocks];
+    rc = qmckl_woodbury_2_c(local_context, Dim, Updates_2block, Updates_index_2block, Slater_inv);
+    if (rc != 0) { // Send the entire block to slagel_splitting
+      uint64_t l = 0;
+      rc = qmckl_slagel_splitting_c(Dim, 2, Updates_2block, Updates_index_2block,
+              Slater_inv, later_updates + (Dim * later), later_index + later, &l);
+      later = later + l;
+    }
+  }
+  else if (remainder == 1) { // Apply last remaining update with slagel_splitting
+    double *Updates_1block = &Updates[n_of_3blocks * length_3block];
+    uint64_t *Updates_index_1block = &Updates_index[3 * n_of_3blocks];
+    uint64_t l = 0;
+    rc = qmckl_slagel_splitting_c(Dim, 1, Updates_1block, Updates_index_1block,
+            Slater_inv, later_updates + (Dim * later), later_index + later, &l);
+    later = later + l;
+  }
+
+  if (later > 0) {
+    rc = qmckl_sherman_morrison_splitting_c(local_context, Dim, later, later_updates, later_index, Slater_inv);
+  }
+}
+
+    #+end_src
+
+*** Performance...
+
+** C interface                                                     :noexport:
+
+   #+CALL: generate_c_interface(table=qmckl_sherman_morrison_smw32s_args,rettyp=get_value("FRetType"),fname=get_value("Name"))
+
+   #+CALL: generate_f_interface(table=qmckl_sherman_morrison_smw32s_args,rettyp=get_value("FRetType"),fname=get_value("Name"))
+
+*** Test                                                           :noexport:
+
+[TODO: FMJC] Write tests for the Sherman-Morrison part.
+
+
+     #+begin_src c :tangle (eval c_test)
+const uint64_t smw32s_Dim = 3;
+const uint64_t smw32s_N_updates = 3;
+const uint64_t smw32s_Updates_index[3] = {1, 1, 1};
+const double smw32s_Updates[9] = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
+double smw32s_Slater_inv[9] = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
+
+// [TODO : FMJC ] add realistic tests
+
+rc = qmckl_sherman_morrison_smw32s_c(context, smw32s_Dim, smw32s_N_updates,
+                  smw32s_Updates, smw32s_Updates_index, smw32s_Slater_inv);
 assert(rc == QMCKL_SUCCESS);
      #+end_src
 
