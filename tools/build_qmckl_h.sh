@@ -85,6 +85,10 @@ cat << EOF > ${OUTPUT}
 #ifndef __QMCKL_H__
 #define __QMCKL_H__
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -100,6 +104,9 @@ do
 done
 
 cat << EOF >> ${OUTPUT}
+#ifdef __cplusplus
+}
+#endif
 #endif
 EOF
 
