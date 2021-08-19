@@ -58,12 +58,11 @@ bool qmckl_probe_check_relative (
 #endif
 }
 
-
-void __attribute__((destructor)) qmckl_dump_probes(){
 #ifdef VFC_CI
+void __attribute__((destructor)) qmckl_dump_probes(){
     vfc_dump_probes(&probes);
-#endif
 }
+#endif
 
 
 // Fortran wrappers
