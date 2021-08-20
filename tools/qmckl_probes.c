@@ -1,4 +1,5 @@
 #include <stdbool.h>
+#include <stdlib.h>
 #include <stdio.h>
 
 #ifdef VFC_CI
@@ -39,7 +40,7 @@ bool qmckl_probe_check(
 #ifdef VFC_CI
     return vfc_probe_check(&probes, testName, varName, value, accuracyTarget);
 #else
-    return !(value == expectedValue);
+    return !(abs(value - expectedValue) < accuracyTarget);
 #endif
 }
 
@@ -54,7 +55,7 @@ bool qmckl_probe_check_relative (
 #ifdef VFC_CI
     return vfc_probe_check_relative(&probes, testName, varName, value, accuracyTarget);
 #else
-    return !(value <= expectedValue + accuracyTarget || value >= expectedValue - accuracyTarget);
+    return !(abs(value - expectedValue) / abs(expectedValue) < accuracyTarget);
 #endif
 }
 
