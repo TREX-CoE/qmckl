@@ -96,10 +96,10 @@ $(src_qmckl_fo): $(src_qmckl_f)
 $(src_qmckl_f): $(srcdir)/$(qmckl_f)
 	cp $(srcdir)/$(qmckl_f) $(src_qmckl_f)
 
-src/qmckl_probes.c: $(srcdir)/tools/qmckl_probes.c
+src/qmckl_probes.c:
 	cp $(srcdir)/tools/qmckl_probes.c $(srcdir)/src/qmckl_probes.c
 
-src/qmckl_probes.h: $(srcdir)/tools/qmckl_probes.h
+src/qmckl_probes.h:
 	cp $(srcdir)/tools/qmckl_probes.h $(srcdir)/src/qmckl_probes.h
 
 src/qmckl_probes_f.f90:
