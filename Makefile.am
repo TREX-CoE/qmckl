@@ -41,7 +41,7 @@ VERSION_MINOR   = @VERSION_MINOR@
 VERSION_PATCH   = @VERSION_PATCH@
 
 SUBDIRS =
-CLEANFILES = qmckl.mod
+CLEANFILES = qmckl.mod qmckl_probes_f.mod
 EXTRA_DIST =
 
 pkgconfigdir = $(libdir)/pkgconfig
@@ -123,7 +123,7 @@ dist_src_DATA = $(ORG_FILES) $(TANGLED_FILES) $(EXPORTED_FILES)
 
 BUILT_SOURCES = $(C_FILES) $(F_FILES) $(FH_FUNC_FILES) $(FH_TYPE_FILES) $(H_FUNC_FILES) $(H_TYPE_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES) $(qmckl_f) $(qmckl_h) $(header_tests)
 
-CLEANFILES += $(BUILT_SOURCES) $(C_TEST_FILES) $(F_TEST_FILES) $(TANGLED_FILES) $(C_TEST_FILES) $(F_TEST_FILES) $(qmckl_f) $(qmckl_h) $(HTML_FILES) $(TEXT_FILES) share/doc/qmckl/html/index.html $(EXPORTED_FILES) $(header_tests) qmckl_probes_f.mod
+CLEANFILES += $(BUILT_SOURCES) $(C_TEST_FILES) $(F_TEST_FILES) $(TANGLED_FILES) $(C_TEST_FILES) $(F_TEST_FILES) $(qmckl_f) $(qmckl_h) $(HTML_FILES) $(TEXT_FILES) share/doc/qmckl/html/index.html $(EXPORTED_FILES) $(header_tests) 
 
 EXTRA_DIST +=                 \
     tools/build_doc.sh        \
