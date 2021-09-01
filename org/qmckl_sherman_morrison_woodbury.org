@@ -27,12 +27,10 @@ int main() {
   #+end_src
 
 
-
 * Helper Functions
   
-Helper functions that are used by the Sherman-Morrison-Woodbury
-kernels. These functions should only be used in the context of these
-kernels.
+Helper functions that are used by the Sherman-Morrison-Woodbury kernels. 
+These functions can only be used internally by higher level functions.
 
 ** ~qmckl_slagel_splitting~
    :PROPERTIES:
@@ -41,7 +39,12 @@ kernels.
    :FRetType: double precision
    :END:
 
-   This function is used to set the threshold value that is used in the kernels to determine if a matrix is invertable or not. In the Sherman-Morrison kernels this is determined by comparing the denominator in the Sherman-Morrison formula to the value set in threshold. If the value is smaller than the threshold value it means the matrix is not invertable. In the Woodbury kernels the threshold value is compared with the value of the determinant of the update matrix.
+   ~qmckl_slagel_splitting~ is used internally to perform a J.~Slagel style split of rank-1 updates.
+  
+   For a given $u_j$ we define a threshold $\epsilon_j$, which is the minimum value of 
+   $1+v_j^TS^{-1}u_j$ for the matrix to be considered nonsingular. If $1+v_j^TS^{-1}u_j \geq \epsilon_j$, 
+   the update is applied as usual. Otherwise, $u_j$ will be redefined as $\frac{u_j}{2}$, and the other half 
+   (to be applied at the end) will be defined using vectors $\frac{u_{j'}}{2}$ and $v_{j'}^T=v_{j'}^T$.
    
    #+NAME: qmckl_slagel_splitting_args
    | uint64_t | Dim                            | in    | Leading dimension of Slater_inv                               |
@@ -57,7 +60,15 @@ kernels.
 
 *** Requirements
 
-      Add description of the input variables. (see for e.g. qmckl_distance.org)
+    - ~Dim >= 2~
+    - ~N_updates >= 1~
+    - ~Updates~ is allocated with at least $1 \times 2 \times 8$ bytes
+    - ~Updates_index~ is allocated with at least $1 \times 8$ bytes
+    - ~breakdown~ is a small number such that $0 < breakdown << 1$
+    - ~Slater_inv~ is allocated with at least $Dim \times Dim \times 8$ bytes
+    - ~later_updates~ is allocated with at least $1 \times 2 \times 8$ bytes
+    - ~later_index~ is allocated with at least $1 \times 8$ bytes
+    - ~later >= 0~ 
 
 *** C header
 
@@ -151,6 +162,8 @@ qmckl_exit_code qmckl_slagel_splitting_c(uint64_t Dim,
     
 *** Performance
 
+This function performce better for cycles with 1 rank-1 update and with a high fail-rate.
+
 
 ** C interface                                                     :noexport:
    
@@ -184,8 +197,7 @@ qmckl_exit_code qmckl_slagel_splitting_c(uint64_t Dim,
 
 *** Test                                                           :noexport:
 
-[TODO: FMJC] Write tests for the Sherman-Morrison part.
-
+  This function does not have an explicit test as it is only used internally by higher level Sherman-Morrison-Woodbury functions.
 
 
 * Naïve Sherman-Morrison
@@ -198,10 +210,20 @@ qmckl_exit_code qmckl_slagel_splitting_c(uint64_t Dim,
    :END:
 
    This is the simplest of the available Sherman-Morrison-Woodbury
-   kernels in QMCkl. It applies rank-1 updates one by one in the order
+   kernels. It applies rank-1 updates one by one in the order
    that is given. It only checks if the denominator in the
-   Sherman-Morrison formula is not too close to zero (and exit with an
-   error if it does) during the application of an update.
+   Sherman-Morrison formula is not too close to zero when an update is evaluated.
+   It will exit with an error code of the denominator is too close to zero.
+
+   The formula that is applied is
+   \begin{equation}
+    (S + uv^T)^{-1} = S^{-1} - \frac{S^{-1} uv^T S^{-1}}{1 + v^T S^{-1} u}
+   \end{equation}
+
+   where
+   $S$ is the Slater-matrix,
+   $u$ and $v^T$ are the column and row vectors containing the updates,
+   $S^{-1}$ is the inverse of the Slater-matrix.
 
    #+NAME: qmckl_sherman_morrison_args
    | qmckl_context | context                  | in    | Global state                                         |
@@ -213,9 +235,15 @@ qmckl_exit_code qmckl_slagel_splitting_c(uint64_t Dim,
    | double        | Slater_inv[Dim*Dim]      | inout | Array containing the inverse of a Slater-matrix      |
 
 *** Requirements
-
-      Add description of the input variables. (see for e.g. qmckl_distance.org)
-
+    
+    - ~context~ is not ~QMCKL_NULL_CONTEXT~
+    - ~Dim >= 2~
+    - ~N_updates >= 1~
+    - ~Updates~ is allocated with at least $1 \times 2 \times 8$ bytes
+    - ~Updates_index~ is allocated with at least $1 \times 8$ bytes
+    - ~breakdown~ is a small number such that $0 < breakdown << 1$
+    - ~Slater_inv~ is allocated with at least $Dim \times Dim \times 8$ bytes
+ 
 *** C header
 
     #+CALL: generate_c_header(table=qmckl_sherman_morrison_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
@@ -312,6 +340,9 @@ qmckl_exit_code qmckl_sherman_morrison_c(const qmckl_context context,
 
 
 *** Performance
+
+    This function performs better when there is only 1 rank-1 update in the update cycle and the fail-rate of rank-1 updates is high.
+
 
 ** C interface                                                     :noexport:
 
