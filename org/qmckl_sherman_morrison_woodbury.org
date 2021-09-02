@@ -26,7 +26,7 @@ int main() {
   qmckl_exit_code rc;
   #+end_src
 
-
+  
 * Helper Functions
   
 Helper functions that are used by the Sherman-Morrison-Woodbury kernels. 
@@ -39,10 +39,11 @@ These functions can only be used internally by higher level functions.
    :FRetType: double precision
    :END:
 
-   ~qmckl_slagel_splitting~ is used internally to perform a J.~Slagel style split of rank-1 updates.
+   ~qmckl_slagel_splitting~ is used internally to apply a list of rank-1 updates while splitting an update if necessary.
+   In case of a split it applies the first half of the update while putting the second half in waiting queue to be applied at the end.
   
-   For a given $u_j$ we define a threshold $\epsilon_j$, which is the minimum value of 
-   $1+v_j^TS^{-1}u_j$ for the matrix to be considered nonsingular. If $1+v_j^TS^{-1}u_j \geq \epsilon_j$, 
+   For a given update $u_j$ we define a threshold value $\epsilon_j$, which is the minimum value of 
+   $1+v_j^TS^{-1}u_j$ for a non-singular matrix $S$. If $1+v_j^TS^{-1}u_j \geq \epsilon_j$, 
    the update is applied as usual. Otherwise, $u_j$ will be redefined as $\frac{u_j}{2}$, and the other half 
    (to be applied at the end) will be defined using vectors $\frac{u_{j'}}{2}$ and $v_{j'}^T=v_{j'}^T$.
    
@@ -69,7 +70,7 @@ These functions can only be used internally by higher level functions.
     - ~later_updates~ is allocated with at least $1 \times 2 \times 8$ bytes
     - ~later_index~ is allocated with at least $1 \times 8$ bytes
     - ~later >= 0~ 
-
+      
 *** C header
 
     #+CALL: generate_c_header(table=qmckl_slagel_splitting_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
@@ -337,8 +338,6 @@ qmckl_exit_code qmckl_sherman_morrison_c(const qmckl_context context,
 
     #+end_src
 
-
-
 *** Performance
 
     This function performs better when there is only 1 rank-1 update in the update cycle and the fail-rate of rank-1 updates is high.
@@ -567,7 +566,6 @@ qmckl_exit_code qmckl_woodbury_2_c(const qmckl_context context,
     #+end_src
 
 
-    
 *** Performance
 
     This function is most efficient when used in cases where there are only 2 rank-1 updates.
@@ -640,7 +638,7 @@ rc = qmckl_woodbury_2_c(context, woodbury_Dim, woodbury_Updates, woodbury_Update
 assert(rc == QMCKL_SUCCESS);
      #+end_src
 
-
+ 
 * Woodbury 3x3
   
 ** ~qmckl_woodbury_3~
@@ -651,7 +649,8 @@ assert(rc == QMCKL_SUCCESS);
    :END:
 
    The 3x3 version of the Woodbury 2x2 kernel. It is used to apply three
-   rank-1 updates at once. The formula used in this kernel is the same as for Woodbury 2x2, with the exception of
+   rank-1 updates at once. The formula used in this kernel is the same as for Woodbury 2x2,
+   except for the sizes of the following matrices:
 
    $C:= S^{-1}U$, a Dim $\times 3$ matrix
    $B := 1 + VC$, the $3 \times 3$ matrix that is going to be inverted
@@ -875,17 +874,6 @@ assert(rc == QMCKL_SUCCESS);
 
 * Sherman-Morrison with update splitting
   
-This is like naïve Sherman-Morrising, but whenever a denominator is
-found that is too close to zero the update is split in half. Then one
-half is applied immediately and the other have is ket for later. When
-all the updates have been processed, the list of split updates that
-have been kept for later are processed. If again applying an update
-results in a denominator that is too close to zero, it is split in
-half again. One half is applied immediately and one half is kept for
-later. The algorithm is done when no more updates have been kept for
-later. This recursion will always end in a finite number of steps,
-unless the last original update causes a singular Slater-matrix.
-  
 ** ~qmckl_sherman_morrison_splitting~
    :PROPERTIES:
    :Name:     qmckl_sherman_morrison_splitting
@@ -893,11 +881,14 @@ unless the last original update causes a singular Slater-matrix.
    :FRetType: qmckl_exit_code
    :END:
 
-   This is the simplest of the available Sherman-Morrison-Woodbury
-   kernels in QMCkl. It applies rank-1 updates one by one in the order
-   that is given. It only checks if the denominator in the
-   Sherman-Morrison formula is not too close to zero (and exit with an
-   error if it does) during the application of an update.
+   This is a variation on the 'Naive' Sherman-Morrison kernel. Whenever the denominator $1+v_j^T S^{-1} u_j$ in
+   the Sherman-Morrison formula is deemed to be too close to zero, the update $u_j$ is split in half:
+   $u_j \rightarrow \frac{1}{1} u_j$. One half is applied immediately --necessarily increasing the value of the
+   denominator because of the split-- while the other halve is put in a queue that will be applied when all the
+   remaining updates have been treated. The kernel is executed recursively until the queue is eiter empty and all
+   updates are applied successfully, or the size of the queue equals the number of initial updates. In the last
+   case the Slater-matrix that would have resulted from applying the updates is un-invertable and therefore the
+   kernel exits with an exit code.
 
    #+NAME: qmckl_sherman_morrison_splitting_args
    | qmckl_context | context                  | in    | Global state                                         |
@@ -910,8 +901,14 @@ unless the last original update causes a singular Slater-matrix.
 
 *** Requirements
 
-      Add description of the input variables. (see for e.g. qmckl_distance.org)
-
+    - ~context~ is not ~QMCKL_NULL_CONTEXT~
+    - ~Dim >= 2~
+    - ~N_updates >= 1~
+    - ~Updates~ is allocated with at least $1 \times 2 \times 8$ bytes
+    - ~Updates_index~ is allocated with at least $1 \times 8$ bytes
+    - ~breakdown~ is a small number such that $0 < breakdown << 1$
+    - ~Slater_inv~ is allocated with at least $Dim \times Dim \times 8$ bytes
+    
 *** C header
 
     #+CALL: generate_c_header(table=qmckl_sherman_morrison_splitting_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
@@ -944,7 +941,6 @@ integer function qmckl_sherman_morrison_splitting_f(context, Dim, N_updates,    
   info = qmckl_sherman_morrison_splitting(context, Dim, N_updates, Updates, Updates_index, breakdown, Slater_inv)
 end function qmckl_sherman_morrison_splitting_f
     #+end_src
-
 
 *** Source C
 
@@ -984,6 +980,8 @@ qmckl_exit_code qmckl_sherman_morrison_splitting_c(const qmckl_context context,
 
 *** Performance...
 
+    This kernel performs best when there are only 1 rank-1 update cycles and/or when the fail-rate is high.
+    
 ** C interface                                                     :noexport:
 
    #+CALL: generate_c_interface(table=qmckl_sherman_morrison_splitting_args,rettyp=get_value("FRetType"),fname=get_value("Name"))
@@ -1059,17 +1057,6 @@ assert(rc == QMCKL_SUCCESS);
 
 * Woodbury 2x2 with Sherman-Morrison and update splitting
 
-This is like naïve Sherman-Morrising, but whenever a denominator is
-found that is too close to zero the update is split in half. Then one
-half is applied immediately and the other have is ket for later. When
-all the updates have been processed, the list of split updates that
-have been kept for later are processed. If again applying an update
-results in a denominator that is too close to zero, it is split in
-half again. One half is applied immediately and one half is kept for
-later. The algorithm is done when no more updates have been kept for
-later. This recursion will always end in a finite number of steps,
-unless the last original update causes a singular Slater-matrix.
-  
 ** ~qmckl_sherman_morrison_smw2s~
    :PROPERTIES:
    :Name:     qmckl_sherman_morrison_smw2s
@@ -1077,11 +1064,17 @@ unless the last original update causes a singular Slater-matrix.
    :FRetType: qmckl_exit_code
    :END:
 
-   This is the simplest of the available Sherman-Morrison-Woodbury
-   kernels in QMCkl. It applies rank-1 updates one by one in the order
-   that is given. It only checks if the denominator in the
-   Sherman-Morrison formula is not too close to zero (and exit with an
-   error if it does) during the application of an update.
+   The Woodbury 2x2 kernel with Sherman-Morrison and update splitting combines the low-level Woodbury 2x2 kernel
+   and Sherman-Morrison with update splitting. For a given number of updates $N$ it splits the number of updates
+   in blocks of two updates. The blocks of two updates are then applied one by one using Woodbury 2x2. If a block
+   of updates fails, both updates in the block are applied with Sherman-Morrison instead, split if necessary and
+   with their second half put in a queue. After all blocks are processed the remaining one update --in case there
+   was an odd number of updates to begin with-- is also aplpied with Sherman-Morrison and split if necessary.
+   The queue containing the collected second halves of all the processed updates is processed at the very end to
+   avoid having many intermediate queues containing only a few updates that risks an increased probability
+   of artificially created non-singular intermediate matrices, resulting from division up the total number of
+   updates in blocks of three.
+   
 
    #+NAME: qmckl_sherman_morrison_smw2s_args
    | qmckl_context | context                  | in    | Global state                                         |
@@ -1094,7 +1087,13 @@ unless the last original update causes a singular Slater-matrix.
 
 *** Requirements
 
-      Add description of the input variables. (see for e.g. qmckl_distance.org)
+    - ~context~ is not ~QMCKL_NULL_CONTEXT~
+    - ~Dim >= 2~
+    - ~N_updates >= 1~
+    - ~Updates~ is allocated with at least $1 \times 2 \times 8$ bytes
+    - ~Updates_index~ is allocated with at least $1 \times 8$ bytes
+    - ~breakdown~ is a small number such that $0 < breakdown << 1$
+    - ~Slater_inv~ is allocated with at least $Dim \times Dim \times 8$ bytes
 
 *** C header
 
@@ -1112,7 +1111,6 @@ unless the last original update causes a singular Slater-matrix.
 	  double* Slater_inv ); 
     #+end_src
 
-
 *** Source Fortran
 
     #+begin_src f90 :tangle (eval f)
@@ -1128,7 +1126,6 @@ integer function qmckl_sherman_morrison_smw2s_f(context, Slater_inv, Dim, N_upda
   info = qmckl_sherman_morrison_smw2s (context, Dim, N_updates, Updates, Updates_index, Slater_inv)
 end function qmckl_sherman_morrison_smw2s_f
     #+end_src
-
 
 *** Source C
 
@@ -1191,6 +1188,8 @@ qmckl_exit_code qmckl_sherman_morrison_smw2s_c(const qmckl_context context,
     #+end_src
 
 *** Performance...
+
+    This kernel performs best for the case of two rank-1 update and a low fail-rate.
 
 ** C interface                                                     :noexport:
 
@@ -1265,17 +1264,6 @@ assert(rc == QMCKL_SUCCESS);
 
 * Woodbury 3x3 with Sherman-Morrison and update splitting
 
-This is like naïve Sherman-Morrising, but whenever a denominator is
-found that is too close to zero the update is split in half. Then one
-half is applied immediately and the other have is ket for later. When
-all the updates have been processed, the list of split updates that
-have been kept for later are processed. If again applying an update
-results in a denominator that is too close to zero, it is split in
-half again. One half is applied immediately and one half is kept for
-later. The algorithm is done when no more updates have been kept for
-later. This recursion will always end in a finite number of steps,
-unless the last original update causes a singular Slater-matrix.
-  
 ** ~qmckl_sherman_morrison_smw3s~
    :PROPERTIES:
    :Name:     qmckl_sherman_morrison_smw3s
@@ -1283,11 +1271,10 @@ unless the last original update causes a singular Slater-matrix.
    :FRetType: qmckl_exit_code
    :END:
 
-   This is the simplest of the available Sherman-Morrison-Woodbury
-   kernels in QMCkl. It applies rank-1 updates one by one in the order
-   that is given. It only checks if the denominator in the
-   Sherman-Morrison formula is not too close to zero (and exit with an
-   error if it does) during the application of an update.
+   The Woodbury 3x3 kernel with Sherman-Morrison and update splitting combines the low-level Woodbury 3x3 kernel
+   and Sherman-Morrison with update splitting. It works the same as Woodbury 2x2 with Sherman-Morrison and update
+   splitting, except that the updates are divided in blocks of three rank-1 updates instead of blocks of two
+   rank-1 updates.     
 
    #+NAME: qmckl_sherman_morrison_smw3s_args
    | qmckl_context | context                  | in    | Global state                                         |
@@ -1300,7 +1287,13 @@ unless the last original update causes a singular Slater-matrix.
 
 *** Requirements
 
-      Add description of the input variables. (see for e.g. qmckl_distance.org)
+    - ~context~ is not ~QMCKL_NULL_CONTEXT~
+    - ~Dim >= 2~
+    - ~N_updates >= 1~
+    - ~Updates~ is allocated with at least $1 \times 2 \times 8$ bytes
+    - ~Updates_index~ is allocated with at least $1 \times 8$ bytes
+    - ~breakdown~ is a small number such that $0 < breakdown << 1$
+    - ~Slater_inv~ is allocated with at least $Dim \times Dim \times 8$ bytes
 
 *** C header
 
@@ -1318,7 +1311,6 @@ unless the last original update causes a singular Slater-matrix.
 	  double* Slater_inv ); 
     #+end_src
 
-
 *** Source Fortran
 
     #+begin_src f90 :tangle (eval f)
@@ -1335,7 +1327,6 @@ integer function qmckl_sherman_morrison_smw3s_f(context, Slater_inv, Dim, N_upda
   info = qmckl_sherman_morrison_smw3s(context, Dim, N_updates, Updates, Updates_index, Slater_inv)
 end function qmckl_sherman_morrison_smw3s_f
     #+end_src
-
 
 *** Source C
 
@@ -1398,6 +1389,9 @@ qmckl_exit_code qmckl_sherman_morrison_smw3s_c(const qmckl_context context,
     #+end_src
 
 *** Performance...
+
+    This kernel performs best for the case of three rank-1 update and a low fail-rate.
+    
 
 ** C interface                                                     :noexport:
 
@@ -1471,17 +1465,6 @@ assert(rc == QMCKL_SUCCESS);
 
 
 * Woodbury 3x3 and 2x2 with Sherman-Morrison and update splitting
-
-This is like naïve Sherman-Morrising, but whenever a denominator is
-found that is too close to zero the update is split in half. Then one
-half is applied immediately and the other have is ket for later. When
-all the updates have been processed, the list of split updates that
-have been kept for later are processed. If again applying an update
-results in a denominator that is too close to zero, it is split in
-half again. One half is applied immediately and one half is kept for
-later. The algorithm is done when no more updates have been kept for
-later. This recursion will always end in a finite number of steps,
-unless the last original update causes a singular Slater-matrix.
   
 ** ~qmckl_sherman_morrison_smw32s~
    :PROPERTIES:
@@ -1490,11 +1473,11 @@ unless the last original update causes a singular Slater-matrix.
    :FRetType: qmckl_exit_code
    :END:
 
-   This is the simplest of the available Sherman-Morrison-Woodbury
-   kernels in QMCkl. It applies rank-1 updates one by one in the order
-   that is given. It only checks if the denominator in the
-   Sherman-Morrison formula is not too close to zero (and exit with an
-   error if it does) during the application of an update.
+   The Woodbury 3x3 and 2x2 kernel with Sherman-Morrison and update splitting combines the low-level Woodbury 3x3 kernel,
+   the Woobury 2x2 kernel and Sherman-Morrison with update splitting. It works the almost the same as Woodbury 3x3 with
+   Sherman-Morrison and update splitting, except that when there is a remainder of two rank-1 updates, it is first tried
+   with Woodbury 2x2 instead of sending them all to Sherman-Morrison with update splitting. For example, in the case of
+   5 updates the updates are applied in 1 block of 3 updates end 1 block of 2 updates.
 
    #+NAME: qmckl_sherman_morrison_smw32s_args
    | qmckl_context | context                  | in    | Global state                                         |
@@ -1507,7 +1490,13 @@ unless the last original update causes a singular Slater-matrix.
 
 *** Requirements
 
-      Add description of the input variables. (see for e.g. qmckl_distance.org)
+    - ~context~ is not ~QMCKL_NULL_CONTEXT~
+    - ~Dim >= 2~
+    - ~N_updates >= 1~
+    - ~Updates~ is allocated with at least $1 \times 2 \times 8$ bytes
+    - ~Updates_index~ is allocated with at least $1 \times 8$ bytes
+    - ~breakdown~ is a small number such that $0 < breakdown << 1$
+    - ~Slater_inv~ is allocated with at least $Dim \times Dim \times 8$ bytes
 
 *** C header
 
@@ -1525,7 +1514,6 @@ unless the last original update causes a singular Slater-matrix.
 	  double* Slater_inv ); 
     #+end_src
 
-
 *** Source Fortran
 
     #+begin_src f90 :tangle (eval f)
@@ -1542,7 +1530,6 @@ integer function qmckl_sherman_morrison_smw32s_f(context, Slater_inv, Dim, N_upd
   info = qmckl_sherman_morrison_smw32s(context, Dim, N_updates, Updates, Updates_index, Slater_inv)
 end function qmckl_sherman_morrison_smw32s_f
     #+end_src
-
 
 *** Source C
 
@@ -1616,6 +1603,8 @@ qmckl_exit_code qmckl_sherman_morrison_smw32s_c(const qmckl_context context,
     #+end_src
 
 *** Performance...
+
+    This kernel performs best when the number of rank-1 updates is larger than 3 and fail-rates are low.
 
 ** C interface                                                     :noexport:
 
