@@ -2,7 +2,7 @@
 #+SETUPFILE: ../tools/theme.setup
 #+INCLUDE: ../tools/lib.org
 
-Low- and high-level functions that use the Sherman-Morrison and
+ Low- and high-level functions that use the Sherman-Morrison and
  Woodbury matrix inversion formulas to update the inverse of a
  non-singular matrix
 
@@ -59,8 +59,8 @@ int main() {
    This value sets the lower bound for which the
    denominator $1+v_j^TS^{-1}u_j$ is considered to be too small and will most probably result in a singular matrix
    $S$, or at least in an inverse of $S$ of very poor numerical quality. Therefore, when $1+v_j^TS^{-1}u_j \geq \epsilon$,
-   the update is applied as usual. If $1+v_j^TS^{-1}u_j \leq \epsilon$ the update is rejected and the kernel exits with
-   return code \texttt{QMCKL_FAILURE}.
+   the update is applied as usual and the kernel exits with return code \texttt{QMCKL_SUCCESS}.
+   If $1+v_j^TS^{-1}u_j \leq \epsilon$ the update is rejected and the kernel exits with return code \texttt{QMCKL_FAILURE}.
 
    #+NAME: qmckl_sherman_morrison_args
    | qmckl_context | context                  | in    | Global state                                         |
@@ -176,8 +176,9 @@ qmckl_exit_code qmckl_sherman_morrison_c(const qmckl_context context,
 
 *** Performance
 
-    This function performs better when there is only 1 rank-1 update in the update cycle and the fail-rate of rank-1 updates is high.
-
+    This function performs best when there is only 1 rank-1 update in the update cycle. It is not useful to
+    use Sherman-Morrison with update splitting for these cycles since splitting can never resolve a situation
+    where applying the update causes singular behaviour.
 
 ** C interface                                                     :noexport:
    
@@ -449,7 +450,8 @@ qmckl_exit_code qmckl_woodbury_2_c(const qmckl_context context,
 
 *** Performance
 
-    This function is most efficient when used in cases where there are only 2 rank-1 updates.
+    This function is most efficient when used in cases where there are only 2 rank-1 updates and
+    it is sure they will not result in a singular matrix.
     
 ** C interface                                                     :noexport:
 
@@ -689,8 +691,8 @@ qmckl_exit_code qmckl_woodbury_3_c(const qmckl_context context,
 
 *** Performance...
     
-    This function is most efficient when used in cases where there are only 3 rank-1 updates.
-
+    This function is most efficient when used in cases where there are only 3 rank-1 updates and
+    it is sure they will not result in a singular matrix.
 
 ** C interface                                                     :noexport:
 
@@ -780,11 +782,13 @@ assert(rc == QMCKL_SUCCESS);
 
    This is a variation on the 'Naive' Sherman-Morrison kernel. Whenever the denominator $1+v_j^T S^{-1} u_j$ in
    the Sherman-Morrison formula is deemed to be too close to zero, the update $u_j$ is split in half:
-   $u_j \rightarrow \frac{1}{1} u_j$. One half is applied immediately --necessarily increasing the value of the
+   $u_j \rightarrow \frac{1}{2} u_j$. One half is applied immediately --necessarily increasing the value of the
    denominator because of the split-- while the other halve is put in a queue that will be applied when all the
-   remaining updates have been treated. The kernel is executed recursively until the queue is eiter empty and all
+   remaining updates have been treated.
+
+   The kernel is executed recursively until the queue is eiter empty and all
    updates are applied successfully, or the size of the queue equals the number of initial updates. In the last
-   case the Slater-matrix that would have resulted from applying the updates is un-invertable and therefore the
+   case the Slater-matrix that would have resulted from applying the updates is singular and therefore the
    kernel exits with an exit code.
 
    #+NAME: qmckl_sherman_morrison_splitting_args
@@ -877,7 +881,7 @@ qmckl_exit_code qmckl_sherman_morrison_splitting_c(const qmckl_context context,
 
 *** Performance...
 
-    This kernel performs best when there are only 1 rank-1 update cycles and/or when the fail-rate is high.
+    This kernel performs best when there are 2 or more rank-1 update cycles and fail-rate is high.
     
 ** C interface                                                     :noexport:
 
@@ -1099,7 +1103,7 @@ qmckl_exit_code qmckl_sherman_morrison_smw32s_c(const qmckl_context context,
 
 *** Performance...
 
-    This kernel performs best when the number of rank-1 updates is larger than 3 and fail-rates are low.
+    This kernel performs best for update cycles with 2 or more rank-1 updates and the fail-rate is low.
 
 ** C interface                                                     :noexport:
 
@@ -1176,7 +1180,7 @@ for (unsigned int i = 0; i < Dim; i++) {
 }
 assert(rc == QMCKL_SUCCESS);
      #+end_src
-
+     
 
 * Helper Functions
   
@@ -1191,7 +1195,7 @@ These functions can only be used internally by the kernels in this module.
    :END:
 
    ~qmckl_slagel_splitting~ is the non-recursive, inner part of the 'Sherman-Morrison with update splitting'-kernel.
-   It is used internally to apply a collection of $N$ of rank-1 updates to the inverse Slater-matrix $S^{-1}$ and
+   It is used internally to apply a collection of $N$ rank-1 updates to the inverse Slater-matrix $S^{-1}$ and
    splitting an update in two equal pieces if necessary. In case of a split, it applies the first half of the update,
    while putting the second half in a waiting queue to be applied at the end.
   
@@ -1279,9 +1283,9 @@ qmckl_exit_code qmckl_slagel_splitting_c(uint64_t Dim,
 
     // Denominator
     double den = 1 + C[Updates_index[l] - 1];
-    if (fabs(den) < breakdown) {
+    if (fabs(den) < breakdown) { // Here is decided to split the update, or not.
 
-      // U_l = U_l / 2 (do the split)
+      // U_l = U_l / 2: split the update in 2 equal halves and save the second halve in later_updates
       for (uint64_t i = 0; i < Dim; i++) {
         later_updates[*later * Dim + i] = Updates[l * Dim + i] / 2.0;
         C[i] /= 2.0;
@@ -1290,7 +1294,7 @@ qmckl_exit_code qmckl_slagel_splitting_c(uint64_t Dim,
       (*later)++;
 
       den = 1 + C[Updates_index[l] - 1];
-    }
+    } // From here onwards we continue with applying the first havel of the update to Slater_inv
     double iden = 1 / den;
 
     // D = v^T x S^{-1}
@@ -1315,7 +1319,8 @@ qmckl_exit_code qmckl_slagel_splitting_c(uint64_t Dim,
     
 *** Performance
 
-This function performce better for cycles with 1 rank-1 update and with a high fail-rate.
+This function cannot be used by itself and is used in Sherman-Morrison with update splitting and Woodbury 3x3 and 2x2
+with Sherman-Morrison and update splitting. Please look at the performance reccomendations for those two kernels.
 
 
 ** C interface                                                     :noexport:
