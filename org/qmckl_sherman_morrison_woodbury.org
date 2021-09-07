@@ -4,7 +4,7 @@
 
 Low- and high-level functions that use the Sherman-Morrison and
  Woodbury matrix inversion formulas to update the inverse of a
- non-singualr matrix
+ non-singular matrix
  
 * Headers
   #+begin_src elisp :noexport :results none :exports none
@@ -27,178 +27,6 @@ int main() {
   #+end_src
 
   
-* Helper Functions
-  
-Helper functions that are used by the Sherman-Morrison-Woodbury kernels. 
-These functions can only be used internally by higher level functions.
-
-** ~qmckl_slagel_splitting~
-   :PROPERTIES:
-   :Name:     qmckl_slagel_splitting
-   :CRetType: double
-   :FRetType: double precision
-   :END:
-
-   ~qmckl_slagel_splitting~ is used internally to apply a list of rank-1 updates while splitting an update if necessary.
-   In case of a split it applies the first half of the update while putting the second half in waiting queue to be applied at the end.
-  
-   For a given update $u_j$ we define a threshold value $\epsilon_j$, which is the minimum value of 
-   $1+v_j^TS^{-1}u_j$ for a non-singular matrix $S$. If $1+v_j^TS^{-1}u_j \geq \epsilon_j$, 
-   the update is applied as usual. Otherwise, $u_j$ will be redefined as $\frac{u_j}{2}$, and the other half 
-   (to be applied at the end) will be defined using vectors $\frac{u_{j'}}{2}$ and $v_{j'}^T=v_{j'}^T$.
-   
-   #+NAME: qmckl_slagel_splitting_args
-   | uint64_t | Dim                            | in    | Leading dimension of Slater_inv                               |
-   | uint64_t | N_updates                      | in    | Number of rank-1 updates to be applied to Slater_inv          |
-   | double   | Updates[N_updates*Dim]         | in    | Array containing the rank-1 updates                           |
-   | uint64_t | Updates_index[N_updates]       | in    | Array containing positions of the rank-1 updates              |
-   | double   | breakdown                      | in    | Break-down parameter on which to fail or not                  |
-   | double   | Slater_inv[Dim*Dim]            | inout | Array containing the inverse Slater-matrix                    |
-   | double   | later_updates[Dim * N_updates] | inout | Array containing the split updates for later                  |
-   | uint64_t | later_index[N_updates]         | inout | Array containing the positions of the split updates for later |
-   | uint64_t | later                          | inout | Number of split updates for later                             |
-  
-
-*** Requirements
-
-    - ~Dim >= 2~
-    - ~N_updates >= 1~
-    - ~Updates~ is allocated with at least $1 \times 2 \times 8$ bytes
-    - ~Updates_index~ is allocated with at least $1 \times 8$ bytes
-    - ~breakdown~ is a small number such that $0 < breakdown << 1$
-    - ~Slater_inv~ is allocated with at least $Dim \times Dim \times 8$ bytes
-    - ~later_updates~ is allocated with at least $1 \times 2 \times 8$ bytes
-    - ~later_index~ is allocated with at least $1 \times 8$ bytes
-    - ~later >= 0~ 
-      
-*** C header
-
-    #+CALL: generate_c_header(table=qmckl_slagel_splitting_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
-
-    #+RESULTS:
-    #+begin_src c :tangle (eval h_func) :comments org
-    qmckl_exit_code qmckl_slagel_splitting_c (
-	  const uint64_t Dim,
-	  const uint64_t N_updates,
-	  const double* Updates,
-	  const uint64_t* Updates_index,
-	  const double breakdown,
-	  double* Slater_inv,
-	  double* later_updates,
-	  uint64_t* later_index,
-	  uint64_t* later ); 
-    #+end_src
-
-*** Source Fortran
-
-*** Source C
-
-    #+begin_src c :tangle (eval c) :comments org
-#include <stdbool.h>
-#include <math.h>
-#include "qmckl.h"
-
-qmckl_exit_code qmckl_slagel_splitting_c(uint64_t Dim,
-                                              uint64_t N_updates,
-                                              const double *Updates, 
-                                              const uint64_t *Updates_index,
-                                              const double breakdown,
-                                              double *Slater_inv,
-                                              double *later_updates, 
-                                              uint64_t *later_index,
-                                              uint64_t *later) {
-// #ifdef DEBUG //  Leave commented out since debugging information is not yet implemented in QMCkl.
-//   std::cerr << "Called slagel_splitting with " << N_updates << " updates" << std::endl;
-// #endif
-
-  double C[Dim];
-  double D[Dim];
-
-  uint64_t l = 0;
-  // For each update
-  while (l < N_updates) {
-    // C = S^{-1} x U_l
-    for (uint64_t i = 0; i < Dim; i++) {
-      C[i] = 0;
-      for (uint64_t j = 0; j < Dim; j++) {
-        C[i] += Slater_inv[i * Dim + j] * Updates[l * Dim + j];
-      }
-    }
-
-    // Denominator
-    double den = 1 + C[Updates_index[l] - 1];
-    if (fabs(den) < breakdown) {
-
-      // U_l = U_l / 2 (do the split)
-      for (uint64_t i = 0; i < Dim; i++) {
-        later_updates[*later * Dim + i] = Updates[l * Dim + i] / 2.0;
-        C[i] /= 2.0;
-      }
-      later_index[*later] = Updates_index[l];
-      (*later)++;
-
-      den = 1 + C[Updates_index[l] - 1];
-    }
-    double iden = 1 / den;
-
-    // D = v^T x S^{-1}
-    for (uint64_t j = 0; j < Dim; j++) {
-      D[j] = Slater_inv[(Updates_index[l] - 1) * Dim + j];
-    }
-
-    // S^{-1} = S^{-1} - C x D / den
-    for (uint64_t i = 0; i < Dim; i++) {
-      for (uint64_t j = 0; j < Dim; j++) {
-        double update = C[i] * D[j] * iden;
-        Slater_inv[i * Dim + j] -= update;
-      }
-    }
-    l += 1;
-  }
-
-  return QMCKL_SUCCESS;
-}
-
-    #+end_src
-    
-*** Performance
-
-This function performce better for cycles with 1 rank-1 update and with a high fail-rate.
-
-
-** C interface                                                     :noexport:
-   
-   #+CALL: generate_c_interface(table=qmckl_slagel_splitting_args,rettyp=get_value("FRetType"),fname=get_value("Name"))
-
-   #+RESULTS:
-   #+begin_src f90 :tangle (eval f) :comments org :exports none
-   integer(c_int32_t) function qmckl_slagel_splitting &
-       (Dim, N_updates, Updates, Updates_index, breakdown, Slater_inv, later_updates, later_index, later) &
-       bind(C) result(info)
-
-     use, intrinsic :: iso_c_binding
-     implicit none
-
-     integer (c_int64_t) , intent(in)  , value :: Dim
-     integer (c_int64_t) , intent(in)  , value :: N_updates
-     real    (c_double ) , intent(in)          :: Updates(N_updates*Dim)
-     integer (c_int64_t) , intent(in)          :: Updates_index(N_updates)
-     real    (c_double ) , intent(in)  , value :: breakdown
-     real    (c_double ) , intent(inout)        :: Slater_inv(Dim*Dim)
-     real    (c_double ) , intent(inout)        :: later_updates(Dim * N_updates)
-     integer (c_int64_t) , intent(inout)        :: later_index(N_updates)
-     integer (c_int64_t) , intent(inout)        :: later
-
-     integer(c_int32_t), external :: qmckl_slagel_splitting_c
-     info = qmckl_slagel_splitting_c &
-	    (Dim, N_updates, Updates, Updates_index, breakdown, Slater_inv, later_updates, later_index, later)
-
-   end function qmckl_slagel_splitting
-   #+end_src
-
-*** Test                                                           :noexport:
-
-  This kernel does not have an explicit test because it is only used internally by higher-level Sherman-Morrison-Woodbury kernels.
 
 * Naïve Sherman-Morrison
   
@@ -690,6 +518,7 @@ for (unsigned int i = 0; i < Dim; i++) {
 }
 assert(rc == QMCKL_SUCCESS);
      #+end_src
+
 
 * Woodbury 3x3
   
@@ -1760,6 +1589,181 @@ for (unsigned int i = 0; i < Dim; i++) {
 }
 assert(rc == QMCKL_SUCCESS);
      #+end_src
+
+
+* Helper Functions
+  
+Helper functions that are used by the Sherman-Morrison-Woodbury kernels. 
+These functions can only be used internally by higher level functions.
+
+** ~qmckl_slagel_splitting~
+   :PROPERTIES:
+   :Name:     qmckl_slagel_splitting
+   :CRetType: double
+   :FRetType: double precision
+   :END:
+
+   ~qmckl_slagel_splitting~ is used internally to apply a list of rank-1 updates while splitting an update if necessary.
+   In case of a split it applies the first half of the update while putting the second half in waiting queue to be applied at the end.
+  
+   For a given update $u_j$ we define a threshold value $\epsilon_j$, which is the minimum value of 
+   $1+v_j^TS^{-1}u_j$ for a non-singular matrix $S$. If $1+v_j^TS^{-1}u_j \geq \epsilon_j$, 
+   the update is applied as usual. Otherwise, $u_j$ will be redefined as $\frac{u_j}{2}$, and the other half 
+   (to be applied at the end) will be defined using vectors $\frac{u_{j'}}{2}$ and $v_{j'}^T=v_{j'}^T$.
+   
+   #+NAME: qmckl_slagel_splitting_args
+   | uint64_t | Dim                            | in    | Leading dimension of Slater_inv                               |
+   | uint64_t | N_updates                      | in    | Number of rank-1 updates to be applied to Slater_inv          |
+   | double   | Updates[N_updates*Dim]         | in    | Array containing the rank-1 updates                           |
+   | uint64_t | Updates_index[N_updates]       | in    | Array containing positions of the rank-1 updates              |
+   | double   | breakdown                      | in    | Break-down parameter on which to fail or not                  |
+   | double   | Slater_inv[Dim*Dim]            | inout | Array containing the inverse Slater-matrix                    |
+   | double   | later_updates[Dim * N_updates] | inout | Array containing the split updates for later                  |
+   | uint64_t | later_index[N_updates]         | inout | Array containing the positions of the split updates for later |
+   | uint64_t | later                          | inout | Number of split updates for later                             |
+  
+
+*** Requirements
+
+    - ~Dim >= 2~
+    - ~N_updates >= 1~
+    - ~Updates~ is allocated with at least $1 \times 2 \times 8$ bytes
+    - ~Updates_index~ is allocated with at least $1 \times 8$ bytes
+    - ~breakdown~ is a small number such that $0 < breakdown << 1$
+    - ~Slater_inv~ is allocated with at least $Dim \times Dim \times 8$ bytes
+    - ~later_updates~ is allocated with at least $1 \times 2 \times 8$ bytes
+    - ~later_index~ is allocated with at least $1 \times 8$ bytes
+    - ~later >= 0~ 
+      
+*** C header
+
+    #+CALL: generate_c_header(table=qmckl_slagel_splitting_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+
+    #+RESULTS:
+    #+begin_src c :tangle (eval h_func) :comments org
+    qmckl_exit_code qmckl_slagel_splitting_c (
+	  const uint64_t Dim,
+	  const uint64_t N_updates,
+	  const double* Updates,
+	  const uint64_t* Updates_index,
+	  const double breakdown,
+	  double* Slater_inv,
+	  double* later_updates,
+	  uint64_t* later_index,
+	  uint64_t* later ); 
+    #+end_src
+
+*** Source Fortran
+
+*** Source C
+
+    #+begin_src c :tangle (eval c) :comments org
+#include <stdbool.h>
+#include <math.h>
+#include "qmckl.h"
+
+qmckl_exit_code qmckl_slagel_splitting_c(uint64_t Dim,
+                                              uint64_t N_updates,
+                                              const double *Updates, 
+                                              const uint64_t *Updates_index,
+                                              const double breakdown,
+                                              double *Slater_inv,
+                                              double *later_updates, 
+                                              uint64_t *later_index,
+                                              uint64_t *later) {
+// #ifdef DEBUG //  Leave commented out since debugging information is not yet implemented in QMCkl.
+//   std::cerr << "Called slagel_splitting with " << N_updates << " updates" << std::endl;
+// #endif
+
+  double C[Dim];
+  double D[Dim];
+
+  uint64_t l = 0;
+  // For each update
+  while (l < N_updates) {
+    // C = S^{-1} x U_l
+    for (uint64_t i = 0; i < Dim; i++) {
+      C[i] = 0;
+      for (uint64_t j = 0; j < Dim; j++) {
+        C[i] += Slater_inv[i * Dim + j] * Updates[l * Dim + j];
+      }
+    }
+
+    // Denominator
+    double den = 1 + C[Updates_index[l] - 1];
+    if (fabs(den) < breakdown) {
+
+      // U_l = U_l / 2 (do the split)
+      for (uint64_t i = 0; i < Dim; i++) {
+        later_updates[*later * Dim + i] = Updates[l * Dim + i] / 2.0;
+        C[i] /= 2.0;
+      }
+      later_index[*later] = Updates_index[l];
+      (*later)++;
+
+      den = 1 + C[Updates_index[l] - 1];
+    }
+    double iden = 1 / den;
+
+    // D = v^T x S^{-1}
+    for (uint64_t j = 0; j < Dim; j++) {
+      D[j] = Slater_inv[(Updates_index[l] - 1) * Dim + j];
+    }
+
+    // S^{-1} = S^{-1} - C x D / den
+    for (uint64_t i = 0; i < Dim; i++) {
+      for (uint64_t j = 0; j < Dim; j++) {
+        double update = C[i] * D[j] * iden;
+        Slater_inv[i * Dim + j] -= update;
+      }
+    }
+    l += 1;
+  }
+
+  return QMCKL_SUCCESS;
+}
+
+    #+end_src
+    
+*** Performance
+
+This function performce better for cycles with 1 rank-1 update and with a high fail-rate.
+
+
+** C interface                                                     :noexport:
+   
+   #+CALL: generate_c_interface(table=qmckl_slagel_splitting_args,rettyp=get_value("FRetType"),fname=get_value("Name"))
+
+   #+RESULTS:
+   #+begin_src f90 :tangle (eval f) :comments org :exports none
+   integer(c_int32_t) function qmckl_slagel_splitting &
+       (Dim, N_updates, Updates, Updates_index, breakdown, Slater_inv, later_updates, later_index, later) &
+       bind(C) result(info)
+
+     use, intrinsic :: iso_c_binding
+     implicit none
+
+     integer (c_int64_t) , intent(in)  , value :: Dim
+     integer (c_int64_t) , intent(in)  , value :: N_updates
+     real    (c_double ) , intent(in)          :: Updates(N_updates*Dim)
+     integer (c_int64_t) , intent(in)          :: Updates_index(N_updates)
+     real    (c_double ) , intent(in)  , value :: breakdown
+     real    (c_double ) , intent(inout)        :: Slater_inv(Dim*Dim)
+     real    (c_double ) , intent(inout)        :: later_updates(Dim * N_updates)
+     integer (c_int64_t) , intent(inout)        :: later_index(N_updates)
+     integer (c_int64_t) , intent(inout)        :: later
+
+     integer(c_int32_t), external :: qmckl_slagel_splitting_c
+     info = qmckl_slagel_splitting_c &
+	    (Dim, N_updates, Updates, Updates_index, breakdown, Slater_inv, later_updates, later_index, later)
+
+   end function qmckl_slagel_splitting
+   #+end_src
+
+*** Test                                                           :noexport:
+
+  This kernel does not have an explicit test because it is only used internally by higher-level Sherman-Morrison-Woodbury kernels.
+
 
 * End of files
 
