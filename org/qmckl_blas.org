@@ -1,0 +1,287 @@
+#+TITLE: BLAS functions
+#+SETUPFILE: ../tools/theme.setup
+#+INCLUDE: ../tools/lib.org
+
+* Headers                                                         :noexport:
+  #+begin_src elisp :noexport :results none
+(org-babel-lob-ingest "../tools/lib.org")
+#+end_src
+
+  #+begin_src c :comments link :tangle (eval c_test) :noweb yes
+#include "qmckl.h"
+#include "assert.h"
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+int main() {
+  qmckl_context context;
+  context = qmckl_context_create();
+
+  #+end_src
+
+* Matrix operations
+
+** ~qmckl_dgemm~
+
+   Matrix multiply l$C_{ij} = \beta C_{ij} + \alpha \sum_{k} A_{ik} \cdot B_{kj}$ using Fortran ~matmul~ function.
+
+   #+NAME: qmckl_dgemm_args
+   | qmckl_context | context  | in  | Global state                                 |
+   | bool          | TransA   | in  | Number of rows of the input matrix           |
+   | bool          | TransB   | in  | Number of rows of the input matrix           |
+   | int64_t       | m        | in  | Number of rows of the input matrix           |
+   | int64_t       | n        | in  | Number of columns of the input matrix        |
+   | int64_t       | k        | in  | Number of columns of the input matrix        |
+   | double        | alpha    | in  | Number of columns of the input matrix        |
+   | double        | A[][lda] | in  | Array containing the $m \times n$ matrix $A$ |
+   | int64_t       | lda      | in  | Leading dimension of array ~A~               |
+   | double        | B[][ldb] | in  | Array containing the $n \times m$ matrix $B$ |
+   | int64_t       | ldb      | in  | Leading dimension of array ~B~               |
+   | double        | beta     | in  | Array containing the $n \times m$ matrix $B$ |
+   | double        | C[][ldc] | out | Array containing the $n \times m$ matrix $B$ |
+   | int64_t       | ldc      | in  | Leading dimension of array ~B~               |
+
+*** Requirements
+
+    - ~context~ is not ~QMCKL_NULL_CONTEXT~
+    - ~m > 0~
+    - ~n > 0~
+    - ~k > 0~
+    - ~lda >= m~
+    - ~ldb >= n~
+    - ~ldc >= n~
+    - ~A~ is allocated with at least $m \times k \times 8$ bytes
+    - ~B~ is allocated with at least $k \times n \times 8$ bytes
+    - ~C~ is allocated with at least $m \times n \times 8$ bytes
+
+*** C header
+
+    #+CALL: generate_c_header(table=qmckl_dgemm_args,rettyp="qmckl_exit_code",fname="qmckl_dgemm")
+
+    #+RESULTS:
+    #+BEGIN_src c :tangle (eval h_func) :comments org
+    qmckl_exit_code qmckl_dgemm (
+	  const qmckl_context context,
+	  const bool TransA,
+	  const bool TransB,
+	  const int64_t m,
+	  const int64_t n,
+	  const int64_t k,
+	  const double alpha,
+	  const double* A,
+	  const int64_t lda,
+	  const double* B,
+	  const int64_t ldb,
+	  const double beta,
+	  double* const C,
+	  const int64_t ldc ); 
+    #+END_src
+
+
+*** Source
+    #+begin_src f90 :tangle (eval f)
+integer function qmckl_dgemm_f(context, TransA, TransB, m, n, k, alpha, A, LDA, B, LDB, beta, C, LDC) &
+     result(info)
+  use qmckl
+  implicit none
+  integer(qmckl_context)  , intent(in)  :: context
+  logical*8  , intent(in)  :: TransA, TransN
+  integer*8  , intent(in)  :: m, n, k
+  integer*8  , intent(in)  :: lda
+  real*8     , intent(in)  :: A(lda,*)
+  integer*8  , intent(in)  :: ldb
+  real*8     , intent(in)  :: B(ldb,*)
+  integer*8  , intent(in)  :: ldc
+  real*8     , intent(out) :: C(ldc,*)
+
+  integer*8 :: i,j
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (m <= 0_8) then
+     info = QMCKL_INVALID_ARG_4
+     return
+  endif
+
+  if (n <= 0_8) then
+     info = QMCKL_INVALID_ARG_5
+     return
+  endif
+
+  if (k <= 0_8) then
+     info = QMCKL_INVALID_ARG_6
+     return
+  endif
+
+  if (LDA < m) then
+     info = QMCKL_INVALID_ARG_9
+     return
+  endif
+
+  if (LDB < n) then
+     info = QMCKL_INVALID_ARG_10
+     return
+  endif
+
+  if (LDB < n) then
+     info = QMCKL_INVALID_ARG_13
+     return
+  endif
+
+  C = matmul(A,B)
+end function qmckl_dgemm_f
+    #+end_src
+
+*** C interface                                                    :noexport:
+
+    #+CALL: generate_c_interface(table=qmckl_dgemm_args,rettyp="qmckl_exit_code",fname="qmckl_dgemm")
+
+    #+RESULTS:
+    #+BEGIN_src f90 :tangle (eval f) :comments org :exports none
+    integer(c_int32_t) function qmckl_dgemm &
+	(context, TransA, TransB, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc) &
+	bind(C) result(info)
+
+      use, intrinsic :: iso_c_binding
+      implicit none
+
+      integer (c_int64_t) , intent(in)  , value :: context
+      logical*8           , intent(in)  , value :: TransA
+      logical*8           , intent(in)  , value :: TransB
+      integer (c_int64_t) , intent(in)  , value :: m
+      integer (c_int64_t) , intent(in)  , value :: n
+      integer (c_int64_t) , intent(in)  , value :: k
+      real    (c_double ) , intent(in)  , value :: alpha
+      real    (c_double ) , intent(in)          :: A(lda,*)
+      integer (c_int64_t) , intent(in)  , value :: lda
+      real    (c_double ) , intent(in)          :: B(ldb,*)
+      integer (c_int64_t) , intent(in)  , value :: ldb
+      real    (c_double ) , intent(in)  , value :: beta
+      real    (c_double ) , intent(out)         :: C(ldc,*)
+      integer (c_int64_t) , intent(in)  , value :: ldc
+
+      integer(c_int32_t), external :: qmckl_dgemm_f
+      info = qmckl_dgemm_f &
+	     (context, TransA, TransB, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc)
+
+    end function qmckl_dgemm
+    #+END_src
+
+
+    #+CALL: generate_f_interface(table=qmckl_dgemm_args,rettyp="qmckl_exit_code",fname="qmckl_dgemm")
+
+    #+RESULTS:
+    #+begin_src f90 :tangle (eval fh_func) :comments org :exports none
+    interface
+      integer(c_int32_t) function qmckl_dgemm &
+          (context, TransA, TransB, m, n, k, alpha, A, lda, B, ldb, beat, C, ldc) &
+          bind(C)
+        use, intrinsic :: iso_c_binding
+        import
+        implicit none
+
+        integer (c_int64_t) , intent(in)  , value :: context
+        logical*8 (c_bool) , intent(in)  , value :: TransA
+        logical*8 (c_bool) , intent(in)  , value :: TransB
+        integer (c_int64_t) , intent(in)  , value :: m
+        integer (c_int64_t) , intent(in)  , value :: n
+        integer (c_int64_t) , intent(in)  , value :: k
+        real    (c_double ) , intent(in)          :: alpha
+        real    (c_double ) , intent(in)          :: A(lda,*)
+        integer (c_int64_t) , intent(in)  , value :: lda
+        real    (c_double ) , intent(in)          :: B(ldb,*)
+        integer (c_int64_t) , intent(in)  , value :: ldb
+        real    (c_double ) , intent(in)          :: beta
+        real    (c_double ) , intent(out)         :: C(ldb,*)
+        integer (c_int64_t) , intent(in)  , value :: ldb
+
+      end function qmckl_dgemm
+    end interface
+    #+end_src
+
+*** Test                                                           :noexport:
+    #+begin_src f90 :tangle (eval f_test)
+integer(qmckl_exit_code) function test_qmckl_dgemm(context) bind(C)
+  use qmckl
+  implicit none
+  integer(qmckl_context), intent(in), value :: context
+
+  double precision, allocatable :: A(:,:), B(:,:), C(:,:), D(:,:)
+  integer*8                     :: m, n, k, LDA, LDB, LDC
+  integer*8                     :: i,j
+  logical*8                     :: TransA, TransB
+  double precision              :: x
+
+  TransA = .False.
+  TransB = .False.
+  m = 5
+  k = 4
+  n = 6
+  LDA = m
+  LDB = k
+  LDC = m
+
+  allocate( A(LDA,k), B(LDB,n) , C(LDC,n), D(LDC,n))
+
+  A = 0.d0
+  B = 0.d0
+  C = 0.d0
+  D = 0.d0
+  do j=1,m
+     do i=1,k
+        A(i,j) = -10.d0 + dble(i+j)
+     end do
+  end do
+
+  do j=1,k
+     do i=1,n
+        B(i,j) = -10.d0 + dble(i+j)
+     end do
+  end do
+
+  test_qmckl_dgemm = qmckl_dgemm(context, TransA, TransB, m, n, k, alpha, A, LDA, B, LDB, beta, C, LDC)
+
+  if (test_qmckl_dgemm /= QMCKL_SUCCESS) return
+
+  test_qmckl_dgemm = QMCKL_FAILURE
+
+  x = 0.d0
+  do j=1,m
+     do i=l,n
+       do l=1,k
+          D(i,j) += D(i,j) + (A(i,k)*B(k,j))
+       end do
+       x = x + (D(i,j) - C(i,j))**2
+     end do
+  end do
+
+  if (dabs(x) <= 1.d-15) then
+     test_qmckl_dgemm = QMCKL_SUCCESS
+  endif
+
+  deallocate(A,B)
+end function test_qmckl_dgemm
+    #+end_src
+
+    #+begin_src c :comments link :tangle (eval c_test)
+qmckl_exit_code test_qmckl_dgemm(qmckl_context context);
+assert(QMCKL_SUCCESS == test_qmckl_dgemm(context));
+    #+end_src
+
+* End of files                                                     :noexport:
+
+   #+begin_src c :comments link :tangle (eval c_test)
+  assert (qmckl_context_destroy(context) == QMCKL_SUCCESS);
+  return 0;
+}
+
+   #+end_src
+
+
+# -*- mode: org -*-
+# vim: syntax=c
