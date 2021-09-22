@@ -61,7 +61,7 @@ int main() {
 #include "qmckl_jastrow_private_func.h"
 #include "qmckl_jastrow_private_type.h"
   #+end_src
-
+  
 * Context
    :PROPERTIES:
    :Name:     qmckl_jastrow
@@ -609,7 +609,7 @@ qmckl_exit_code qmckl_get_jastrow_cord_vector (const qmckl_context context, doub
   }
 
   assert (ctx->jastrow.cord_vector != NULL);
-  memcpy(cord_vector, ctx->jastrow.cord_vector, ctx->jastrow.cord_num*sizeof(double));
+  memcpy(cord_vector, ctx->jastrow.cord_vector, ctx->jastrow.dim_cord_vect*sizeof(double));
   return QMCKL_SUCCESS;
 }
 
@@ -3022,7 +3022,15 @@ integer function qmckl_compute_een_rescaled_e_f(context, walk_num, elec_num, cor
       end do
     end do
   end do
+  
+  do l = 0, cord_num
+    do j = 1, elec_num
+      een_rescaled_e(l, j, j, nw) = 0.0d0
+    end do 
   end do
+
+  end do
+
 
 end function qmckl_compute_een_rescaled_e_f
     #+end_src
@@ -3107,6 +3115,10 @@ for l in range(1,cord_num+1):
       een_rescaled_e[j, i, l] = x
       k = k + 1
 
+for l in range(0,cord_num+1):
+  for j in range(0, elec_num):
+    een_rescaled_e[j,j,l] = 0.0
+
 print(" een_rescaled_e[0, 2, 1] = ",een_rescaled_e[0, 2, 1])
 print(" een_rescaled_e[0, 3, 1] = ",een_rescaled_e[0, 3, 1])
 print(" een_rescaled_e[0, 4, 1] = ",een_rescaled_e[0, 4, 1])
@@ -3141,7 +3153,7 @@ assert(fabs(een_rescaled_e[0][1][5][2]-0.3424402276009091)    < 1.e-12);
      #+end_src
 
 ** Electron-electron rescaled distances for each order and derivatives
-
+   
    ~een_rescaled_e_deriv_e~ stores the table of the derivatives of the
    rescaled distances between all pairs of electrons and raised to the
    power \(p\) defined by ~cord_num~.  Here we take its derivatives
@@ -4699,6 +4711,7 @@ end function qmckl_compute_lkpm_combined_index_f
     
 *** Test
 
+    #+name: helper_funcs
     #+begin_src python :results output :exports none :noweb yes
 import numpy as np
 
@@ -4725,21 +4738,46 @@ for l in range(2,cord_num+1):
     for i in range(elec_num):
       een_rescaled_n[a, i, l] = een_rescaled_n[a, i, l - 1] * een_rescaled_n[a, i, 1]
 
-print(" een_rescaled_n[0, 2, 1] = ",een_rescaled_n[0, 2, 1])
-print(" een_rescaled_n[0, 3, 1] = ",een_rescaled_n[0, 3, 1])
-print(" een_rescaled_n[0, 4, 1] = ",een_rescaled_n[0, 4, 1])
-print(" een_rescaled_n[1, 3, 2] = ",een_rescaled_n[1, 3, 2])
-print(" een_rescaled_n[1, 4, 2] = ",een_rescaled_n[1, 4, 2])
-print(" een_rescaled_n[1, 5, 2] = ",een_rescaled_n[1, 5, 2])
+elec_dist = np.zeros(shape=(elec_num, elec_num),dtype=float)
+for i in range(elec_num):
+  for j in range(elec_num):
+    elec_dist[i, j] = np.linalg.norm(elec_coord[i] - elec_coord[j])
+
+kappa = 1.0
+
+een_rescaled_e_ij = np.zeros(shape=(elec_num * (elec_num - 1)//2, cord_num+1), dtype=float)
+een_rescaled_e_ij[:,0] = 1.0
+
+k = 0
+for j in range(elec_num):
+  for i in range(j):
+    een_rescaled_e_ij[k, 1] = np.exp(-kappa * elec_dist[i, j])
+    k = k + 1
+
+for l in range(2, cord_num + 1):
+  for k in range(elec_num * (elec_num - 1)//2):
+    een_rescaled_e_ij[k, l] = een_rescaled_e_ij[k, l - 1] * een_rescaled_e_ij[k, 1]
+
+een_rescaled_e = np.zeros(shape=(elec_num, elec_num, cord_num + 1), dtype=float)
+een_rescaled_e[:,:,0] = 1.0
+
+for l in range(1,cord_num+1):
+  k = 0
+  for j in range(elec_num):
+    for i in range(j):
+      x = een_rescaled_e_ij[k, l]
+      een_rescaled_e[i, j, l] = x
+      een_rescaled_e[j, i, l] = x
+      k = k + 1
+
+for l in range(0,cord_num+1):
+  for j in range(0, elec_num):
+    een_rescaled_e[j,j,l] = 0.0
+
+lkpm_of_cindex = np.array(lkpm_combined_index).T
     #+end_src
 
-    #+RESULTS:
-    :  een_rescaled_n[0, 2, 1] =  0.10612983920006765
-    :  een_rescaled_n[0, 3, 1] =  0.135652809635553
-    :  een_rescaled_n[0, 4, 1] =  0.023391817607642338
-    :  een_rescaled_n[1, 3, 2] =  0.880957224822116
-    :  een_rescaled_n[1, 4, 2] =  0.027185942659395074
-    :  een_rescaled_n[1, 5, 2] =  0.01343938025140174
+    #+RESULTS: helper_funcs
 
      #+begin_src c :tangle (eval c_test)
 //assert(qmckl_electron_provided(context));
@@ -5025,102 +5063,42 @@ import numpy as np
 
 <<jastrow_data>>
 
+<<helper_funcs>>
+
 kappa = 1.0
 
-elec_coord = np.array(elec_coord)[0]
-nucl_coord = np.array(nucl_coord)
-elnuc_dist = np.zeros(shape=(elec_num, nucl_num),dtype=float)
-for i in range(elec_num):
-  for j in range(nucl_num):
-    elnuc_dist[i, j] = np.linalg.norm(elec_coord[i] - nucl_coord[:,j])
+factor_een = 0.0
 
-elnuc_dist_deriv_e = np.zeros(shape=(4, elec_num, nucl_num),dtype=float)
-for a in range(nucl_num):
-  for i in range(elec_num):
-    rij_inv = 1.0 / elnuc_dist[i, a]
-    for ii in range(3):
-      elnuc_dist_deriv_e[ii, i, a] = (elec_coord[i][ii] - nucl_coord[ii][a]) * rij_inv
-    elnuc_dist_deriv_e[3, i, a] = 2.0 * rij_inv
+for n in range(0, dim_cord_vect):
+  l = lkpm_of_cindex[0,n]
+  k = lkpm_of_cindex[1,n]
+  p = lkpm_of_cindex[2,n]
+  m = lkpm_of_cindex[3,n]
 
-en_distance_rescaled_deriv_e = np.zeros(shape=(4,elec_num,nucl_num),dtype=float)
-for a in range(nucl_num):
-  for i in range(elec_num):
-    f = 1.0 - kappa * en_distance_rescaled[i][a]
-    for ii in range(4):
-      en_distance_rescaled_deriv_e[ii][i][a] = elnuc_dist_deriv_e[ii][i][a]
-    en_distance_rescaled_deriv_e[3][i][a] = en_distance_rescaled_deriv_e[3][i][a] + \
-                              (-kappa * en_distance_rescaled_deriv_e[0][i][a] * en_distance_rescaled_deriv_e[0][i][a]) + \
-                              (-kappa * en_distance_rescaled_deriv_e[1][i][a] * en_distance_rescaled_deriv_e[1][i][a]) + \
-                              (-kappa * en_distance_rescaled_deriv_e[2][i][a] * en_distance_rescaled_deriv_e[2][i][a])
-    for ii in range(4):
-      en_distance_rescaled_deriv_e[ii][i][a] = en_distance_rescaled_deriv_e[ii][i][a] * f
+  for a in range(0, nucl_num):
+    accu2 = 0.0
+    cn = cord_vector_full[a][n]
+    for j in range(0, elec_num):
+      accu = 0.0
+      for i in range(0, elec_num):
+        accu = accu + een_rescaled_e[i,j,k] *       \
+                      een_rescaled_n[a,i,m]
+      accu2 = accu2 + accu * een_rescaled_n[a,j,m+l]
+    factor_een = factor_een + accu2 * cn
 
-third = 1.0 / 3.0
-factor_en_deriv_e = np.zeros(shape=(4,elec_num),dtype=float)
-dx = np.zeros(shape=(4),dtype=float)
-pow_ser_g = np.zeros(shape=(3),dtype=float)
-for a in range(nucl_num):
-   for i in range(elec_num):
-      x = en_distance_rescaled[i][a]
-      if abs(x) < 1e-18:
-        continue
-      pow_ser_g = np.zeros(shape=(3),dtype=float)
-      den         = 1.0 + aord_vector[1][type_nucl_vector[a]-1] * x
-      invden      = 1.0 / den
-      invden2     = invden * invden
-      invden3     = invden2 * invden
-      xinv        = 1.0 / (x + 1.0E-18)
-
-      for ii in range(4):
-        dx[ii] = en_distance_rescaled_deriv_e[ii][i][a]
-
-      lap1 = 0.0
-      lap2 = 0.0
-      lap3 = 0.0
-      for ii in range(3):
-        x = en_distance_rescaled[i][a]
-        if x < 1e-18:
-          continue
-        for p in range(2,aord_num+1):
-          y = p * aord_vector[(p-1) + 1][type_nucl_vector[a]-1] * x
-          pow_ser_g[ii] = pow_ser_g[ii] + y * dx[ii]
-          lap1 = lap1 + (p - 1) * y * xinv * dx[ii] * dx[ii]
-          lap2 = lap2 + y
-          x = x * en_distance_rescaled[i][a]
-        
-        lap3 = lap3 - 2.0 * aord_vector[1][type_nucl_vector[a]-1] * dx[ii] * dx[ii]
-
-        factor_en_deriv_e[ii][i] = factor_en_deriv_e[ii][i] + aord_vector[0][type_nucl_vector[a]-1]  * \
-                              dx[ii] * invden2 + pow_ser_g[ii]
-
-      ii = 3
-      lap2 = lap2 * dx[ii] * third
-      lap3 = lap3 + den * dx[ii]
-      lap3 = lap3 * (aord_vector[0][type_nucl_vector[a]-1] * invden3)
-      factor_en_deriv_e[ii][i] = factor_en_deriv_e[ii][i] + lap1 + lap2 + lap3
-
-print("factor_en_deriv_e[0][0]:",factor_en_deriv_e[0][0])
-print("factor_en_deriv_e[1][0]:",factor_en_deriv_e[1][0])
-print("factor_en_deriv_e[2][0]:",factor_en_deriv_e[2][0])
-print("factor_en_deriv_e[3][0]:",factor_en_deriv_e[3][0])
-
-
+print("factor_een:",factor_een)
     #+end_src
 
     #+RESULTS:
-    : factor_en_deriv_e[0][0]: 0.11609919541763383
-    : factor_en_deriv_e[1][0]: -0.23301394780804574
-    : factor_en_deriv_e[2][0]: 0.17548337641865783
-    : factor_en_deriv_e[3][0]: -0.9667363412285741
+    : factor_een: -0.37407972141304213
     
 
      #+begin_src c :tangle (eval c_test)
 /* Check if Jastrow is properly initialized */
 assert(qmckl_jastrow_provided(context));
 
-//double factor_een[walk_num];
-//rc = qmckl_get_jastrow_factor_een(context, &(factor_een[0]));
-
+double factor_een[walk_num];
+rc = qmckl_get_jastrow_factor_een(context, &(factor_een[0]));
 
      #+end_src
      
