@@ -202,7 +202,7 @@ for i in range(elec_num):
 type_nucl_num = 1
 aord_num     = 5
 bord_num     = 5
-cord_num     = 23
+cord_num     = 5
 dim_cord_vect= 23
 type_nucl_vector = [ 1, 1]
 aord_vector = [ 
@@ -860,19 +860,22 @@ qmckl_exit_code qmckl_set_jastrow_cord_vector(qmckl_context context, double cons
 
   int32_t mask = 1 << 5;
 
-  int64_t cord_num;
-  qmckl_exit_code rc = qmckl_get_jastrow_cord_num(context, &cord_num);
+  qmckl_exit_code rc = qmckl_provide_dim_cord_vect(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  int64_t dim_cord_vect;
+  rc = qmckl_get_jastrow_dim_cord_vect(context, &dim_cord_vect);
   if (rc != QMCKL_SUCCESS) return rc;
  
   int64_t type_nucl_num;
   rc = qmckl_get_jastrow_type_nucl_num(context, &type_nucl_num);
   if (rc != QMCKL_SUCCESS) return rc;
 
-  if (cord_num == 0) {
+  if (dim_cord_vect == 0) {
     return qmckl_failwith( context,
                            QMCKL_FAILURE,
                            "qmckl_set_jastrow_coefficient",
-                           "cord_num is not set");
+                           "dim_cord_vect is not set");
   }
 
   if (cord_vector == NULL) {
@@ -892,7 +895,7 @@ qmckl_exit_code qmckl_set_jastrow_cord_vector(qmckl_context context, double cons
   }
 
   qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-  mem_info.size = cord_num * type_nucl_num * sizeof(double);
+  mem_info.size = dim_cord_vect * type_nucl_num * sizeof(double);
   double* new_array = (double*) qmckl_malloc(context, mem_info);
 
   if(new_array == NULL) {
@@ -1324,20 +1327,20 @@ end function qmckl_compute_asymp_jasb_f
     #+CALL: generate_c_header(table=qmckl_asymp_jasb_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
 
     #+RESULTS:
-    #+begin_src c :tangle (eval h_private_func) :comments org
+    #+BEGIN_src c :tangle (eval h_func) :comments org
     qmckl_exit_code qmckl_compute_asymp_jasb (
 	  const qmckl_context context,
 	  const int64_t bord_num,
 	  const double* bord_vector,
 	  const double rescale_factor_kappa_ee,
 	  double* const asymp_jasb ); 
-    #+end_src
+    #+END_src
 
 
     #+CALL: generate_c_interface(table=qmckl_asymp_jasb_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
 
     #+RESULTS:
-    #+begin_src f90 :tangle (eval f) :comments org :exports none
+    #+BEGIN_src f90 :tangle (eval f) :comments org :exports none
     integer(c_int32_t) function qmckl_compute_asymp_jasb &
 	(context, bord_num, bord_vector, rescale_factor_kappa_ee, asymp_jasb) &
 	bind(C) result(info)
@@ -1356,7 +1359,7 @@ end function qmckl_compute_asymp_jasb_f
 	     (context, bord_num, bord_vector, rescale_factor_kappa_ee, asymp_jasb)
 
     end function qmckl_compute_asymp_jasb
-    #+end_src
+    #+END_src
 
 *** Test
     #+name: asymp_jasb
@@ -1408,6 +1411,8 @@ assert(rc == QMCKL_SUCCESS);
 rc = qmckl_set_jastrow_type_nucl_vector(context, type_nucl_vector, nucl_num);
 assert(rc == QMCKL_SUCCESS);
 rc = qmckl_set_jastrow_aord_vector(context, aord_vector);
+assert(rc == QMCKL_SUCCESS);
+rc = qmckl_set_jastrow_bord_vector(context, bord_vector);
 assert(rc == QMCKL_SUCCESS);
 rc = qmckl_set_jastrow_bord_vector(context, bord_vector);
 assert(rc == QMCKL_SUCCESS);
@@ -3022,7 +3027,7 @@ integer function qmckl_compute_een_rescaled_e_f(context, walk_num, elec_num, cor
       end do
     end do
   end do
-  
+
   do l = 0, cord_num
     do j = 1, elec_num
       een_rescaled_e(l, j, j, nw) = 0.0d0
@@ -3030,7 +3035,6 @@ integer function qmckl_compute_een_rescaled_e_f(context, walk_num, elec_num, cor
   end do
 
   end do
-
 
 end function qmckl_compute_een_rescaled_e_f
     #+end_src
@@ -3510,7 +3514,7 @@ assert(fabs(een_rescaled_e_deriv_e[0][1][0][5][2] + 0.5880599146214673    ) < 1.
      #+end_src
 
 ** Electron-nucleus rescaled distances for each order
-
+   
    ~een_rescaled_n~ stores the table of the rescaled distances between 
    electrons and nucleii raised to the power \(p\) defined by ~cord_num~:
 
@@ -4328,7 +4332,6 @@ qmckl_exit_code qmckl_provide_cord_vect_full(qmckl_context context)
     qmckl_exit_code rc =
       qmckl_compute_cord_vect_full(context,
                                 ctx->nucleus.num,
-                                ctx->jastrow.cord_num,
                                 ctx->jastrow.dim_cord_vect,
                                 ctx->jastrow.type_nucl_num,
                                 ctx->jastrow.type_nucl_vector,
@@ -4488,28 +4491,26 @@ end function qmckl_compute_dim_cord_vect_f
    :END:
 
     #+NAME: qmckl_factor_cord_vect_full_args
-   | qmckl_context | context                                 | in  | Global state                 |
-   | int64_t       | nucl_num                                | in  | Number of atoms              |
-   | int64_t       | cord_num                                | in  | Order of polynomials         |
-   | int64_t       | dim_cord_vect                           | in  | dimension of cord full table |
-   | int64_t       | type_nucl_num                           | in  | dimension of cord full table |
-   | int64_t       | type_nucl_vector[nucl_num]              | in  | dimension of cord full table |
-   | double        | cord_vector[cord_num][type_nucl_num]    | in  | dimension of cord full table |
-   | double        | cord_vect_full[dim_cord_vect][nucl_num] | out | Full list of coefficients    |
+   | qmckl_context | context                                   | in  | Global state                 |
+   | int64_t       | nucl_num                                  | in  | Number of atoms              |
+   | int64_t       | dim_cord_vect                             | in  | dimension of cord full table |
+   | int64_t       | type_nucl_num                             | in  | dimension of cord full table |
+   | int64_t       | type_nucl_vector[nucl_num]                | in  | dimension of cord full table |
+   | double        | cord_vector[dim_cord_vect][type_nucl_num] | in  | dimension of cord full table |
+   | double        | cord_vect_full[dim_cord_vect][nucl_num]   | out | Full list of coefficients    |
 
     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_cord_vect_full_f(context, nucl_num, cord_num, dim_cord_vect, type_nucl_num,  &
+integer function qmckl_compute_cord_vect_full_f(context, nucl_num, dim_cord_vect, type_nucl_num,  &
      type_nucl_vector, cord_vector, cord_vect_full) &
      result(info)
   use qmckl
   implicit none
   integer(qmckl_context), intent(in)  :: context
   integer*8             , intent(in)  :: nucl_num
-  integer*8             , intent(in)  :: cord_num
   integer*8             , intent(in)  :: dim_cord_vect
   integer*8             , intent(in)  :: type_nucl_num
   integer*8             , intent(in)  :: type_nucl_vector(nucl_num)
-  double precision      , intent(in)  :: cord_vector(cord_num, type_nucl_num)
+  double precision      , intent(in)  :: cord_vector(type_nucl_num, dim_cord_vect)
   double precision      , intent(out) :: cord_vect_full(nucl_num,dim_cord_vect)
   double precision                    :: x
   integer*8                           :: i, a, k, l, nw
@@ -4526,11 +4527,6 @@ integer function qmckl_compute_cord_vect_full_f(context, nucl_num, cord_num, dim
      return
   endif
 
-  if (cord_num <= 0) then
-     info = QMCKL_INVALID_ARG_3
-     return
-  endif
-
   if (type_nucl_num <= 0) then
      info = QMCKL_INVALID_ARG_4
      return
@@ -4543,7 +4539,7 @@ integer function qmckl_compute_cord_vect_full_f(context, nucl_num, cord_num, dim
 
 
   do a = 1, nucl_num
-    cord_vect_full(1:dim_cord_vect,a) = cord_vector(1:dim_cord_vect,type_nucl_vector(a))
+    cord_vect_full(a,1:dim_cord_vect) = cord_vector(type_nucl_vector(a),1:dim_cord_vect)
   end do
 
 end function qmckl_compute_cord_vect_full_f
@@ -4556,7 +4552,6 @@ end function qmckl_compute_cord_vect_full_f
     qmckl_exit_code qmckl_compute_cord_vect_full (
 	  const qmckl_context context,
 	  const int64_t nucl_num,
-	  const int64_t cord_num,
 	  const int64_t dim_cord_vect,
 	  const int64_t type_nucl_num,
 	  const int64_t* type_nucl_vector,
@@ -4570,14 +4565,7 @@ end function qmckl_compute_cord_vect_full_f
     #+RESULTS:
     #+begin_src f90 :tangle (eval f) :comments org :exports none
     integer(c_int32_t) function qmckl_compute_cord_vect_full &
-	(context, &
-		 nucl_num, &
-		 cord_num, &
-		 dim_cord_vect, &
-		 type_nucl_num, &
-		 type_nucl_vector, &
-		 cord_vector, &
-		 cord_vect_full) &
+	(context, nucl_num, dim_cord_vect, type_nucl_num, type_nucl_vector, cord_vector, cord_vect_full) &
 	bind(C) result(info)
 
       use, intrinsic :: iso_c_binding
@@ -4585,23 +4573,15 @@ end function qmckl_compute_cord_vect_full_f
 
       integer (c_int64_t) , intent(in)  , value :: context
       integer (c_int64_t) , intent(in)  , value :: nucl_num
-      integer (c_int64_t) , intent(in)  , value :: cord_num
       integer (c_int64_t) , intent(in)  , value :: dim_cord_vect
       integer (c_int64_t) , intent(in)  , value :: type_nucl_num
       integer (c_int64_t) , intent(in)          :: type_nucl_vector(nucl_num)
-      real    (c_double ) , intent(in)          :: cord_vector(type_nucl_num,cord_num)
+      real    (c_double ) , intent(in)          :: cord_vector(type_nucl_num,dim_cord_vect)
       real    (c_double ) , intent(out)         :: cord_vect_full(nucl_num,dim_cord_vect)
 
       integer(c_int32_t), external :: qmckl_compute_cord_vect_full_f
       info = qmckl_compute_cord_vect_full_f &
-	     (context, &
-		 nucl_num, &
-		 cord_num, &
-		 dim_cord_vect, &
-		 type_nucl_num, &
-		 type_nucl_vector, &
-		 cord_vector, &
-		 cord_vect_full)
+	     (context, nucl_num, dim_cord_vect, type_nucl_num, type_nucl_vector, cord_vector, cord_vect_full)
 
     end function qmckl_compute_cord_vect_full
     #+end_src
@@ -4708,7 +4688,6 @@ end function qmckl_compute_lkpm_combined_index_f
     end function qmckl_compute_lkpm_combined_index
     #+end_src
 
-    
 *** Test
 
     #+name: helper_funcs
@@ -4786,7 +4765,7 @@ lkpm_of_cindex = np.array(lkpm_combined_index).T
      #+end_src
 
 ** Electron-electron-nucleus Jastrow \(f_{een}\)
-
+   
   Calculate the electron-electron-nuclear three-body jastrow component ~factor_een~ 
   using the above prepared tables.
 
@@ -4924,10 +4903,10 @@ integer function qmckl_compute_factor_een_f(context, walk_num, elec_num, nucl_nu
   implicit none
   integer(qmckl_context), intent(in)  :: context
   integer*8             , intent(in)  :: walk_num, elec_num, cord_num, nucl_num, dim_cord_vect
-  integer*8             , intent(in)  :: lkpm_combined_index(4,dim_cord_vect)
-  double precision      , intent(in)  :: cord_vect_full(dim_cord_vect, nucl_num)
-  double precision      , intent(in)  :: een_rescaled_e(walk_num, elec_num, elec_num, 0:cord_num)
-  double precision      , intent(in)  :: een_rescaled_n(walk_num, elec_num, nucl_num, 0:cord_num)
+  integer*8             , intent(in)  :: lkpm_combined_index(dim_cord_vect,4)
+  double precision      , intent(in)  :: cord_vect_full(nucl_num, dim_cord_vect)
+  double precision      , intent(in)  :: een_rescaled_e(0:cord_num, elec_num, elec_num, walk_num)
+  double precision      , intent(in)  :: een_rescaled_n(0:cord_num, nucl_num, elec_num, walk_num)
   double precision      , intent(out) :: factor_een(walk_num)
 
   integer*8 :: i, a, j, l, k, p, m, n, nw
@@ -4964,23 +4943,27 @@ integer function qmckl_compute_factor_een_f(context, walk_num, elec_num, nucl_nu
   
   do nw =1, walk_num
   do n = 1, dim_cord_vect
-    l = lkpm_combined_index(1, n)  
-    k = lkpm_combined_index(2, n)  
-    p = lkpm_combined_index(3, n)  
-    m = lkpm_combined_index(4, n)  
+    l = lkpm_combined_index(n, 1)  
+    k = lkpm_combined_index(n, 2)
+    p = lkpm_combined_index(n, 3)  
+    m = lkpm_combined_index(n, 4)  
 
     do a = 1, nucl_num
       accu2 = 0.0d0
-      cn = cord_vect_full(n, a)
+      cn = cord_vect_full(a, n)
       do j = 1, elec_num
         accu = 0.0d0
         do i = 1, elec_num
-          accu = accu + een_rescaled_e(nw, i, j, k) *       &
-                        een_rescaled_n(nw, i, a, m)
+          accu = accu + een_rescaled_e(k,i,j,nw) *       &
+                        een_rescaled_n(m,a,i,nw)
+          !if(nw .eq. 1) then
+          !  print *,l,k,p,m,j,i,een_rescaled_e(k,i,j,nw), een_rescaled_n(m,a,i,nw), accu
+          !endif
         end do
-        accu2 = accu2 + accu * een_rescaled_n(nw, j, a, m + l)
+        accu2 = accu2 + accu * een_rescaled_n(m + l,a,j,nw)
+        !print *, l,m,nw,accu, accu2, een_rescaled_n(m + l, a, j, nw), cn, factor_een(nw)
       end do
-      factor_een(nw) = factor_een(nw) + accu2 + cn
+      factor_een(nw) = factor_een(nw) + accu2 * cn
     end do
   end do
   end do
@@ -5005,7 +4988,6 @@ end function qmckl_compute_factor_een_f
 	  const double* een_rescaled_n,
 	  double* const factor_een ); 
     #+end_src
-
 
     #+CALL: generate_c_interface(table=qmckl_factor_een_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
 
@@ -5097,9 +5079,10 @@ print("factor_een:",factor_een)
 /* Check if Jastrow is properly initialized */
 assert(qmckl_jastrow_provided(context));
 
-//double factor_een[walk_num];
-//rc = qmckl_get_jastrow_factor_een(context, &(factor_een[0]));
+double factor_een[walk_num];
+rc = qmckl_get_jastrow_factor_een(context, &(factor_een[0]));
 
+assert(fabs(factor_een[0] + 0.37407972141304213) < 1e-12);
      #+end_src
      
 ** Electron-electron-nucleus Jastrow \(f_{een}\) derivative
