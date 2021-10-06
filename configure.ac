@@ -4,24 +4,24 @@
 # QMCkl - Quantum Monte Carlo kernel library
 #
 # BSD 3-Clause License
-# 
+#
 # Copyright (c) 2020, TREX Center of Excellence
 # All rights reserved.
-# 
+#
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are met:
-# 
+#
 # 1. Redistributions of source code must retain the above copyright notice, this
 #    list of conditions and the following disclaimer.
-# 
+#
 # 2. Redistributions in binary form must reproduce the above copyright notice,
 #    this list of conditions and the following disclaimer in the documentation
 #    and/or other materials provided with the distribution.
-# 
+#
 # 3. Neither the name of the copyright holder nor the names of its
 #    contributors may be used to endorse or promote products derived from
 #    this software without specific prior written permission.
-# 
+#
 # THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
 # AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
 # IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -92,11 +92,29 @@ AC_CHECK_LIB([pthread], [pthread_create])
 # OpenMP
 #AC_ARG_WITH(openmp, [AC_HELP_STRING([--with-openmp],[enable OpenMP])], with_omp=$withval, with_omp=no)
 #if test "x$with_omp" = xyes; then
-#   AC_DEFINE([USE_OPENMP], [1], [Define to use OpenMP threading.])
+#   AC_DEFINE([HAVE_OPENMP], [1], [Define to use OpenMP threading.])
 #   AX_OPENMP([],
 #    [AC_MSG_ERROR([Could not find OpenMP flags; configure with --without-openmp])])
 #   CFLAGS="${CFLAGS} ${OPENMP_CFLAGS}"
 #fi
+
+# TREXIO
+
+AC_ARG_WITH(trexio, [AC_HELP_STRING([--without-trexio],[disable support for TREXIO])],
+            with_trexio=$withval, with_trexio=yes)
+
+AS_IF([test "x$with_trexio" != xno], [
+  AC_DEFINE([HAVE_TREXIO], [1], [Define if your have libtrexio])
+  ARGS="${ARGS} trexio"
+  AC_CHECK_LIB([trexio], [trexio_open],
+       [],
+       [AS_IF([test "x$with_trexio" != xcheck],
+       [PKG_CHECK_MODULES([TREXIO], [trexio]) ])
+  ])
+])
+
+PKG_CFLAGS="$PKG_CFLAGS $TREXIO_CFLAGS"
+PKG_LIBS="$PKG_LIBS $TREXIO_LIBS"
 
 ## BLAS
 #AX_BLAS([], [AC_MSG_ERROR([BLAS was not found.])])
@@ -199,8 +217,9 @@ fi
 #PKG-CONFIG
 #mkl-dynamic-lp64-seq
 
-LIBS="${LAPACK_LIBS} ${BLAS_LIBS} ${LIBS}"
-PKG_LIBS="${PKG_LIBS} ${LIBS}"
+PKG_LIBS="$PKG_LIBS $LIBS"
+LIBS="$LAPACK_LIBS $BLAS_LIBS $PKG_LIBS"
+CFLAGS="$CFLAGS $PKG_CFLAGS"
 AC_SUBST([PKG_LIBS])
 AC_SUBST([PKG_CFLAGS])
 AC_SUBST([HAS_CPPCHECK])
