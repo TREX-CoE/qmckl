@@ -1,0 +1,230 @@
+#+TITLE: TREXIO I/O library
+#+SETUPFILE: ../tools/theme.setup
+#+INCLUDE: ../tools/lib.org
+
+The [[https://github.com/trex-coe/trexio][TREXIO library]] enables easy and efficient input/output of wave
+function parameters. In this section we provide high-level functions
+to prepare the context by reading the required data from a TREXIO file.
+
+* Headers                                                          :noexport:
+  #+begin_src elisp :noexport :results none
+(org-babel-lob-ingest "../tools/lib.org")
+#+end_src
+
+
+  #+begin_src c :tangle (eval c_test) :noweb yes
+#include "qmckl.h"
+#include <assert.h>
+#include <math.h>
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#include "chbrclf.h"
+
+int main() {
+  qmckl_context context;
+  context = qmckl_context_create();
+#ifdef HAVE_TREXIO
+  #+end_src
+
+  #+begin_src c :tangle (eval c)
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#ifdef HAVE_STDINT_H
+#include <stdint.h>
+#elif HAVE_INTTYPES_H
+#include <inttypes.h>
+#endif
+
+#ifdef HAVE_TREXIO
+#include <trexio.h>
+#endif
+
+#include <stdlib.h>
+#include <string.h>
+#include <stdbool.h>
+#include <assert.h>
+#include <math.h>
+
+#include <stdio.h>
+
+#include "qmckl.h"
+  #+end_src
+  
+* Local functions
+
+  Functions defined in this section are all local: they should not be
+  exposed in the API. To identify them, we append an underscore to
+  their name.
+  
+  
+** Open file
+   
+   We first define a helper function to open a file by first trying to
+   use the TEXT back end, and then the HDF5 back end. If both
+   strategies fail, a ~NULL~ pointer is returned. This will allow to
+   open only once the file and call multiple small functions to read
+   groups of data by passing the ~trexio_t~ handle.
+  
+   #+begin_src c :tangle (eval c)
+#ifdef HAVE_TREXIO
+trexio_t* qmckl_trexio_open_(const char* file_name, qmckl_exit_code* rc)
+{
+  *rc = QMCKL_SUCCESS;
+  trexio_t* file = NULL;
+
+  file = trexio_open(file_name, 'r', TREXIO_TEXT, rc);
+  if (file != NULL) return file;
+
+  file = trexio_open(file_name, 'r', TREXIO_HDF5, rc);
+  if (file != NULL) return file;
+    
+  *rc = QMCKL_FAILURE;
+  return NULL;
+}
+#endif
+   #+end_src
+
+** Electron
+   
+   In this section we read all the data into the electron data structure.
+  
+   #+begin_src c :tangle (eval c)
+#ifdef HAVE_TREXIO
+qmckl_exit_code
+qmckl_trexio_read_electron_(qmckl_context context, trexio_t* const file) 
+{
+  // Should not be possible by construction.
+  assert (context != (qmckl_context) 0);
+  assert (file != NULL);
+  
+  int rcio = 0;
+
+  int64_t up_num = 0;
+  int64_t dn_num = 0;
+
+  rcio = trexio_read_electron_up_num_64(file, &up_num);
+  if (rcio != TREXIO_SUCCESS) {
+    return qmckl_failwith( context,
+                           QMCKL_FAILURE,
+                           "trexio_read_electron_up_num",
+                           trexio_string_of_error(rcio));
+  }
+
+  assert (up_num >= 0);
+
+  rcio = trexio_read_electron_dn_num_64(file, &dn_num);
+  if (rcio != TREXIO_SUCCESS) {
+    return qmckl_failwith( context,
+                           QMCKL_FAILURE,
+                           "trexio_read_electron_dn_num",
+                           trexio_string_of_error(rcio));
+  }
+  
+  assert (dn_num >= 0);
+  
+  
+  qmckl_exit_code rc;
+  rc = qmckl_set_electron_num(context, up_num, dn_num);
+  return rc;
+}
+#endif
+   #+end_src
+
+* Read everything
+
+  #+begin_src c :tangle (eval h_func)
+qmckl_exit_code qmckl_trexio_read(const qmckl_context context, const char* file_name);
+  #+end_src
+
+  #+begin_src c :tangle (eval c)
+qmckl_exit_code
+qmckl_trexio_read(const qmckl_context context, const char* file_name)
+{
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return false;
+  }
+
+  qmckl_exit_code rc;
+
+#ifdef HAVE_TREXIO
+  trexio_t* file = qmckl_trexio_open_(file_name, &rc);
+  if (file == NULL) {
+    trexio_close(file);
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_trexio_read",
+                           trexio_string_of_error(rc));
+  }
+
+  assert (file != NULL);
+
+  rc = qmckl_trexio_read_electron_(context, file);
+  printf("%d %d\n", rc, QMCKL_SUCCESS);
+  if (rc != QMCKL_SUCCESS) {
+    trexio_close(file);
+    return qmckl_failwith( context,
+                           QMCKL_FAILURE,
+                           "qmckl_trexio_read",
+                           "Error reading electron");
+  }
+  
+  trexio_close(file);
+  file = NULL;
+#else
+  
+  rc = qmckl_failwith( context,
+                       QMCKL_FAILURE,
+                       "qmckl_trexio_read",
+                       "QMCkl was not compiled without TREXIO");
+#endif
+  return rc;
+}
+  #+end_src
+  
+* Test
+
+  #+begin_src c :tangle (eval c_test)
+#ifdef HAVE_TREXIO
+
+qmckl_exit_code rc;
+char fname[256];
+char message[256];
+rc = qmckl_trexio_read(context, "share/qmckl/test_data/chbrclf");
+if (rc != QMCKL_SUCCESS) {
+  printf("%s\n", qmckl_string_of_error(rc));
+  qmckl_get_error(context, &rc, fname, message);
+  printf("%s\n", fname);
+  printf("%s\n", message);
+ }
+  
+assert ( rc == QMCKL_SUCCESS );
+
+int64_t num;
+rc = qmckl_get_electron_up_num(context, &num);
+assert (num == chbrclf_elec_up_num);
+  
+rc = qmckl_get_electron_down_num(context, &num);
+assert (num == chbrclf_elec_dn_num);
+  
+#endif
+  #+end_src
+
+* End of files                                                     :noexport:
+
+*** Test
+  #+begin_src c :tangle (eval c_test)
+  if (qmckl_context_destroy(context) != QMCKL_SUCCESS)
+    return QMCKL_FAILURE;
+#endif
+  return 0;
+}
+  #+end_src
+
+# -*- mode: org -*-
+# vim: syntax=c
+
+
