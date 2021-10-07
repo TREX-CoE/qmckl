@@ -37,7 +37,6 @@ determinant ψ(x).
 (org-babel-lob-ingest "../tools/lib.org")
   #+end_src
 
-
   #+begin_src c :tangle (eval h_private_type)
 #ifndef QMCKL_DETERMINANT_HPT
 #define QMCKL_DETERMINANT_HPT
@@ -1178,6 +1177,8 @@ qmckl_exit_code qmckl_provide_det_inv_matrix_alpha(qmckl_context context) {
                                         ctx->electron.up_num,
                                         ctx->mo_basis.mo_num,
                                         ctx->det.det_vgl_alpha,
+                                        ctx->det.det_value_alpha,
+                                        ctx->det.det_adj_matrix_alpha,
                                         ctx->det.det_inv_matrix_alpha);
     } else {
       return qmckl_failwith( context,
@@ -1267,6 +1268,8 @@ qmckl_exit_code qmckl_provide_det_inv_matrix_beta(qmckl_context context) {
                                         ctx->electron.down_num,
                                         ctx->mo_basis.mo_num,
                                         ctx->det.det_vgl_beta,
+                                        ctx->det.det_value_beta,
+                                        ctx->det.det_adj_matrix_beta,
                                         ctx->det.det_inv_matrix_beta);
     } else {
       return qmckl_failwith( context,
@@ -1293,17 +1296,19 @@ qmckl_exit_code qmckl_provide_det_inv_matrix_beta(qmckl_context context) {
    :END:
 
     #+NAME: qmckl_det_inv_matrix_alpha_args
-   | ~qmckl_context~ | ~context~                                                       | in  | Global state                                                 |
+   | ~qmckl_context~ | ~context~                                                             | in  | Global state                                                 |
    | ~int64_t~       | ~det_num_alpha~                                                       | in  | Number of determinants                                       |
-   | ~int64_t~       | ~walk_num~                                                      | in  | Number of walkers                                            |
-   | ~int64_t~       | ~alpha_num~                                                     | in  | Number of electrons                                          |
-   | ~int64_t~       | ~mo_num~                                                        | in  | Number of MOs                                                |
+   | ~int64_t~       | ~walk_num~                                                            | in  | Number of walkers                                            |
+   | ~int64_t~       | ~alpha_num~                                                           | in  | Number of electrons                                          |
+   | ~int64_t~       | ~mo_num~                                                              | in  | Number of MOs                                                |
    | ~double~        | ~det_vgl_alpha[det_num_alpha][walk_num][5][alpha_num][mo_num]~        | in  | determinant matrix Value, gradients and Laplacian of the MOs |
+   | ~double~        | ~det_value_alpha[det_num_alpha][walk_num]~                            | out | value of determinant matrix                                  |
+   | ~double~        | ~det_adj_matrix_alpha[det_num_alpha][walk_num][alpha_num][alpha_num]~ | out | adjoint of determinant matrix                                |
    | ~double~        | ~det_inv_matrix_alpha[det_num_alpha][walk_num][alpha_num][alpha_num]~ | out | inverse of determinant matrix                                |
     
     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
 integer function qmckl_compute_det_inv_matrix_alpha_f(context, &
-     det_num_alpha, walk_num, alpha_num, mo_num, det_vgl_alpha, det_inv_matrix_alpha) &
+     det_num_alpha, walk_num, alpha_num, mo_num, det_vgl_alpha, det_value_alpha, det_adj_matrix_alpha, det_inv_matrix_alpha) &
      result(info)
   use qmckl
   implicit none
@@ -1313,6 +1318,8 @@ integer function qmckl_compute_det_inv_matrix_alpha_f(context, &
   integer*8, intent(in)             :: alpha_num
   integer*8, intent(in)             :: mo_num
   double precision, intent(in)      :: det_vgl_alpha(mo_num, alpha_num, 5, walk_num, det_num_alpha)
+  double precision, intent(inout)   :: det_value_alpha(walk_num, det_num_alpha)
+  double precision, intent(inout)   :: det_adj_matrix_alpha(alpha_num, alpha_num, walk_num, det_num_alpha)
   double precision, intent(inout)   :: det_inv_matrix_alpha(alpha_num, alpha_num, walk_num, det_num_alpha)
   double precision,dimension(:,:),allocatable  :: matA
   double precision                  :: det_l
@@ -1353,7 +1360,9 @@ integer function qmckl_compute_det_inv_matrix_alpha_f(context, &
     ! Value
     matA = det_vgl_alpha(1:mo_num, 1:alpha_num, 1, iwalk, idet)
     res = qmckl_invert(context, alpha_num, alpha_num, LDA, matA, det_l)
-    det_inv_matrix_alpha(1:mo_num, 1:alpha_num, iwalk, idet) = matA
+    det_adj_matrix_alpha(1:mo_num, 1:alpha_num, iwalk, idet) = matA
+    det_inv_matrix_alpha(1:mo_num, 1:alpha_num, iwalk, idet) = matA/det_l
+    det_value_alpha(iwalk, idet) = det_l
   end do
   end do
 
@@ -1371,6 +1380,8 @@ end function qmckl_compute_det_inv_matrix_alpha_f
 	 const int64_t alpha_num,
 	 const int64_t mo_num,
 	 const double* det_vgl_alpha,
+	 double* const det_value_alpha,
+	 double* const det_adj_matrix_alpha,
 	 double* const det_inv_matrix_alpha ); 
    #+end_src
 
@@ -1379,7 +1390,15 @@ end function qmckl_compute_det_inv_matrix_alpha_f
     #+RESULTS:
     #+begin_src f90 :tangle (eval f) :comments org :exports none
     integer(c_int32_t) function qmckl_compute_det_inv_matrix_alpha &
-	(context, det_num_alpha, walk_num, alpha_num, mo_num, det_vgl_alpha, det_inv_matrix_alpha) &
+	(context, &
+		 det_num_alpha, &
+		 walk_num, &
+		 alpha_num, &
+		 mo_num, &
+		 det_vgl_alpha, &
+		 det_value_alpha, &
+		 det_adj_matrix_alpha, &
+		 det_inv_matrix_alpha) &
 	bind(C) result(info)
 
       use, intrinsic :: iso_c_binding
@@ -1391,11 +1410,21 @@ end function qmckl_compute_det_inv_matrix_alpha_f
       integer (c_int64_t) , intent(in)  , value :: alpha_num
       integer (c_int64_t) , intent(in)  , value :: mo_num
       real    (c_double ) , intent(in)          :: det_vgl_alpha(mo_num,alpha_num,5,walk_num,det_num_alpha)
+      real    (c_double ) , intent(out)         :: det_value_alpha(walk_num,det_num_alpha)
+      real    (c_double ) , intent(out)         :: det_adj_matrix_alpha(alpha_num,alpha_num,walk_num,det_num_alpha)
       real    (c_double ) , intent(out)         :: det_inv_matrix_alpha(alpha_num,alpha_num,walk_num,det_num_alpha)
 
       integer(c_int32_t), external :: qmckl_compute_det_inv_matrix_alpha_f
       info = qmckl_compute_det_inv_matrix_alpha_f &
-	     (context, det_num_alpha, walk_num, alpha_num, mo_num, det_vgl_alpha, det_inv_matrix_alpha)
+	     (context, &
+		 det_num_alpha, &
+		 walk_num, &
+		 alpha_num, &
+		 mo_num, &
+		 det_vgl_alpha, &
+		 det_value_alpha, &
+		 det_adj_matrix_alpha, &
+		 det_inv_matrix_alpha)
 
     end function qmckl_compute_det_inv_matrix_alpha
     #+end_src
@@ -1408,17 +1437,19 @@ end function qmckl_compute_det_inv_matrix_alpha_f
    :END:
 
     #+NAME: qmckl_det_inv_matrix_beta_args
-   | ~qmckl_context~ | ~context~                                                       | in  | Global state                                                 |
-   | ~int64_t~       | ~det_num_beta~                                                       | in  | Number of determinants                                       |
-   | ~int64_t~       | ~walk_num~                                                      | in  | Number of walkers                                            |
-   | ~int64_t~       | ~beta_num~                                                     | in  | Number of electrons                                          |
-   | ~int64_t~       | ~mo_num~                                                        | in  | Number of MOs                                                |
-   | ~double~        | ~det_vgl_beta[det_num_beta][walk_num][5][beta_num][mo_num]~        | in  | determinant matrix Value, gradients and Laplacian of the MOs |
+   | ~qmckl_context~ | ~context~                                                         | in  | Global state                                                 |
+   | ~int64_t~       | ~det_num_beta~                                                    | in  | Number of determinants                                       |
+   | ~int64_t~       | ~walk_num~                                                        | in  | Number of walkers                                            |
+   | ~int64_t~       | ~beta_num~                                                        | in  | Number of electrons                                          |
+   | ~int64_t~       | ~mo_num~                                                          | in  | Number of MOs                                                |
+   | ~double~        | ~det_vgl_beta[det_num_beta][walk_num][5][beta_num][mo_num]~       | in  | determinant matrix Value, gradients and Laplacian of the MOs |
+   | ~double~        | ~det_value_beta[det_num_beta][walk_num]~                          | out | value of determinant matrix                                  |
+   | ~double~        | ~det_adj_matrix_beta[det_num_beta][walk_num][beta_num][beta_num]~ | out | adjoint of determinant matrix                                |
    | ~double~        | ~det_inv_matrix_beta[det_num_beta][walk_num][beta_num][beta_num]~ | out | inverse of determinant matrix                                |
     
     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
 integer function qmckl_compute_det_inv_matrix_beta_f(context, &
-     det_num_beta, walk_num, beta_num, mo_num, det_vgl_beta, det_inv_matrix_beta) &
+     det_num_beta, walk_num, beta_num, mo_num, det_vgl_beta, det_value_beta, det_adj_matrix_beta, det_inv_matrix_beta) &
      result(info)
   use qmckl
   implicit none
@@ -1428,6 +1459,8 @@ integer function qmckl_compute_det_inv_matrix_beta_f(context, &
   integer*8, intent(in)             :: beta_num
   integer*8, intent(in)             :: mo_num
   double precision, intent(in)      :: det_vgl_beta(mo_num, beta_num, 5, walk_num, det_num_beta)
+  double precision, intent(inout)   :: det_value_beta(walk_num, det_num_beta)
+  double precision, intent(inout)   :: det_adj_matrix_beta(beta_num, beta_num, walk_num, det_num_beta)
   double precision, intent(inout)   :: det_inv_matrix_beta(beta_num, beta_num, walk_num, det_num_beta)
   double precision,dimension(:,:),allocatable  :: matA
   double precision                  :: det_l
@@ -1468,7 +1501,9 @@ integer function qmckl_compute_det_inv_matrix_beta_f(context, &
     ! Value
     matA = det_vgl_beta(1:mo_num, 1:beta_num, 1, iwalk, idet)
     res = qmckl_invert(context, beta_num, beta_num, LDA, matA, det_l)
-    det_inv_matrix_beta(1:mo_num, 1:beta_num, iwalk, idet) = matA
+    det_adj_matrix_beta(1:mo_num, 1:beta_num, iwalk, idet) = matA
+    det_inv_matrix_beta(1:mo_num, 1:beta_num, iwalk, idet) = matA/det_l
+    det_value_beta(iwalk, idet) = det_l
   end do
   end do
 
@@ -1486,6 +1521,8 @@ end function qmckl_compute_det_inv_matrix_beta_f
 	 const int64_t beta_num,
 	 const int64_t mo_num,
 	 const double* det_vgl_beta,
+	 double* const det_value_beta,
+	 double* const det_adj_matrix_beta,
 	 double* const det_inv_matrix_beta ); 
    #+end_src
 
@@ -1494,7 +1531,15 @@ end function qmckl_compute_det_inv_matrix_beta_f
     #+RESULTS:
     #+begin_src f90 :tangle (eval f) :comments org :exports none
     integer(c_int32_t) function qmckl_compute_det_inv_matrix_beta &
-	(context, det_num_beta, walk_num, beta_num, mo_num, det_vgl_beta, det_inv_matrix_beta) &
+	(context, &
+		 det_num_beta, &
+		 walk_num, &
+		 beta_num, &
+		 mo_num, &
+		 det_vgl_beta, &
+		 det_value_beta, &
+		 det_adj_matrix_beta, &
+		 det_inv_matrix_beta) &
 	bind(C) result(info)
 
       use, intrinsic :: iso_c_binding
@@ -1506,11 +1551,21 @@ end function qmckl_compute_det_inv_matrix_beta_f
       integer (c_int64_t) , intent(in)  , value :: beta_num
       integer (c_int64_t) , intent(in)  , value :: mo_num
       real    (c_double ) , intent(in)          :: det_vgl_beta(mo_num,beta_num,5,walk_num,det_num_beta)
+      real    (c_double ) , intent(out)         :: det_value_beta(walk_num,det_num_beta)
+      real    (c_double ) , intent(out)         :: det_adj_matrix_beta(beta_num,beta_num,walk_num,det_num_beta)
       real    (c_double ) , intent(out)         :: det_inv_matrix_beta(beta_num,beta_num,walk_num,det_num_beta)
 
       integer(c_int32_t), external :: qmckl_compute_det_inv_matrix_beta_f
       info = qmckl_compute_det_inv_matrix_beta_f &
-	     (context, det_num_beta, walk_num, beta_num, mo_num, det_vgl_beta, det_inv_matrix_beta)
+	     (context, &
+		 det_num_beta, &
+		 walk_num, &
+		 beta_num, &
+		 mo_num, &
+		 det_vgl_beta, &
+		 det_value_beta, &
+		 det_adj_matrix_beta, &
+		 det_inv_matrix_beta)
 
     end function qmckl_compute_det_inv_matrix_beta
     #+end_src
