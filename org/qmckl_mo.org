@@ -438,7 +438,7 @@ qmckl_exit_code qmckl_provide_mo_vgl(qmckl_context context)
    | ~int64_t~       | ~mo_num~                                | in  | Number of MOs                             |
    | ~int64_t~       | ~elec_num~                              | in  | Number of electrons                       |
    | ~int64_t~       | ~walk_num~                              | in  | Number of walkers                         |
-   | ~double~        | ~coef_normalized[mo_num][ao_num]~       | in  | AO to MO transformation matrix            |
+   | ~double~        | ~coef_normalized[ao_num][mo_num]~       | in  | AO to MO transformation matrix            |
    | ~double~        | ~ao_vgl[5][walk_num][elec_num][ao_num]~ | in  | Value, gradients and Laplacian of the AOs |
    | ~double~        | ~mo_vgl[5][walk_num][elec_num][mo_num]~ | out | Value, gradients and Laplacian of the MOs |
     
@@ -454,9 +454,10 @@ integer function qmckl_compute_mo_basis_gaussian_vgl_f(context, &
   integer*8             , intent(in)  :: elec_num
   integer*8             , intent(in)  :: walk_num
   double precision      , intent(in)  :: ao_vgl(ao_num,elec_num,walk_num,5)
-  double precision      , intent(in)  :: coef_normalized(ao_num,mo_num)
+  double precision      , intent(in)  :: coef_normalized(mo_num,ao_num)
   double precision      , intent(out) :: mo_vgl(mo_num,elec_num,walk_num,5)
   logical*8                     :: TransA, TransB
+  double precision,dimension(:,:),allocatable    :: mo_vgl_big
   double precision              :: alpha, beta
   integer                       :: info_qmckl_dgemm_value
   integer                       :: info_qmckl_dgemm_Gx   
@@ -467,6 +468,9 @@ integer function qmckl_compute_mo_basis_gaussian_vgl_f(context, &
 
   integer*8 :: inucl, iprim, iwalk, ielec, ishell
   double precision :: x, y, z, two_a, ar2, r2, v, cutoff
+
+  allocate(mo_vgl_big(mo_num,elec_num*walk_num*5))
+
   TransA = .False.
   TransB = .False. 
   alpha = 1.0d0
@@ -474,64 +478,25 @@ integer function qmckl_compute_mo_basis_gaussian_vgl_f(context, &
 
   info = QMCKL_SUCCESS
   info_qmckl_dgemm_value = QMCKL_SUCCESS
-  info_qmckl_dgemm_Gx    = QMCKL_SUCCESS
-  info_qmckl_dgemm_Gy    = QMCKL_SUCCESS
-  info_qmckl_dgemm_Gz    = QMCKL_SUCCESS
-  info_qmckl_dgemm_lap   = QMCKL_SUCCESS
   
   ! Don't compute exponentials when the result will be almost zero.
   ! TODO : Use numerical precision here
   cutoff = -dlog(1.d-15)
-  M = elec_num
-  N = mo_num * 1_8
+  M = mo_num
+  N = elec_num*walk_num*5
   K = ao_num * 1_8
   LDA = M
   LDB = K
   LDC = M
 
-  do iwalk = 1, walk_num
-    ! Value
-    info_qmckl_dgemm_value = qmckl_dgemm(context,TransA, TransB, M, N, K, alpha,     &
-                                   ao_vgl(:, :, iwalk, 1), LDA, &
-                                   coef_normalized(1:ao_num,1:mo_num),size(coef_normalized,1) * 1_8,    &
-                                   beta,                                       &
-                                   mo_vgl(:,:,iwalk,1),LDC)
-    ! Grad_x
-    info_qmckl_dgemm_Gx = qmckl_dgemm(context,TransA, TransB, M, N, K, alpha,     &
-                                   ao_vgl(:, ielec, iwalk, 2), LDA, &
-                                   coef_normalized(1:ao_num,1:mo_num),size(coef_normalized,1) * 1_8,    &
-                                   beta,                                       &
-                                   mo_vgl(:,ielec,iwalk,2),LDC)
-    ! Grad_y
-    info_qmckl_dgemm_Gy = qmckl_dgemm(context,TransA, TransB, M, N, K, alpha,     &
-                                   ao_vgl(:, ielec, iwalk, 3), LDA, &
-                                   coef_normalized(1:ao_num,1:mo_num),size(coef_normalized,1) * 1_8,    &
-                                   beta,                                       &
-                                   mo_vgl(:,ielec,iwalk,3),LDC)
-    ! Grad_z
-    info_qmckl_dgemm_Gz = qmckl_dgemm(context,TransA, TransB, M, N, K, alpha,     &
-                                   ao_vgl(:, ielec, iwalk, 4), LDA, &
-                                   coef_normalized(1:ao_num,1:mo_num),size(coef_normalized,1) * 1_8,    &
-                                   beta,                                       &
-                                   mo_vgl(:,ielec,iwalk,4),LDC)
-    ! Lapl_z
-    info_qmckl_dgemm_lap = qmckl_dgemm(context, TransA, TransB, M, N, K, alpha,     &
-                                   ao_vgl(:, ielec, iwalk, 5), LDA, &
-                                   coef_normalized(1:ao_num,1:mo_num),size(coef_normalized,1) * 1_8,    &
-                                   beta,                                       &
-                                   mo_vgl(:,ielec,iwalk,5),LDC)
-  end do
+  info = qmckl_dgemm(context,TransA, TransB, M, N, K, alpha,     &
+                                 coef_normalized(1:mo_num,1:ao_num),size(coef_normalized,1) * 1_8,    &
+                                 reshape(ao_vgl(:,:, :, :),(/ao_num,elec_num*walk_num*5/)), LDB, &
+                                 beta,                                       &
+                                 mo_vgl_big(:,:),LDC)
+  mo_vgl = reshape(mo_vgl_big,(/mo_num,elec_num,walk_num,5_8/))
 
-  if(info_qmckl_dgemm_value .eq. QMCKL_SUCCESS .and.  &
-     info_qmckl_dgemm_Gx    .eq. QMCKL_SUCCESS .and.  &
-     info_qmckl_dgemm_Gy    .eq. QMCKL_SUCCESS .and.  &
-     info_qmckl_dgemm_Gz    .eq. QMCKL_SUCCESS .and.  &
-     info_qmckl_dgemm_lap   .eq. QMCKL_SUCCESS        ) then
-     info = QMCKL_SUCCESS
-   else
-     info = QMCKL_FAILURE
-   end if
-  
+  deallocate(mo_vgl_big)
 end function qmckl_compute_mo_basis_gaussian_vgl_f
     #+end_src
 
@@ -567,7 +532,7 @@ end function qmckl_compute_mo_basis_gaussian_vgl_f
       integer (c_int64_t) , intent(in)  , value :: mo_num
       integer (c_int64_t) , intent(in)  , value :: elec_num
       integer (c_int64_t) , intent(in)  , value :: walk_num
-      real    (c_double ) , intent(in)          :: coef_normalized(ao_num,mo_num)
+      real    (c_double ) , intent(in)          :: coef_normalized(mo_num,ao_num)
       real    (c_double ) , intent(in)          :: ao_vgl(ao_num,elec_num,walk_num,5)
       real    (c_double ) , intent(out)         :: mo_vgl(mo_num,elec_num,walk_num,5)
 
