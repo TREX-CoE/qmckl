@@ -223,7 +223,6 @@ qmckl_exit_code qmckl_get_kinetic_energy(qmckl_context context, double * const k
 }
     #+end_src
 
-     
 *** Provide
 
     #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
@@ -507,6 +506,249 @@ end function qmckl_compute_kinetic_energy_f
     
 *** Test
     
+** Potential energy
+   :PROPERTIES:
+   :Name:     qmckl_compute_potential_energy
+   :CRetType: qmckl_exit_code
+   :FRetType: qmckl_exit_code
+   :END:
+
+*** Get
+    
+    #+begin_src c :comments org :tangle (eval h_func) :noweb yes
+qmckl_exit_code qmckl_get_potential_energy(qmckl_context context, double* const potential_energy);
+    #+end_src
+
+    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code qmckl_get_potential_energy(qmckl_context context, double * const potential_energy) {
+  
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_exit_code rc;
+
+  if(!qmckl_electron_provided(context)) return QMCKL_NOT_PROVIDED;
+
+  if(!qmckl_nucleus_provided(context)) return QMCKL_NOT_PROVIDED;
+
+  rc = qmckl_provide_ao_vgl(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_mo_vgl(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_potential_energy(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  size_t sze = ctx->electron.walk_num * sizeof(double);
+  memcpy(potential_energy, ctx->local_energy.e_kin, sze);
+
+  return QMCKL_SUCCESS;
+}
+    #+end_src
+
+*** Provide
+
+    #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_provide_potential_energy(qmckl_context context);
+    #+end_src
+
+    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code qmckl_provide_potential_energy(qmckl_context context) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  if(!(ctx->nucleus.provided)) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_electron",
+                           NULL);
+  }
+  
+  if(!(ctx->electron.provided)) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_electron",
+                           NULL);
+  }
+  
+  if (!ctx->ao_basis.provided) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_ao_basis",
+                           NULL);
+  }
+
+  if (!ctx->mo_basis.provided) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_mo_basis",
+                           NULL);
+  }
+
+  if (!ctx->det.provided) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_mo_basis",
+                           NULL);
+  }
+
+  /* Compute if necessary */
+  if (ctx->electron.coord_new_date > ctx->local_energy.e_kin_date) {
+
+    /* Allocate array */
+    if (ctx->local_energy.e_kin == NULL) {
+
+      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+      mem_info.size = ctx->electron.walk_num * sizeof(double);
+      double* e_kin = (double*) qmckl_malloc(context, mem_info);
+
+      if (e_kin == NULL) {
+        return qmckl_failwith( context,
+                               QMCKL_ALLOCATION_FAILED,
+                               "qmckl_e_kin",
+                               NULL);
+      }
+      ctx->local_energy.e_kin = e_kin;
+    }
+
+    qmckl_exit_code rc; 
+    if (ctx->det.type == 'G') {
+      rc = qmckl_compute_potential_energy(context,
+                                 ctx->det.walk_num,
+                                 ctx->electron.num,
+                                 ctx->nucleus.num,
+                                 ctx->electron.ee_pot,
+                                 ctx->nucleus.en_pot,
+                                 ctx->nucleus.repulsion,
+                                 ctx->local_energy.e_kin);
+    } else {
+      return qmckl_failwith( context,
+                             QMCKL_FAILURE,
+                             "compute_potential_energy",
+                             "Not yet implemented");
+    } 
+    if (rc != QMCKL_SUCCESS) {
+      return rc;
+    }
+
+    ctx->local_energy.e_kin_date = ctx->date;
+  }
+
+  return QMCKL_SUCCESS;
+}
+    #+end_src
+
+*** Compute potential enregy
+   :PROPERTIES:
+   :Name:     qmckl_compute_potential_energy
+   :CRetType: qmckl_exit_code
+   :FRetType: qmckl_exit_code
+   :END:
+
+    #+NAME: qmckl_compute_potential_energy_args
+   | ~qmckl_context~ | ~context~          | in  | Global state        |
+   | ~int64_t~       | ~walk_num~         | in  | Number of walkers   |
+   | ~int64_t~       | ~elec_num~         | in  | Number of electrons |
+   | ~int64_t~       | ~nucl_num~         | in  | Number of MOs       |
+   | ~double~        | ~ee_pot[walk_num]~ | in  | ee potential        |
+   | ~double~        | ~en_pot[walk_num]~ | in  | en potential        |
+   | ~double~        | ~repulsion~        | in  | en potential        |
+   | ~double~        | ~e_pot[walk_num]~  | out | Potential energy |
+    
+    #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+integer function qmckl_compute_potential_energy_f(context, walk_num, &
+     elec_num, nucl_num, ee_pot, en_pot, repulsion, e_pot) &
+     result(info)
+  use qmckl
+  implicit none
+  integer(qmckl_context)  , intent(in)  :: context
+  integer*8, intent(in)             :: walk_num
+  integer*8, intent(in)             :: elec_num
+  integer*8, intent(in)             :: nucl_num
+  double precision, intent(in)      :: ee_pot(walk_num)
+  double precision, intent(in)      :: en_pot(walk_num)
+  double precision, intent(in)      :: repulsion
+  double precision, intent(inout)   :: e_pot(walk_num)
+  integer*8 :: idet, iwalk, ielec, mo_id, imo
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (walk_num <= 0) then
+     info = QMCKL_INVALID_ARG_2
+     return
+  endif
+
+  if (elec_num <= 0) then
+     info = QMCKL_INVALID_ARG_3
+     return
+  endif
+
+  e_pot = 0.0d0 + repulsion
+  do iwalk = 1, walk_num
+    e_pot(iwalk) = e_pot(iwalk) + ee_pot(iwalk) + en_pot(iwalk)
+  end do
+
+end function qmckl_compute_potential_energy_f
+    #+end_src
+
+    #+CALL: generate_c_header(table=qmckl_compute_potential_energy_args,rettyp=get_value("CRetType"),fname="qmckl_compute_potential_energy"))
+
+   #+RESULTS:
+   #+begin_src c :tangle (eval h_func) :comments org
+   qmckl_exit_code qmckl_compute_potential_energy (
+	 const qmckl_context context,
+	 const int64_t walk_num,
+	 const int64_t elec_num,
+	 const int64_t nucl_num,
+	 const double* ee_pot,
+	 const double* en_pot,
+	 const double repulsion,
+	 double* const e_pot ); 
+   #+end_src
+
+    #+CALL: generate_c_interface(table=qmckl_compute_potential_energy_args,rettyp=get_value("CRetType"),fname="qmckl_compute_potential_energy"))
+
+    #+RESULTS:
+    #+begin_src f90 :tangle (eval f) :comments org :exports none
+    integer(c_int32_t) function qmckl_compute_potential_energy &
+	(context, walk_num, elec_num, nucl_num, ee_pot, en_pot, repulsion, e_pot) &
+	bind(C) result(info)
+
+      use, intrinsic :: iso_c_binding
+      implicit none
+
+      integer (c_int64_t) , intent(in)  , value :: context
+      integer (c_int64_t) , intent(in)  , value :: walk_num
+      integer (c_int64_t) , intent(in)  , value :: elec_num
+      integer (c_int64_t) , intent(in)  , value :: nucl_num
+      real    (c_double ) , intent(in)          :: ee_pot(walk_num)
+      real    (c_double ) , intent(in)          :: en_pot(walk_num)
+      real    (c_double ) , intent(in)  , value :: repulsion
+      real    (c_double ) , intent(out)         :: e_pot(walk_num)
+
+      integer(c_int32_t), external :: qmckl_compute_potential_energy_f
+      info = qmckl_compute_potential_energy_f &
+	     (context, walk_num, elec_num, nucl_num, ee_pot, en_pot, repulsion, e_pot)
+
+    end function qmckl_compute_potential_energy
+    #+end_src
+    
+*** Test
 * End of files                                                     :noexport:
 
   #+begin_src c :tangle (eval h_private_type)
