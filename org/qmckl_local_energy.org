@@ -346,7 +346,7 @@ qmckl_exit_code qmckl_provide_kinetic_energy(qmckl_context context) {
    :FRetType: qmckl_exit_code
    :END:
 
-    #+NAME: qmckl_compute_kinetic_energy_args
+   #+NAME: qmckl_compute_kinetic_energy_args
    | ~qmckl_context~ | ~context~                                                             | in  | Global state                              |
    | ~int64_t~       | ~walk_num~                                                            | in  | Number of walkers                         |
    | ~int64_t~       | ~det_num_alpha~                                                       | in  | Number of determinants                    |
@@ -1009,6 +1009,348 @@ end function qmckl_compute_local_energy_f
 	     (context, walk_num, e_kin, e_pot, e_local)
 
     end function qmckl_compute_local_energy
+    #+end_src
+    
+*** Test
+** Drift vector
+   :PROPERTIES:
+   :Name:     qmckl_compute_drift_vector
+   :CRetType: qmckl_exit_code
+   :FRetType: qmckl_exit_code
+   :END:
+
+The local energy is the sum of kinetic and potential energies.
+
+\[
+E_L = KE + PE
+\]
+
+
+*** Get
+    
+    #+begin_src c :comments org :tangle (eval h_func) :noweb yes
+qmckl_exit_code qmckl_get_drift_vector(qmckl_context context, double* const drift_vector);
+    #+end_src
+
+    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code qmckl_get_drift_vector(qmckl_context context, double * const drift_vector) {
+  
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_exit_code rc;
+
+  if(!qmckl_electron_provided(context)) return QMCKL_NOT_PROVIDED;
+
+  if(!qmckl_nucleus_provided(context)) return QMCKL_NOT_PROVIDED;
+
+  rc = qmckl_provide_ao_vgl(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_mo_vgl(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_drift_vector(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  size_t sze = ctx->electron.walk_num * 3 * sizeof(double);
+  memcpy(drift_vector, ctx->local_energy.r_drift, sze);
+
+  return QMCKL_SUCCESS;
+}
+    #+end_src
+
+*** Provide
+
+    #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_provide_drift_vector(qmckl_context context);
+    #+end_src
+
+    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code qmckl_provide_drift_vector(qmckl_context context) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  if(!(ctx->nucleus.provided)) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_electron",
+                           NULL);
+  }
+  
+  if(!(ctx->electron.provided)) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_electron",
+                           NULL);
+  }
+  
+  if (!ctx->ao_basis.provided) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_ao_basis",
+                           NULL);
+  }
+
+  if (!ctx->mo_basis.provided) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_mo_basis",
+                           NULL);
+  }
+
+  if (!ctx->det.provided) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_mo_basis",
+                           NULL);
+  }
+
+  /* Compute if necessary */
+  if (ctx->electron.coord_new_date > ctx->local_energy.r_drift_date) {
+
+    /* Allocate array */
+    if (ctx->local_energy.r_drift == NULL) {
+
+      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+      mem_info.size = ctx->electron.walk_num * 3 * sizeof(double);
+      double* r_drift = (double*) qmckl_malloc(context, mem_info);
+
+      if (r_drift == NULL) {
+        return qmckl_failwith( context,
+                               QMCKL_ALLOCATION_FAILED,
+                               "qmckl_r_drift",
+                               NULL);
+      }
+      ctx->local_energy.r_drift = r_drift;
+    }
+
+    qmckl_exit_code rc; 
+    if (ctx->det.type == 'G') {
+      rc = qmckl_compute_drift_vector(context,
+                                 ctx->det.walk_num,
+                                 ctx->det.det_num_alpha,
+                                 ctx->det.det_num_beta,
+                                 ctx->electron.up_num,
+                                 ctx->electron.down_num,
+                                 ctx->electron.num,
+                                 ctx->det.mo_index_alpha,
+                                 ctx->det.mo_index_beta,
+                                 ctx->mo_basis.mo_num,
+                                 ctx->mo_basis.mo_vgl,
+                                 ctx->det.det_adj_matrix_alpha,
+                                 ctx->det.det_adj_matrix_beta,
+                                 ctx->local_energy.r_drift);
+    } else {
+      return qmckl_failwith( context,
+                             QMCKL_FAILURE,
+                             "compute_drift_vector",
+                             "Not yet implemented");
+    } 
+    if (rc != QMCKL_SUCCESS) {
+      return rc;
+    }
+
+    ctx->local_energy.r_drift_date = ctx->date;
+  }
+
+  return QMCKL_SUCCESS;
+}
+    #+end_src
+
+*** Compute drift vector
+   :PROPERTIES:
+   :Name:     qmckl_compute_drift_vector
+   :CRetType: qmckl_exit_code
+   :FRetType: qmckl_exit_code
+   :END:
+
+    #+NAME: qmckl_compute_drift_vector_args
+   | ~qmckl_context~ | ~context~                                                             | in  | Global state                              |
+   | ~int64_t~       | ~walk_num~                                                            | in  | Number of walkers                         |
+   | ~int64_t~       | ~det_num_alpha~                                                       | in  | Number of determinants                    |
+   | ~int64_t~       | ~det_num_beta~                                                        | in  | Number of determinants                    |
+   | ~int64_t~       | ~alpha_num~                                                           | in  | Number of electrons                       |
+   | ~int64_t~       | ~beta_num~                                                            | in  | Number of electrons                       |
+   | ~int64_t~       | ~elec_num~                                                            | in  | Number of electrons                       |
+   | ~int64_t~       | ~mo_index_alpha[det_num_alpha][walk_num][alpha_num]~                  | in  | MO indices for electrons                  |
+   | ~int64_t~       | ~mo_index_beta[det_num_beta][walk_num][beta_num]~                     | in  | MO indices for electrons                  |
+   | ~int64_t~       | ~mo_num~                                                              | in  | Number of MOs                             |
+   | ~double~        | ~mo_vgl[5][walk_num][elec_num][mo_num]~                               | in  | Value, gradients and Laplacian of the MOs |
+   | ~double~        | ~det_adj_matrix_alpha[det_num_alpha][walk_num][alpha_num][alpha_num]~ | in  | Value, gradients and Laplacian of the Det |
+   | ~double~        | ~det_adj_matrix_beta[det_num_beta][walk_num][beta_num][beta_num]~     | in  | Value, gradients and Laplacian of the Det |
+   | ~double~        | ~r_drift[walk_num][3]~                                        | out | Kinetic energy                            |
+    
+    #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+integer function qmckl_compute_drift_vector_f(context, walk_num, &
+     det_num_alpha, det_num_beta, alpha_num, beta_num, elec_num, mo_index_alpha, mo_index_beta, &
+     mo_num, mo_vgl, det_adj_matrix_alpha, det_adj_matrix_beta, r_drift) &
+     result(info)
+  use qmckl
+  implicit none
+  integer(qmckl_context)  , intent(in)  :: context
+  integer*8, intent(in)             :: walk_num
+  integer*8, intent(in)             :: det_num_alpha
+  integer*8, intent(in)             :: det_num_beta
+  integer*8, intent(in)             :: alpha_num
+  integer*8, intent(in)             :: beta_num
+  integer*8, intent(in)             :: elec_num
+  integer*8, intent(in)             :: mo_num
+  integer*8, intent(in)             :: mo_index_alpha(alpha_num, walk_num, det_num_alpha)
+  integer*8, intent(in)             :: mo_index_beta(beta_num, walk_num, det_num_beta)
+  double precision, intent(in)      :: mo_vgl(mo_num, elec_num, walk_num, 5)
+  double precision, intent(in)      :: det_adj_matrix_alpha(alpha_num, alpha_num, walk_num, det_num_alpha)
+  double precision, intent(in)      :: det_adj_matrix_beta(beta_num, beta_num, walk_num, det_num_beta)
+  double precision, intent(inout)   :: r_drift(3,walk_num)
+  integer*8 :: idet, iwalk, ielec, mo_id, imo
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (walk_num <= 0) then
+     info = QMCKL_INVALID_ARG_2
+     return
+  endif
+
+  if (alpha_num <= 0) then
+     info = QMCKL_INVALID_ARG_3
+     return
+  endif
+
+  if (beta_num < 0) then
+     info = QMCKL_INVALID_ARG_4
+     return
+  endif
+
+  if (elec_num <= 0) then
+     info = QMCKL_INVALID_ARG_5
+     return
+  endif
+
+  r_drift = 0.0d0
+  do idet = 1, det_num_alpha
+  do iwalk = 1, walk_num
+    ! Alpha part
+    do imo = 1, alpha_num
+    do ielec = 1, alpha_num
+      mo_id = mo_index_alpha(ielec, iwalk, idet)
+      r_drift(1,iwalk) = r_drift(1,iwalk) + 2.0d0 * det_adj_matrix_alpha(imo, ielec, iwalk, idet) * &
+                                    mo_vgl(mo_id, ielec, iwalk, 2)
+      r_drift(2,iwalk) = r_drift(2,iwalk) + 2.0d0 * det_adj_matrix_alpha(imo, ielec, iwalk, idet) * &
+                                    mo_vgl(mo_id, ielec, iwalk, 3)
+      r_drift(3,iwalk) = r_drift(3,iwalk) + 2.0d0 * det_adj_matrix_alpha(imo, ielec, iwalk, idet) * &
+                                    mo_vgl(mo_id, ielec, iwalk, 4)
+    end do
+    end do
+    ! Beta part
+    do imo = 1, beta_num
+    do ielec = 1, beta_num
+      mo_id = mo_index_beta(ielec, iwalk, idet)
+      r_drift(1,iwalk) = r_drift(1,iwalk) + 2.0d0 * det_adj_matrix_beta(imo, ielec, iwalk, idet) * &
+                                    mo_vgl(mo_id, alpha_num + ielec, iwalk, 2)
+      r_drift(2,iwalk) = r_drift(2,iwalk) + 2.0d0 * det_adj_matrix_beta(imo, ielec, iwalk, idet) * &
+                                    mo_vgl(mo_id, alpha_num + ielec, iwalk, 3)
+      r_drift(3,iwalk) = r_drift(3,iwalk) + 2.0d0 * det_adj_matrix_beta(imo, ielec, iwalk, idet) * &
+                                    mo_vgl(mo_id, alpha_num + ielec, iwalk, 4)
+    end do
+    end do
+  end do
+  end do
+
+end function qmckl_compute_drift_vector_f
+    #+end_src
+
+    #+CALL: generate_c_header(table=qmckl_compute_drift_vector_args,rettyp=get_value("CRetType"),fname="qmckl_compute_drift_vector"))
+
+   #+RESULTS:
+   #+begin_src c :tangle (eval h_func) :comments org
+   qmckl_exit_code qmckl_compute_drift_vector (
+	 const qmckl_context context,
+	 const int64_t walk_num,
+	 const int64_t det_num_alpha,
+	 const int64_t det_num_beta,
+	 const int64_t alpha_num,
+	 const int64_t beta_num,
+	 const int64_t elec_num,
+	 const int64_t* mo_index_alpha,
+	 const int64_t* mo_index_beta,
+	 const int64_t mo_num,
+	 const double* mo_vgl,
+	 const double* det_adj_matrix_alpha,
+	 const double* det_adj_matrix_beta,
+	 double* const r_drift ); 
+   #+end_src
+
+   #+CALL: generate_c_interface(table=qmckl_compute_drift_vector_args,rettyp=get_value("CRetType"),fname="qmckl_compute_drift_vector"))
+
+    #+RESULTS:
+    #+begin_src f90 :tangle (eval f) :comments org :exports none
+    integer(c_int32_t) function qmckl_compute_drift_vector &
+	(context, &
+		 walk_num, &
+		 det_num_alpha, &
+		 det_num_beta, &
+		 alpha_num, &
+		 beta_num, &
+		 elec_num, &
+		 mo_index_alpha, &
+		 mo_index_beta, &
+		 mo_num, &
+		 mo_vgl, &
+		 det_adj_matrix_alpha, &
+		 det_adj_matrix_beta, &
+		 r_drift) &
+	bind(C) result(info)
+
+      use, intrinsic :: iso_c_binding
+      implicit none
+
+      integer (c_int64_t) , intent(in)  , value :: context
+      integer (c_int64_t) , intent(in)  , value :: walk_num
+      integer (c_int64_t) , intent(in)  , value :: det_num_alpha
+      integer (c_int64_t) , intent(in)  , value :: det_num_beta
+      integer (c_int64_t) , intent(in)  , value :: alpha_num
+      integer (c_int64_t) , intent(in)  , value :: beta_num
+      integer (c_int64_t) , intent(in)  , value :: elec_num
+      integer (c_int64_t) , intent(in)          :: mo_index_alpha(alpha_num,walk_num,det_num_alpha)
+      integer (c_int64_t) , intent(in)          :: mo_index_beta(beta_num,walk_num,det_num_beta)
+      integer (c_int64_t) , intent(in)  , value :: mo_num
+      real    (c_double ) , intent(in)          :: mo_vgl(mo_num,elec_num,walk_num,5)
+      real    (c_double ) , intent(in)          :: det_adj_matrix_alpha(alpha_num,alpha_num,walk_num,det_num_alpha)
+      real    (c_double ) , intent(in)          :: det_adj_matrix_beta(beta_num,beta_num,walk_num,det_num_beta)
+      real    (c_double ) , intent(out)         :: r_drift(3,walk_num)
+
+      integer(c_int32_t), external :: qmckl_compute_drift_vector_f
+      info = qmckl_compute_drift_vector_f &
+	     (context, &
+		 walk_num, &
+		 det_num_alpha, &
+		 det_num_beta, &
+		 alpha_num, &
+		 beta_num, &
+		 elec_num, &
+		 mo_index_alpha, &
+		 mo_index_beta, &
+		 mo_num, &
+		 mo_vgl, &
+		 det_adj_matrix_alpha, &
+		 det_adj_matrix_beta, &
+		 r_drift)
+
+    end function qmckl_compute_drift_vector
     #+end_src
     
 *** Test
