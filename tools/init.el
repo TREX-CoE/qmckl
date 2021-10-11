@@ -39,6 +39,7 @@
 (setq org-hide-emphasis-markers nil)
 (setq org-pretty-entities nil)
 (setq org-confirm-babel-evaluate nil) ;; Do not ask for confirmation all the time!!
+(setq python-indent-guess-indent-offset-verbose nil) ;; Remove warning : Can’t guess python-indent-offset 
 
 (org-babel-do-load-languages
  'org-babel-load-languages
