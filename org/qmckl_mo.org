@@ -87,7 +87,7 @@ int main() {
   
   |---------------+-----------------------------------+----------------------------------------------------------------------------------------|
   |---------------+-----------------------------------+----------------------------------------------------------------------------------------|
-  | ~mo_vgl~      | ~[5][walk_num][elec_num][mo_num]~ | Value, gradients, Laplacian of the MOs at electron positions                           |
+  | ~mo_vgl~      | ~[5][elec_num][mo_num]~ | Value, gradients, Laplacian of the MOs at electron positions                           |
   | ~mo_vgl_date~ | ~uint64_t~                        | Late modification date of Value, gradients, Laplacian of the MOs at electron positions |
   |---------------+-----------------------------------+----------------------------------------------------------------------------------------|
 
@@ -319,7 +319,7 @@ qmckl_exit_code qmckl_get_mo_basis_vgl(qmckl_context context, double* const mo_v
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
   assert (ctx != NULL);
 
-  size_t sze = 5 * ctx->electron.num * ctx->mo_basis.mo_num * ctx->electron.walk_num;
+  size_t sze = 5 * ctx->electron.num * ctx->mo_basis.mo_num;
   memcpy(mo_vgl, ctx->mo_basis.mo_vgl, sze * sizeof(double));
 
   return QMCKL_SUCCESS;
@@ -385,8 +385,7 @@ qmckl_exit_code qmckl_provide_mo_vgl(qmckl_context context)
     if (ctx->mo_basis.mo_vgl == NULL) {
 
       qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-      mem_info.size = 5 * ctx->electron.num * ctx->mo_basis.mo_num *
-        ctx->electron.walk_num * sizeof(double);
+      mem_info.size = 5 * ctx->electron.num * ctx->mo_basis.mo_num * sizeof(double);
       double* mo_vgl = (double*) qmckl_malloc(context, mem_info);
 
       if (mo_vgl == NULL) {
@@ -404,7 +403,6 @@ qmckl_exit_code qmckl_provide_mo_vgl(qmckl_context context)
                                                ctx->ao_basis.ao_num,
                                                ctx->mo_basis.mo_num,
                                                ctx->electron.num,
-                                               ctx->electron.walk_num,
                                                ctx->mo_basis.coefficient,
                                                ctx->ao_basis.ao_vgl,
                                                ctx->mo_basis.mo_vgl);
@@ -433,18 +431,17 @@ qmckl_exit_code qmckl_provide_mo_vgl(qmckl_context context)
    :END:
 
     #+NAME: qmckl_mo_basis_gaussian_vgl_args
-   | ~qmckl_context~ | ~context~                               | in  | Global state                              |
-   | ~int64_t~       | ~ao_num~                                | in  | Number of AOs                             |
-   | ~int64_t~       | ~mo_num~                                | in  | Number of MOs                             |
-   | ~int64_t~       | ~elec_num~                              | in  | Number of electrons                       |
-   | ~int64_t~       | ~walk_num~                              | in  | Number of walkers                         |
-   | ~double~        | ~coef_normalized[ao_num][mo_num]~       | in  | AO to MO transformation matrix            |
-   | ~double~        | ~ao_vgl[5][walk_num][elec_num][ao_num]~ | in  | Value, gradients and Laplacian of the AOs |
-   | ~double~        | ~mo_vgl[5][walk_num][elec_num][mo_num]~ | out | Value, gradients and Laplacian of the MOs |
+   | ~qmckl_context~ | ~context~                         | in  | Global state                              |
+   | ~int64_t~       | ~ao_num~                          | in  | Number of AOs                             |
+   | ~int64_t~       | ~mo_num~                          | in  | Number of MOs                             |
+   | ~int64_t~       | ~elec_num~                        | in  | Number of electrons                       |
+   | ~double~        | ~coef_normalized[ao_num][mo_num]~ | in  | AO to MO transformation matrix            |
+   | ~double~        | ~ao_vgl[5][elec_num][ao_num]~     | in  | Value, gradients and Laplacian of the AOs |
+   | ~double~        | ~mo_vgl[5][elec_num][mo_num]~     | out | Value, gradients and Laplacian of the MOs |
     
     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
 integer function qmckl_compute_mo_basis_gaussian_vgl_f(context, &
-     ao_num, mo_num, elec_num, walk_num, &
+     ao_num, mo_num, elec_num, &
      coef_normalized, ao_vgl, mo_vgl) &
      result(info)
   use qmckl
@@ -452,12 +449,12 @@ integer function qmckl_compute_mo_basis_gaussian_vgl_f(context, &
   integer(qmckl_context), intent(in)  :: context
   integer*8             , intent(in)  :: ao_num, mo_num
   integer*8             , intent(in)  :: elec_num
-  integer*8             , intent(in)  :: walk_num
-  double precision      , intent(in)  :: ao_vgl(ao_num,elec_num,walk_num,5)
+  double precision      , intent(in)  :: ao_vgl(ao_num,elec_num,5)
   double precision      , intent(in)  :: coef_normalized(mo_num,ao_num)
-  double precision      , intent(out) :: mo_vgl(mo_num,elec_num,walk_num,5)
+  double precision      , intent(out) :: mo_vgl(mo_num,elec_num,5)
   logical*8                     :: TransA, TransB
   double precision,dimension(:,:),allocatable    :: mo_vgl_big
+  double precision,dimension(:,:),allocatable    :: ao_vgl_big
   double precision              :: alpha, beta
   integer                       :: info_qmckl_dgemm_value
   integer                       :: info_qmckl_dgemm_Gx   
@@ -469,7 +466,8 @@ integer function qmckl_compute_mo_basis_gaussian_vgl_f(context, &
   integer*8 :: inucl, iprim, iwalk, ielec, ishell
   double precision :: x, y, z, two_a, ar2, r2, v, cutoff
 
-  allocate(mo_vgl_big(mo_num,elec_num*walk_num*5))
+  allocate(mo_vgl_big(mo_num,elec_num*5))
+  allocate(ao_vgl_big(ao_num,elec_num*5))
 
   TransA = .False.
   TransB = .False. 
@@ -483,20 +481,23 @@ integer function qmckl_compute_mo_basis_gaussian_vgl_f(context, &
   ! TODO : Use numerical precision here
   cutoff = -dlog(1.d-15)
   M = mo_num
-  N = elec_num*walk_num*5
+  N = elec_num*5
   K = ao_num * 1_8
   LDA = M
   LDB = K
   LDC = M
 
+  ao_vgl_big = reshape(ao_vgl(:, :, :),(/ao_num, elec_num*5_8/))
+
   info = qmckl_dgemm(context,TransA, TransB, M, N, K, alpha,     &
-                                 coef_normalized(1:mo_num,1:ao_num),size(coef_normalized,1) * 1_8,    &
-                                 reshape(ao_vgl(:,:, :, :),(/ao_num,elec_num*walk_num*5/)), LDB, &
+                                 coef_normalized,size(coef_normalized,1) * 1_8,    &
+                                 ao_vgl_big, LDB, &
                                  beta,                                       &
-                                 mo_vgl_big(:,:),LDC)
-  mo_vgl = reshape(mo_vgl_big,(/mo_num,elec_num,walk_num,5_8/))
+                                 mo_vgl_big,LDC)
+  mo_vgl = reshape(mo_vgl_big,(/mo_num,elec_num,5_8/))
 
   deallocate(mo_vgl_big)
+  deallocate(ao_vgl_big)
 end function qmckl_compute_mo_basis_gaussian_vgl_f
     #+end_src
 
@@ -509,7 +510,6 @@ end function qmckl_compute_mo_basis_gaussian_vgl_f
 	 const int64_t ao_num,
 	 const int64_t mo_num,
 	 const int64_t elec_num,
-	 const int64_t walk_num,
 	 const double* coef_normalized,
 	 const double* ao_vgl,
 	 double* const mo_vgl ); 
@@ -521,7 +521,7 @@ end function qmckl_compute_mo_basis_gaussian_vgl_f
     #+RESULTS:
     #+begin_src f90 :tangle (eval f) :comments org :exports none
     integer(c_int32_t) function qmckl_compute_mo_basis_gaussian_vgl &
-	(context, ao_num, mo_num, elec_num, walk_num, coef_normalized, ao_vgl, mo_vgl) &
+	(context, ao_num, mo_num, elec_num, coef_normalized, ao_vgl, mo_vgl) &
 	bind(C) result(info)
 
       use, intrinsic :: iso_c_binding
@@ -531,14 +531,13 @@ end function qmckl_compute_mo_basis_gaussian_vgl_f
       integer (c_int64_t) , intent(in)  , value :: ao_num
       integer (c_int64_t) , intent(in)  , value :: mo_num
       integer (c_int64_t) , intent(in)  , value :: elec_num
-      integer (c_int64_t) , intent(in)  , value :: walk_num
       real    (c_double ) , intent(in)          :: coef_normalized(mo_num,ao_num)
-      real    (c_double ) , intent(in)          :: ao_vgl(ao_num,elec_num,walk_num,5)
-      real    (c_double ) , intent(out)         :: mo_vgl(mo_num,elec_num,walk_num,5)
+      real    (c_double ) , intent(in)          :: ao_vgl(ao_num,elec_num,5)
+      real    (c_double ) , intent(out)         :: mo_vgl(mo_num,elec_num,5)
 
       integer(c_int32_t), external :: qmckl_compute_mo_basis_gaussian_vgl_f
       info = qmckl_compute_mo_basis_gaussian_vgl_f &
-	     (context, ao_num, mo_num, elec_num, walk_num, coef_normalized, ao_vgl, mo_vgl)
+	     (context, ao_num, mo_num, elec_num, coef_normalized, ao_vgl, mo_vgl)
 
     end function qmckl_compute_mo_basis_gaussian_vgl
     #+end_src
