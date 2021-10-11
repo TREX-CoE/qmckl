@@ -62,6 +62,14 @@ int main() {
   Functions defined in this section are all local: they should not be
   exposed in the API. To identify them, we append ~_X~ to
   their name.
+
+  Users are not able to call directly these functions, so by
+  construction the context can't be ~NULL~, hence we can check this
+  with an ~assert~ statement.
+
+  In the functions defined in this section, we use as local variables
+  - ~rc~: the return code for QMCkl functions
+  - ~rcio~: the return code for TREXIO functions.
   
   
 ** Open file
@@ -94,13 +102,13 @@ trexio_t* qmckl_trexio_open_X(const char* file_name, qmckl_exit_code* rc)
 ** Electron
    
    In this section we read all the data into the electron data structure.
+   We read the number of up-spin and down-spin electrons.
   
    #+begin_src c :tangle (eval c)
 #ifdef HAVE_TREXIO
 qmckl_exit_code
 qmckl_trexio_read_electron_X(qmckl_context context, trexio_t* const file) 
 {
-  // Should not be possible by construction.
   assert (context != (qmckl_context) 0);
   assert (file != NULL);
   
@@ -139,21 +147,23 @@ qmckl_trexio_read_electron_X(qmckl_context context, trexio_t* const file)
 
 ** Nucleus
    
-   In this section we read the molecular geometry and nuclear charges.
+   In this section we read the number of nuclei, the molecular geometry and nuclear charges.
   
    #+begin_src c :tangle (eval c)
 #ifdef HAVE_TREXIO
 qmckl_exit_code
 qmckl_trexio_read_nucleus_X(qmckl_context context, trexio_t* const file) 
 {
-  // Should not be possible by construction.
   assert (context != (qmckl_context) 0);
   assert (file != NULL);
   
   qmckl_exit_code rc;
   int rcio = 0;
+   #+end_src
 
-  // Nucleus num
+*** Number of nuclei
+
+   #+begin_src c :tangle (eval c)
   int64_t num = 0;
 
   rcio = trexio_read_nucleus_num_64(file, &num);
@@ -167,8 +177,13 @@ qmckl_trexio_read_nucleus_X(qmckl_context context, trexio_t* const file)
   assert (num > 0);
   rc = qmckl_set_nucleus_num(context, num);
 
+  if (rc != QMCKL_SUCCESS)
+    return rc;
+   #+end_src
 
-  // Nuclear charges
+*** Nuclear charges
+
+   #+begin_src c :tangle (eval c)
   {
     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
     mem_info.size = num * sizeof(double);
@@ -197,12 +212,18 @@ qmckl_trexio_read_nucleus_X(qmckl_context context, trexio_t* const file)
     qmckl_free(context, nucl_charge);
     nucl_charge = NULL;
 
-    if (rc != QMCKL_SUCCESS) {
+    if (rc != QMCKL_SUCCESS) 
       return rc;
-    }
+    
   }
+   #+end_src
 
-  // Nuclear coordinates
+*** Nuclear coordinates
+
+    Now, we read the molecular geometry. It is stored in normal format
+    in the TREXIO file (~'N'~), so it will be automatically transposed internally.
+
+   #+begin_src c :tangle (eval c)
   {
     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
     mem_info.size = num * 3 * sizeof(double);
@@ -235,12 +256,174 @@ qmckl_trexio_read_nucleus_X(qmckl_context context, trexio_t* const file)
       return rc;
     }
   }
+   #+end_src
+
+
+   #+begin_src c :tangle (eval c)
 
   return QMCKL_SUCCESS;
 }
 #endif
    #+end_src
 
+** Basis set and AOs
+   
+   In this section we read the atomic basis set and atomic orbitals.
+  
+   #+begin_src c :tangle (eval c)
+#ifdef HAVE_TREXIO
+qmckl_exit_code
+qmckl_trexio_read_ao_X(qmckl_context context, trexio_t* const file) 
+{
+  assert (context != (qmckl_context) 0);
+  assert (file != NULL);
+  
+  qmckl_exit_code rc;
+  int rcio = 0;
+  int64_t nucleus_num = 0;
+
+  rc = qmckl_get_nucleus_num(context, &nucleus_num);
+  if (rc != QMCKL_SUCCESS)
+    return rc;
+
+   #+end_src
+
+*** Basis set type
+
+   #+begin_src c :tangle (eval c)
+#define MAX_STR_LEN 1024
+  char basis_type[MAX_STR_LEN];
+
+  rcio = trexio_read_basis_type(file, basis_type, MAX_STR_LEN);
+  if (rcio != TREXIO_SUCCESS) {
+    return qmckl_failwith( context,
+                           QMCKL_FAILURE,
+                           "trexio_read_basis_type",
+                           trexio_string_of_error(rcio));
+  }
+  
+  if (basis_type[0] == 'G') {
+    rc = qmckl_set_ao_basis_type(context, basis_type[0]);
+  } else {
+    return qmckl_failwith( context,
+                           QMCKL_FAILURE,
+                           "trexio_read_basis_type",
+                           "Invalid basis type");
+  }
+
+  if (rc != QMCKL_SUCCESS)
+    return rc;
+
+   #+end_src
+
+*** Number of shells
+
+   #+begin_src c :tangle (eval c)
+  int64_t shell_num = 0;
+
+  rcio = trexio_read_basis_num_64(file, &shell_num);
+  if (rcio != TREXIO_SUCCESS) {
+    return qmckl_failwith( context,
+                           QMCKL_FAILURE,
+                           "trexio_read_basis_shell_num",
+                           trexio_string_of_error(rcio));
+  }
+  
+  assert (shell_num > 0);
+  rc = qmckl_set_ao_basis_shell_num(context, shell_num);
+
+  if (rc != QMCKL_SUCCESS)
+    return rc;
+
+   #+end_src
+
+*** Number of primitives
+
+   #+begin_src c :tangle (eval c)
+  int64_t prim_num = 0;
+
+  rcio = trexio_read_basis_prim_num_64(file, &prim_num);
+  if (rcio != TREXIO_SUCCESS) {
+    return qmckl_failwith( context,
+                           QMCKL_FAILURE,
+                           "trexio_read_basis_prim_num",
+                           trexio_string_of_error(rcio));
+  }
+  
+  assert (prim_num > 0);
+  rc = qmckl_set_ao_basis_prim_num(context, prim_num);
+
+  if (rc != QMCKL_SUCCESS)
+    return rc;
+
+   #+end_src
+
+*** Number of atomic orbitals
+
+   #+begin_src c :tangle (eval c)
+  int64_t ao_num = 0;
+
+  rcio = trexio_read_ao_num_64(file, &ao_num);
+  if (rcio != TREXIO_SUCCESS) {
+    return qmckl_failwith( context,
+                           QMCKL_FAILURE,
+                           "trexio_read_ao_num",
+                           trexio_string_of_error(rcio));
+  }
+  
+  assert (ao_num > 0);
+  rc = qmckl_set_ao_basis_ao_num(context, ao_num);
+
+  if (rc != QMCKL_SUCCESS)
+    return rc;
+
+   #+end_src
+
+*** Nucleus index array
+
+   #+begin_src c :tangle (eval c)
+  {
+    qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+    mem_info.size = nucleus_num * sizeof(int64_t);
+
+    int64_t* nucleus_index = (int64_t*) qmckl_malloc(context, mem_info);
+
+    if (nucleus_index == NULL) {
+      return qmckl_failwith( context,
+                             QMCKL_ALLOCATION_FAILED,
+                             "qmckl_trexio_read_basis_nucleus_index_X",
+                             NULL);
+    }
+
+    assert (nucleus_index != NULL);
+
+    rcio = trexio_read_basis_nucleus_index_64(file, nucleus_index);
+    if (rcio != TREXIO_SUCCESS) {
+      return qmckl_failwith( context,
+                             QMCKL_FAILURE,
+                             "trexio_read_basis_nucleus_index",
+                             trexio_string_of_error(rcio));
+    }
+
+    rc = qmckl_set_ao_basis_nucleus_index(context, nucleus_index);
+
+    qmckl_free(context, nucleus_index);
+    nucleus_index = NULL;
+
+    if (rc != QMCKL_SUCCESS) 
+      return rc;
+  }
+   #+end_src
+
+
+   #+begin_src c :tangle (eval c)
+
+  return QMCKL_SUCCESS;
+}
+#endif
+   #+end_src
+
+** TODO ECP
 * Read everything
 
   #+begin_src c :tangle (eval h_func)
@@ -287,6 +470,15 @@ qmckl_trexio_read(const qmckl_context context, const char* file_name)
                            "Error reading nucleus");
   }
   
+  rc = qmckl_trexio_read_ao_X(context, file);
+  if (rc != QMCKL_SUCCESS) {
+    trexio_close(file);
+    return qmckl_failwith( context,
+                           QMCKL_FAILURE,
+                           "qmckl_trexio_read",
+                           "Error reading AOs");
+  }
+  
   trexio_close(file);
   file = NULL;
 #else
@@ -318,7 +510,12 @@ if (rc != QMCKL_SUCCESS) {
   
 assert ( rc == QMCKL_SUCCESS );
 
-printf("Electrons");
+  #+end_src
+  
+*** Electrons
+
+  #+begin_src c :tangle (eval c_test)
+printf("Electrons\n");
 int64_t num;
 rc = qmckl_get_electron_up_num(context, &num);
 assert (rc == QMCKL_SUCCESS);
@@ -332,7 +529,12 @@ rc = qmckl_get_nucleus_num(context, &num);
 assert (rc == QMCKL_SUCCESS);
 assert (num == chbrclf_nucl_num);
 
-printf("Nuclear charges");
+  #+end_src
+  
+*** Nuclei
+
+  #+begin_src c :tangle (eval c_test)
+printf("Nuclear charges\n");
 double * charge = (double*) malloc (num * sizeof(double));
 rc = qmckl_get_nucleus_charge(context, charge);
 assert (rc == QMCKL_SUCCESS);
@@ -342,7 +544,7 @@ for (int i=0 ; i<num ; i++) {
 free(charge);
 charge = NULL;
 
-printf("Nuclear coordinates");
+printf("Nuclear coordinates\n");
 double * coord  = (double*) malloc (num * 3 * sizeof(double));
 rc = qmckl_get_nucleus_coord(context, 'T', coord);
 assert (rc == QMCKL_SUCCESS);
@@ -357,9 +559,39 @@ for (int j=0 ; j<3 ; ++j) {
 free(coord);
 coord = NULL;
   
-
-#endif
   #+end_src
+  
+*** Atomic basis
+
+  #+begin_src c :tangle (eval c_test)
+printf("Atomic basis\n");
+
+char basis_type;
+rc = qmckl_get_ao_basis_type(context, &basis_type);
+assert (basis_type == 'G');
+
+int64_t shell_num;
+rc = qmckl_get_ao_basis_shell_num(context, &shell_num);
+assert (shell_num == chbrclf_shell_num);
+
+int64_t prim_num;
+rc = qmckl_get_ao_basis_prim_num(context, &prim_num);
+assert (prim_num == chbrclf_prim_num);
+
+int64_t ao_num;
+rc = qmckl_get_ao_basis_ao_num(context, &ao_num);
+assert (ao_num == chbrclf_ao_num);
+
+int64_t* nucleus_index = (int64_t*) malloc (shell_num * sizeof(int64_t));
+rc = qmckl_get_ao_basis_nucleus_index(context, nucleus_index, num);
+assert (rc == QMCKL_SUCCESS);
+for (int i=0 ; i<num ; i++) {
+  assert (nucleus_index[i] == chbrclf_basis_nucleus_index[i]);
+ }
+free(charge);
+charge = NULL;
+#endif
+    #+end_src
 
 * End of files                                                     :noexport:
 
