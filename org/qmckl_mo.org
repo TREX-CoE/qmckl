@@ -1,0 +1,872 @@
+#+TITLE: Molecular Orbitals
+#+SETUPFILE: ../tools/theme.setup
+#+INCLUDE: ../tools/lib.org
+
+The molecular orbitals (MOs) are defined in the basis of AOs along with a AO to MO 
+coefficient matrix \[C\]. Using these coefficients (e.g. from Hartree Fock SCF method)
+the MOs are defined as follows:
+
+\[
+\phi_i(\mathbf{r}) = C_i * \chi_i (\mathbf{r})
+\]
+
+
+In this section we demonstrate how to use the QMCkl specific DGEMM
+function to calculate the MOs.
+
+
+* Headers                                                          :noexport:
+  #+begin_src elisp :noexport :results none
+(org-babel-lob-ingest "../tools/lib.org")
+  #+end_src
+
+
+  #+begin_src c :tangle (eval h_private_type)
+#ifndef QMCKL_MO_HPT
+#define QMCKL_MO_HPT
+
+#include <stdbool.h>
+  #+end_src
+
+  #+begin_src c :tangle (eval c_test) :noweb yes
+#include "qmckl.h"
+#include "assert.h"
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#include <stdio.h>
+#include <math.h>
+#include "chbrclf.h"
+#include "qmckl_ao_private_func.h"
+#include "qmckl_mo_private_func.h"
+
+int main() {
+    qmckl_context context;
+    context = qmckl_context_create();
+
+    qmckl_exit_code rc;
+  #+end_src
+
+  #+begin_src c :tangle (eval c)
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#ifdef HAVE_STDINT_H
+#include <stdint.h>
+#elif HAVE_INTTYPES_H
+#include <inttypes.h>
+#endif
+
+#include <stdlib.h>
+#include <string.h>
+#include <stdbool.h>
+#include <assert.h>
+
+#include "qmckl.h"
+#include "qmckl_context_private_type.h"
+#include "qmckl_memory_private_type.h"
+#include "qmckl_memory_private_func.h"
+#include "qmckl_ao_private_type.h"
+#include "qmckl_ao_private_func.h"
+#include "qmckl_mo_private_type.h"
+#include "qmckl_mo_private_func.h"
+  #+end_src
+
+* Context
+
+  The following arrays are stored in the context:
+
+  |---------------------+--------------------+--------------------------------------------------------------|
+  | ~type~              |                    | Gaussian (~'G'~) or Slater (~'S'~)                           |
+  | ~mo_num~            |                    | Number of MOs                                                |
+  | ~coefficient~       | ~[mo_num, ao_num]~ | Orbital coefficients                                         |
+
+  Computed data:
+  
+  |---------------+-----------------------------------+----------------------------------------------------------------------------------------|
+  |---------------+-----------------------------------+----------------------------------------------------------------------------------------|
+  | ~mo_vgl~      | ~[5][elec_num][mo_num]~ | Value, gradients, Laplacian of the MOs at electron positions                           |
+  | ~mo_vgl_date~ | ~uint64_t~                        | Late modification date of Value, gradients, Laplacian of the MOs at electron positions |
+  |---------------+-----------------------------------+----------------------------------------------------------------------------------------|
+
+** Data structure
+
+   #+begin_src c :comments org :tangle (eval h_private_type)
+typedef struct qmckl_mo_basis_struct {
+  int64_t   mo_num;  
+  double  * coefficient;
+
+  double  * mo_vgl;
+  int64_t   mo_vgl_date;
+
+  int32_t   uninitialized;
+  bool      provided;
+  char      type;
+} qmckl_mo_basis_struct;
+   #+end_src
+
+   The ~uninitialized~ integer contains one bit set to one for each
+   initialization function which has not been called. It becomes equal
+   to zero after all initialization functions have been called. The
+   struct is then initialized and ~provided == true~.
+   Some values are initialized by default, and are not concerned by
+   this mechanism.
+
+** Access functions
+   
+   #+begin_src c :comments org :tangle (eval h_private_func) :exports none
+char      qmckl_get_mo_basis_type             (const qmckl_context context);
+int64_t   qmckl_get_mo_basis_mo_num           (const qmckl_context context);
+double*   qmckl_get_mo_basis_coefficient      (const qmckl_context context);
+   #+end_src
+
+   When all the data for the AOs have been provided, the following
+   function returns ~true~.
+
+   #+begin_src c :comments org :tangle (eval h_func)
+bool      qmckl_mo_basis_provided           (const qmckl_context context);
+   #+end_src
+
+   #+NAME:post
+   #+begin_src c :exports none
+if ( (ctx->mo_basis.uninitialized & mask) != 0) {
+  return NULL;
+}
+   #+end_src
+
+
+   #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
+char qmckl_get_mo_basis_type (const qmckl_context context) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return (char) 0;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  int32_t mask = 1;
+
+  if ( (ctx->mo_basis.uninitialized & mask) != 0) {
+    return (char) 0;
+  }
+
+  assert (ctx->mo_basis.type != (char) 0);
+  return ctx->mo_basis.type;
+}
+
+int64_t qmckl_get_mo_basis_mo_num (const qmckl_context context) {
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return (int64_t) 0;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  int32_t mask = 1 << 1;
+
+  if ( (ctx->mo_basis.uninitialized & mask) != 0) {
+    return (int64_t) 0;
+  }
+
+  assert (ctx->mo_basis.mo_num > (int64_t) 0);
+  return ctx->mo_basis.mo_num;
+}
+
+bool qmckl_mo_basis_provided(const qmckl_context context) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return false;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  return ctx->mo_basis.provided;
+}
+
+
+   #+end_src
+
+** Initialization functions
+
+   To set the basis set, all the following functions need to be
+   called.
+
+   #+begin_src c :comments org :tangle (eval h_func)
+qmckl_exit_code  qmckl_set_mo_basis_type             (qmckl_context context, const char      t);
+qmckl_exit_code  qmckl_set_mo_basis_mo_num           (qmckl_context context, const int64_t   mo_num);
+qmckl_exit_code  qmckl_set_mo_basis_coefficient      (qmckl_context context, const double  * coefficient);
+   #+end_src
+
+   #+NAME:pre2
+   #+begin_src c  :exports none
+if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+  return QMCKL_NULL_CONTEXT;
+ }
+
+qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+   #+end_src
+
+   #+NAME:post2
+   #+begin_src c  :exports none
+ctx->mo_basis.uninitialized &= ~mask;
+ctx->mo_basis.provided = (ctx->mo_basis.uninitialized == 0);
+if (ctx->mo_basis.provided) {
+  qmckl_exit_code rc_ = qmckl_finalize_basis(context);
+  if (rc_ != QMCKL_SUCCESS) return rc_;
+ }
+
+return QMCKL_SUCCESS;
+   #+end_src
+
+   #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
+qmckl_exit_code qmckl_set_mo_basis_type(qmckl_context context, const char t) {
+  <<pre2>>
+
+  if (t != 'G' && t != 'S') {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_set_mo_basis_type",
+                           NULL);
+  }
+
+  int32_t mask = 1;
+  ctx->mo_basis.type = t;
+
+  <<post2>>
+}
+
+qmckl_exit_code qmckl_set_mo_basis_mo_num(qmckl_context context, const int64_t mo_num) {
+  <<pre2>>
+
+  if (mo_num <= 0) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_set_mo_basis_mo_num",
+                           "mo_num <= 0");
+  }
+
+  int32_t mask = 1 << 1;
+  ctx->mo_basis.mo_num = mo_num;
+
+  <<post2>>
+}
+
+qmckl_exit_code  qmckl_set_mo_basis_coefficient(qmckl_context context, const double* coefficient) {
+  <<pre2>>
+
+  int32_t mask = 1 << 2;
+
+  if (ctx->mo_basis.coefficient != NULL) {
+    qmckl_exit_code rc = qmckl_free(context, ctx->mo_basis.coefficient);
+    if (rc != QMCKL_SUCCESS) {
+      return qmckl_failwith( context, rc,
+                             "qmckl_set_mo_basis_coefficient",
+                             NULL);
+    }
+  }
+
+  qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+  mem_info.size = ctx->ao_basis.ao_num * ctx->mo_basis.mo_num * sizeof(double);
+  double* new_array = (double*) qmckl_malloc(context, mem_info);
+  if (new_array == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_ALLOCATION_FAILED,
+                           "qmckl_set_mo_basis_coefficient",
+                           NULL);
+  }
+
+  memcpy(new_array, coefficient, mem_info.size);
+
+  ctx->mo_basis.coefficient = new_array;
+
+  <<post2>>
+}
+
+   #+end_src
+
+ When the basis set is completely entered, other data structures are
+ computed to accelerate the calculations.
+
+* Computation
+
+** Computation of MOs
+
+*** Get
+
+    #+begin_src c :comments org :tangle (eval h_func) :noweb yes
+qmckl_exit_code qmckl_get_mo_basis_vgl(qmckl_context context, double* const mo_vgl);
+    #+end_src
+
+    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code qmckl_get_mo_basis_vgl(qmckl_context context, double* const mo_vgl) {
+  
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_exit_code rc;
+
+  rc = qmckl_provide_ao_vgl(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_mo_vgl(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  size_t sze = 5 * ctx->electron.num * ctx->mo_basis.mo_num;
+  memcpy(mo_vgl, ctx->mo_basis.mo_vgl, sze * sizeof(double));
+
+  return QMCKL_SUCCESS;
+}
+    #+end_src
+
+    #+begin_src f90 :tangle (eval fh_func) :comments org :exports none
+    interface
+      integer(c_int32_t) function qmckl_get_mo_basis_vgl (context, mo_vgl) &
+          bind(C)
+        use, intrinsic :: iso_c_binding
+        import
+        implicit none
+
+        integer (c_int64_t) , intent(in)  , value :: context
+        double precision,     intent(out)         :: mo_vgl(*)
+      end function
+    end interface
+    #+end_src
+
+*** Provide
+
+    #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_provide_mo_vgl(qmckl_context context);
+    #+end_src
+
+    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code qmckl_provide_mo_vgl(qmckl_context context)
+{
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  if (!ctx->ao_basis.provided) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_ao_basis",
+                           NULL);
+  }
+
+  if(!(ctx->electron.provided)) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_electron",
+                           NULL);
+  }
+  
+  if (!ctx->mo_basis.provided) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_mo_basis",
+                           NULL);
+  }
+
+  /* Compute if necessary */
+  if (ctx->electron.coord_new_date > ctx->mo_basis.mo_vgl_date) {
+
+    /* Allocate array */
+    if (ctx->mo_basis.mo_vgl == NULL) {
+
+      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+      mem_info.size = 5 * ctx->electron.num * ctx->mo_basis.mo_num * sizeof(double);
+      double* mo_vgl = (double*) qmckl_malloc(context, mem_info);
+
+      if (mo_vgl == NULL) {
+        return qmckl_failwith( context,
+                               QMCKL_ALLOCATION_FAILED,
+                               "qmckl_mo_basis_vgl",
+                               NULL);
+      }
+      ctx->mo_basis.mo_vgl = mo_vgl;
+    }
+
+    qmckl_exit_code rc; 
+    if (ctx->mo_basis.type == 'G') {
+      rc = qmckl_compute_mo_basis_gaussian_vgl(context,
+                                               ctx->ao_basis.ao_num,
+                                               ctx->mo_basis.mo_num,
+                                               ctx->electron.num,
+                                               ctx->mo_basis.coefficient,
+                                               ctx->ao_basis.ao_vgl,
+                                               ctx->mo_basis.mo_vgl);
+    } else {
+      return qmckl_failwith( context,
+                             QMCKL_FAILURE,
+                             "compute_mo_basis_vgl",
+                             "Not yet implemented");
+    } 
+    if (rc != QMCKL_SUCCESS) {
+      return rc;
+    }
+
+    ctx->mo_basis.mo_vgl_date = ctx->date;
+  }
+
+  return QMCKL_SUCCESS;
+}
+    #+end_src
+    
+*** Compute
+   :PROPERTIES:
+   :Name:     qmckl_compute_mo_basis_gaussian_vgl
+   :CRetType: qmckl_exit_code
+   :FRetType: qmckl_exit_code
+   :END:
+
+    #+NAME: qmckl_mo_basis_gaussian_vgl_args
+   | ~qmckl_context~ | ~context~                               | in  | Global state                              |
+   | ~int64_t~       | ~ao_num~                                | in  | Number of AOs                             |
+   | ~int64_t~       | ~mo_num~                                | in  | Number of MOs                             |
+   | ~int64_t~       | ~elec_num~                              | in  | Number of electrons                       |
+   | ~double~        | ~coef_normalized[mo_num][ao_num]~       | in  | AO to MO transformation matrix            |
+   | ~double~        | ~ao_vgl[5][elec_num][ao_num]~ | in  | Value, gradients and Laplacian of the AOs |
+   | ~double~        | ~mo_vgl[5][elec_num][mo_num]~ | out | Value, gradients and Laplacian of the MOs |
+    
+    #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+integer function qmckl_compute_mo_basis_gaussian_vgl_f(context, &
+     ao_num, mo_num, elec_num, &
+     coef_normalized, ao_vgl, mo_vgl) &
+     result(info)
+  use qmckl
+  implicit none
+  integer(qmckl_context), intent(in)  :: context
+  integer*8             , intent(in)  :: ao_num, mo_num
+  integer*8             , intent(in)  :: elec_num
+  double precision      , intent(in)  :: ao_vgl(ao_num,elec_num,5)
+  double precision      , intent(in)  :: coef_normalized(ao_num,mo_num)
+  double precision      , intent(out) :: mo_vgl(mo_num,elec_num,5)
+  logical*8                     :: TransA, TransB
+  double precision              :: alpha, beta
+  integer                       :: info_qmckl_dgemm_value
+  integer                       :: info_qmckl_dgemm_Gx   
+  integer                       :: info_qmckl_dgemm_Gy   
+  integer                       :: info_qmckl_dgemm_Gz   
+  integer                       :: info_qmckl_dgemm_lap  
+  integer*8                     :: M, N, K, LDA, LDB, LDC, i,j
+
+  integer*8 :: inucl, iprim, iwalk, ielec, ishell
+  double precision :: x, y, z, two_a, ar2, r2, v, cutoff
+  TransA = .False.
+  TransB = .False. 
+  alpha = 1.0d0
+  beta  = 0.0d0
+
+  info = QMCKL_SUCCESS
+  info_qmckl_dgemm_value = QMCKL_SUCCESS
+  info_qmckl_dgemm_Gx    = QMCKL_SUCCESS
+  info_qmckl_dgemm_Gy    = QMCKL_SUCCESS
+  info_qmckl_dgemm_Gz    = QMCKL_SUCCESS
+  info_qmckl_dgemm_lap   = QMCKL_SUCCESS
+  
+  ! Don't compute exponentials when the result will be almost zero.
+  ! TODO : Use numerical precision here
+  cutoff = -dlog(1.d-15)
+  M = 1_8
+  N = mo_num * 1_8
+  K = ao_num * 1_8
+  LDA = M
+  LDB = K
+  LDC = M
+
+  do ielec = 1, elec_num
+          ! Value
+          info_qmckl_dgemm_value = qmckl_dgemm(context,TransA, TransB, M, N, K, alpha,     &
+                                         ao_vgl(:, ielec, 1), LDA, &
+                                         coef_normalized(1:ao_num,1:mo_num),size(coef_normalized,1) * 1_8,    &
+                                         beta,                                       &
+                                         mo_vgl(:,ielec,1),LDC)
+          ! Grad_x
+          info_qmckl_dgemm_Gx = qmckl_dgemm(context,TransA, TransB, M, N, K, alpha,     &
+                                         ao_vgl(:, ielec, 2), LDA, &
+                                         coef_normalized(1:ao_num,1:mo_num),size(coef_normalized,1) * 1_8,    &
+                                         beta,                                       &
+                                         mo_vgl(:,ielec,2),LDC)
+          ! Grad_y
+          info_qmckl_dgemm_Gy = qmckl_dgemm(context,TransA, TransB, M, N, K, alpha,     &
+                                         ao_vgl(:, ielec,  3), LDA, &
+                                         coef_normalized(1:ao_num,1:mo_num),size(coef_normalized,1) * 1_8,    &
+                                         beta,                                       &
+                                         mo_vgl(:,ielec,3),LDC)
+          ! Grad_z
+          info_qmckl_dgemm_Gz = qmckl_dgemm(context,TransA, TransB, M, N, K, alpha,     &
+                                         ao_vgl(:, ielec,  4), LDA, &
+                                         coef_normalized(1:ao_num,1:mo_num),size(coef_normalized,1) * 1_8,    &
+                                         beta,                                       &
+                                         mo_vgl(:,ielec,4),LDC)
+          ! Lapl_z
+          info_qmckl_dgemm_lap = qmckl_dgemm(context, TransA, TransB, M, N, K, alpha,     &
+                                         ao_vgl(:, ielec,  5), LDA, &
+                                         coef_normalized(1:ao_num,1:mo_num),size(coef_normalized,1) * 1_8,    &
+                                         beta,                                       &
+                                         mo_vgl(:,ielec,5),LDC)
+  end do
+
+  if(info_qmckl_dgemm_value .eq. QMCKL_SUCCESS .and.  &
+     info_qmckl_dgemm_Gx    .eq. QMCKL_SUCCESS .and.  &
+     info_qmckl_dgemm_Gy    .eq. QMCKL_SUCCESS .and.  &
+     info_qmckl_dgemm_Gz    .eq. QMCKL_SUCCESS .and.  &
+     info_qmckl_dgemm_lap   .eq. QMCKL_SUCCESS        ) then
+     info = QMCKL_SUCCESS
+   else
+     info = QMCKL_FAILURE
+   end if
+  
+end function qmckl_compute_mo_basis_gaussian_vgl_f
+    #+end_src
+
+   #+CALL: generate_c_header(table=qmckl_mo_basis_gaussian_vgl_args,rettyp=get_value("CRetType"),fname="qmckl_compute_mo_basis_gaussian_vgl"))
+
+   #+RESULTS:
+   #+begin_src c :tangle (eval h_func) :comments org
+   qmckl_exit_code qmckl_compute_mo_basis_gaussian_vgl (
+	 const qmckl_context context,
+	 const int64_t ao_num,
+	 const int64_t mo_num,
+	 const int64_t elec_num,
+	 const double* coef_normalized,
+	 const double* ao_vgl,
+	 double* const mo_vgl ); 
+   #+end_src
+
+
+    #+CALL: generate_c_interface(table=qmckl_mo_basis_gaussian_vgl_args,rettyp=get_value("CRetType"),fname="qmckl_compute_mo_basis_gaussian_vgl"))
+
+    #+RESULTS:
+    #+begin_src f90 :tangle (eval f) :comments org :exports none
+    integer(c_int32_t) function qmckl_compute_mo_basis_gaussian_vgl &
+	(context, ao_num, mo_num, elec_num, coef_normalized, ao_vgl, mo_vgl) &
+	bind(C) result(info)
+
+      use, intrinsic :: iso_c_binding
+      implicit none
+
+      integer (c_int64_t) , intent(in)  , value :: context
+      integer (c_int64_t) , intent(in)  , value :: ao_num
+      integer (c_int64_t) , intent(in)  , value :: mo_num
+      integer (c_int64_t) , intent(in)  , value :: elec_num
+      real    (c_double ) , intent(in)          :: coef_normalized(ao_num,mo_num)
+      real    (c_double ) , intent(in)          :: ao_vgl(ao_num,elec_num,5)
+      real    (c_double ) , intent(out)         :: mo_vgl(mo_num,elec_num,5)
+
+      integer(c_int32_t), external :: qmckl_compute_mo_basis_gaussian_vgl_f
+      info = qmckl_compute_mo_basis_gaussian_vgl_f &
+	     (context, ao_num, mo_num, elec_num, coef_normalized, ao_vgl, mo_vgl)
+
+    end function qmckl_compute_mo_basis_gaussian_vgl
+    #+end_src
+
+
+    
+*** Test
+
+    #+begin_src python :results output :exports none
+import numpy as np
+
+def f(a,x,y):
+    return np.sum( [c * np.exp( -b*(np.linalg.norm(x-y))**2) for b,c in a] ) 
+
+def df(a,x,y,n):
+    h0 = 1.e-6
+    if   n == 1: h = np.array([h0,0.,0.])
+    elif n == 2: h = np.array([0.,h0,0.])
+    elif n == 3: h = np.array([0.,0.,h0])
+    return ( f(a,x+h,y) - f(a,x-h,y) ) / (2.*h0)
+
+def d2f(a,x,y,n):
+    h0 = 1.e-6
+    if   n == 1: h = np.array([h0,0.,0.])
+    elif n == 2: h = np.array([0.,h0,0.])
+    elif n == 3: h = np.array([0.,0.,h0])
+    return ( f(a,x+h,y) - 2.*f(a,x,y) + f(a,x-h,y) ) / h0**2
+
+def lf(a,x,y):
+    return d2f(a,x,y,1) + d2f(a,x,y,2) + d2f(a,x,y,3)
+
+elec_26_w1 = np.array( [  1.49050402641, 2.90106987953, -1.05920815468  ] )
+elec_15_w2 = np.array( [  -2.20180344582,-1.9113150239,  2.2193744778600002 ] )
+nucl_1    = np.array( [ 1.096243353458458e+00, 8.907054016973815e-01, 7.777092280258892e-01 ] )
+nucl_2    = np.array( [ 1.168459237342663e+00, 1.125660720053393e+00, 2.833370314829343e+00 ] )
+
+#double prim_vgl[prim_num][5][walk_num][elec_num];
+x = elec_26_w1 ; y = nucl_1
+a = [(  8.236000E+03,  -1.130000E-04 * 6.1616545431994848e+02 ),
+     (  1.235000E+03,  -8.780000E-04 * 1.4847738511079908e+02 ),
+     (  2.808000E+02,  -4.540000E-03 * 4.8888635917437597e+01 ),
+     (  7.927000E+01,  -1.813300E-02 * 1.8933972232608955e+01 ),
+     (  2.559000E+01,  -5.576000E-02 * 8.1089160941724145e+00 ),
+     (  8.997000E+00,  -1.268950E-01 * 3.7024003863155635e+00 ),
+     (  3.319000E+00,  -1.703520E-01 * 1.7525302846177560e+00 ),
+     (  9.059000E-01,   1.403820E-01 * 6.6179013183966806e-01 ),
+     (  3.643000E-01,   5.986840E-01 * 3.3419848027174592e-01 ),
+     (  1.285000E-01,   3.953890E-01 * 1.5296336817449557e-01 )]
+
+print ( "[1][0][0][26]  : %25.15e"% f(a,x,y))
+print ( "[1][1][0][26]  : %25.15e"% df(a,x,y,1))
+print ( "[1][2][0][26]  : %25.15e"% df(a,x,y,2))
+print ( "[1][3][0][26]  : %25.15e"% df(a,x,y,3))
+print ( "[1][4][0][26]  : %25.15e"% lf(a,x,y))
+
+x = elec_15_w2 ; y = nucl_2
+a = [(3.387000E+01, 6.068000E-03 *1.0006253235944540e+01),
+     (5.095000E+00, 4.530800E-02 *2.4169531573445120e+00),
+     (1.159000E+00, 2.028220E-01 *7.9610924849766440e-01),
+     (3.258000E-01, 5.039030E-01 *3.0734305383061117e-01),
+     (1.027000E-01, 3.834210E-01 *1.2929684417481876e-01)]
+
+print ( "[0][1][15][14] : %25.15e"% f(a,x,y))
+print ( "[1][1][15][14] : %25.15e"% df(a,x,y,1))
+print ( "[2][1][15][14] : %25.15e"% df(a,x,y,2))
+print ( "[3][1][15][14] : %25.15e"% df(a,x,y,3))
+print ( "[4][1][15][14] : %25.15e"% lf(a,x,y))
+
+    #+end_src
+
+     #+begin_src c :tangle (eval c_test) :exports none
+{
+#define walk_num chbrclf_walk_num
+#define elec_num chbrclf_elec_num
+#define shell_num chbrclf_shell_num
+#define ao_num chbrclf_ao_num
+
+int64_t elec_up_num   = chbrclf_elec_up_num;
+int64_t elec_dn_num   = chbrclf_elec_dn_num;
+double* elec_coord    = &(chbrclf_elec_coord[0][0][0]);
+const int64_t   nucl_num      = chbrclf_nucl_num;
+const double*   nucl_charge   = chbrclf_charge;
+const double*   nucl_coord    = &(chbrclf_nucl_coord[0][0]);
+
+rc = qmckl_set_electron_num (context, elec_up_num, elec_dn_num);  
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_set_electron_walk_num (context, walk_num);
+assert (rc == QMCKL_SUCCESS);
+
+assert(qmckl_electron_provided(context));
+
+rc = qmckl_set_electron_coord (context, 'N', elec_coord);                                     
+assert(rc == QMCKL_SUCCESS);
+
+rc = qmckl_set_nucleus_num (context, nucl_num);
+assert(rc == QMCKL_SUCCESS);
+
+rc = qmckl_set_nucleus_coord (context, 'T', &(nucl_coord[0]));
+assert(rc == QMCKL_SUCCESS);
+
+rc = qmckl_set_nucleus_charge(context, nucl_charge);
+assert(rc == QMCKL_SUCCESS);
+
+assert(qmckl_nucleus_provided(context));
+
+const int64_t *  nucleus_index     =  &(chbrclf_basis_nucleus_index[0]);
+const int64_t *  nucleus_shell_num =  &(chbrclf_basis_nucleus_shell_num[0]);
+const int32_t *  shell_ang_mom     =  &(chbrclf_basis_shell_ang_mom[0]);
+const int64_t *  shell_prim_num    =  &(chbrclf_basis_shell_prim_num[0]);
+const int64_t *  shell_prim_index  =  &(chbrclf_basis_shell_prim_index[0]);
+const double  *  shell_factor      =  &(chbrclf_basis_shell_factor[0]);
+const double  *  exponent          =  &(chbrclf_basis_exponent[0]);
+const double  *  coefficient       =  &(chbrclf_basis_coefficient[0]);
+const double  *  prim_factor       =  &(chbrclf_basis_prim_factor[0]);
+const double  *  ao_factor         =  &(chbrclf_basis_ao_factor[0]);
+
+const char typ = 'G';
+
+assert(!qmckl_ao_basis_provided(context));
+
+rc = qmckl_set_ao_basis_type (context, typ);
+assert(rc == QMCKL_SUCCESS);
+assert(!qmckl_ao_basis_provided(context));
+
+rc = qmckl_set_ao_basis_shell_num (context, chbrclf_shell_num);
+assert(rc == QMCKL_SUCCESS);
+assert(!qmckl_ao_basis_provided(context));
+
+rc = qmckl_set_ao_basis_prim_num (context, chbrclf_prim_num);
+assert(rc == QMCKL_SUCCESS);
+assert(!qmckl_ao_basis_provided(context));
+
+rc = qmckl_set_ao_basis_nucleus_index (context, nucleus_index);
+assert(rc == QMCKL_SUCCESS);
+assert(!qmckl_ao_basis_provided(context));
+
+rc = qmckl_set_ao_basis_nucleus_shell_num (context, nucleus_shell_num);
+assert(rc == QMCKL_SUCCESS);
+assert(!qmckl_ao_basis_provided(context));
+
+rc = qmckl_set_ao_basis_shell_ang_mom (context, shell_ang_mom);
+assert(rc == QMCKL_SUCCESS);
+assert(!qmckl_ao_basis_provided(context));
+
+rc = qmckl_set_ao_basis_shell_factor  (context, shell_factor);
+assert(rc == QMCKL_SUCCESS);
+assert(!qmckl_ao_basis_provided(context));
+
+rc = qmckl_set_ao_basis_shell_prim_num (context, shell_prim_num);
+assert(rc == QMCKL_SUCCESS);
+assert(!qmckl_ao_basis_provided(context));
+
+rc = qmckl_set_ao_basis_shell_prim_index (context, shell_prim_index);
+assert(rc == QMCKL_SUCCESS);
+assert(!qmckl_ao_basis_provided(context));
+
+rc = qmckl_set_ao_basis_exponent      (context, exponent);
+assert(rc == QMCKL_SUCCESS);
+assert(!qmckl_ao_basis_provided(context));
+
+rc = qmckl_set_ao_basis_coefficient   (context, coefficient);
+assert(rc == QMCKL_SUCCESS);
+assert(!qmckl_ao_basis_provided(context));
+
+rc = qmckl_set_ao_basis_prim_factor (context, prim_factor);
+assert(rc == QMCKL_SUCCESS);
+
+rc = qmckl_set_ao_basis_ao_num(context, chbrclf_ao_num);
+assert(rc == QMCKL_SUCCESS);
+
+rc = qmckl_set_ao_basis_ao_factor (context, ao_factor);
+assert(rc == QMCKL_SUCCESS);
+
+assert(qmckl_ao_basis_provided(context));
+
+
+double ao_vgl[5][walk_num][elec_num][chbrclf_ao_num];
+
+rc = qmckl_get_ao_vgl(context, &(ao_vgl[0][0][0][0]));
+assert (rc == QMCKL_SUCCESS);
+
+/* Set up MO data */
+rc = qmckl_set_mo_basis_type(context, typ);
+assert (rc == QMCKL_SUCCESS);
+
+const int64_t mo_num = chbrclf_mo_num;
+rc = qmckl_set_mo_basis_mo_num(context, mo_num);
+assert (rc == QMCKL_SUCCESS);
+
+const double  * mo_coefficient          =  &(chbrclf_mo_coef[0]);
+
+rc = qmckl_set_mo_basis_coefficient(context, mo_coefficient);
+assert (rc == QMCKL_SUCCESS);
+
+assert(qmckl_mo_basis_provided(context));
+
+double mo_vgl[5][elec_num][chbrclf_mo_num];
+rc = qmckl_get_mo_basis_vgl(context, &(mo_vgl[0][0][0]));
+assert (rc == QMCKL_SUCCESS);
+
+// Test overlap of MO
+//double point_x[100];
+//double point_y[100];
+//double point_z[100];
+//int32_t npoints=100;
+//// obtain points
+//double dr = 20./(npoints-1);
+//double dr3 = dr*dr*dr;
+//
+//for (int i=0;i<npoints;++i) {
+//  point_x[i] = -10. + dr*i;
+//  point_y[i] = -10. + dr*i;
+//  point_z[i] = -10. + dr*i;
+//}
+//
+//double ovlmo1 = 0.0;
+//// Calculate overlap
+//for (int i=0;i<npoints;++i) {
+//  printf(".");
+//  fflush(stdout);
+//  for (int j=0;j<npoints;++j) {
+//    for (int k=0;k<npoints;++k) {
+//      // Set point
+//      elec_coord[0] = point_x[i];
+//      elec_coord[1] = point_y[j];
+//      elec_coord[2] = point_z[k];
+//      rc = qmckl_set_electron_coord (context, 'N', elec_coord);                                     
+//      assert(rc == QMCKL_SUCCESS);
+//
+//      // Calculate value of MO (1st electron)
+//      double mo_vgl[5][walk_num][elec_num][chbrclf_mo_num];
+//      rc = qmckl_get_mo_basis_vgl(context, &(mo_vgl[0][0][0][0]));
+//      assert (rc == QMCKL_SUCCESS);
+//      ovlmo1 += mo_vgl[0][0][0][0]*mo_vgl[0][0][0][0]*dr3;
+//    }
+//  }
+//}
+//printf("OVL MO1 = %10.15f\n",ovlmo1);
+
+
+printf("\n");
+printf(" mo_vgl mo_vgl[0][26][219] %25.15e\n", mo_vgl[0][2][3]);
+printf(" mo_vgl mo_vgl[1][26][219] %25.15e\n", mo_vgl[1][2][3]);
+printf(" mo_vgl mo_vgl[0][26][220] %25.15e\n", mo_vgl[0][2][3]);
+printf(" mo_vgl mo_vgl[1][26][220] %25.15e\n", mo_vgl[1][2][3]);
+printf(" mo_vgl mo_vgl[0][26][221] %25.15e\n", mo_vgl[0][2][3]);
+printf(" mo_vgl mo_vgl[1][26][221] %25.15e\n", mo_vgl[1][2][3]);
+printf(" mo_vgl mo_vgl[0][26][222] %25.15e\n", mo_vgl[0][2][3]);
+printf(" mo_vgl mo_vgl[1][26][222] %25.15e\n", mo_vgl[1][2][3]);
+printf(" mo_vgl mo_vgl[0][26][223] %25.15e\n", mo_vgl[0][2][3]);
+printf(" mo_vgl mo_vgl[1][26][223] %25.15e\n", mo_vgl[1][2][3]);
+printf(" mo_vgl mo_vgl[0][26][224] %25.15e\n", mo_vgl[0][2][3]);
+printf(" mo_vgl mo_vgl[1][26][224] %25.15e\n", mo_vgl[1][2][3]);
+printf("\n");
+}  
+ 
+     #+end_src
+
+     
+* End of files                                                     :noexport:
+
+  #+begin_src c :tangle (eval h_private_type)
+#endif
+  #+end_src
+
+*** Test
+  #+begin_src c :tangle (eval c_test)
+    rc = qmckl_context_destroy(context);
+    assert (rc == QMCKL_SUCCESS);
+
+    return 0;
+}
+  #+end_src
+
+*** Compute file names
+    #+begin_src emacs-lisp
+; The following is required to compute the file names
+
+(setq pwd (file-name-directory buffer-file-name))
+(setq name (file-name-nondirectory (substring buffer-file-name 0 -4)))
+(setq f  (concat pwd name "_f.f90"))
+(setq fh (concat pwd name "_fh.f90"))
+(setq c  (concat pwd name ".c"))
+(setq h  (concat name ".h"))
+(setq h_private  (concat name "_private.h"))
+(setq c_test  (concat pwd "test_" name ".c"))
+(setq f_test  (concat pwd "test_" name "_f.f90"))
+
+; Minted
+(require 'ox-latex)
+(setq org-latex-listings 'minted)
+(add-to-list 'org-latex-packages-alist '("" "listings"))
+(add-to-list 'org-latex-packages-alist '("" "color"))
+
+    #+end_src
+
+
+# -*- mode: org -*-
+# vim: syntax=c
+
+
