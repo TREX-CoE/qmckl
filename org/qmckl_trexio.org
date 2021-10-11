@@ -21,6 +21,7 @@ to prepare the context by reading the required data from a TREXIO file.
 #endif
 
 #include "chbrclf.h"
+#include <stdio.h>
 
 int main() {
   qmckl_context context;
@@ -52,12 +53,14 @@ int main() {
 #include <stdio.h>
 
 #include "qmckl.h"
+#include "qmckl_memory_private_type.h"
+#include "qmckl_memory_private_func.h"
   #+end_src
   
 * Local functions
 
   Functions defined in this section are all local: they should not be
-  exposed in the API. To identify them, we append an underscore to
+  exposed in the API. To identify them, we append ~_X~ to
   their name.
   
   
@@ -71,7 +74,7 @@ int main() {
   
    #+begin_src c :tangle (eval c)
 #ifdef HAVE_TREXIO
-trexio_t* qmckl_trexio_open_(const char* file_name, qmckl_exit_code* rc)
+trexio_t* qmckl_trexio_open_X(const char* file_name, qmckl_exit_code* rc)
 {
   *rc = QMCKL_SUCCESS;
   trexio_t* file = NULL;
@@ -95,7 +98,7 @@ trexio_t* qmckl_trexio_open_(const char* file_name, qmckl_exit_code* rc)
    #+begin_src c :tangle (eval c)
 #ifdef HAVE_TREXIO
 qmckl_exit_code
-qmckl_trexio_read_electron_(qmckl_context context, trexio_t* const file) 
+qmckl_trexio_read_electron_X(qmckl_context context, trexio_t* const file) 
 {
   // Should not be possible by construction.
   assert (context != (qmckl_context) 0);
@@ -134,6 +137,110 @@ qmckl_trexio_read_electron_(qmckl_context context, trexio_t* const file)
 #endif
    #+end_src
 
+** Nucleus
+   
+   In this section we read the molecular geometry and nuclear charges.
+  
+   #+begin_src c :tangle (eval c)
+#ifdef HAVE_TREXIO
+qmckl_exit_code
+qmckl_trexio_read_nucleus_X(qmckl_context context, trexio_t* const file) 
+{
+  // Should not be possible by construction.
+  assert (context != (qmckl_context) 0);
+  assert (file != NULL);
+  
+  qmckl_exit_code rc;
+  int rcio = 0;
+
+  // Nucleus num
+  int64_t num = 0;
+
+  rcio = trexio_read_nucleus_num_64(file, &num);
+  if (rcio != TREXIO_SUCCESS) {
+    return qmckl_failwith( context,
+                           QMCKL_FAILURE,
+                           "trexio_read_nucleus_num",
+                           trexio_string_of_error(rcio));
+  }
+  
+  assert (num > 0);
+  rc = qmckl_set_nucleus_num(context, num);
+
+
+  // Nuclear charges
+  {
+    qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+    mem_info.size = num * sizeof(double);
+
+    double* nucl_charge = (double*) qmckl_malloc(context, mem_info);
+
+    if (nucl_charge == NULL) {
+      return qmckl_failwith( context,
+                             QMCKL_ALLOCATION_FAILED,
+                             "qmckl_trexio_read_nucleus_X",
+                             NULL);
+    }
+
+    assert (nucl_charge != NULL);
+
+    rcio = trexio_read_nucleus_charge_64(file, nucl_charge);
+    if (rcio != TREXIO_SUCCESS) {
+      return qmckl_failwith( context,
+                             QMCKL_FAILURE,
+                             "trexio_read_nucleus_charge",
+                             trexio_string_of_error(rcio));
+    }
+
+    rc = qmckl_set_nucleus_charge(context, nucl_charge);
+
+    qmckl_free(context, nucl_charge);
+    nucl_charge = NULL;
+
+    if (rc != QMCKL_SUCCESS) {
+      return rc;
+    }
+  }
+
+  // Nuclear coordinates
+  {
+    qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+    mem_info.size = num * 3 * sizeof(double);
+
+    double* nucl_coord = (double*) qmckl_malloc(context, mem_info);
+
+    if (nucl_coord == NULL) {
+      return qmckl_failwith( context,
+                             QMCKL_ALLOCATION_FAILED,
+                             "qmckl_trexio_read_nucleus_X",
+                             NULL);
+    }
+
+    assert (nucl_coord != NULL);
+
+    rcio = trexio_read_nucleus_coord_64(file, nucl_coord);
+    if (rcio != TREXIO_SUCCESS) {
+      return qmckl_failwith( context,
+                             QMCKL_FAILURE,
+                             "trexio_read_nucleus_charge",
+                             trexio_string_of_error(rcio));
+    }
+
+    rc = qmckl_set_nucleus_coord(context, 'N', nucl_coord);
+
+    qmckl_free(context, nucl_coord);
+    nucl_coord = NULL;
+
+    if (rc != QMCKL_SUCCESS) {
+      return rc;
+    }
+  }
+
+  return QMCKL_SUCCESS;
+}
+#endif
+   #+end_src
+
 * Read everything
 
   #+begin_src c :tangle (eval h_func)
@@ -151,7 +258,7 @@ qmckl_trexio_read(const qmckl_context context, const char* file_name)
   qmckl_exit_code rc;
 
 #ifdef HAVE_TREXIO
-  trexio_t* file = qmckl_trexio_open_(file_name, &rc);
+  trexio_t* file = qmckl_trexio_open_X(file_name, &rc);
   if (file == NULL) {
     trexio_close(file);
     return qmckl_failwith( context,
@@ -162,14 +269,22 @@ qmckl_trexio_read(const qmckl_context context, const char* file_name)
 
   assert (file != NULL);
 
-  rc = qmckl_trexio_read_electron_(context, file);
-  printf("%d %d\n", rc, QMCKL_SUCCESS);
+  rc = qmckl_trexio_read_electron_X(context, file);
   if (rc != QMCKL_SUCCESS) {
     trexio_close(file);
     return qmckl_failwith( context,
                            QMCKL_FAILURE,
                            "qmckl_trexio_read",
                            "Error reading electron");
+  }
+  
+  rc = qmckl_trexio_read_nucleus_X(context, file);
+  if (rc != QMCKL_SUCCESS) {
+    trexio_close(file);
+    return qmckl_failwith( context,
+                           QMCKL_FAILURE,
+                           "qmckl_trexio_read",
+                           "Error reading nucleus");
   }
   
   trexio_close(file);
@@ -203,13 +318,46 @@ if (rc != QMCKL_SUCCESS) {
   
 assert ( rc == QMCKL_SUCCESS );
 
+printf("Electrons");
 int64_t num;
 rc = qmckl_get_electron_up_num(context, &num);
+assert (rc == QMCKL_SUCCESS);
 assert (num == chbrclf_elec_up_num);
   
 rc = qmckl_get_electron_down_num(context, &num);
+assert (rc == QMCKL_SUCCESS);
 assert (num == chbrclf_elec_dn_num);
+
+rc = qmckl_get_nucleus_num(context, &num);
+assert (rc == QMCKL_SUCCESS);
+assert (num == chbrclf_nucl_num);
+
+printf("Nuclear charges");
+double * charge = (double*) malloc (num * sizeof(double));
+rc = qmckl_get_nucleus_charge(context, charge);
+assert (rc == QMCKL_SUCCESS);
+for (int i=0 ; i<num ; i++) {
+  assert (charge[i] == chbrclf_charge[i]);
+ }
+free(charge);
+charge = NULL;
+
+printf("Nuclear coordinates");
+double * coord  = (double*) malloc (num * 3 * sizeof(double));
+rc = qmckl_get_nucleus_coord(context, 'T', coord);
+assert (rc == QMCKL_SUCCESS);
+int k=0;
+for (int j=0 ; j<3 ; ++j) {
+  for (int i=0 ; i<num ; ++i) {
+//    printf("%f  %f\n", coord[k], chbrclf_nucl_coord[j][i]);
+    assert (coord[k] == chbrclf_nucl_coord[j][i]);
+    ++k;
+  }
+ }
+free(coord);
+coord = NULL;
   
+
 #endif
   #+end_src
 
