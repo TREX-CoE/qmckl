@@ -102,7 +102,6 @@ int main() {
   | ~walk_num~       | ~int64_t~                                      | Number of walkers                  |
   | ~det_num_alpha~  | ~int64_t~                                      | Number of determinants per walker  |
   | ~det_num_beta~   | ~int64_t~                                      | Number of determinants per walker  |
-  | ~fermi_num~      | ~int64_t~                                      | Number of number of fermions       |
   | ~mo_index_alpha~ | ~mo_index[det_num_alpha][walk_num][alpha_num]~ | Index of MOs for each walker       |
   | ~mo_index_beta~  | ~mo_index[det_num_beta][walk_num][beta_num]~   | Index of MOs for each walker       |
 
@@ -140,7 +139,6 @@ typedef struct qmckl_determinant_struct {
   int64_t  det_num_beta ;  
   int64_t  up_num;  
   int64_t  down_num;  
-  int64_t  fermi_num;  
   int64_t* mo_index_alpha;
   int64_t* mo_index_beta;
 
@@ -180,7 +178,6 @@ char      qmckl_get_determinant_type             (const qmckl_context context);
 int64_t   qmckl_get_determinant_walk_num         (const qmckl_context context);
 int64_t   qmckl_get_determinant_det_num_alpha    (const qmckl_context context);
 int64_t   qmckl_get_determinant_det_num_beta     (const qmckl_context context);
-int64_t   qmckl_get_determinant_fermi_num        (const qmckl_context context);
 int64_t*   qmckl_get_determinant_mo_index_alpha  (const qmckl_context context);
 int64_t*   qmckl_get_determinant_mo_index_beta   (const qmckl_context context);
    #+end_src
@@ -274,24 +271,6 @@ int64_t qmckl_get_determinant_det_num_beta (const qmckl_context context) {
   return ctx->det.det_num_beta;
 }
 
-int64_t qmckl_get_determinant_fermi_num (const qmckl_context context) {
-  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return (int64_t) 0;
-  }
-
-  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
-  assert (ctx != NULL);
-
-  int32_t mask = 1 << 4;
-
-  if ( (ctx->det.uninitialized & mask) != 0) {
-    return (int64_t) 0;
-  }
-
-  assert (ctx->det.fermi_num > (int64_t) 0);
-  return ctx->det.fermi_num;
-}
-
 int64_t* qmckl_get_determinant_mo_index_alpha (const qmckl_context context) {
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return (int64_t) 0;
@@ -300,7 +279,7 @@ int64_t* qmckl_get_determinant_mo_index_alpha (const qmckl_context context) {
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
   assert (ctx != NULL);
 
-  int32_t mask = 1 << 5;
+  int32_t mask = 1 << 4;
 
   if ( (ctx->det.uninitialized & mask) != 0) {
     return (int64_t) 0;
@@ -318,7 +297,7 @@ int64_t* qmckl_get_determinant_mo_index_beta (const qmckl_context context) {
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
   assert (ctx != NULL);
 
-  int32_t mask = 1 << 6;
+  int32_t mask = 1 << 5;
 
   if ( (ctx->det.uninitialized & mask) != 0) {
     return (int64_t) 0;
@@ -340,7 +319,6 @@ qmckl_exit_code  qmckl_set_determinant_type             (const qmckl_context con
 qmckl_exit_code  qmckl_set_determinant_walk_num         (const qmckl_context context, const int64_t walk_num);
 qmckl_exit_code  qmckl_set_determinant_det_num_alpha    (const qmckl_context context, const int64_t det_num_alpha);
 qmckl_exit_code  qmckl_set_determinant_det_num_beta     (const qmckl_context context, const int64_t det_num_beta);
-qmckl_exit_code  qmckl_set_determinant_fermi_num        (const qmckl_context context, const int64_t fermi_num);
 qmckl_exit_code  qmckl_set_determinant_mo_index_alpha   (const qmckl_context context, const int64_t* mo_index_alpha);
 qmckl_exit_code  qmckl_set_determinant_mo_index_beta    (const qmckl_context context, const int64_t* mo_index_beta);
    #+end_src
@@ -427,22 +405,6 @@ qmckl_exit_code qmckl_set_determinant_det_num_beta(qmckl_context context, const 
 
   int32_t mask = 1 << 3;
   ctx->det.det_num_beta = det_num_beta;
-
-  <<post2>>
-}
-
-qmckl_exit_code qmckl_set_determinant_fermi_num(qmckl_context context, const int64_t fermi_num) {
-  <<pre2>>
-
-  if (fermi_num <= 0) {
-    return qmckl_failwith( context,
-                           QMCKL_INVALID_ARG_2,
-                           "qmckl_set_slater_fermierminant_det_num",
-                           "fermi_num <= 0");
-  }
-
-  int32_t mask = 1 << 4;
-  ctx->det.fermi_num = fermi_num;
 
   <<post2>>
 }
@@ -1208,6 +1170,35 @@ assert(qmckl_mo_basis_provided(context));
 double mo_vgl[5][elec_num][chbrclf_mo_num];
 rc = qmckl_get_mo_basis_vgl(context, &(mo_vgl[0][0][0]));
 assert (rc == QMCKL_SUCCESS);
+
+/* Set up determinant data */
+
+const int64_t det_num_alpha = 1;
+const int64_t det_num_beta  = 1;
+int64_t mo_index_alpha[1];
+int64_t mo_index_beta[1];
+
+mo_index_alpha[0] = 1;
+mo_index_beta[0]  = 2;
+
+rc = qmckl_set_determinant_type (context, typ);
+assert(rc == QMCKL_SUCCESS);
+
+rc = qmckl_set_determinant_walk_num (context, walk_num);
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_set_determinant_det_num_alpha (context, det_num_alpha);
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_set_determinant_det_num_beta (context, det_num_beta);
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_set_determinant_mo_index_alpha (context, &(mo_index_alpha[0]));
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_set_determinant_mo_index_beta (context, &(mo_index_beta[0]));
+assert (rc == QMCKL_SUCCESS);
+
 
 }  
  
