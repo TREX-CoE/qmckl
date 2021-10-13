@@ -4,24 +4,24 @@
 # QMCkl - Quantum Monte Carlo kernel library
 #
 # BSD 3-Clause License
-# 
+#
 # Copyright (c) 2020, TREX Center of Excellence
 # All rights reserved.
-# 
+#
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are met:
-# 
+#
 # 1. Redistributions of source code must retain the above copyright notice, this
 #    list of conditions and the following disclaimer.
-# 
+#
 # 2. Redistributions in binary form must reproduce the above copyright notice,
 #    this list of conditions and the following disclaimer in the documentation
 #    and/or other materials provided with the distribution.
-# 
+#
 # 3. Neither the name of the copyright holder nor the names of its
 #    contributors may be used to endorse or promote products derived from
 #    this software without specific prior written permission.
-# 
+#
 # THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
 # AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
 # IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -167,7 +167,7 @@ AC_TYPE_UINT64_T
 # Checks for library functions.
 
 ## qmckl
-AC_FUNC_MALLOC
+# AC_FUNC_MALLOC
 AC_CHECK_FUNCS([memset strerror])
 
 # Development mode
@@ -194,6 +194,29 @@ if test "x${QMCKL_DEVEL}" != "x"; then
         HAS_CPPCHECK=1
   fi
 
+fi
+
+# Enable Verificarlo tests
+AC_ARG_ENABLE([vfc_ci],
+[  --enable-vfc_ci    Build the library with vfc_ci support],
+[case "${enableval}" in
+  yes) vfc_ci=true &&  FCFLAGS="-D VFC_CI $FCFLAGS" && CFLAGS="-D VFC_CI $CFLAGS";;
+  no)  vfc_ci=false ;;
+  *) AC_MSG_ERROR([bad value ${enableval} for --enable_vfc_ci]) ;;
+esac],[vfc_ci=false])
+AM_CONDITIONAL([VFC_CI], [test x$vfc_ci = xtrue])
+
+# Enable Fortran preprocessor
+if test "$FC" = "gfortran"; then
+  AC_MSG_NOTICE(gfortran detected)
+  # Arguments order is important here
+  FCFLAGS="-cpp $FCFLAGS"
+fi
+
+if test "$FC" = "verificarlo-f"; then
+  AC_MSG_NOTICE(verificarlo-f detected)
+  # Arguments order is important here
+  FCFLAGS="-Mpreprocess $FCFLAGS"
 fi
 
 #PKG-CONFIG
@@ -237,4 +260,3 @@ where the optional <target> is:
   check         - run tests
   install       - install ${PACKAGE_NAME}
 --------------------------------------------------"
-
