@@ -60,6 +60,9 @@ int main() {
    the update is applied as usual and the kernel exits with return code \texttt{QMCKL_SUCCESS}.
    If $1+v_j^TS^{-1}u_j \leq \epsilon$ the update is rejected and the kernel exits with return code \texttt{QMCKL_FAILURE}.
 
+   If the determinant of the Slater-matrix is passed, it will be updated to the determinant resulting
+   from applying the updates to the original matrix.
+
    #+NAME: qmckl_sherman_morrison_args
    | qmckl_context | context                  | in    | Global state                                         |
    | uint64_t      | Dim                      | in    | Leading dimension of Slater_inv                      |
@@ -68,6 +71,7 @@ int main() {
    | uint64_t      | Updates_index[N_updates] | in    | Array containing the rank-1 updates                  |
    | double        | breakdown                | in    | Break-down parameter on which to fail or not         |
    | double        | Slater_inv[Dim*Dim]      | inout | Array containing the inverse of a Slater-matrix      |
+   | double*       |  determinant             | inout | det(Slater) the determinant of the Slater-matrix     |
 
 *** Requirements
 
@@ -92,7 +96,8 @@ int main() {
 	  const double* Updates,
 	  const uint64_t* Updates_index,
 	  const double breakdown,
-	  double* Slater_inv);
+	  double* Slater_inv,
+    double* determinant);
     #+end_src
 
 *** C source
@@ -108,7 +113,8 @@ qmckl_exit_code qmckl_sherman_morrison(const qmckl_context context,
                                 const double* Updates,
                                 const uint64_t* Updates_index,
                                 const double breakdown,
-                                double* Slater_inv) {
+                                double* Slater_inv,
+                                double* determinant) {
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return QMCKL_NULL_CONTEXT;
@@ -130,10 +136,15 @@ qmckl_exit_code qmckl_sherman_morrison(const qmckl_context context,
 
     // Denominator
     double den = 1 + C[Updates_index[l] - 1];
+
     if (fabs(den) < breakdown) {
       return QMCKL_FAILURE;
     }
     double iden = 1 / den;
+
+    // Update det(A)
+    if (determinant != NULL)
+      *determinant *= den;
 
     // D = v^T x A^{-1}
     for (uint64_t j = 0; j < Dim; j++) {
@@ -174,7 +185,7 @@ qmckl_exit_code qmckl_sherman_morrison(const qmckl_context context,
    #+begin_src f90 :tangle (eval fh_func) :comments org :exports none
    interface
      integer(c_int32_t) function qmckl_sherman_morrison &
-	 (context, Dim, N_updates, Updates, Updates_index, breakdown, Slater_inv) &
+	 (context, Dim, N_updates, Updates, Updates_index, breakdown, Slater_inv, determinant) &
 	 bind(C)
 
        use, intrinsic :: iso_c_binding
@@ -188,6 +199,7 @@ qmckl_exit_code qmckl_sherman_morrison(const qmckl_context context,
        integer (c_int64_t) , intent(in)         :: Updates_index(N_updates)
        real    (c_double ) , intent(in) , value :: breakdown
        real    (c_double ) , intent(inout)      :: Slater_inv(Dim*Dim)
+       real    (c_double ) , intent(inout)      :: determinant
 
      end function qmckl_sherman_morrison
    end interface
@@ -234,7 +246,14 @@ double Slater_inv5[441] = {-0.054189244668834902, -105.426713929607, -88.4584964
 assert(Updates1 != NULL);
 assert(Updates_index1 != NULL);
 assert(Slater_inv1 != NULL);
-rc = qmckl_sherman_morrison(context, Dim, N_updates1, Updates1, Updates_index1, breakdown, Slater_inv1);
+
+// original determinant of Slater1 (before applying updates)
+double det = 3.407025646103221e-10;
+rc = qmckl_sherman_morrison(context, Dim, N_updates1, Updates1, Updates_index1, breakdown, Slater_inv1, &det);
+
+// Check that the determinant is updated properly
+assert(fabs(det - 4.120398385068217e-10) < 1e-8);
+
 for (unsigned int i = 0; i < Dim; i++) {
   for (unsigned int j = 0; j < Dim; j++) {
     res[i * Dim + j] = 0;
