@@ -55,7 +55,9 @@ src_qmckl_fo  = src/qmckl_f.o
 header_tests  = tests/chbrclf.h tests/n2.h
 
 fortrandir = $(datadir)/$(PACKAGE_NAME)/fortran/
+testdatadir = $(datadir)/$(PACKAGE_NAME)/test_data/
 dist_fortran_DATA = $(qmckl_f)
+
 
 AM_CPPFLAGS = -I$(srcdir)/src -I$(srcdir)/include
 

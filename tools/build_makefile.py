@@ -134,7 +134,7 @@ def main():
                 DEPS[fo] += [f90, "$(src_qmckl_fo)"]
             else:
                 DEPS[fo]  = [f90, "$(src_qmckl_fo)"]
-                                                        
+
         if "(eval fh_func)" in grep:
             FH_FUNC_FILES += [fh_func]
 
@@ -151,7 +151,7 @@ def main():
             else:
                 DEPS[fh_type]  = [tangled]
 
-        
+
         if "(eval c_test)" in grep:
             C_TEST_FILES += [c_test]
 
@@ -164,7 +164,7 @@ def main():
                 TESTS[c_test_x] += [c_test, "$(qmckl_h)"]
             else:
                 TESTS[c_test_x]  = [c_test, "$(qmckl_h)"]
-        
+
         if "(eval f_test)" in grep:
             F_TEST_FILES += [f_test]
 
@@ -181,20 +181,20 @@ def main():
     output = ["",
               "## Source files",
               "",
-              "ORG_FILES="+" ".join(ORG_FILES), 
+              "ORG_FILES="+" ".join(ORG_FILES),
               "TANGLED_FILES="+" ".join(TANGLED_FILES),
-              "EXPORTED_FILES="+" ".join(EXPORTED_FILES), 
-              "C_FILES="+" ".join(C_FILES), 
-              "F_FILES="+" ".join(F_FILES), 
-              "C_O_FILES="+" ".join(C_O_FILES), 
-              "FH_FUNC_FILES="+" ".join(FH_FUNC_FILES), 
-              "FH_TYPE_FILES="+" ".join(FH_TYPE_FILES), 
-              "H_FUNC_FILES="+" ".join(H_FUNC_FILES), 
-              "H_TYPE_FILES="+" ".join(H_TYPE_FILES), 
-              "H_PRIVATE_FUNC_FILES="+" ".join(H_PRIVATE_FUNC_FILES), 
-              "H_PRIVATE_TYPE_FILES="+" ".join(H_PRIVATE_TYPE_FILES), 
-              "C_TEST_FILES="+" ".join(C_TEST_FILES), 
-              "F_TEST_FILES="+" ".join(F_TEST_FILES), 
+              "EXPORTED_FILES="+" ".join(EXPORTED_FILES),
+              "C_FILES="+" ".join(C_FILES),
+              "F_FILES="+" ".join(F_FILES),
+              "C_O_FILES="+" ".join(C_O_FILES),
+              "FH_FUNC_FILES="+" ".join(FH_FUNC_FILES),
+              "FH_TYPE_FILES="+" ".join(FH_TYPE_FILES),
+              "H_FUNC_FILES="+" ".join(H_FUNC_FILES),
+              "H_TYPE_FILES="+" ".join(H_TYPE_FILES),
+              "H_PRIVATE_FUNC_FILES="+" ".join(H_PRIVATE_FUNC_FILES),
+              "H_PRIVATE_TYPE_FILES="+" ".join(H_PRIVATE_TYPE_FILES),
+              "C_TEST_FILES="+" ".join(C_TEST_FILES),
+              "F_TEST_FILES="+" ".join(F_TEST_FILES),
               "TESTS="+" ".join(TESTS.keys()).replace("$(srcdir)/",""),
               "HTML_FILES="+" ".join(HTML.values()),
               "TEXT_FILES="+" ".join(TEXT.values()),
@@ -234,9 +234,16 @@ def main():
         prefix = "tests_" + f.rsplit("/",1)[-1]
         output += [ prefix + "_SOURCES = " + \
                     " ".join(TESTS[f]).replace("$(srcdir)",""),
-                    prefix + "_LDADD   = src/libqmckl.la", 
+                    prefix + "_LDADD   = src/libqmckl.la",
                     prefix + "_LDFLAGS = -no-install",
                     "" ]
+
+    tmp = "dist_testdata_DATA = "
+    for dir in glob("share/qmckl/test_data/*"):
+      for f in glob("%s/*"%(dir)):
+        tmp += " \\\n   "+f
+    tmp += "\n"
+    output += tmp.split("\n")
 
     output+= ["",
               "## Documentation",
