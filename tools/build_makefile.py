@@ -238,7 +238,7 @@ def main():
                     prefix + "_LDFLAGS = -no-install",
                     "" ]
 
-    tmp = "dist_testdata_DATA = "
+    tmp = "EXTRA_DIST += "
     for dir in glob("share/qmckl/test_data/*"):
       for f in glob("%s/*"%(dir)):
         tmp += " \\\n   "+f
