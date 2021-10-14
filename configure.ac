@@ -49,9 +49,9 @@ AC_CONFIG_MACRO_DIR([m4])
 VERSION_MAJOR=`echo ${PACKAGE_VERSION} | cut -d. -f1`
 VERSION_MINOR=`echo ${PACKAGE_VERSION} | cut -d. -f2`
 VERSION_PATCH=`echo ${PACKAGE_VERSION} | cut -d. -f3 | cut -d- -f1`
-AC_DEFINE_UNQUOTED(QMCKL_VERSION_MAJOR, [$VERSION_MAJOR], [major version])
-AC_DEFINE_UNQUOTED(QMCKL_VERSION_MINOR, [$VERSION_MINOR], [minor version])
-AC_DEFINE_UNQUOTED(QMCKL_VERSION_PATCH, [$VERSION_PATCH], [patch version])
+AC_DEFINE_UNQUOTED([QMCKL_VERSION_MAJOR], [$VERSION_MAJOR], [major version])
+AC_DEFINE_UNQUOTED([QMCKL_VERSION_MINOR], [$VERSION_MINOR], [minor version])
+AC_DEFINE_UNQUOTED([QMCKL_VERSION_PATCH], [$VERSION_PATCH], [patch version])
 AC_SUBST([VERSION_MAJOR])
 AC_SUBST([VERSION_MINOR])
 AC_SUBST([VERSION_PATCH])
@@ -92,11 +92,29 @@ AC_CHECK_LIB([pthread], [pthread_create])
 # OpenMP
 #AC_ARG_WITH(openmp, [AC_HELP_STRING([--with-openmp],[enable OpenMP])], with_omp=$withval, with_omp=no)
 #if test "x$with_omp" = xyes; then
-#   AC_DEFINE([USE_OPENMP], [1], [Define to use OpenMP threading.])
+#   AC_DEFINE([HAVE_OPENMP], [1], [Define to use OpenMP threading.])
 #   AX_OPENMP([],
 #    [AC_MSG_ERROR([Could not find OpenMP flags; configure with --without-openmp])])
 #   CFLAGS="${CFLAGS} ${OPENMP_CFLAGS}"
 #fi
+
+# TREXIO
+
+AC_ARG_WITH(trexio, [AC_HELP_STRING([--without-trexio],[disable support for TREXIO])],
+            with_trexio=$withval, with_trexio=yes)
+
+AS_IF([test "x$with_trexio" != xno], [
+  AC_DEFINE([HAVE_TREXIO], [1], [Define if your have libtrexio])
+  ARGS="${ARGS} trexio"
+  AC_CHECK_LIB([trexio], [trexio_open],
+       [],
+       [AS_IF([test "x$with_trexio" != xcheck],
+       [PKG_CHECK_MODULES([TREXIO], [trexio]) ])
+  ])
+])
+
+PKG_CFLAGS="$PKG_CFLAGS $TREXIO_CFLAGS"
+PKG_LIBS="$PKG_LIBS $TREXIO_LIBS"
 
 ## BLAS
 #AX_BLAS([], [AC_MSG_ERROR([BLAS was not found.])])
@@ -222,8 +240,9 @@ fi
 #PKG-CONFIG
 #mkl-dynamic-lp64-seq
 
-LIBS="${LAPACK_LIBS} ${BLAS_LIBS} ${LIBS}"
-PKG_LIBS="${PKG_LIBS} ${LIBS}"
+PKG_LIBS="$PKG_LIBS $LIBS"
+LIBS="$LAPACK_LIBS $BLAS_LIBS $PKG_LIBS"
+CFLAGS="$CFLAGS $PKG_CFLAGS"
 AC_SUBST([PKG_LIBS])
 AC_SUBST([PKG_CFLAGS])
 AC_SUBST([HAS_CPPCHECK])
