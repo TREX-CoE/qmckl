@@ -59,10 +59,13 @@ header_tests  = tests/chbrclf.h tests/n2.h
 qmckl_probes_src = src/qmckl_probes.h src/qmckl_probes.c src/qmckl_probes_f.f90
 
 
-fortrandir = $(datadir)/$(PACKAGE_NAME)/fortran/
+fortrandir = $(datadir)/qmckl/fortran/
+
 dist_fortran_DATA = $(qmckl_f)
 
-AM_CPPFLAGS = -I$(srcdir)/src -I$(srcdir)/include
+AM_CPPFLAGS  = -I$(srcdir)/src -I$(srcdir)/include
+AM_CPPFLAGS += -DQMCKL_TEST_DIR="\"$(abs_srcdir)/share/qmckl/test_data/\""
+
 
 lib_LTLIBRARIES = src/libqmckl.la
 src_libqmckl_la_SOURCES = $(qmckl_h) $(src_qmckl_f) $(C_FILES) $(F_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES) $(header_tests) $(qmckl_probes_src)
@@ -71,7 +74,7 @@ export qmckl_f qmckl_h srcdir
 
 CLEANFILES+=$(test_qmckl_f) $(src_qmckl_f) $(test_qmckl_o) $(src_qmckl_o)
 
-htmlize_el=share/doc/qmckl/html/htmlize.el
+htmlize_el=$(srcdir)/share/doc/qmckl/html/htmlize.el
 
 include generated.mk
 
@@ -126,17 +129,17 @@ BUILT_SOURCES = $(C_FILES) $(F_FILES) $(FH_FUNC_FILES) $(FH_TYPE_FILES) $(H_FUNC
 CLEANFILES += $(BUILT_SOURCES) $(C_TEST_FILES) $(F_TEST_FILES) $(TANGLED_FILES) $(C_TEST_FILES) $(F_TEST_FILES) $(qmckl_f) $(qmckl_h) $(HTML_FILES) $(TEXT_FILES) share/doc/qmckl/html/index.html $(EXPORTED_FILES) $(header_tests) 
 
 EXTRA_DIST +=                 \
-    tools/build_doc.sh        \
-    tools/build_makefile.py   \
-    tools/build_qmckl_f.sh    \
-    tools/build_qmckl_h.sh    \
-    tools/config_doc.el       \
-    tools/config_tangle.el    \
-    tools/init.el             \
-    tools/install_htmlize.sh  \
-    tools/lib.org             \
-    tools/tangle.sh           \
-    tools/theme.setup
+    $(srcdir)/tools/build_doc.sh        \
+    $(srcdir)/tools/build_makefile.py   \
+    $(srcdir)/tools/build_qmckl_f.sh    \
+    $(srcdir)/tools/build_qmckl_h.sh    \
+    $(srcdir)/tools/config_doc.el       \
+    $(srcdir)/tools/config_tangle.el    \
+    $(srcdir)/tools/init.el             \
+    $(srcdir)/tools/install_htmlize.sh  \
+    $(srcdir)/tools/lib.org             \
+    $(srcdir)/tools/tangle.sh           \
+    $(srcdir)/tools/theme.setup
 
 
 ## Silent
