@@ -30,6 +30,9 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+if VFC_CI
+AM_LDFLAGS=-lvfc_probes -lvfc_probes_f
+endif
 
 ACLOCAL_AMFLAGS = -I m4
 
@@ -38,7 +41,7 @@ VERSION_MINOR   = @VERSION_MINOR@
 VERSION_PATCH   = @VERSION_PATCH@
 
 SUBDIRS =
-CLEANFILES = qmckl.mod
+CLEANFILES = qmckl.mod qmckl_probes_f.mod
 EXTRA_DIST =
 
 pkgconfigdir = $(libdir)/pkgconfig
@@ -53,6 +56,8 @@ test_qmckl_fo = tests/qmckl_f.o
 src_qmckl_f   = src/qmckl_f.f90
 src_qmckl_fo  = src/qmckl_f.o
 header_tests  = tests/chbrclf.h tests/n2.h
+qmckl_probes_src = src/qmckl_probes.h src/qmckl_probes.c src/qmckl_probes_f.f90
+
 
 fortrandir = $(datadir)/qmckl/fortran/
 
@@ -63,11 +68,11 @@ AM_CPPFLAGS += -DQMCKL_TEST_DIR="\"$(abs_srcdir)/share/qmckl/test_data/\""
 
 
 lib_LTLIBRARIES = src/libqmckl.la
-src_libqmckl_la_SOURCES = $(qmckl_h) $(src_qmckl_f) $(C_FILES) $(F_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES) $(header_tests)
+src_libqmckl_la_SOURCES = $(qmckl_h) $(src_qmckl_f) $(C_FILES) $(F_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES) $(header_tests) $(qmckl_probes_src)
 
 export qmckl_f qmckl_h srcdir
 
-CLEANFILES+=$(test_qmckl_f) $(src_qmckl_f) $(test_qmckl_o) $(src_qmckl_o) 
+CLEANFILES+=$(test_qmckl_f) $(src_qmckl_f) $(test_qmckl_o) $(src_qmckl_o)
 
 htmlize_el=$(srcdir)/share/doc/qmckl/html/htmlize.el
 
@@ -94,6 +99,15 @@ $(src_qmckl_fo): $(src_qmckl_f)
 $(src_qmckl_f): $(srcdir)/$(qmckl_f)
 	cp $(srcdir)/$(qmckl_f) $(src_qmckl_f)
 
+src/qmckl_probes.c:
+	cp $(srcdir)/tools/qmckl_probes.c $(srcdir)/src/qmckl_probes.c
+
+src/qmckl_probes.h:
+	cp $(srcdir)/tools/qmckl_probes.h $(srcdir)/src/qmckl_probes.h
+
+src/qmckl_probes_f.f90:
+	cp $(srcdir)/tools/qmckl_probes_f.f90 $(srcdir)/src/qmckl_probes_f.f90
+
 share/doc/qmckl/html/index.html: share/doc/qmckl/html/README.html
 	$(ln_s_verbose)cd share/doc/qmckl/html/ && \
         rm -rf index.html && \
@@ -112,7 +126,7 @@ dist_src_DATA = $(ORG_FILES) $(TANGLED_FILES) $(EXPORTED_FILES)
 
 BUILT_SOURCES = $(C_FILES) $(F_FILES) $(FH_FUNC_FILES) $(FH_TYPE_FILES) $(H_FUNC_FILES) $(H_TYPE_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES) $(qmckl_f) $(qmckl_h) $(header_tests)
 
-CLEANFILES += $(BUILT_SOURCES) $(C_TEST_FILES) $(F_TEST_FILES) $(TANGLED_FILES) $(C_TEST_FILES) $(F_TEST_FILES) $(qmckl_f) $(qmckl_h) $(HTML_FILES) $(TEXT_FILES) share/doc/qmckl/html/index.html $(EXPORTED_FILES) $(header_tests)
+CLEANFILES += $(BUILT_SOURCES) $(C_TEST_FILES) $(F_TEST_FILES) $(TANGLED_FILES) $(C_TEST_FILES) $(F_TEST_FILES) $(qmckl_f) $(qmckl_h) $(HTML_FILES) $(TEXT_FILES) share/doc/qmckl/html/index.html $(EXPORTED_FILES) $(header_tests) 
 
 EXTRA_DIST +=                 \
     $(srcdir)/tools/build_doc.sh        \
@@ -159,14 +173,14 @@ $(htmlize_el):
 	$(srcdir)/tools/install_htmlize.sh $(htmlize_el)
 
 tests/chbrclf.h: $(qmckl_h)
-	
+
 tests/n2.h: $(qmckl_h)
 
 generated.mk: $(ORG_FILES)
 	$(PYTHON) $(srcdir)/tools/build_makefile.py
 
 cppcheck: cppcheck.out
-	
+
 cppcheck.out: $(qmckl_h)
 	cd src/ && \
 	cppcheck --addon=cert -q --error-exitcode=0  \
