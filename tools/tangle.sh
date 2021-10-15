@@ -35,8 +35,13 @@ do
     tangled=${i%.org}.tangled
     tangled=$(dirname $tangled)/.$(basename $tangled)
     NOW=$(date +"%m%d%H%M.%S")
-    tangle ${i} > $tangled
-
+    tangle ${i} &> $tangled 
+    rc=$?
     # Make log file older than the tangled files
     touch -t ${NOW} $tangled
+    # Fail if tangling failed
+    if [[ $rc -ne 0 ]] ; then
+       cat $tangled
+       exit rc
+    fi
 done

@@ -1,0 +1,328 @@
+#+TITLE: Verificarlo CI
+#+SETUPFILE: ../tools/theme.setup
+#+INCLUDE: ../tools/lib.org
+
+* Headers                                                          :noexport:
+
+  #+begin_src c :tangle (eval h_private_func)
+#ifndef QMCKL_VERIFICARLO_HPT
+#define QMCKL_VERIFICARLO_HPT
+
+#include <stdbool.h>
+
+
+#ifdef VFC_CI
+#include <vfc_probes.h>
+extern vfc_probes * probes;
+#endif
+
+
+  #+end_src
+
+  #+begin_src c :tangle (eval c)
+#include <stdbool.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <math.h>
+
+#ifdef VFC_CI
+#include <vfc_probes.h>
+vfc_probes probes;
+#else
+
+/* Disable GCC warnings with unused variables */
+#ifdef __GNUC__
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+#endif
+
+#endif
+
+  #+end_src
+
+* Verificarlo probes
+
+This file contains utility functions to enable the Verificarlo
+Continuous Integration system (~VFC_CI~).
+
+It is a wrapper to Verificarlo's ~vfc_probes~ system. The goal of QMCkl
+probes is to simplify the use of ~vfc_probes~, and to provide functions that
+can be called either with or without ~VFC_CI~ support by using ~#ifndef~
+statements :
+
+- when ~VFC_CI~ is disabled, the functions will either return ~false~
+  (no error) or perform a check based on a reference value
+
+- when ~VFC_CI~ is enabled, the functions will simply encapsulate
+calls to ~vfc_probe~.
+
+Moreover, one does not have to worry about the life cycle of the probes
+structure, as it is automatically created, dumped and freed by this wrapper.
+
+~VFC_CI~ support can be enabled by using the following configure command :
+
+  #+begin_src bash
+QMCKL_DEVEL=1 ./configure --prefix=$PWD/_install --enable-silent-rules \
+  --enable-maintainer-mode CC=verificarlo-f FC=verificarlo-f --host=x86_64
+  #+end_src
+
+Finally, this wrapper also comes with a Fortran interface (in its dedicated
+file).
+
+To learn more about Verificarlo CI :
+https://github.com/verificarlo/verificarlo/blob/master/doc/06-Postprocessing.md#verificarlo-ci
+
+
+** Automatically initialize the vfc_probe object if ~VFC_CI~ is defined
+
+  #+begin_src c :tangle (eval h_private_func)
+#ifdef VFC_CI
+void qmckl_init_probes() __attribute__((constructor));
+#endif
+  #+end_src
+
+  #+begin_src c :tangle (eval c)
+#ifdef VFC_CI
+void __attribute__((constructor)) qmckl_init_probes(){
+	probes = vfc_init_probes();
+}
+#endif
+  #+end_src
+
+** Standard probe, without check
+
+ - if ~VFC_CI~ is defined, place a standard probe
+ - if ~VFC_CI~ is undefined, return ~false~ (no error)
+
+  #+begin_src c :tangle (eval h_private_func)
+bool qmckl_probe(
+    char * testName,
+    char * varName,
+    double value
+);
+  #+end_src
+
+  #+begin_src c :tangle (eval c)
+bool qmckl_probe(
+    char * testName,
+    char * varName,
+    double value)
+{
+#ifdef VFC_CI
+    return vfc_probe(&probes, testName, varName, value);
+#else
+	return false;
+#endif
+}
+  #+end_src
+
+** Probe with absolute check
+
+ - if VFC_CI is defined, place a probe with an absolute check
+ - if VFC_CI is undefined, perform an absolute check based on target value
+   and accuracy
+
+  #+begin_src c :tangle (eval h_private_func)
+bool qmckl_probe_check(
+    char * testName,
+    char * varName,
+    double value,
+    double expectedValue,
+    double accuracyTarget
+);
+  #+end_src
+
+  #+begin_src c :tangle (eval c)
+bool qmckl_probe_check(
+    char * testName,
+    char * varName,
+    double value,
+    double expectedValue,
+    double accuracyTarget)
+{
+#ifdef VFC_CI
+    return vfc_probe_check(&probes, testName, varName, value, accuracyTarget);
+#else
+    return !(fabs(value - expectedValue) < accuracyTarget);
+#endif
+}
+  #+end_src
+
+** Probe with relative check
+
+ - if VFC_CI is defined, place a probe with a relative check
+ - if VFC_CI is undefined, perform a relative check based on target value
+   and accuracy
+
+  #+begin_src c :tangle (eval h_private_func)
+bool qmckl_probe_check_relative(
+    char * testName,
+    char * varName,
+    double value,
+    double expectedValue,
+    double accuracyTarget
+);
+  #+end_src
+
+  #+begin_src c :tangle (eval c)
+bool qmckl_probe_check_relative (
+    char * testName,
+    char * varName,
+    double value,
+    double expectedValue,
+    double accuracyTarget)
+{
+#ifdef VFC_CI
+    return vfc_probe_check_relative(&probes, testName, varName, value, accuracyTarget);
+#else
+    return !(fabs(value - expectedValue) / fabs(expectedValue) < accuracyTarget);
+#endif
+}
+  #+end_src
+
+** Automatically delete and dump the vfc_probe object if ~VFC_CI~ is defined
+
+  #+begin_src c :tangle (eval h_private_func)
+#ifdef VFC_CI
+void qmckl_dump_probes() __attribute__((destructor));
+#endif
+  #+end_src
+
+  #+begin_src c :tangle (eval c)
+#ifdef VFC_CI
+void __attribute__((destructor)) qmckl_dump_probes(){
+    vfc_dump_probes(&probes);
+}
+#endif
+  #+end_src
+
+* Fortran wrappers
+
+  #+begin_src c :tangle (eval h_private_func)
+bool qmckl_probe_f(
+    char * testName,
+    char * varName,
+    double * value
+);
+
+bool qmckl_probe_check_f(
+    char * testName,
+    char * varName,
+    double * value,
+    double * expectedValue,
+    double * accuracyTarget
+);
+
+
+bool qmckl_probe_check_relative_f(
+    char * testName,
+    char * varName,
+    double * value,
+    double * expectedValue,
+    double * accuracyTarget
+);
+  #+end_src
+
+  #+begin_src c :tangle (eval c)
+bool qmckl_probe_f(
+    char * testName,
+    char * varName,
+    double * value)
+{
+    return qmckl_probe(testName, varName, *value);
+}
+
+
+bool qmckl_probe_check_f(
+    char * testName,
+    char * varName,
+    double * value,
+    double * expectedValue,
+    double * accuracyTarget)
+{
+    return qmckl_probe_check(
+        testName, varName,
+        ,*value, *expectedValue, *accuracyTarget
+    );
+}
+
+
+bool qmckl_probe_check_relative_f(
+    char * testName,
+    char * varName,
+    double * value,
+    double * expectedValue,
+    double * accuracyTarget)
+{
+    return qmckl_probe_check_relative(
+        testName, varName,
+        ,*value, *expectedValue, *accuracyTarget
+    );
+}
+  #+end_src
+
+  #+begin_src f90 :tangle (eval f)
+module qmckl_verificarlo_f
+  interface
+     logical(c_bool) function qmckl_probe &
+          (testName, varName, val) &
+          bind(C, name="qmckl_probe_f")
+
+       use, intrinsic :: iso_c_binding
+       import
+       implicit none
+
+       character(C_CHAR), dimension(*) :: testName
+       character(C_CHAR), dimension(*) :: varName
+
+       real(C_DOUBLE) :: val
+     end function qmckl_probe
+
+     logical(c_bool) function qmckl_probe_check &
+          (testName, varName, val, expectedValue, accuracyTarget) &
+          bind(C, name="qmckl_probe_check_f")
+
+       use, intrinsic :: iso_c_binding
+       import
+       implicit none
+
+       character(C_CHAR), dimension(*) :: testName
+       character(C_CHAR), dimension(*) :: varName
+
+       real(C_DOUBLE) :: val
+       real(C_DOUBLE) :: expectedValue
+       real(C_DOUBLE) :: accuracyTarget
+     end function qmckl_probe_check
+
+     logical(c_bool) function qmckl_probe_check_relative &
+          (testName, varName, val, expectedValue, accuracyTarget) &
+          bind(C, name="qmckl_probe_check_relative_f")
+
+       use, intrinsic :: iso_c_binding
+       import
+       implicit none
+
+       character(C_CHAR), dimension(*) :: testName
+       character(C_CHAR), dimension(*) :: varName
+
+       real(C_DOUBLE) :: val
+       real(C_DOUBLE) :: expectedValue
+       real(C_DOUBLE) :: accuracyTarget
+     end function qmckl_probe_check_relative
+  end interface
+end module qmckl_verificarlo_f
+  #+end_src
+
+* End of files                                                     :noexport:
+
+  #+begin_src c :tangle (eval c)
+#ifndef VFC_CI
+#ifdef __GNUC__
+#pragma GCC diagnostic pop
+#endif
+#endif
+  #+end_src
+
+  #+begin_src c :comments link :tangle (eval h_private_func)
+#endif
+  #+end_src

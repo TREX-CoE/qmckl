@@ -36,10 +36,17 @@ do
     exported=${i%.org}.exported
     exported=$(dirname $exported)/.$(basename $exported)
     NOW=$(date +"%m%d%H%M.%S")
-    extract_doc ${i} > $exported
+    extract_doc ${i} &> $exported
+    rc=$?
 
     # Make log file older than the exported files
     touch -t ${NOW} $exported
+
+    # Fail if tangling failed
+    if [[ $rc -ne 0 ]] ; then
+       cat $exported
+       exit rc
+    fi
 done
 
 
