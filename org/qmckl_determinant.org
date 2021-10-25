@@ -171,6 +171,26 @@ typedef struct qmckl_determinant_struct {
    Some values are initialized by default, and are not concerned by
    this mechanism.
 
+   #+begin_src c :comments org :tangle (eval h_private_func) 
+qmckl_exit_code qmckl_init_determinant(qmckl_context context);
+   #+end_src
+   
+   #+begin_src c :comments org :tangle (eval c)
+qmckl_exit_code qmckl_init_determinant(qmckl_context context) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return false;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  ctx->det.uninitialized = (1 << 6) - 1;
+
+  return QMCKL_SUCCESS;
+}
+   #+end_src
+   
 ** Access functions
    
    #+begin_src c :comments org :tangle (eval h_private_func) :exports none
@@ -188,6 +208,20 @@ int64_t*   qmckl_get_determinant_mo_index_beta   (const qmckl_context context);
    #+begin_src c :comments org :tangle (eval h_func)
 bool      qmckl_determinant_provided           (const qmckl_context context);
    #+end_src
+
+      #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
+bool qmckl_determinant_provided(const qmckl_context context) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return false;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  return ctx->det.provided;
+}
+      #+end_src
 
    #+NAME:post
    #+begin_src c :exports none
@@ -337,8 +371,8 @@ qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
 ctx->det.uninitialized &= ~mask;
 ctx->det.provided = (ctx->det.uninitialized == 0);
 if (ctx->det.provided) {
-  //qmckl_exit_code rc_ = qmckl_finalize_determinant(context);
-  //if (rc_ != QMCKL_SUCCESS) return rc_;
+  qmckl_exit_code rc_ = qmckl_finalize_determinant(context);
+  if (rc_ != QMCKL_SUCCESS) return rc_;
  }
 
 return QMCKL_SUCCESS;
@@ -412,7 +446,7 @@ qmckl_exit_code qmckl_set_determinant_det_num_beta(qmckl_context context, const 
 qmckl_exit_code  qmckl_set_determinant_mo_index_alpha(qmckl_context context, const int64_t* mo_index_alpha) {
   <<pre2>>
 
-  int32_t mask = 1 << 5;
+  int32_t mask = 1 << 4;
 
   if (ctx->det.mo_index_alpha != NULL) {
     qmckl_exit_code rc = qmckl_free(context, ctx->det.mo_index_alpha);
@@ -444,7 +478,7 @@ qmckl_exit_code  qmckl_set_determinant_mo_index_alpha(qmckl_context context, con
 qmckl_exit_code  qmckl_set_determinant_mo_index_beta(qmckl_context context, const int64_t* mo_index_beta) {
   <<pre2>>
 
-  int32_t mask = 1 << 6;
+  int32_t mask = 1 << 5;
 
   if (ctx->det.mo_index_beta != NULL) {
     qmckl_exit_code rc = qmckl_free(context, ctx->det.mo_index_beta);
@@ -479,11 +513,50 @@ qmckl_exit_code  qmckl_set_determinant_mo_index_beta(qmckl_context context, cons
  computed to accelerate the calculations.
 
    #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
-qmckl_exit_code qmckl_finalize_basis(qmckl_context context);
+qmckl_exit_code qmckl_finalize_determinant(qmckl_context context);
    #+end_src
 
    #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
 qmckl_exit_code qmckl_finalize_determinant(qmckl_context context) {
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_finalize_determinant",
+                           NULL);
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  qmckl_exit_code rc;
+  rc = qmckl_provide_det_vgl_alpha(context);
+  if (rc != QMCKL_SUCCESS) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_finalize_determinant",
+                            NULL);
+  }
+  rc = qmckl_provide_det_vgl_beta(context);
+  if (rc != QMCKL_SUCCESS) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_finalize_determinant",
+                            NULL);
+  }
+  rc = qmckl_provide_det_inv_matrix_alpha(context);
+  if (rc != QMCKL_SUCCESS) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_finalize_determinant",
+                            NULL);
+  }
+  rc = qmckl_provide_det_inv_matrix_beta(context);
+  if (rc != QMCKL_SUCCESS) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_finalize_determinant",
+                            NULL);
+  }
 }
    #+end_src
 
@@ -608,7 +681,7 @@ qmckl_exit_code qmckl_provide_det_vgl_alpha(qmckl_context context) {
   if (!ctx->det.provided) {
     return qmckl_failwith( context,
                            QMCKL_NOT_PROVIDED,
-                           "qmckl_mo_basis",
+                           "qmckl_determinant",
                            NULL);
   }
 
@@ -959,19 +1032,19 @@ integer function qmckl_compute_det_vgl_beta_f(context, &
       do imo = 1, beta_num
         mo_id = mo_index_beta(imo, iwalk, idet)
         ! Value
-        det_vgl_beta(imo, ielec, 1, iwalk, idet) = mo_vgl(mo_id, alpha_num + ielec, 1)
+        det_vgl_beta(imo, ielec, 1, iwalk, idet) = mo_vgl(mo_id, ielec, 1)
 
         ! Grad_x
-        det_vgl_beta(imo, ielec, 2, iwalk, idet) = mo_vgl(mo_id, alpha_num + ielec, 2)
+        det_vgl_beta(imo, ielec, 2, iwalk, idet) = mo_vgl(mo_id, ielec, 2)
 
         ! Grad_y
-        det_vgl_beta(imo, ielec, 3, iwalk, idet) = mo_vgl(mo_id, alpha_num + ielec, 3)
+        det_vgl_beta(imo, ielec, 3, iwalk, idet) = mo_vgl(mo_id, ielec, 3)
 
         ! Grad_z
-        det_vgl_beta(imo, ielec, 4, iwalk, idet) = mo_vgl(mo_id, alpha_num + ielec, 4)
+        det_vgl_beta(imo, ielec, 4, iwalk, idet) = mo_vgl(mo_id, ielec, 4)
 
         ! Lap
-        det_vgl_beta(imo, ielec, 5, iwalk, idet) = mo_vgl(mo_id, alpha_num + ielec, 5)
+        det_vgl_beta(imo, ielec, 5, iwalk, idet) = mo_vgl(mo_id, ielec, 5)
       end do
     end do
   end do
@@ -1280,7 +1353,7 @@ qmckl_exit_code qmckl_get_det_inv_matrix_beta(qmckl_context context, double * co
   rc = qmckl_provide_mo_vgl(context);
   if (rc != QMCKL_SUCCESS) return rc;
 
-  rc = qmckl_provide_det_vgl_alpha(context);
+  rc = qmckl_provide_det_vgl_beta(context);
   if (rc != QMCKL_SUCCESS) return rc;
 
   rc = qmckl_provide_det_inv_matrix_beta(context);
@@ -1496,7 +1569,7 @@ qmckl_exit_code qmckl_provide_det_inv_matrix_beta(qmckl_context context) {
 
       qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
       mem_info.size = ctx->det.walk_num * ctx->det.det_num_beta * 
-                      ctx->electron.up_num * ctx->electron.up_num * sizeof(double);
+                      ctx->electron.down_num * ctx->electron.down_num * sizeof(double);
       double* det_adj_matrix_beta = (double*) qmckl_malloc(context, mem_info);
 
       if (det_adj_matrix_beta == NULL) {
