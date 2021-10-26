@@ -139,14 +139,14 @@ int main() {
 
   Computed data:
   
-  |--------------+-----------------+----------------------------|
-  | ~e_kin~      | ~[walk_num]~    | total kinetic energy       |
-  | ~e_pot~      | ~[walk_num]~    | total potential energy     |
-  | ~e_local~    | ~[walk_num]~    | local energy               |
-  | ~r_drift~    | ~[3][walk_num]~ | The drift vector           |
-  | ~y_move~     | ~[3][walk_num]~ | The diffusion move         |
-  | ~accep_prob~ | ~[walk_num]~    | The acceptance probability |
-  |--------------+-----------------+----------------------------|
+  |--------------+---------------------------+----------------------------|
+  | ~e_kin~      | ~[walk_num]~              | total kinetic energy       |
+  | ~e_pot~      | ~[walk_num]~              | total potential energy     |
+  | ~e_local~    | ~[walk_num]~              | local energy               |
+  | ~r_drift~    | ~[3][walk_num][elec_num]~ | The drift vector           |
+  | ~y_move~     | ~[3][walk_num]~           | The diffusion move         |
+  | ~accep_prob~ | ~[walk_num]~              | The acceptance probability |
+  |--------------+---------------------------+----------------------------|
   
 ** Data structure
    
@@ -1318,12 +1318,12 @@ assert (rc == QMCKL_SUCCESS);
    :FRetType: qmckl_exit_code
    :END:
 
-The local energy is the sum of kinetic and potential energies.
+The drift vector is calculated as the ration of the gradient 
+with the determinant of the wavefunction.
 
 \[
-E_L = KE + PE
+\mathbf{F} = 2 \frac{\nabla \Psi}{\Psi}
 \]
-
 
 *** Get
     
@@ -1356,7 +1356,7 @@ qmckl_exit_code qmckl_get_drift_vector(qmckl_context context, double * const dri
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
   assert (ctx != NULL);
 
-  size_t sze = ctx->electron.walk_num * 3 * sizeof(double);
+  size_t sze = ctx->electron.walk_num * ctx->electron.num * 3 * sizeof(double);
   memcpy(drift_vector, ctx->local_energy.r_drift, sze);
 
   return QMCKL_SUCCESS;
@@ -1421,7 +1421,7 @@ qmckl_exit_code qmckl_provide_drift_vector(qmckl_context context) {
     if (ctx->local_energy.r_drift == NULL) {
 
       qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-      mem_info.size = ctx->electron.walk_num * 3 * sizeof(double);
+      mem_info.size = ctx->electron.walk_num * ctx->electron.num * 3 * sizeof(double);
       double* r_drift = (double*) qmckl_malloc(context, mem_info);
 
       if (r_drift == NULL) {
@@ -1446,8 +1446,8 @@ qmckl_exit_code qmckl_provide_drift_vector(qmckl_context context) {
                                  ctx->det.mo_index_beta,
                                  ctx->mo_basis.mo_num,
                                  ctx->mo_basis.mo_vgl,
-                                 ctx->det.det_adj_matrix_alpha,
-                                 ctx->det.det_adj_matrix_beta,
+                                 ctx->det.det_inv_matrix_alpha,
+                                 ctx->det.det_inv_matrix_beta,
                                  ctx->local_energy.r_drift);
     } else {
       return qmckl_failwith( context,
@@ -1485,14 +1485,14 @@ qmckl_exit_code qmckl_provide_drift_vector(qmckl_context context) {
    | ~int64_t~       | ~mo_index_beta[det_num_beta][walk_num][beta_num]~                     | in  | MO indices for electrons                  |
    | ~int64_t~       | ~mo_num~                                                              | in  | Number of MOs                             |
    | ~double~        | ~mo_vgl[5][elec_num][mo_num]~                                         | in  | Value, gradients and Laplacian of the MOs |
-   | ~double~        | ~det_adj_matrix_alpha[det_num_alpha][walk_num][alpha_num][alpha_num]~ | in  | Value, gradients and Laplacian of the Det |
-   | ~double~        | ~det_adj_matrix_beta[det_num_beta][walk_num][beta_num][beta_num]~     | in  | Value, gradients and Laplacian of the Det |
-   | ~double~        | ~r_drift[walk_num][3]~                                                | out | Kinetic energy                            |
+   | ~double~        | ~det_inv_matrix_alpha[det_num_alpha][walk_num][alpha_num][alpha_num]~ | in  | Value, gradients and Laplacian of the Det |
+   | ~double~        | ~det_inv_matrix_beta[det_num_beta][walk_num][beta_num][beta_num]~  | in  | Value, gradients and Laplacian of the Det |
+   | ~double~        | ~r_drift[walk_num][elec_num][3]~                                      | out | Kinetic energy                            |
     
     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
 integer function qmckl_compute_drift_vector_f(context, walk_num, &
      det_num_alpha, det_num_beta, alpha_num, beta_num, elec_num, mo_index_alpha, mo_index_beta, &
-     mo_num, mo_vgl, det_adj_matrix_alpha, det_adj_matrix_beta, r_drift) &
+     mo_num, mo_vgl, det_inv_matrix_alpha, det_inv_matrix_beta, r_drift) &
      result(info)
   use qmckl
   implicit none
@@ -1507,9 +1507,9 @@ integer function qmckl_compute_drift_vector_f(context, walk_num, &
   integer*8, intent(in)             :: mo_index_alpha(alpha_num, walk_num, det_num_alpha)
   integer*8, intent(in)             :: mo_index_beta(beta_num, walk_num, det_num_beta)
   double precision, intent(in)      :: mo_vgl(mo_num, elec_num, 5)
-  double precision, intent(in)      :: det_adj_matrix_alpha(alpha_num, alpha_num, walk_num, det_num_alpha)
-  double precision, intent(in)      :: det_adj_matrix_beta(beta_num, beta_num, walk_num, det_num_beta)
-  double precision, intent(inout)   :: r_drift(3,walk_num)
+  double precision, intent(in)      :: det_inv_matrix_alpha(alpha_num, alpha_num, walk_num, det_num_alpha)
+  double precision, intent(in)      :: det_inv_matrix_beta(beta_num, beta_num, walk_num, det_num_beta)
+  double precision, intent(inout)   :: r_drift(3,elec_num,walk_num)
   integer*8 :: idet, iwalk, ielec, mo_id, imo
 
   info = QMCKL_SUCCESS
@@ -1545,25 +1545,25 @@ integer function qmckl_compute_drift_vector_f(context, walk_num, &
     ! Alpha part
     do imo = 1, alpha_num
     do ielec = 1, alpha_num
-      mo_id = mo_index_alpha(ielec, iwalk, idet)
-      r_drift(1,iwalk) = r_drift(1,iwalk) + 2.0d0 * det_adj_matrix_alpha(imo, ielec, iwalk, idet) * &
+      mo_id = mo_index_alpha(imo, iwalk, idet)
+      r_drift(1,ielec,iwalk) = r_drift(1,ielec,iwalk) + 2.0d0 * det_inv_matrix_alpha(imo, ielec, iwalk, idet) * &
                                     mo_vgl(mo_id, ielec, 2)
-      r_drift(2,iwalk) = r_drift(2,iwalk) + 2.0d0 * det_adj_matrix_alpha(imo, ielec, iwalk, idet) * &
+      r_drift(2,ielec,iwalk) = r_drift(2,ielec,iwalk) + 2.0d0 * det_inv_matrix_alpha(imo, ielec, iwalk, idet) * &
                                     mo_vgl(mo_id, ielec, 3)
-      r_drift(3,iwalk) = r_drift(3,iwalk) + 2.0d0 * det_adj_matrix_alpha(imo, ielec, iwalk, idet) * &
+      r_drift(3,ielec,iwalk) = r_drift(3,ielec,iwalk) + 2.0d0 * det_inv_matrix_alpha(imo, ielec, iwalk, idet) * &
                                     mo_vgl(mo_id, ielec, 4)
     end do
     end do
     ! Beta part
     do imo = 1, beta_num
     do ielec = 1, beta_num
-      mo_id = mo_index_beta(ielec, iwalk, idet)
-      r_drift(1,iwalk) = r_drift(1,iwalk) + 2.0d0 * det_adj_matrix_beta(imo, ielec, iwalk, idet) * &
-                                    mo_vgl(mo_id, ielec, 2)
-      r_drift(2,iwalk) = r_drift(2,iwalk) + 2.0d0 * det_adj_matrix_beta(imo, ielec, iwalk, idet) * &
-                                    mo_vgl(mo_id, ielec, 3)
-      r_drift(3,iwalk) = r_drift(3,iwalk) + 2.0d0 * det_adj_matrix_beta(imo, ielec, iwalk, idet) * &
-                                    mo_vgl(mo_id, ielec, 4)
+      mo_id = mo_index_beta(imo, iwalk, idet)
+      r_drift(1,ielec,iwalk) = r_drift(1,ielec,iwalk) + 2.0d0 * det_inv_matrix_beta(imo, ielec, iwalk, idet) * &
+                                    mo_vgl(mo_id, alpha_num + ielec, 2)
+      r_drift(2,ielec,iwalk) = r_drift(2,ielec,iwalk) + 2.0d0 * det_inv_matrix_beta(imo, ielec, iwalk, idet) * &
+                                    mo_vgl(mo_id, alpha_num + ielec, 3)
+      r_drift(3,ielec,iwalk) = r_drift(3,ielec,iwalk) + 2.0d0 * det_inv_matrix_beta(imo, ielec, iwalk, idet) * &
+                                    mo_vgl(mo_id, alpha_num + ielec, 4)
     end do
     end do
   end do
@@ -1588,8 +1588,8 @@ end function qmckl_compute_drift_vector_f
 	 const int64_t* mo_index_beta,
 	 const int64_t mo_num,
 	 const double* mo_vgl,
-	 const double* det_adj_matrix_alpha,
-	 const double* det_adj_matrix_beta,
+	 const double* det_inv_matrix_alpha,
+	 const double* det_inv_matrix_beta,
 	 double* const r_drift ); 
    #+end_src
 
@@ -1609,8 +1609,8 @@ end function qmckl_compute_drift_vector_f
 		 mo_index_beta, &
 		 mo_num, &
 		 mo_vgl, &
-		 det_adj_matrix_alpha, &
-		 det_adj_matrix_beta, &
+		 det_inv_matrix_alpha, &
+		 det_inv_matrix_beta, &
 		 r_drift) &
 	bind(C) result(info)
 
@@ -1628,9 +1628,9 @@ end function qmckl_compute_drift_vector_f
       integer (c_int64_t) , intent(in)          :: mo_index_beta(beta_num,walk_num,det_num_beta)
       integer (c_int64_t) , intent(in)  , value :: mo_num
       real    (c_double ) , intent(in)          :: mo_vgl(mo_num,elec_num,5)
-      real    (c_double ) , intent(in)          :: det_adj_matrix_alpha(alpha_num,alpha_num,walk_num,det_num_alpha)
-      real    (c_double ) , intent(in)          :: det_adj_matrix_beta(beta_num,beta_num,walk_num,det_num_beta)
-      real    (c_double ) , intent(out)         :: r_drift(3,walk_num)
+      real    (c_double ) , intent(in)          :: det_inv_matrix_alpha(alpha_num,alpha_num,walk_num,det_num_alpha)
+      real    (c_double ) , intent(in)          :: det_inv_matrix_beta(beta_num,beta_num,walk_num,det_num_beta)
+      real    (c_double ) , intent(out)         :: r_drift(3,elec_num,walk_num)
 
       integer(c_int32_t), external :: qmckl_compute_drift_vector_f
       info = qmckl_compute_drift_vector_f &
@@ -1645,8 +1645,8 @@ end function qmckl_compute_drift_vector_f
 		 mo_index_beta, &
 		 mo_num, &
 		 mo_vgl, &
-		 det_adj_matrix_alpha, &
-		 det_adj_matrix_beta, &
+		 det_inv_matrix_alpha, &
+		 det_inv_matrix_beta, &
 		 r_drift)
 
     end function qmckl_compute_drift_vector
