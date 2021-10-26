@@ -22,7 +22,7 @@ int main() {
 * Matrix operations
 
 ** ~qmckl_dgemm~
-
+   
    Matrix multiply: $C_{ij} = \beta C_{ij} + \alpha \sum_{k} A_{ik} \cdot B_{kj}$ using Fortran ~matmul~ function.
 
    TODO: Add description about the external library dependence.
@@ -90,21 +90,22 @@ integer function qmckl_dgemm_f(context, TransA, TransB, m, n, k, alpha, A, LDA, 
   integer*8  , intent(in)  :: m, n, k
   real*8     , intent(in)  :: alpha, beta
   integer*8  , intent(in)  :: lda
-  real*8     , intent(in)  :: A(m,k)
+  real*8     , intent(in)  :: A(lda,*)
   integer*8  , intent(in)  :: ldb
-  real*8     , intent(in)  :: B(k,n)
+  real*8     , intent(in)  :: B(ldb,*)
   integer*8  , intent(in)  :: ldc
-  real*8     , intent(out) :: C(m,n)
+  real*8     , intent(out) :: C(ldc,*)
   real*8, allocatable      :: AT(:,:), BT(:,:), CT(:,:)
+  integer*4 :: qmckl_dgemm_N_N_f
 
   integer*8 :: i,j,l, LDA_2, LDB_2
 
   info = QMCKL_SUCCESS
 
   if (TransA) then
-  allocate(AT(k,m))
-    do i = 1, m
-      do j = 1, k
+  allocate(AT(m,k))
+    do i = 1, k
+      do j = 1, m
         AT(j,i) = A(i,j)
       end do
     end do
@@ -114,9 +115,9 @@ integer function qmckl_dgemm_f(context, TransA, TransB, m, n, k, alpha, A, LDA, 
   endif
 
   if (TransB) then
-  allocate(BT(n,k))
-    do i = 1, k
-      do j = 1, n
+  allocate(BT(k,n))
+    do i = 1, n
+      do j = 1, k
         BT(j,i) = B(i,j)
       end do
     end do
@@ -161,26 +162,75 @@ integer function qmckl_dgemm_f(context, TransA, TransB, m, n, k, alpha, A, LDA, 
   endif
 
    if (TransA) then
-
-     if (alpha == 1.0d0 .and. beta == 0.0d0) then
-       C = matmul(AT,B)
-     else
-       C = beta*C + alpha*matmul(AT,B)
-     endif
+     info = qmckl_dgemm_N_N_f(context, m, n, k, alpha, AT, LDA_2, B, LDB_2, beta, c, LDC)
    else if (TransB) then
-     if (alpha == 1.0d0 .and. beta == 0.0d0) then
-       C = matmul(A,BT)
-     else
-       C = beta*C + alpha*matmul(A,BT)
-     endif
+     info = qmckl_dgemm_N_N_f(context, m, n, k, alpha, A, LDA_2, BT, LDB_2, beta, c, LDC)
+   else if (TransA .and. TransB) then
+     info = qmckl_dgemm_N_N_f(context, m, n, k, alpha, AT, LDA_2, BT, LDB_2, beta, c, LDC)
    else
-     if (alpha == 1.0d0 .and. beta == 0.0d0) then
-       C = matmul(A,B)
-     else
-       C = beta*C + alpha*matmul(A,B)
-     endif
+     info = qmckl_dgemm_N_N_f(context, m, n, k, alpha, A, LDA_2, B, LDB_2, beta, c, LDC)
    endif
 end function qmckl_dgemm_f
+
+integer function qmckl_dgemm_N_N_f(context, m, n, k, alpha, A, LDA, B, LDB, beta, C, LDC) &
+     result(info)
+  use qmckl
+  implicit none
+  integer(qmckl_context)  , intent(in)  :: context
+  integer*8  , intent(in)  :: m, n, k
+  real*8     , intent(in)  :: alpha, beta
+  integer*8  , intent(in)  :: lda
+  real*8     , intent(in)  :: A(lda,k)
+  integer*8  , intent(in)  :: ldb
+  real*8     , intent(in)  :: B(ldb,n)
+  integer*8  , intent(in)  :: ldc
+  real*8     , intent(out) :: C(ldc,n)
+
+  integer*8 :: i,j,l, LDA_2, LDB_2
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (m <= 0_8) then
+     info = QMCKL_INVALID_ARG_4
+     return
+  endif
+
+  if (n <= 0_8) then
+     info = QMCKL_INVALID_ARG_5
+     return
+  endif
+
+  if (k <= 0_8) then
+     info = QMCKL_INVALID_ARG_6
+     return
+  endif
+
+  if (LDA /= m) then
+     info = QMCKL_INVALID_ARG_9
+     return
+  endif
+
+  if (LDB /= k) then
+     info = QMCKL_INVALID_ARG_10
+     return
+  endif
+
+  if (LDC /= m) then
+     info = QMCKL_INVALID_ARG_13
+     return
+  endif
+
+  if (alpha == 1.0d0 .and. beta == 0.0d0) then
+    C = matmul(A,B)
+  else
+    C = beta*C + alpha*matmul(A,B)
+  endif
+end function qmckl_dgemm_N_N_f
     #+end_src
     
 *** C interface                                                    :noexport:
@@ -393,6 +443,7 @@ integer function qmckl_invert_f(context, ma, na, LDA, A, det_l) &
   case (4)
 !DIR$ forceinline
     call invert4(a,LDA,na,det_l)
+    
   case (3)
 !DIR$ forceinline
     call invert3(a,LDA,na,det_l)
@@ -414,11 +465,184 @@ subroutine invert1(a,LDA,na,det_l)
  integer*8, intent(in)             :: na
  double precision, intent(inout) :: det_l
 
+ call cofactor1(a,LDA,na,det_l)
+end
+
+subroutine invert2(a,LDA,na,det_l)
+ implicit none
+ double precision, intent(inout) :: a (LDA,na)
+ integer*8, intent(in)             :: LDA
+ integer*8, intent(in)             :: na
+ double precision, intent(inout) :: det_l
+ double precision :: b(2,2)
+
+ call cofactor2(a,LDA,na,det_l)
+
+ ! Calculate the transpose
+ b(1,1) = a(1,1)
+ b(1,2) = a(2,1)
+ b(2,1) = a(1,2)
+ b(2,2) = a(2,2)
+ a(1,1) = b(1,1)
+ a(1,2) = b(1,2)
+ a(2,1) = b(2,1)
+ a(2,2) = b(2,2)
+end
+
+subroutine invert3(a,LDA,na,det_l)
+ implicit none
+ double precision, intent(inout) :: a (LDA,na)
+ integer*8, intent(in)             :: LDA
+ integer*8, intent(in)             :: na
+ double precision, intent(inout) :: det_l
+ double precision :: b(3,3)
+
+ call cofactor3(a,LDA,na,det_l)
+
+ ! Calculate the transpose
+ b(1,1) = a(1,1)
+ b(1,2) = a(2,1)
+ b(1,3) = a(3,1)
+ b(2,1) = a(1,2)
+ b(2,2) = a(2,2)
+ b(2,3) = a(3,2)
+ b(3,1) = a(1,3)
+ b(3,2) = a(2,3)
+ b(3,3) = a(3,3)
+ ! copy
+ a(1,1) = b(1,1)
+ a(2,1) = b(2,1)
+ a(3,1) = b(3,1)
+ a(1,2) = b(1,2)
+ a(2,2) = b(2,2)
+ a(3,2) = b(3,2)
+ a(1,3) = b(1,3)
+ a(2,3) = b(2,3)
+ a(3,3) = b(3,3)
+end
+
+subroutine invert4(a,LDA,na,det_l)
+ implicit none
+ double precision, intent(inout) :: a (LDA,na)
+ integer*8, intent(in)             :: LDA
+ integer*8, intent(in)             :: na
+ double precision, intent(inout) :: det_l
+ double precision :: b(4,4)
+
+ call cofactor4(a,LDA,na,det_l)
+
+ ! Calculate the transpose
+ b(1,1) = a(1,1)
+ b(1,2) = a(2,1)
+ b(1,3) = a(3,1)
+ b(1,4) = a(4,1)
+ b(2,1) = a(1,2)
+ b(2,2) = a(2,2)
+ b(2,3) = a(3,2)
+ b(2,4) = a(4,2)
+ b(3,1) = a(1,3)
+ b(3,2) = a(2,3)
+ b(3,3) = a(3,3)
+ b(3,4) = a(4,3)
+ b(4,1) = a(1,4)
+ b(4,2) = a(2,4)
+ b(4,3) = a(3,4)
+ b(4,4) = a(4,4)
+ ! copy
+ a(1,1) = b(1,1)
+ a(2,1) = b(2,1)
+ a(3,1) = b(3,1)
+ a(4,1) = b(4,1)
+ a(1,2) = b(1,2)
+ a(2,2) = b(2,2)
+ a(3,2) = b(3,2)
+ a(4,2) = b(4,2)
+ a(1,3) = b(1,3)
+ a(2,3) = b(2,3)
+ a(3,3) = b(3,3)
+ a(4,3) = b(4,3)
+ a(1,4) = b(1,4)
+ a(2,4) = b(2,4)
+ a(3,4) = b(3,4)
+ a(4,4) = b(4,4)
+end
+
+subroutine invert5(a,LDA,na,det_l)
+ implicit none
+ double precision, intent(inout) :: a (LDA,na)
+ integer*8, intent(in)             :: LDA
+ integer*8, intent(in)             :: na
+ double precision, intent(inout) :: det_l
+ double precision :: b(5,5)
+
+ call cofactor5(a,LDA,na,det_l)
+
+ ! Calculate the transpose
+ b(1,1) = a(1,1)
+ b(1,2) = a(2,1)
+ b(1,3) = a(3,1)
+ b(1,4) = a(4,1)
+ b(1,5) = a(5,1)
+ b(2,1) = a(1,2)
+ b(2,2) = a(2,2)
+ b(2,3) = a(3,2)
+ b(2,4) = a(4,2)
+ b(2,5) = a(5,2)
+ b(3,1) = a(1,3)
+ b(3,2) = a(2,3)
+ b(3,3) = a(3,3)
+ b(3,4) = a(4,3)
+ b(3,5) = a(5,3)
+ b(4,1) = a(1,4)
+ b(4,2) = a(2,4)
+ b(4,3) = a(3,4)
+ b(4,4) = a(4,4)
+ b(4,5) = a(5,4)
+ b(5,1) = a(1,5)
+ b(5,2) = a(2,5)
+ b(5,3) = a(3,5)
+ b(5,4) = a(4,5)
+ b(5,5) = a(5,5)
+ ! copy
+ a(1,1) = b(1,1)
+ a(2,1) = b(2,1)
+ a(3,1) = b(3,1)
+ a(4,1) = b(4,1)
+ a(5,1) = b(5,1)
+ a(1,2) = b(1,2)
+ a(2,2) = b(2,2)
+ a(3,2) = b(3,2)
+ a(4,2) = b(4,2)
+ a(5,2) = b(5,2)
+ a(1,3) = b(1,3)
+ a(2,3) = b(2,3)
+ a(3,3) = b(3,3)
+ a(4,3) = b(4,3)
+ a(5,3) = b(5,3)
+ a(1,4) = b(1,4)
+ a(2,4) = b(2,4)
+ a(3,4) = b(3,4)
+ a(4,4) = b(4,4)
+ a(5,4) = b(5,4)
+ a(1,5) = b(1,5)
+ a(2,5) = b(2,5)
+ a(3,5) = b(3,5)
+ a(4,5) = b(4,5)
+ a(5,5) = b(5,5)
+end
+
+subroutine cofactor1(a,LDA,na,det_l)
+ implicit none
+ double precision, intent(inout) :: a (LDA,na)
+ integer*8, intent(in)             :: LDA
+ integer*8, intent(in)             :: na
+ double precision, intent(inout) :: det_l
+
  det_l = a(1,1)
  a(1,1) = 1.d0
 end
 
-subroutine invert2(a,LDA,na,det_l)
+subroutine cofactor2(a,LDA,na,det_l)
  implicit none
  double precision :: a (LDA,na)
  integer*8        :: LDA
@@ -437,7 +661,7 @@ subroutine invert2(a,LDA,na,det_l)
  a(2,2) = b(1,1)
 end
 
-subroutine invert3(a,LDA,na,det_l)
+subroutine cofactor3(a,LDA,na,det_l)
  implicit none
  double precision, intent(inout) :: a (LDA,na)
  integer*8, intent(in)             :: LDA
@@ -468,7 +692,7 @@ subroutine invert3(a,LDA,na,det_l)
 
 end
 
-subroutine invert4(a,LDA,na,det_l)
+subroutine cofactor4(a,LDA,na,det_l)
  implicit none
  double precision, intent(inout) :: a (LDA,na)
  integer*8, intent(in)             :: LDA
@@ -518,7 +742,7 @@ subroutine invert4(a,LDA,na,det_l)
 
 end
 
-subroutine invert5(a,LDA,na,det_l)
+subroutine cofactor5(a,LDA,na,det_l)
  implicit none
  double precision, intent(inout) :: a (LDA,na)
  integer*8, intent(in)             :: LDA

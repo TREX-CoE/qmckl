@@ -245,6 +245,7 @@ qmckl_exit_code qmckl_provide_kinetic_energy(qmckl_context context);
     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
 qmckl_exit_code qmckl_provide_kinetic_energy(qmckl_context context) {
 
+  qmckl_exit_code rc; 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return QMCKL_NULL_CONTEXT;
   }
@@ -286,6 +287,21 @@ qmckl_exit_code qmckl_provide_kinetic_energy(qmckl_context context) {
                            "qmckl_mo_basis",
                            NULL);
   }
+  rc = qmckl_provide_det_inv_matrix_alpha(context);
+  if (rc != QMCKL_SUCCESS) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_det_inv_matrix_alpha",
+                           NULL);
+  }
+
+  rc = qmckl_provide_det_inv_matrix_beta(context);
+  if (rc != QMCKL_SUCCESS) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_det_inv_matrix_beta",
+                           NULL);
+  }
 
   /* Compute if necessary */
   if (ctx->electron.coord_new_date > ctx->local_energy.e_kin_date) {
@@ -306,7 +322,6 @@ qmckl_exit_code qmckl_provide_kinetic_energy(qmckl_context context) {
       ctx->local_energy.e_kin = e_kin;
     }
 
-    qmckl_exit_code rc; 
     if (ctx->det.type == 'G') {
       rc = qmckl_compute_kinetic_energy(context,
                                  ctx->det.walk_num,
@@ -319,8 +334,10 @@ qmckl_exit_code qmckl_provide_kinetic_energy(qmckl_context context) {
                                  ctx->det.mo_index_beta,
                                  ctx->mo_basis.mo_num,
                                  ctx->mo_basis.mo_vgl,
-                                 ctx->det.det_adj_matrix_alpha,
-                                 ctx->det.det_adj_matrix_beta,
+                                 ctx->det.det_value_alpha,
+                                 ctx->det.det_value_beta,
+                                 ctx->det.det_inv_matrix_alpha,
+                                 ctx->det.det_inv_matrix_beta,
                                  ctx->local_energy.e_kin);
     } else {
       return qmckl_failwith( context,
@@ -358,14 +375,16 @@ qmckl_exit_code qmckl_provide_kinetic_energy(qmckl_context context) {
    | ~int64_t~       | ~mo_index_beta[det_num_beta][walk_num][beta_num]~                     | in  | MO indices for electrons                  |
    | ~int64_t~       | ~mo_num~                                                              | in  | Number of MOs                             |
    | ~double~        | ~mo_vgl[5][elec_num][mo_num]~                                         | in  | Value, gradients and Laplacian of the MOs |
-   | ~double~        | ~det_adj_matrix_alpha[det_num_alpha][walk_num][alpha_num][alpha_num]~ | in  | Value, gradients and Laplacian of the Det |
-   | ~double~        | ~det_adj_matrix_beta[det_num_beta][walk_num][beta_num][beta_num]~     | in  | Value, gradients and Laplacian of the Det |
+   | ~double~        | ~det_value_alpha[det_num_alpha][walk_num]~                            | in  | Det of wavefunction                       |
+   | ~double~        | ~det_value_beta[det_num_beta][walk_num]~                              | in  | Det of wavefunction                       |
+   | ~double~        | ~det_inv_matrix_alpha[det_num_alpha][walk_num][alpha_num][alpha_num]~ | in  | Value, gradients and Laplacian of the Det |
+   | ~double~        | ~det_inv_matrix_beta[det_num_beta][walk_num][beta_num][beta_num]~  | in  | Value, gradients and Laplacian of the Det |
    | ~double~        | ~e_kin[walk_num]~                                                     | out | Kinetic energy                            |
     
     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
 integer function qmckl_compute_kinetic_energy_f(context, walk_num, &
      det_num_alpha, det_num_beta, alpha_num, beta_num, elec_num, mo_index_alpha, mo_index_beta, &
-     mo_num, mo_vgl, det_adj_matrix_alpha, det_adj_matrix_beta, e_kin) &
+     mo_num, mo_vgl, det_value_alpha, det_value_beta, det_inv_matrix_alpha, det_inv_matrix_beta, e_kin) &
      result(info)
   use qmckl
   implicit none
@@ -380,9 +399,12 @@ integer function qmckl_compute_kinetic_energy_f(context, walk_num, &
   integer*8, intent(in)             :: mo_index_alpha(alpha_num, walk_num, det_num_alpha)
   integer*8, intent(in)             :: mo_index_beta(beta_num, walk_num, det_num_beta)
   double precision, intent(in)      :: mo_vgl(mo_num, elec_num, 5)
-  double precision, intent(in)      :: det_adj_matrix_alpha(alpha_num, alpha_num, walk_num, det_num_alpha)
-  double precision, intent(in)      :: det_adj_matrix_beta(beta_num, beta_num, walk_num, det_num_beta)
+  double precision, intent(in)      :: det_value_alpha(walk_num, det_num_alpha)
+  double precision, intent(in)      :: det_value_beta(walk_num, det_num_beta)
+  double precision, intent(in)      :: det_inv_matrix_alpha(alpha_num, alpha_num, walk_num, det_num_alpha)
+  double precision, intent(in)      :: det_inv_matrix_beta(beta_num, beta_num, walk_num, det_num_beta)
   double precision, intent(inout)   :: e_kin(walk_num)
+  double precision                  :: tmp_e
   integer*8 :: idet, iwalk, ielec, mo_id, imo
 
   info = QMCKL_SUCCESS
@@ -416,20 +438,34 @@ integer function qmckl_compute_kinetic_energy_f(context, walk_num, &
   do idet = 1, det_num_alpha
   do iwalk = 1, walk_num
     ! Alpha part
+  tmp_e = 0.0d0
     do imo = 1, alpha_num
     do ielec = 1, alpha_num
-      mo_id = mo_index_alpha(ielec, iwalk, idet)
-      e_kin(iwalk) = e_kin(iwalk) - 0.5d0 * det_adj_matrix_alpha(imo, ielec, iwalk, idet) * &
+      mo_id = mo_index_alpha(imo, iwalk, idet)
+      e_kin(iwalk) = e_kin(iwalk) - 0.5d0 * det_inv_matrix_alpha(imo, ielec, iwalk, idet) * &
                                     mo_vgl(mo_id, ielec, 5)
+      !print *,"det alpha = ",det_inv_matrix_alpha(imo,ielec,iwalk,idet)
+      !print *,mo_vgl(mo_id,ielec,5)
+      !!print *," det val = ",det_value_alpha(iwalk,idet)
+      !tmp_e = tmp_e - 0.5d0 * det_inv_matrix_alpha(imo, ielec, iwalk, idet) * &
+      !                              mo_vgl(mo_id, ielec, 5)
     end do
+      !print *,"e_kin = ",tmp_e
     end do
     ! Beta part
+  tmp_e = 0.0d0
     do imo = 1, beta_num
     do ielec = 1, beta_num
-      mo_id = mo_index_beta(ielec, iwalk, idet)
-      e_kin(iwalk) = e_kin(iwalk) - 0.5d0 * det_adj_matrix_beta(imo, ielec, iwalk, idet) * &
-                                     mo_vgl(mo_id, ielec, 5)
+      mo_id = mo_index_beta(imo, iwalk, idet)
+      e_kin(iwalk) = e_kin(iwalk) - 0.5d0 * det_inv_matrix_beta(imo, ielec, iwalk, idet) * &
+                                     mo_vgl(mo_id, alpha_num + ielec, 5)
+      !print *,"det beta = ",det_inv_matrix_beta(imo,ielec,iwalk,idet)
+      !print *,mo_vgl(mo_id,alpha_num+ielec,5)
+      !!print *," det val = ",det_value_alpha(iwalk,idet)
+      !tmp_e = tmp_e - 0.5d0 * det_inv_matrix_beta(imo, ielec, iwalk, idet) * &
+      !                               mo_vgl(mo_id, alpha_num + ielec, 5)
     end do
+      !print *,"e_kin = ",tmp_e
     end do
   end do
   end do
@@ -453,8 +489,10 @@ end function qmckl_compute_kinetic_energy_f
 	 const int64_t* mo_index_beta,
 	 const int64_t mo_num,
 	 const double* mo_vgl,
-	 const double* det_adj_matrix_alpha,
-	 const double* det_adj_matrix_beta,
+	 const double* det_value_alpha,
+	 const double* det_value_beta,
+	 const double* det_inv_matrix_alpha,
+	 const double* det_inv_matrix_beta,
 	 double* const e_kin ); 
    #+end_src
 
@@ -474,8 +512,10 @@ end function qmckl_compute_kinetic_energy_f
 		 mo_index_beta, &
 		 mo_num, &
 		 mo_vgl, &
-		 det_adj_matrix_alpha, &
-		 det_adj_matrix_beta, &
+		 det_value_alpha, &
+		 det_value_beta, &
+		 det_inv_matrix_alpha, &
+		 det_inv_matrix_beta, &
 		 e_kin) &
 	bind(C) result(info)
 
@@ -493,8 +533,10 @@ end function qmckl_compute_kinetic_energy_f
       integer (c_int64_t) , intent(in)          :: mo_index_beta(beta_num,walk_num,det_num_beta)
       integer (c_int64_t) , intent(in)  , value :: mo_num
       real    (c_double ) , intent(in)          :: mo_vgl(mo_num,elec_num,5)
-      real    (c_double ) , intent(in)          :: det_adj_matrix_alpha(alpha_num,alpha_num,walk_num,det_num_alpha)
-      real    (c_double ) , intent(in)          :: det_adj_matrix_beta(beta_num,beta_num,walk_num,det_num_beta)
+      real    (c_double ) , intent(in)          :: det_value_alpha(walk_num,det_num_alpha)
+      real    (c_double ) , intent(in)          :: det_value_beta(walk_num,det_num_beta)
+      real    (c_double ) , intent(in)          :: det_inv_matrix_alpha(alpha_num,alpha_num,walk_num,det_num_alpha)
+      real    (c_double ) , intent(in)          :: det_inv_matrix_beta(beta_num,beta_num,walk_num,det_num_beta)
       real    (c_double ) , intent(out)         :: e_kin(walk_num)
 
       integer(c_int32_t), external :: qmckl_compute_kinetic_energy_f
@@ -510,8 +552,10 @@ end function qmckl_compute_kinetic_energy_f
 		 mo_index_beta, &
 		 mo_num, &
 		 mo_vgl, &
-		 det_adj_matrix_alpha, &
-		 det_adj_matrix_beta, &
+		 det_value_alpha, &
+		 det_value_beta, &
+		 det_inv_matrix_alpha, &
+		 det_inv_matrix_beta, &
 		 e_kin)
 
     end function qmckl_compute_kinetic_energy
@@ -830,14 +874,6 @@ qmckl_exit_code qmckl_provide_potential_energy(qmckl_context context) {
                            NULL);
   }
 
-  rc = qmckl_provide_ee_potential(context);
-  if (rc != QMCKL_SUCCESS) {
-    return qmckl_failwith( context,
-                           QMCKL_NOT_PROVIDED,
-                           "qmckl_ee_potential",
-                           NULL);
-  }
-
   rc = qmckl_provide_nucleus_repulsion(context);
   if (rc != QMCKL_SUCCESS) {
     return qmckl_failwith( context,
@@ -958,6 +994,7 @@ integer function qmckl_compute_potential_energy_f(context, walk_num, &
   endif
 
   e_pot = 0.0d0 + repulsion
+  print *,repulsion
   do iwalk = 1, walk_num
     e_pot(iwalk) = e_pot(iwalk) + ee_pot(iwalk) + en_pot(iwalk)
   end do
