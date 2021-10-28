@@ -65,17 +65,19 @@ int main() {
 
    #+NAME: qmckl_sherman_morrison_args
    | qmckl_context | context                  | in    | Global state                                         |
-   | uint64_t      | Dim                      | in    | Leading dimension of Slater_inv                      |
+   | uint64_t      | LDS                      | in    | Leading dimension of Slater_inv                      |
+   | uint64_t      | Dim                      | in    | Dimension of Slater_inv                              |
    | uint64_t      | N_updates                | in    | Number of rank-1 updates to be applied to Slater_inv |
    | double        | Updates[N_updates*Dim]   | in    | Array containing the updates                         |
    | uint64_t      | Updates_index[N_updates] | in    | Array containing the rank-1 updates                  |
    | double        | breakdown                | in    | Break-down parameter on which to fail or not         |
-   | double        | Slater_inv[Dim*Dim]      | inout | Array containing the inverse of a Slater-matrix      |
+   | double        | Slater_inv[LDS*Dim]      | inout | Array containing the inverse of a Slater-matrix      |
    | double*       | determinant              | inout | Determinant of the Slater-matrix                     |
 
 *** Requirements
 
     * ~context~ is not ~QMCKL_NULL_CONTEXT~
+    * ~LDS >= 2~
     * ~Dim >= 2~
     * ~N_updates >= 1~
     * ~Updates~ is allocated with $N_updates \times Dim$ elements
@@ -91,6 +93,7 @@ int main() {
     #+begin_src c :tangle (eval h_func) :comments org
     qmckl_exit_code qmckl_sherman_morrison(
 	  const qmckl_context context,
+	  const uint64_t LDS,
 	  const uint64_t Dim,
 	  const uint64_t N_updates,
 	  const double* Updates,
@@ -108,6 +111,7 @@ int main() {
 #include "qmckl.h"
 
 qmckl_exit_code qmckl_sherman_morrison(const qmckl_context context,
+                                const uint64_t LDS,
                                 const uint64_t Dim,
                                 const uint64_t N_updates,
                                 const double* Updates,
@@ -130,7 +134,7 @@ qmckl_exit_code qmckl_sherman_morrison(const qmckl_context context,
     for (uint64_t i = 0; i < Dim; i++) {
       C[i] = 0;
       for (uint64_t j = 0; j < Dim; j++) {
-        C[i] += Slater_inv[i * Dim + j] * Updates[l * Dim + j];
+        C[i] += Slater_inv[i * LDS + j] * Updates[l * Dim + j];
       }
     }
 
@@ -148,14 +152,14 @@ qmckl_exit_code qmckl_sherman_morrison(const qmckl_context context,
 
     // D = v^T x A^{-1}
     for (uint64_t j = 0; j < Dim; j++) {
-      D[j] = Slater_inv[(Updates_index[l] - 1) * Dim + j];
+      D[j] = Slater_inv[(Updates_index[l] - 1) * LDS + j];
     }
 
     // A^{-1} = A^{-1} - C x D / den
     for (uint64_t i = 0; i < Dim; i++) {
       for (uint64_t j = 0; j < Dim; j++) {
         double update = C[i] * D[j] * iden;
-        Slater_inv[i * Dim + j] -= update;
+        Slater_inv[i * LDS + j] -= update;
       }
     }
 
@@ -185,7 +189,7 @@ qmckl_exit_code qmckl_sherman_morrison(const qmckl_context context,
    #+begin_src f90 :tangle (eval fh_func) :comments org :exports none
    interface
      integer(c_int32_t) function qmckl_sherman_morrison &
-	 (context, Dim, N_updates, Updates, Updates_index, breakdown, Slater_inv, determinant) &
+	 (context, LDS, Dim, N_updates, Updates, Updates_index, breakdown, Slater_inv, determinant) &
 	 bind(C)
 
        use, intrinsic :: iso_c_binding
@@ -193,12 +197,13 @@ qmckl_exit_code qmckl_sherman_morrison(const qmckl_context context,
        implicit none
 
        integer (c_int64_t) , intent(in) , value :: context
+       integer (c_int64_t) , intent(in) , value :: LDS
        integer (c_int64_t) , intent(in) , value :: Dim
        integer (c_int64_t) , intent(in) , value :: N_updates
        real    (c_double ) , intent(in)         :: Updates(N_updates*Dim)
        integer (c_int64_t) , intent(in)         :: Updates_index(N_updates)
        real    (c_double ) , intent(in) , value :: breakdown
-       real    (c_double ) , intent(inout)      :: Slater_inv(Dim*Dim)
+       real    (c_double ) , intent(inout)      :: Slater_inv(LDS*Dim)
        real    (c_double ) , intent(inout)      :: determinant
 
      end function qmckl_sherman_morrison
@@ -247,7 +252,7 @@ assert(Slater_inv1 != NULL);
 
 // original determinant of Slater1 (before applying updates)
 double det = 3.407025646103221e-10;
-rc = qmckl_sherman_morrison(context, Dim, N_updates1, Updates1, Updates_index1, breakdown, Slater_inv1, &det);
+rc = qmckl_sherman_morrison(context, Dim, Dim, N_updates1, Updates1, Updates_index1, breakdown, Slater_inv1, &det);
 
 // Check that the determinant is updated properly
 assert(fabs(det + 4.120398385068217e-10) < 1e-15);
@@ -303,16 +308,18 @@ assert(rc == QMCKL_SUCCESS);
 
    #+NAME: qmckl_woodbury_2_args
    | qmckl_context | context             | in    | Global state                                    |
-   | uint64_t      | Dim                 | in    | Leading dimension of Slater_inv                 |
+   | uint64_t      | LDS                 | in    | Leading dimension of Slater_inv                 |
+   | uint64_t      | Dim                 | in    | Dimension of Slater_inv                 |
    | double        | Updates[2*Dim]      | in    | Array containing the updates                    |
    | uint64_t      | Updates_index[2]    | in    | Array containing the rank-1 updates             |
    | double        | breakdown           | in    | Break-down parameter on which to fail or not    |
-   | double        | Slater_inv[Dim*Dim] | inout | Array containing the inverse of a Slater-matrix |
+   | double        | Slater_inv[LDS*Dim] | inout | Array containing the inverse of a Slater-matrix |
    | double*       | determinant         | inout | Determinant of Slater-matrix                    |
 
 *** Requirements
 
     - ~context~ is not ~qmckl_null_context~
+    - ~LDS >= 2~
     - ~Dim >= 2~
     - ~Updates~ is allocated with $2 \times Dim$ elements
     - ~Updates_index~ is allocated with $2$ elements
@@ -327,6 +334,7 @@ assert(rc == QMCKL_SUCCESS);
     #+begin_src c :tangle (eval h_func) :comments org
     qmckl_exit_code qmckl_woodbury_2(
 	  const qmckl_context context,
+	  const uint64_t LDS,
 	  const uint64_t Dim,
 	  const double* Updates,
 	  const uint64_t* Updates_index,
@@ -343,6 +351,7 @@ assert(rc == QMCKL_SUCCESS);
 #include "qmckl.h"
 
 qmckl_exit_code qmckl_woodbury_2(const qmckl_context context,
+                                const uint64_t LDS,
                                 const uint64_t Dim,
                                 const double* Updates,
                                 const uint64_t* Updates_index,
@@ -353,7 +362,7 @@ qmckl_exit_code qmckl_woodbury_2(const qmckl_context context,
     C := S^{-1} * U,    dim x 2
     B := 1 + V * C,     2 x 2
     D := V * S^{-1},    2 x dim
-,*/
+*/
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return QMCKL_NULL_CONTEXT;
@@ -369,7 +378,7 @@ qmckl_exit_code qmckl_woodbury_2(const qmckl_context context,
     for (uint64_t j = 0; j < 2; j++) {
       C[i * 2 + j] = 0;
       for (uint64_t k = 0; k < Dim; k++) {
-        C[i * 2 + j] += Slater_inv[i * Dim + k] * Updates[Dim * j + k];
+        C[i * 2 + j] += Slater_inv[i * LDS + k] * Updates[Dim * j + k];
       }
     }
   }
@@ -401,16 +410,16 @@ qmckl_exit_code qmckl_woodbury_2(const qmckl_context context,
   double tmp[2 * Dim];
   for (uint64_t i = 0; i < 2; i++) {
     for (uint64_t j = 0; j < Dim; j++) {
-      tmp[i * Dim + j] = Binv[i * 2] * Slater_inv[row1 * Dim + j];
-      tmp[i * Dim + j] += Binv[i * 2 + 1] * Slater_inv[row2 * Dim + j];
+      tmp[i * Dim + j] = Binv[i * 2] * Slater_inv[row1 * LDS + j];
+      tmp[i * Dim + j] += Binv[i * 2 + 1] * Slater_inv[row2 * LDS + j];
     }
   }
 
   // Compute (S + U V)^{-1} = S^{-1} - C x tmp
   for (uint64_t i = 0; i < Dim; i++) {
     for (uint64_t j = 0; j < Dim; j++) {
-      Slater_inv[i * Dim + j] -= C[i * 2] * tmp[j];
-      Slater_inv[i * Dim + j] -= C[i * 2 + 1] * tmp[Dim + j];
+      Slater_inv[i * LDS + j] -= C[i * 2] * tmp[j];
+      Slater_inv[i * LDS + j] -= C[i * 2 + 1] * tmp[Dim + j];
     }
   }
 
@@ -436,18 +445,19 @@ qmckl_exit_code qmckl_woodbury_2(const qmckl_context context,
    #+begin_src f90 :tangle (eval fh_func) :comments org :exports none
    interface
      integer(c_int32_t) function qmckl_woodbury_2 &
-	 (context, Dim, Updates, Updates_index, breakdown, Slater_inv, determinant) &
+	 (context, LDS, Dim, Updates, Updates_index, breakdown, Slater_inv, determinant) &
 	 bind(C)
        use, intrinsic :: iso_c_binding
        import
        implicit none
 
        integer (c_int64_t) , intent(in) , value :: context
+       integer (c_int64_t) , intent(in) , value :: LDS
        integer (c_int64_t) , intent(in) , value :: Dim
        real    (c_double ) , intent(in)         :: Updates(2*Dim)
        integer (c_int64_t) , intent(in)         :: Updates_index(2)
        real    (c_double ) , intent(in) , value :: breakdown
-       real    (c_double ) , intent(inout)      :: Slater_inv(Dim*Dim)
+       real    (c_double ) , intent(inout)      :: Slater_inv(LDS*Dim)
        real    (c_double ) , intent(inout)      :: determinant
 
      end function qmckl_woodbury_2
@@ -461,7 +471,7 @@ assert(Updates2 != NULL);
 assert(Updates_index2 != NULL);
 assert(Slater_inv2 != NULL);
 det = -1.4432116661319376e-11;
-rc = qmckl_woodbury_2(context, Dim, Updates2, Updates_index2, breakdown, Slater_inv2, &det);
+rc = qmckl_woodbury_2(context, Dim, Dim, Updates2, Updates_index2, breakdown, Slater_inv2, &det);
 assert(fabs(det-2.367058141251457e-10) < 1e-15);
 for (unsigned int i = 0; i < Dim; i++) {
   for (unsigned int j = 0; j < Dim; j++) {
@@ -509,16 +519,18 @@ assert(rc == QMCKL_SUCCESS);
 
    #+NAME: qmckl_woodbury_3_args
    | qmckl_context | context             | in    | Global state                                    |
-   | uint64_t      | Dim                 | in    | Leading dimension of Slater_inv                 |
+   | uint64_t      | LDS                 | in    | Leading dimension of Slater_inv                 |
+   | uint64_t      | Dim                 | in    | Dimension of Slater_inv                 |
    | double        | Updates[3*Dim]      | in    | Array containing the updates                    |
    | uint64_t      | Updates_index[3]    | in    | Array containing the rank-1 updates             |
    | double        | breakdown           | in    | Break-down parameter on which to fail or not    |
-   | double        | Slater_inv[Dim*Dim] | inout | Array containing the inverse of a Slater-matrix |
+   | double        | Slater_inv[LDS*Dim] | inout | Array containing the inverse of a Slater-matrix |
    | double*       | determinant         | inout | Determinant of Slater-matrix                    |
 
 *** Requirements
 
     - ~context~ is not ~qmckl_null_context~
+    - ~LDS >= 2~
     - ~Dim >= 2~
     - ~Updates~ is allocated with $3 \times Dim$ elements
     - ~Updates_index~ is allocated with $3$ elements
@@ -533,6 +545,7 @@ assert(rc == QMCKL_SUCCESS);
     #+begin_src c :tangle (eval h_func) :comments org
     qmckl_exit_code qmckl_woodbury_3(
 	  const qmckl_context context,
+	  const uint64_t LDS,
 	  const uint64_t Dim,
 	  const double* Updates,
 	  const uint64_t* Updates_index,
@@ -549,6 +562,7 @@ assert(rc == QMCKL_SUCCESS);
 #include "qmckl.h"
 
 qmckl_exit_code qmckl_woodbury_3(const qmckl_context context,
+                                const uint64_t LDS,
                                 const uint64_t Dim,
                                 const double* Updates,
                                 const uint64_t* Updates_index,
@@ -576,7 +590,7 @@ qmckl_exit_code qmckl_woodbury_3(const qmckl_context context,
     for (uint64_t j = 0; j < 3; j++) {
       C[i * 3 + j] = 0;
       for (uint64_t k = 0; k < Dim; k++) {
-        C[i * 3 + j] += Slater_inv[i * Dim + k] * Updates[Dim * j + k];
+        C[i * 3 + j] += Slater_inv[i * LDS + k] * Updates[Dim * j + k];
       }
     }
   }
@@ -620,18 +634,18 @@ qmckl_exit_code qmckl_woodbury_3(const qmckl_context context,
   double tmp[3 * Dim];
   for (uint64_t i = 0; i < 3; i++) {
     for (uint64_t j = 0; j < Dim; j++) {
-      tmp[i * Dim + j] = Binv[i * 3] * Slater_inv[row1 * Dim + j];
-      tmp[i * Dim + j] += Binv[i * 3 + 1] * Slater_inv[row2 * Dim + j];
-      tmp[i * Dim + j] += Binv[i * 3 + 2] * Slater_inv[row3 * Dim + j];
+      tmp[i * Dim + j] = Binv[i * 3] * Slater_inv[row1 * LDS + j];
+      tmp[i * Dim + j] += Binv[i * 3 + 1] * Slater_inv[row2 * LDS + j];
+      tmp[i * Dim + j] += Binv[i * 3 + 2] * Slater_inv[row3 * LDS + j];
     }
   }
 
   // Compute (S + U V)^{-1} = S^{-1} - C x tmp
   for (uint64_t i = 0; i < Dim; i++) {
     for (uint64_t j = 0; j < Dim; j++) {
-      Slater_inv[i * Dim + j] -= C[i * 3] * tmp[j];
-      Slater_inv[i * Dim + j] -= C[i * 3 + 1] * tmp[Dim + j];
-      Slater_inv[i * Dim + j] -= C[i * 3 + 2] * tmp[2 * Dim + j];
+      Slater_inv[i * LDS + j] -= C[i * 3] * tmp[j];
+      Slater_inv[i * LDS + j] -= C[i * 3 + 1] * tmp[Dim + j];
+      Slater_inv[i * LDS + j] -= C[i * 3 + 2] * tmp[2 * Dim + j];
     }
   }
 
@@ -657,18 +671,19 @@ qmckl_exit_code qmckl_woodbury_3(const qmckl_context context,
    #+begin_src f90 :tangle (eval fh_func) :comments org :exports none
    interface
      integer(c_int32_t) function qmckl_woodbury_3 &
-	 (context, Dim, Updates, Updates_index, breakdown, Slater_inv, determinant) &
+	 (context, LDS, Dim, Updates, Updates_index, breakdown, Slater_inv, determinant) &
 	 bind(C)
        use, intrinsic :: iso_c_binding
        import
        implicit none
 
        integer (c_int64_t) , intent(in) , value :: context
+       integer (c_int64_t) , intent(in) , value :: LDS
        integer (c_int64_t) , intent(in) , value :: Dim
        real    (c_double ) , intent(in)         :: Updates(3*Dim)
        integer (c_int64_t) , intent(in)         :: Updates_index(3)
        real    (c_double ) , intent(in) , value :: breakdown
-       real    (c_double ) , intent(inout)      :: Slater_inv(Dim*Dim)
+       real    (c_double ) , intent(inout)      :: Slater_inv(LDS*Dim)
        real    (c_double ) , intent(inout)      :: determinant
 
      end function qmckl_woodbury_3
@@ -682,7 +697,7 @@ assert(Updates3 != NULL);
 assert(Updates_index3 != NULL);
 assert(Slater_inv3_1 != NULL);
 det = -1.23743195512859e-09;
-rc = qmckl_woodbury_3(context, Dim, Updates3, Updates_index3, breakdown, Slater_inv3_1, &det);
+rc = qmckl_woodbury_3(context, Dim, Dim, Updates3, Updates_index3, breakdown, Slater_inv3_1, &det);
 assert(fabs(det - 1.602708950725074e-10) < 1e-15);
 for (unsigned int i = 0; i < Dim; i++) {
   for (unsigned int j = 0; j < Dim; j++) {
@@ -731,12 +746,13 @@ assert(rc == QMCKL_SUCCESS);
 
    #+NAME: qmckl_sherman_morrison_splitting_args
    | qmckl_context | context                  | in    | Global state                                         |
-   | uint64_t      | Dim                      | in    | Leading dimension of Slater_inv                      |
+   | uint64_t      | LDS                      | in    | Leading dimension of Slater_inv                      |
+   | uint64_t      | Dim                      | in    | Dimension of Slater_inv                      |
    | uint64_t      | N_updates                | in    | Number of rank-1 updates to be applied to Slater_inv |
    | double        | Updates[N_updates*Dim]   | in    | Array containing the updates                         |
    | uint64_t      | Updates_index[N_updates] | in    | Array containing the rank-1 updates                  |
    | double        | breakdown                | in    | Break-down parameter on which to fail or not         |
-   | double        | Slater_inv[Dim*Dim]      | inout | Array containing the inverse of a Slater-matrix      |
+   | double        | Slater_inv[LDS*Dim]      | inout | Array containing the inverse of a Slater-matrix      |
    | double*       | determinant              | inout | Determinant of the Slater-matrix                     |
    If the determinant of the Slater-matrix is passed, it will be updated to the determinant resulting
    from applying the updates to the original matrix.
@@ -745,6 +761,7 @@ assert(rc == QMCKL_SUCCESS);
 *** Requirements
 
     * ~context~ is not ~QMCKL_NULL_CONTEXT~
+    * ~LDS >= 2~
     * ~Dim >= 2~
     * ~N_updates >= 1~
     * ~Updates~ is allocated with $N_updates \times Dim$ elements
@@ -760,6 +777,7 @@ assert(rc == QMCKL_SUCCESS);
     #+begin_src c :tangle (eval h_func) :comments org
     qmckl_exit_code qmckl_sherman_morrison_splitting(
 	  const qmckl_context context,
+	  const uint64_t LDS,
 	  const uint64_t Dim,
 	  const uint64_t N_updates,
 	  const double* Updates,
@@ -776,6 +794,7 @@ assert(rc == QMCKL_SUCCESS);
 #include "qmckl.h"
 
 qmckl_exit_code qmckl_sherman_morrison_splitting(const qmckl_context context,
+                                const uint64_t LDS,
                                 const uint64_t Dim,
                                 const uint64_t N_updates,
                                 const double* Updates,
@@ -792,11 +811,11 @@ qmckl_exit_code qmckl_sherman_morrison_splitting(const qmckl_context context,
   uint64_t later_index[N_updates];
   uint64_t later = 0;
 
-  (void) qmckl_slagel_splitting(Dim, N_updates, Updates, Updates_index,
+  (void) qmckl_slagel_splitting(LDS, Dim, N_updates, Updates, Updates_index,
                             breakdown, Slater_inv, later_updates, later_index, &later, determinant);
 
   if (later > 0) {
-    (void) qmckl_sherman_morrison_splitting(context, Dim, later,
+    (void) qmckl_sherman_morrison_splitting(context, LDS, Dim, later,
                             later_updates, later_index, breakdown, Slater_inv, determinant);
   }
 
@@ -822,19 +841,20 @@ qmckl_exit_code qmckl_sherman_morrison_splitting(const qmckl_context context,
    #+begin_src f90 :tangle (eval fh_func) :comments org :exports none
    interface
      integer(c_int32_t) function qmckl_sherman_morrison_splitting &
-	 (context, Dim, N_updates, Updates, Updates_index, breakdown, Slater_inv, determinant) &
+	 (context, LDS, Dim, N_updates, Updates, Updates_index, breakdown, Slater_inv, determinant) &
 	 bind(C)
        use, intrinsic :: iso_c_binding
        import
        implicit none
 
        integer (c_int64_t) , intent(in) , value :: context
+       integer (c_int64_t) , intent(in) , value :: LDS
        integer (c_int64_t) , intent(in) , value :: Dim
        integer (c_int64_t) , intent(in) , value :: N_updates
        real    (c_double ) , intent(in)         :: Updates(N_updates*Dim)
        integer (c_int64_t) , intent(in)         :: Updates_index(N_updates)
        real    (c_double ) , intent(in) , value :: breakdown
-       real    (c_double ) , intent(inout)      :: Slater_inv(Dim*Dim)
+       real    (c_double ) , intent(inout)      :: Slater_inv(LDS*Dim)
        real    (c_double ) , intent(inout)      :: determinant
 
      end function qmckl_sherman_morrison_splitting
@@ -848,7 +868,7 @@ assert(Updates3 != NULL);
 assert(Updates_index3 != NULL);
 assert(Slater_inv3_2 != NULL);
 det = -1.23743195512859e-09;
-rc = qmckl_sherman_morrison_splitting(context, Dim, N_updates3, Updates3, Updates_index3, breakdown, Slater_inv3_2, &det);
+rc = qmckl_sherman_morrison_splitting(context, Dim, Dim, N_updates3, Updates3, Updates_index3, breakdown, Slater_inv3_2, &det);
 assert(fabs(det - 1.602708950725074e-10) < 1e-15);
 for (unsigned int i = 0; i < Dim; i++) {
   for (unsigned int j = 0; j < Dim; j++) {
@@ -892,18 +912,20 @@ assert(rc == QMCKL_SUCCESS);
 
    #+NAME: qmckl_sherman_morrison_smw32s_args
    | qmckl_context | context                  | in    | Global state                                         |
-   | uint64_t      | Dim                      | in    | Leading dimension of Slater_inv                      |
+   | uint64_t      | LDS                      | in    | Leading dimension of Slater_inv                      |
+   | uint64_t      | Dim                      | in    | Dimension of Slater_inv                      |
    | uint64_t      | N_updates                | in    | Number of rank-1 updates to be applied to Slater_inv |
    | double        | Updates[N_updates*Dim]   | in    | Array containing the updates                         |
    | uint64_t      | Updates_index[N_updates] | in    | Array containing the rank-1 updates                  |
    | double        | breakdown                | in    | Break-down parameter on which to fail or not         |
-   | double        | Slater_inv[Dim*Dim]      | inout | Array containing the inverse of a Slater-matrix      |
+   | double        | Slater_inv[LDS*Dim]      | inout | Array containing the inverse of a Slater-matrix      |
    | double*       | determinant              | inout | Determinant of the Slater-matrix                     |
 
 
 *** Requirements
 
     * ~context~ is not ~QMCKL_NULL_CONTEXT~
+    * ~LDS >= 2~
     * ~Dim >= 2~
     * ~N_updates >= 1~
     * ~Updates~ is allocated with $N_updates \times Dim$ elements
@@ -919,6 +941,7 @@ assert(rc == QMCKL_SUCCESS);
     #+begin_src c :tangle (eval h_func) :comments org
     qmckl_exit_code qmckl_sherman_morrison_smw32s(
 	  const qmckl_context context,
+	  const uint64_t LDS,
 	  const uint64_t Dim,
 	  const uint64_t N_updates,
 	  const double* Updates,
@@ -935,6 +958,7 @@ assert(rc == QMCKL_SUCCESS);
 #include "qmckl.h"
 
 qmckl_exit_code qmckl_sherman_morrison_smw32s(const qmckl_context context,
+                                const uint64_t LDS,
                                 const uint64_t Dim,
                                 const uint64_t N_updates,
                                 const double* Updates,
@@ -962,10 +986,10 @@ qmckl_exit_code qmckl_sherman_morrison_smw32s(const qmckl_context context,
     for (uint64_t i = 0; i < n_of_3blocks; i++) {
       const double *Updates_3block = &Updates[i * length_3block];
       const uint64_t *Updates_index_3block = &Updates_index[i * 3];
-      rc = qmckl_woodbury_3(context, Dim, Updates_3block, Updates_index_3block, breakdown, Slater_inv, determinant);
+      rc = qmckl_woodbury_3(context, LDS, Dim, Updates_3block, Updates_index_3block, breakdown, Slater_inv, determinant);
       if (rc != 0) { // Send the entire block to slagel_splitting
         uint64_t l = 0;
-        rc = qmckl_slagel_splitting(Dim, 3, Updates_3block, Updates_index_3block,
+        rc = qmckl_slagel_splitting(LDS, Dim, 3, Updates_3block, Updates_index_3block,
                 breakdown, Slater_inv, later_updates + (Dim * later), later_index + later, &l, determinant);
         later = later + l;
       }
@@ -976,10 +1000,10 @@ qmckl_exit_code qmckl_sherman_morrison_smw32s(const qmckl_context context,
   if (remainder == 2) {
     const double *Updates_2block = &Updates[n_of_3blocks * length_3block];
     const uint64_t *Updates_index_2block = &Updates_index[3 * n_of_3blocks];
-    rc = qmckl_woodbury_2(context, Dim, Updates_2block, Updates_index_2block, breakdown, Slater_inv, determinant);
+    rc = qmckl_woodbury_2(context, LDS, Dim, Updates_2block, Updates_index_2block, breakdown, Slater_inv, determinant);
     if (rc != 0) { // Send the entire block to slagel_splitting
       uint64_t l = 0;
-      (void) qmckl_slagel_splitting(Dim, 2, Updates_2block, Updates_index_2block,
+      (void) qmckl_slagel_splitting(LDS, Dim, 2, Updates_2block, Updates_index_2block,
               breakdown, Slater_inv, later_updates + (Dim * later), later_index + later, &l, determinant);
       later = later + l;
     }
@@ -989,13 +1013,13 @@ qmckl_exit_code qmckl_sherman_morrison_smw32s(const qmckl_context context,
     const double *Updates_1block = &Updates[n_of_3blocks * length_3block];
     const uint64_t *Updates_index_1block = &Updates_index[3 * n_of_3blocks];
     uint64_t l = 0;
-    (void) qmckl_slagel_splitting(Dim, 1, Updates_1block, Updates_index_1block,
+    (void) qmckl_slagel_splitting(LDS, Dim, 1, Updates_1block, Updates_index_1block,
             breakdown, Slater_inv, later_updates + (Dim * later), later_index + later, &l, determinant);
     later = later + l;
   }
 
   if (later > 0) {
-    (void) qmckl_sherman_morrison_splitting(context, Dim, later, later_updates, later_index, breakdown, Slater_inv, determinant);
+    (void) qmckl_sherman_morrison_splitting(context, LDS, Dim, later, later_updates, later_index, breakdown, Slater_inv, determinant);
   }
   return QMCKL_SUCCESS;
 }
@@ -1019,19 +1043,20 @@ qmckl_exit_code qmckl_sherman_morrison_smw32s(const qmckl_context context,
    #+begin_src f90 :tangle (eval fh_func) :comments org :exports none
    interface
      integer(c_int32_t) function qmckl_sherman_morrison_smw32s &
-	 (context, Dim, N_updates, Updates, Updates_index, breakdown, Slater_inv, determinant) &
+	 (context, LDS, Dim, N_updates, Updates, Updates_index, breakdown, Slater_inv, determinant) &
 	 bind(C)
        use, intrinsic :: iso_c_binding
        import
        implicit none
 
        integer (c_int64_t) , intent(in) , value :: context
+       integer (c_int64_t) , intent(in) , value :: LDS
        integer (c_int64_t) , intent(in) , value :: Dim
        integer (c_int64_t) , intent(in) , value :: N_updates
        real    (c_double ) , intent(in)         :: Updates(N_updates*Dim)
        integer (c_int64_t) , intent(in)         :: Updates_index(N_updates)
        real    (c_double ) , intent(in) , value :: breakdown
-       real    (c_double ) , intent(inout)      :: Slater_inv(Dim*Dim)
+       real    (c_double ) , intent(inout)      :: Slater_inv(LDS*Dim)
        real    (c_double ) , intent(inout)      :: determinant
 
      end function qmckl_sherman_morrison_smw32s
@@ -1045,7 +1070,7 @@ assert(Updates5 != NULL);
 assert(Updates_index5 != NULL);
 assert(Slater_inv5 != NULL);
 det = -3.186005284713128e-10;
-rc = qmckl_sherman_morrison_smw32s(context, Dim, N_updates5, Updates5, Updates_index5, breakdown, Slater_inv5, &det);
+rc = qmckl_sherman_morrison_smw32s(context, Dim, Dim, N_updates5, Updates5, Updates_index5, breakdown, Slater_inv5, &det);
 assert(fabs(det + 5.260200118412903e-10) < 1e-15);
 
 for (unsigned int i = 0; i < Dim; i++) {
@@ -1095,12 +1120,13 @@ These functions can only be used internally by the kernels in this module.
    from applying the updates to the original matrix.
 
    #+NAME: qmckl_slagel_splitting_args
-   | uint64_t | Dim                            | in    | Leading dimension of Slater_inv                               |
+   | uint64_t | LDS                            | in    | Leading dimension of Slater_inv                               |
+   | uint64_t | Dim                            | in    | Dimension of Slater_inv                               |
    | uint64_t | N_updates                      | in    | Number of rank-1 updates to be applied to Slater_inv          |
    | double   | Updates[N_updates*Dim]         | in    | Array containing the rank-1 updates                           |
    | uint64_t | Updates_index[N_updates]       | in    | Array containing positions of the rank-1 updates              |
    | double   | breakdown                      | in    | Break-down parameter on which to fail or not                  |
-   | double   | Slater_inv[Dim*Dim]            | inout | Array containing the inverse Slater-matrix                    |
+   | double   | Slater_inv[LDS*Dim]            | inout | Array containing the inverse Slater-matrix                    |
    | double   | later_updates[Dim * N_updates] | inout | Array containing the split updates for later                  |
    | uint64_t | later_index[N_updates]         | inout | Array containing the positions of the split updates for later |
    | uint64_t | later                          | inout | Number of split updates for later                             |
@@ -1109,6 +1135,7 @@ These functions can only be used internally by the kernels in this module.
 
 *** Requirements
 
+    - ~LDS >= 2~
     - ~Dim >= 2~
     - ~N_updates >= 1~
     - ~Updates~ is allocated with $N_updates \times Dim$ elements
@@ -1126,6 +1153,7 @@ These functions can only be used internally by the kernels in this module.
     #+RESULTS:
     #+begin_src c :tangle (eval h_func) :comments org
     qmckl_exit_code qmckl_slagel_splitting (
+	  const uint64_t LDS,
 	  const uint64_t Dim,
 	  const uint64_t N_updates,
 	  const double* Updates,
@@ -1145,7 +1173,8 @@ These functions can only be used internally by the kernels in this module.
 #include <math.h>
 #include "qmckl.h"
 
-qmckl_exit_code qmckl_slagel_splitting(uint64_t Dim,
+qmckl_exit_code qmckl_slagel_splitting(uint64_t LDS,
+                                              uint64_t Dim,
                                               uint64_t N_updates,
                                               const double *Updates,
                                               const uint64_t *Updates_index,
@@ -1169,7 +1198,7 @@ qmckl_exit_code qmckl_slagel_splitting(uint64_t Dim,
     for (uint64_t i = 0; i < Dim; i++) {
       C[i] = 0;
       for (uint64_t j = 0; j < Dim; j++) {
-        C[i] += Slater_inv[i * Dim + j] * Updates[l * Dim + j];
+        C[i] += Slater_inv[i * LDS + j] * Updates[l * Dim + j];
       }
     }
 
@@ -1194,14 +1223,14 @@ qmckl_exit_code qmckl_slagel_splitting(uint64_t Dim,
 
     // D = v^T x S^{-1}
     for (uint64_t j = 0; j < Dim; j++) {
-      D[j] = Slater_inv[(Updates_index[l] - 1) * Dim + j];
+      D[j] = Slater_inv[(Updates_index[l] - 1) * LDS + j];
     }
 
     // S^{-1} = S^{-1} - C x D / den
     for (uint64_t i = 0; i < Dim; i++) {
       for (uint64_t j = 0; j < Dim; j++) {
         double update = C[i] * D[j] * iden;
-        Slater_inv[i * Dim + j] -= update;
+        Slater_inv[i * LDS + j] -= update;
       }
     }
     l += 1;
