@@ -42,7 +42,7 @@ AC_CONFIG_AUX_DIR(tools)
 AM_INIT_AUTOMAKE([subdir-objects color-tests parallel-tests silent-rules 1.11])
 AM_MAINTAINER_MODE()
 LT_INIT
-AC_CONFIG_SRCDIR([Makefile.in])
+AC_CONFIG_SRCDIR([configure.ac])
 AC_CONFIG_HEADERS([include/config.h])
 AC_CONFIG_MACRO_DIR([m4])
 

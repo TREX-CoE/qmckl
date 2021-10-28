@@ -30,6 +30,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+
 ACLOCAL_AMFLAGS = -I m4
 
 VERSION_MAJOR   = @VERSION_MAJOR@
@@ -43,7 +44,7 @@ EXTRA_DIST =
 pkgconfigdir = $(libdir)/pkgconfig
 pkgconfig_DATA = pkgconfig/qmckl.pc
 
-qmckl_h = $(srcdir)/include/qmckl.h
+qmckl_h = include/qmckl.h
 include_HEADERS = $(qmckl_h)
 
 qmckl_f       = share/qmckl/fortran/qmckl_f.f90
@@ -53,10 +54,9 @@ src_qmckl_f   = src/qmckl_f.f90
 src_qmckl_fo  = src/qmckl_f.o
 header_tests  = tests/chbrclf.h tests/n2.h
 
+fortrandir = $(datadir)/fortran
+fortran_DATA = $(qmckl_f)
 
-fortrandir = $(datadir)/qmckl/fortran/
-
-dist_fortran_DATA = $(qmckl_f)
 
 AM_CPPFLAGS  = -I$(srcdir)/src -I$(srcdir)/include
 AM_CPPFLAGS += -DQMCKL_TEST_DIR="\"$(abs_srcdir)/share/qmckl/test_data/\""
@@ -65,11 +65,9 @@ AM_CPPFLAGS += -DQMCKL_TEST_DIR="\"$(abs_srcdir)/share/qmckl/test_data/\""
 lib_LTLIBRARIES = src/libqmckl.la
 src_libqmckl_la_SOURCES = $(qmckl_h) $(src_qmckl_f) $(C_FILES) $(F_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES) $(header_tests)
 
-export qmckl_f qmckl_h srcdir
+CLEANFILES+=$(test_qmckl_f) $(test_qmckl_fo) $(src_qmckl_f) $(src_qmckl_fo) $(test_qmckl_o) $(src_qmckl_o)
 
-CLEANFILES+=$(test_qmckl_f) $(src_qmckl_f) $(test_qmckl_o) $(src_qmckl_o)
-
-htmlize_el=$(srcdir)/share/doc/qmckl/html/htmlize.el
+htmlize_el=share/doc/qmckl/html/htmlize.el
 
 include generated.mk
 
@@ -81,18 +79,10 @@ ln_s_verbose_0 = @echo "  LN_S     $<";
 htmldir = $(docdir)/html
 dist_html_DATA = $(HTML_FILES) \
         share/doc/qmckl/html/index.html \
-        $(srcdir)/share/doc/qmckl/html/qmckl.css
+        share/doc/qmckl/html/qmckl.css
 
 textdir = $(docdir)/text
 dist_text_DATA = $(TEXT_FILES)
-
-$(test_qmckl_fo): $(test_qmckl_f)
-$(test_qmckl_f): $(srcdir)/$(qmckl_f)
-	cp $(srcdir)/$(qmckl_f) $(test_qmckl_f)
-
-$(src_qmckl_fo): $(src_qmckl_f)
-$(src_qmckl_f): $(srcdir)/$(qmckl_f)
-	cp $(srcdir)/$(qmckl_f) $(src_qmckl_f)
 
 share/doc/qmckl/html/index.html: share/doc/qmckl/html/README.html
 	$(ln_s_verbose)cd share/doc/qmckl/html/ && \
@@ -113,24 +103,24 @@ if VFC_CI
 AM_LDFLAGS=-lvfc_probes -lvfc_probes_f
 endif
 
-dist_src_DATA = $(ORG_FILES) $(TANGLED_FILES) $(EXPORTED_FILES)
+dist_src_DATA = $(ORG_FILES) $(TANGLED_FILES) $(EXPORTED_FILES) $(qmckl_f) $(test_qmckl_f)
 
-BUILT_SOURCES = $(C_FILES) $(F_FILES) $(FH_FUNC_FILES) $(FH_TYPE_FILES) $(H_FUNC_FILES) $(H_TYPE_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES) $(qmckl_f) $(qmckl_h) $(header_tests)
+BUILT_SOURCES = $(C_FILES) $(F_FILES) $(FH_FUNC_FILES) $(FH_TYPE_FILES) $(H_FUNC_FILES) $(H_TYPE_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES) $(qmckl_f) $(src_qmckl_f) $(test_qmckl_f) $(qmckl_h) $(header_tests)
 
-CLEANFILES += $(BUILT_SOURCES) $(C_TEST_FILES) $(F_TEST_FILES) $(TANGLED_FILES) $(C_TEST_FILES) $(F_TEST_FILES) $(qmckl_f) $(qmckl_h) $(HTML_FILES) $(TEXT_FILES) share/doc/qmckl/html/index.html $(EXPORTED_FILES) $(header_tests)
+CLEANFILES += $(BUILT_SOURCES) $(C_TEST_FILES) $(F_TEST_FILES) $(TANGLED_FILES) $(C_TEST_FILES) $(F_TEST_FILES) $(qmckl_f) $(src_qmckl_f) $(test_qmckl_f) $(qmckl_h) $(HTML_FILES) $(TEXT_FILES) share/doc/qmckl/html/index.html $(EXPORTED_FILES) $(header_tests)
 
 EXTRA_DIST +=                 \
-    $(srcdir)/tools/build_doc.sh        \
-    $(srcdir)/tools/build_makefile.py   \
-    $(srcdir)/tools/build_qmckl_f.sh    \
-    $(srcdir)/tools/build_qmckl_h.sh    \
-    $(srcdir)/tools/config_doc.el       \
-    $(srcdir)/tools/config_tangle.el    \
-    $(srcdir)/tools/init.el             \
-    $(srcdir)/tools/install_htmlize.sh  \
-    $(srcdir)/tools/lib.org             \
-    $(srcdir)/tools/tangle.sh           \
-    $(srcdir)/tools/theme.setup
+    tools/build_doc.sh        \
+    tools/build_makefile.py   \
+    tools/build_qmckl_f.sh    \
+    tools/build_qmckl_h.sh    \
+    tools/config_doc.el       \
+    tools/config_tangle.el    \
+    tools/init.el             \
+    tools/install_htmlize.sh  \
+    tools/lib.org             \
+    tools/tangle.sh           \
+    tools/theme.setup
 
 
 ## Silent
@@ -154,11 +144,17 @@ cat_h_verbose_0 = @echo "  HEADER   $@";
 
 SUFFIXES = .f90 .h .org .c _f.f90 _func.h _type.h _private_func.h _private_type.h
 
-$(qmckl_h): $(H_FUNC_FILES) $(H_TYPE_FILES)
-	$(cat_h_verbose)$(srcdir)/tools/build_qmckl_h.sh
+$(test_qmckl_f): $(src_qmckl_f)
+	cp $(src_qmckl_f) $(test_qmckl_f)
 
-$(qmckl_f): $(FH_FUNC_FILES) $(FH_TYPE_FILES)
-	$(cat_h_verbose)$(srcdir)/tools/build_qmckl_f.sh
+$(qmckl_f): $(src_qmckl_f)
+	cp $(src_qmckl_f) $(qmckl_f) 
+
+$(qmckl_h): $(H_FUNC_FILES) $(H_TYPE_FILES)
+	$(cat_h_verbose)top_builddir=$(top_builddir) srcdir=$(srcdir) qmckl_h=$(qmckl_h) $(srcdir)/tools/build_qmckl_h.sh
+
+$(src_qmckl_f): $(FH_FUNC_FILES) $(FH_TYPE_FILES)
+	$(cat_h_verbose)top_builddir=$(top_builddir) srcdir=$(srcdir) src_qmckl_f=$(src_qmckl_f) $(srcdir)/tools/build_qmckl_f.sh
 
 $(htmlize_el):
 	$(srcdir)/tools/install_htmlize.sh $(htmlize_el)
@@ -168,7 +164,7 @@ tests/chbrclf.h: $(qmckl_h)
 tests/n2.h: $(qmckl_h)
 
 generated.mk: $(ORG_FILES)
-	$(PYTHON) $(srcdir)/tools/build_makefile.py
+	top_builddir=$(top_builddir) srcdir=$(srcdir) qmckl_h=$(qmckl_h) src_qmckl_f=$(src_qmckl_f) $(PYTHON) $(srcdir)/tools/build_makefile.py
 
 cppcheck: cppcheck.out
 

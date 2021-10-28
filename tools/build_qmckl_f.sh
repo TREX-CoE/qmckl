@@ -1,22 +1,27 @@
-#!/bin/bash
-# Script to build the final qmckl_f.f90 file
+#!/bin/sh
+# Script to build the final src/qmckl_f.f90 file
 
 set -e
 
-# All the produced header files are concatenated in the =qmckl_f.f90=
+# All the produced header files are concatenated in the =src/qmckl_f.f90=
 # file, located in the share/qmckl/fortran directory.
 
 
 # Check required environment variables
 # ------------------------------------
 
-if [[ -z ${srcdir} ]] ; then
+if [ -z ${srcdir} ] ; then
    echo "Error: srcdir environment variable is not defined"
    exit 1
 fi
 
-if [[ -z ${qmckl_f} ]] ; then
-   echo "Error: qmckl_f environment variable is not defined"
+if [ -z ${top_builddir} ] ; then
+   echo "Error: top_builddir environment variable is not defined"
+   exit 1
+fi
+
+if [ -z ${src_qmckl_f} ] ; then
+   echo "Error: src_qmckl_f environment variable is not defined"
    exit 1
 fi
 
@@ -25,11 +30,10 @@ fi
 # Generate Fortran interface file
 # -------------------------------
 
-HEADERS_TYPE="${srcdir}/src/qmckl_*_fh_type.f90"
-HEADERS="${srcdir}/src/qmckl_*_fh_func.f90"
+HEADERS_TYPE="src/qmckl_*_fh_type.f90"
+HEADERS="src/qmckl_*_fh_func.f90"
 
-OUTPUT="${qmckl_f}"
-cat << EOF > ${OUTPUT}
+cat << EOF > ${src_qmckl_f}
 !
 !    ------------------------------------------
 !     QMCkl - Quantum Monte Carlo kernel library
@@ -78,14 +82,14 @@ EOF
 
 for i in ${HEADERS_TYPE}
 do
-    cat $i >> ${OUTPUT}
+    cat $i >> ${src_qmckl_f}
 done
 
 for i in ${HEADERS}
 do
-    cat $i >> ${OUTPUT}
+    cat $i >> ${src_qmckl_f}
 done
 
-cat << EOF >> ${OUTPUT}
+cat << EOF >> ${src_qmckl_f}
 end module qmckl
 EOF

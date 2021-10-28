@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 # Script to build the final qmckl.h file
 
 # All the produced header files are concatenated in the =qmckl.h=
@@ -11,12 +11,17 @@ set -e
 # Check required environment variables
 # ------------------------------------
 
-if [[ -z ${srcdir} ]] ; then
+if [ -z ${srcdir} ] ; then
    echo "Error: srcdir environment variable is not defined"
    exit 1
 fi
 
-if [[ -z ${qmckl_h} ]] ; then
+if [ -z ${top_builddir} ] ; then
+   echo "Error: top_builddir environment variable is not defined"
+   exit 1
+fi
+
+if [ -z ${qmckl_h} ] ; then
    echo "Error: qmckl_h environment variable is not defined"
    exit 1
 fi
@@ -28,17 +33,15 @@ fi
 HEADERS=""
 for i in $(cat ${srcdir}/org/table_of_contents)
 do
-    HEADERS+="${i%.org}_type.h "
+    HEADERS="${HEADERS} ${i%.org}_type.h "
 done
 
 for i in $(cat ${srcdir}/org/table_of_contents)
 do
-    HEADERS+="${i%.org}_func.h "
+    HEADERS="${HEADERS} ${i%.org}_func.h "
 done
 
-OUTPUT=${qmckl_h}
-
-cat << EOF > ${OUTPUT}
+cat << EOF > ${qmckl_h}
 /*
  *    ------------------------------------------
  *     QMCkl - Quantum Monte Carlo kernel library
@@ -97,13 +100,13 @@ EOF
 for i in ${HEADERS}
 do
     header=${srcdir}/src/$i
-    if [[ -f $header ]] ; then
-        echo "/* $header */" >> ${OUTPUT}
-        cat $header >> ${OUTPUT}
+    if [ -f $header ] ; then
+        echo "/* $header */" >> ${qmckl_h}
+        cat $header >> ${qmckl_h}
     fi
 done
 
-cat << EOF >> ${OUTPUT}
+cat << EOF >> ${qmckl_h}
 #ifdef __cplusplus
 }
 #endif
