@@ -1,11 +1,20 @@
 #!/bin/bash
 # Extracts documentation from an org-mode file.
 
-set -e
+# Check required environment variables
+# ------------------------------------
 
-srcdir=$PWD
+if [[ -z ${srcdir} ]] ; then
+   echo "Error: srcdir environment variable is not defined"
+   exit 1
+fi
 
-readonly DOCS=${srcdir}/share/doc/qmckl/
+if [[ -z ${top_builddir} ]] ; then
+   echo "Error: srcdir environment variable is not defined"
+   exit 1
+fi
+
+readonly DOCS=${top_builddir}/share/doc/qmckl/
 readonly ORG=${srcdir}/org/
 readonly HTMLIZE=${DOCS}/html/htmlize.el
 readonly CONFIG_DOC=${srcdir}/tools/config_doc.el
@@ -19,14 +28,18 @@ function extract_doc()
   html=${DOCS}/html/$(basename ${org%.org}.html)
   text=${DOCS}/text/$(basename ${org%.org}.txt)
 
-  ./tools/missing emacs --batch  \
-        --load ${HTMLIZE}          \
-        --load ${CONFIG_DOC}       \
-        ${org}                     \
-        --load ${CONFIG_TANGLE}    \
-        -f org-html-export-to-html \
+  ${srcdir}/tools/missing emacs --batch  \
+        --load="${HTMLIZE}"           \
+        --load="${CONFIG_DOC}"        \
+        ${org}                           \
+        --load="../${CONFIG_TANGLE}"     \
+        -f org-html-export-to-html       \
         -f org-ascii-export-to-ascii 
 
+  rc=$?
+  if [ $rc -ne 0 ] ; then
+    return $rc
+  fi
   mv ${local_html} ${html}
   mv ${local_text} ${text}
 }
@@ -36,16 +49,16 @@ do
     exported=${i%.org}.exported
     exported=$(dirname $exported)/.$(basename $exported)
     NOW=$(date +"%m%d%H%M.%S")
-    extract_doc ${i} &> $exported
+    extract_doc ${i} &> $exported 
     rc=$?
 
     # Make log file older than the exported files
     touch -t ${NOW} $exported
 
     # Fail if tangling failed
-    if [[ $rc -ne 0 ]] ; then
+    if [ $rc -ne 0 ] ; then
        cat $exported
-       exit rc
+       exit $rc
     fi
 done
 
