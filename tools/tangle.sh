@@ -9,8 +9,13 @@
 # The =missing= script is used to check if emacs is present on the system.
 
 if [[ -z ${srcdir} ]] ; then
-  print "Error: srcdir environment variable is not defined"
+  echo "Error: srcdir environment variable is not defined"
   exit 1
+fi
+
+if [[ -z ${top_builddir} ]] ; then
+   echo "Error: srcdir environment variable is not defined"
+   exit 1
 fi
 
 function tangle()
@@ -24,7 +29,7 @@ function tangle()
     elif [[ ${org_file} -ot ${f_file} ]] ; then
         return
     fi
-    ./tools/missing \
+    ${srcdir}/tools/missing \
         emacs --batch ${org_file} \
          --load=${PWD}/tools/config_tangle.el \
         -f org-babel-tangle
