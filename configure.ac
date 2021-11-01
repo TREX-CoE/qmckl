@@ -189,11 +189,16 @@ AC_TYPE_UINT64_T
 AC_CHECK_FUNCS([memset strerror])
 
 # Development mode
+if test "x$enable_maintainer_mode" == "xyes" ; then
+  QMCKL_DEVEL=" -- Developer mode"
+else
+  QMCKL_DEVEL=""
+fi
+
 AM_CONDITIONAL([QMCKL_DEVEL],[test "x$QMCKL_DEVEL" != x])
 
 if test "x${QMCKL_DEVEL}" != "x"; then
 
-  QMCKL_DEVEL=" -- Developer mode"
   AC_PROG_AWK
   AM_PATH_PYTHON
   ${PYTHON} ${srcdir}/tools/build_makefile.py
