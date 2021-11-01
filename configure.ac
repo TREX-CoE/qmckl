@@ -40,6 +40,14 @@ AC_INIT([qmckl],[0.1.1],
         [https://trex-coe.github.io/qmckl/index.html])
 AC_CONFIG_AUX_DIR(tools)
 AM_INIT_AUTOMAKE([subdir-objects color-tests parallel-tests silent-rules 1.11])
+
+# Activate developer mode when the source is the git repository.
+# Otherwise, it is the source distribution and the developer mode should not be activated.
+TEST_IFEXISTS=".git"
+AC_CHECK_FILE([$TEST_IFEXISTS],
+        [enable_maintainer_mode="yes"],
+)
+
 AM_MAINTAINER_MODE()
 LT_INIT
 AC_CONFIG_SRCDIR([configure.ac])
