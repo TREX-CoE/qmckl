@@ -28,7 +28,7 @@ in org-mode files and produce the source code and the documentation from these f
 
 ```
 ./autogen.sh
-QMCKL_DEVEL=1 ./configure --prefix=$PWD/_install --enable-silent-rules --enable-maintainer-mode
+./configure --prefix=$PWD/_install --enable-silent-rules --enable-maintainer-mode
 
 make
 make check
@@ -54,7 +54,7 @@ by the preprocessor otherwise). To enable vfc_ci support, the library should be
 configured with the following command :
 
 ```
-QMCKL_DEVEL=1 ./configure --prefix=$PWD/_install \ --enable-silent-rules --enable-maintainer-mode --enable-vfc_ci --host=x86_64 \ CC="verificarlo-f" FC="verificarlo-f"
+./configure --prefix=$PWD/_install \ --enable-silent-rules --enable-maintainer-mode --enable-vfc_ci --host=x86_64 \ CC="verificarlo-f" FC="verificarlo-f"
 ```
 
 where CC and FC are set to verificarlo-f, and support is explicitely enabled

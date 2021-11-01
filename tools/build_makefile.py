@@ -206,7 +206,7 @@ def main():
               "if QMCKL_DEVEL" ]
     for f in DEPS_ORG.keys():
         output += [ DEPS_ORG[f] + ": "+f,
-                    "\t$(tangle_verbose)top_builddir=$(top_builddir) srcdir=$(srcdir) $(srcdir)/tools/tangle.sh "+f,
+                    "\t$(tangle_verbose)top_builddir=$(top_builddir) srcdir=$(srcdir) $(srcdir)/tools/missing bash $(srcdir)/tools/tangle.sh "+f,
                     "" ]
     output += [ "endif",
                 "" ]
@@ -257,7 +257,7 @@ def main():
 
     for f in sorted(DEPS_DOC.keys()):
         output += [ DEPS_DOC[f] + ": " + f + " $(htmlize_el)",
-                    "\t$(export_verbose)top_builddir=$(top_builddir) srcdir=$(srcdir) $(srcdir)/tools/build_doc.sh "+f,
+                    "\t$(export_verbose)top_builddir=$(top_builddir) srcdir=$(srcdir) $(srcdir)/tools/missing bash $(srcdir)/tools/build_doc.sh "+f,
                     "" ]
     output += ["endif"]
 
