@@ -103,7 +103,8 @@ if VFC_CI
 AM_LDFLAGS=-lvfc_probes -lvfc_probes_f
 endif
 
-dist_src_DATA = $(ORG_FILES) $(TANGLED_FILES) $(EXPORTED_FILES) $(qmckl_f) #$(test_qmckl_f) 
+dist_data_DATA = $(ORG_FILES) $(TANGLED_FILES) $(EXPORTED_FILES) $(qmckl_f)
+dist_src_DATA = $(test_qmckl_f)
 
 BUILT_SOURCES = $(C_FILES) $(F_FILES) $(FH_FUNC_FILES) $(FH_TYPE_FILES) $(H_FUNC_FILES) $(H_TYPE_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES) $(qmckl_f) $(src_qmckl_f) $(test_qmckl_f) $(qmckl_h) $(header_tests)
 
