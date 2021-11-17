@@ -14,7 +14,7 @@ if [[ -z ${srcdir} ]] ; then
 fi
 
 if [[ -z ${top_builddir} ]] ; then
-   echo "Error: srcdir environment variable is not defined"
+   echo "Error: top_builddir environment variable is not defined"
    exit 1
 fi
 
@@ -31,14 +31,14 @@ function tangle()
     fi
     ${srcdir}/tools/missing \
         emacs --batch ${org_file} \
-         --load=${PWD}/tools/config_tangle.el \
+         --load=${srcdir}/tools/config_tangle.el \
         -f org-babel-tangle
 }
 
 for i in $@
 do
     tangled=${i%.org}.tangled
-    tangled=$(dirname $tangled)/.$(basename $tangled)
+    tangled=${top_builddir}/src/$(basename $tangled)
     NOW=$(date +"%m%d%H%M.%S")
     tangle ${i} &> $tangled 
     rc=$?
@@ -47,6 +47,6 @@ do
     # Fail if tangling failed
     if [[ $rc -ne 0 ]] ; then
        cat $tangled
-       exit rc
+       exit $rc
     fi
 done

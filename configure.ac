@@ -41,7 +41,7 @@ AM_INIT_AUTOMAKE([subdir-objects color-tests parallel-tests silent-rules 1.11])
 
 # Activate developer mode when the source is the git repository.
 # Otherwise, it is the source distribution and the developer mode should not be activated.
-AS_IF([test -d .git],
+AS_IF([test -d ${srcdir}/.git],
         [enable_maintainer_mode="yes"],
         [enable_maintainer_mode="no"]
 )
@@ -208,7 +208,6 @@ if test "x${QMCKL_DEVEL}" != "x"; then
 
   AC_PROG_AWK
   AM_PATH_PYTHON
-  ${PYTHON} ${srcdir}/tools/build_makefile.py
 
   AC_CHECK_PROGS([EMACS],[emacs26 emacs],[no])
   if test x${EMACS} == xno ; then

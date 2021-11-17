@@ -1,4 +1,5 @@
 #!/bin/bash
 
-python ./tools/build_makefile.py
+export srcdir="."
+${PYTHON} ${srcdir}/tools/build_makefile.py
 autoreconf -i -Wall --no-recursive

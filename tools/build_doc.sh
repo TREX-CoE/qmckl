@@ -32,7 +32,7 @@ function extract_doc()
         --load="${HTMLIZE}"           \
         --load="${CONFIG_DOC}"        \
         ${org}                           \
-        --load="../${CONFIG_TANGLE}"     \
+        --load="${CONFIG_TANGLE}"     \
         -f org-html-export-to-html       \
         -f org-ascii-export-to-ascii 
 
@@ -47,7 +47,7 @@ function extract_doc()
 for i in $@
 do
     exported=${i%.org}.exported
-    exported=$(dirname $exported)/.$(basename $exported)
+    exported=${top_builddir}/src/$(basename $exported)
     NOW=$(date +"%m%d%H%M.%S")
     extract_doc ${i} &> $exported 
     rc=$?
