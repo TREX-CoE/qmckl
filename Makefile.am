@@ -90,7 +90,7 @@ share/doc/qmckl/html/index.html: share/doc/qmckl/html/README.html
 	$(LN_S) README.html index.html
 
 
-html: $(dist_html_DATA)
+html-local: $(dist_html_DATA)
 text: $(dist_text_DATA)
 doc: html text
 
