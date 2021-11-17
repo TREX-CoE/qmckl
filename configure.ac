@@ -35,11 +35,18 @@
 
 AC_PREREQ([2.69])
 
-AC_INIT([qmckl],[0.1.1],
-        [https://github.com/TREX-CoE/qmckl/issues], [],
-        [https://trex-coe.github.io/qmckl/index.html])
-AC_CONFIG_AUX_DIR(tools)
+AC_INIT([qmckl],[0.1.1],[https://github.com/TREX-CoE/qmckl/issues],[],[https://trex-coe.github.io/qmckl/index.html])
+AC_CONFIG_AUX_DIR([tools])
 AM_INIT_AUTOMAKE([subdir-objects color-tests parallel-tests silent-rules 1.11])
+
+# Activate developer mode when the source is the git repository.
+# Otherwise, it is the source distribution and the developer mode should not be activated.
+AS_IF([test -d .git],
+        [enable_maintainer_mode="yes"],
+        [enable_maintainer_mode="no"]
+)
+
+AM_PROG_AR
 AM_MAINTAINER_MODE()
 LT_INIT
 AC_CONFIG_SRCDIR([configure.ac])
@@ -58,7 +65,7 @@ AC_SUBST([VERSION_PATCH])
 
 #AM_SILENT_RULES(yes)
 #AC_SUBST(SHARED_VERSION_INFO)
-#AM_ENABLE_SHARED(no) dnl shared libs cause too many headaches to be default
+#AC_ENABLE_SHARED([no]) dnl shared libs cause too many headaches to be default
 
 AC_LANG(C)
 
@@ -72,7 +79,7 @@ AC_PROG_FC
 AC_PROG_FC_C_O
 AC_FC_SRCEXT([f90])
 AC_FC_FREEFORM
-AC_PROG_LIBTOOL
+LT_INIT
 AC_PROG_INSTALL
 AC_PROG_LN_S
 PKG_PROG_PKG_CONFIG([])
@@ -90,7 +97,7 @@ AC_CHECK_HEADERS([assert.h errno.h math.h pthread.h stdbool.h stdint.h stdio.h s
 AC_CHECK_LIB([pthread], [pthread_create])
 
 # OpenMP
-#AC_ARG_WITH(openmp, [AC_HELP_STRING([--with-openmp],[enable OpenMP])], with_omp=$withval, with_omp=no)
+#AC_ARG_WITH(openmp, [AS_HELP_STRING([--with-openmp],[enable OpenMP])], with_omp=$withval, with_omp=no)
 #if test "x$with_omp" = xyes; then
 #   AC_DEFINE([HAVE_OPENMP], [1], [Define to use OpenMP threading.])
 #   AX_OPENMP([],
@@ -100,7 +107,7 @@ AC_CHECK_LIB([pthread], [pthread_create])
 
 # TREXIO
 
-AC_ARG_WITH(trexio, [AC_HELP_STRING([--without-trexio],[disable support for TREXIO])],
+AC_ARG_WITH(trexio, [AS_HELP_STRING([--without-trexio],[disable support for TREXIO])],
             with_trexio=$withval, with_trexio=yes)
 
 AS_IF([test "x$with_trexio" != xno], [
@@ -124,7 +131,7 @@ PKG_LIBS="$PKG_LIBS $TREXIO_LIBS"
 
 # Options.
 
-AC_ARG_ENABLE(debug, [AC_HELP_STRING([--enable-debug],[compile for debugging])], ok=$enableval, ok=no)
+AC_ARG_ENABLE(debug, [AS_HELP_STRING([--enable-debug],[compile for debugging])], ok=$enableval, ok=no)
 if test "$ok" = "yes"; then
         if test "$GCC" = "yes"; then
 	        CFLAGS="$CFLAGS \
@@ -146,20 +153,20 @@ if test "$ok" = "yes"; then
         ARGS="${ARGS} debug"
 fi
 
-AC_ARG_ENABLE(malloc-trace, [AC_HELP_STRING([--enable-malloc-trace],[use debug malloc/free])], ok=$enableval, ok=no)
+AC_ARG_ENABLE(malloc-trace, [AS_HELP_STRING([--enable-malloc-trace],[use debug malloc/free])], ok=$enableval, ok=no)
 if test "$ok" = "yes"; then
 	AC_DEFINE(MALLOC_TRACE,"malloc_trace.dat",[Define to use debugging malloc/free])
         ARGS="${ARGS} malloc-trace"
 fi
 
-AC_ARG_ENABLE(prof, [AC_HELP_STRING([--enable-prof],[compile for profiling])], ok=$enableval, ok=no)
+AC_ARG_ENABLE(prof, [AS_HELP_STRING([--enable-prof],[compile for profiling])], ok=$enableval, ok=no)
 if test "$ok" = "yes"; then
 	CFLAGS="${CFLAGS} -pg"
 	AC_DEFINE(ENABLE_PROF,1,[Define when using the profiler tool])
         ARGS="${ARGS} prof"
 fi
 
-AC_ARG_WITH(efence, [AC_HELP_STRING([--with-efence],[use ElectricFence library])], ok=$withval, ok=no)
+AC_ARG_WITH(efence, [AS_HELP_STRING([--with-efence],[use ElectricFence library])], ok=$withval, ok=no)
 if test "$ok" = "yes"; then
 	AC_CHECK_LIB(efence, malloc)
         ARGS="${ARGS} efence"
@@ -189,11 +196,16 @@ AC_TYPE_UINT64_T
 AC_CHECK_FUNCS([memset strerror])
 
 # Development mode
+if test "x$enable_maintainer_mode" == "xyes" ; then
+  QMCKL_DEVEL=" -- Developer mode"
+else
+  QMCKL_DEVEL=""
+fi
+
 AM_CONDITIONAL([QMCKL_DEVEL],[test "x$QMCKL_DEVEL" != x])
 
 if test "x${QMCKL_DEVEL}" != "x"; then
 
-  QMCKL_DEVEL=" -- Developer mode"
   AC_PROG_AWK
   AM_PATH_PYTHON
   ${PYTHON} ${srcdir}/tools/build_makefile.py
