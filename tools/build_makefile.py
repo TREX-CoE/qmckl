@@ -248,7 +248,7 @@ def main():
                     "" ]
 
     tmp = "EXTRA_DIST += "
-    r = subprocess.check_output("git ls-tree --name-only -r master".split())
+    r = subprocess.check_output("git ls-tree --name-only -r HEAD".split())
     for line in r.splitlines():
        if "share/qmckl/test_data/" in line:
          tmp += " \\\n   " + line
