@@ -56,10 +56,11 @@ header_tests  = tests/chbrclf.h tests/n2.h
 fortrandir = $(datadir)/fortran
 fortran_DATA = $(src_qmckl_f)
 
+QMCKL_TEST_DIR = $(abs_srcdir)/share/qmckl/test_data/
 
 AM_CPPFLAGS  = -I$(top_builddir)/src -I$(top_builddir)/include
-AM_CPPFLAGS += -I$(srcdir)/src -I$(srcdir)/include
-AM_CPPFLAGS += -DQMCKL_TEST_DIR="\"$(abs_srcdir)/share/qmckl/test_data/\""
+AM_CPPFLAGS += -I$(srcdir)/src -I$(srcdir)/include -I$(QMCKL_TEST_DIR)
+AM_CPPFLAGS += -DQMCKL_TEST_DIR=\"$(QMCKL_TEST_DIR)\"
 
 
 lib_LTLIBRARIES = src/libqmckl.la
