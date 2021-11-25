@@ -5,6 +5,7 @@
 from __future__ import print_function
 from glob import glob
 import os
+import subprocess
 
 def main():
     wd = os.getcwd()
@@ -247,11 +248,10 @@ def main():
                     "" ]
 
     tmp = "EXTRA_DIST += "
-    for dir in glob("share/qmckl/test_data/*"):
-      for f in glob("%s/*"%(dir)):
-        tmp += " \\\n   "+f
-    for dir in glob("share/qmckl/test_data/*.*"):
-        tmp += " \\\n   "+f
+    r = subprocess.check_output("git ls-tree --name-only -r master".split())
+    for line in r.splitlines():
+       if "share/qmckl/test_data/" in line:
+         tmp += " \\\n   " + line
     tmp += "\n"
     output += tmp.split("\n")
 
