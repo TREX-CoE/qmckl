@@ -250,6 +250,8 @@ def main():
     for dir in glob("share/qmckl/test_data/*"):
       for f in glob("%s/*"%(dir)):
         tmp += " \\\n   "+f
+    for dir in glob("share/qmckl/test_data/*.*"):
+        tmp += " \\\n   "+f
     tmp += "\n"
     output += tmp.split("\n")
 
