@@ -105,6 +105,52 @@ AC_CHECK_LIB([pthread], [pthread_create])
 #   CFLAGS="${CFLAGS} ${OPENMP_CFLAGS}"
 #fi
 
+# CHAMELEON
+AC_ARG_WITH(chameleon,
+  AS_HELP_STRING([--without-chameleon],
+                 [Do not use Chameleon. Default: auto-detect]), [
+case "$with_chameleon" in
+  no)
+    : ;;
+  yes)
+    PKG_CHECK_MODULES([LIBCHAMELEON],[chameleon >= 1.0.0],
+      [PKG_CFLAGS="$PKG_CFLAGS $LIBCHAMELEON_CFLAGS"
+      PKG_LIBS="$PKG_LIBS $LIBCHAMELEON_LIBS"]
+                      ,[
+    
+      ## something went wrong.
+      ## try to find the package without pkg-config
+    
+      ## check that the library is actually new enough.
+      ## by testing for a 1.0.0+ function which we use
+      AC_CHECK_LIB(chameleon,CHAMELEON_finalize,[LIBCHAMELEON_LIBS="-lchameleon"])
+    ])
+    AH_TEMPLATE(HAVE_CHAMELEON,[Chameleon support is available])
+  ;;
+  *)
+    if test ! -d "$withval" ; then
+      AC_MSG_ERROR([--with-chameleon path does not point to a directory])
+    fi
+    LIBCHAMELEON_LIBS="-L$with_chameleon/lib -lchameleon -lchameleon_starpu -lhqr -lcoreblas"
+    LIBCHAMELEON_CFLAGS="-I$with_chameleon/include $CFLAGS"
+    LIBCHAMELEON_CPPFLAGS="-I$with_chameleon/include $CPPFLAGS"
+  esac
+])
+
+if test "x$LIBCHAMELEON_LIBS" != "x" ; then
+  LIBS="$LIBS $LIBCHAMELEON_LIBS"
+  CFLAGS="$CFLAGS $LIBCHAMELEON_CFLAGS"
+  CPPFLAGS="$CPPFLAGS $LIBCHAMELEON_CPPFLAGS"
+  AC_CHECK_HEADERS([chameleon.h], [], [AC_MSG_ERROR("chamelon.h not found")])
+  AC_DEFINE_UNQUOTED([HAVE_CHAMELEON],1,[CHAMELEON support is available])
+fi
+
+#AS_IF([test "x$with_chameleon" != "xno"], [
+#])
+
+AC_MSG_NOTICE([CHAMELEON library support: ${with_CHAMELEON:=auto} ${LIBCHAMELEON_PATH} ${LIBCHAMELEON_LIBS}])
+
+
 # TREXIO
 
 AC_ARG_WITH(trexio, [AS_HELP_STRING([--without-trexio],[disable support for TREXIO])],
@@ -280,6 +326,7 @@ FC..............: ${FC}
 FCLAGS..........: ${FCFLAGS}
 LDFLAGS:........: ${LDFLAGS}
 LIBS............: ${LIBS}
+USE CHAMELEON...: ${with_chameleon}
 
 Package features:
   ${ARGS}
