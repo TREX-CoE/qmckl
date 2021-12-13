@@ -8,9 +8,10 @@ export VERSION=2.0
 wget https://github.com/TREX-CoE/trexio/releases/download/v${VERSION}/trexio-${VERSION}.0.tar.gz
 tar -zxf trexio-${VERSION}.0.tar.gz
 cd trexio-${VERSION}.0
-./configure --prefix=/usr --host=x86_64 CC="verificarlo-c" FC="verificarlo-f"
-make -j4
-sudo make install
+./configure --prefix=/usr CC="gcc-7" FC="gfortran-7"
+# modify LDFLAGS to include -lhdf5_hl because autoconf sometime fails to detect the HL component
+make LDFLAGS="-L/usr/lib/x86_64-linux-gnu/hdf5/serial -lhdf5_hl"
+make install
 cd ..
 
 ./autogen.sh
