@@ -4,16 +4,6 @@
 # the library dependencies and build it with Verificarlo with vfc_probes support
 # enabled.
 
-export VERSION=2.0
-wget https://github.com/TREX-CoE/trexio/releases/download/v${VERSION}/trexio-${VERSION}.0.tar.gz
-tar -zxf trexio-${VERSION}.0.tar.gz
-cd trexio-${VERSION}.0
-./configure --prefix=/usr CC="gcc-7" FC="gfortran-7"
-# modify LDFLAGS to include -lhdf5_hl because autoconf sometime fails to detect the HL component
-make LDFLAGS="-L/usr/lib/x86_64-linux-gnu/hdf5/serial -lhdf5_hl"
-make install
-cd ..
-
 ./autogen.sh
 QMCKL_DEVEL=1 ./configure --prefix=$PWD/_install \
 --enable-silent-rules --enable-maintainer-mode --enable-vfc_ci --host=x86_64 \
