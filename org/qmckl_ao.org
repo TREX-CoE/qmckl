@@ -1,4 +1,4 @@
-#+TITLE: Atomic Orbitals
+qmckl_get_ao_basis_ao_vgl#+TITLE: Atomic Orbitals
 #+SETUPFILE: ../tools/theme.setup
 #+INCLUDE: ../tools/lib.org
 
@@ -326,6 +326,10 @@ qmckl_exit_code qmckl_init_ao_basis(qmckl_context context) {
     #+end_src
 
 *** Initialization functions
+
+    ~size_max~ is the dimension of the input array, which should be
+    equal of larger than the value given in the table of section [[Context]].
+
 **** C interface
 
      #+NAME:pre2
@@ -1148,148 +1152,6 @@ qmckl_set_ao_basis_cartesian (qmckl_context context,
 }
      #+end_src
 
-   When the basis set is completely entered, extra data structures may be
-   computed to accelerate the calculations. The primitives within each
-   contraction are sorted in ascending order of their exponents, such
-   that as soon as a primitive is zero all the following functions
-   vanish. Also, it is possible to compute a nuclear radius beyond which
-   all the primitives are zero up to the numerical accuracy defined in
-   the context.
-
-     #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
-qmckl_exit_code qmckl_finalize_basis(qmckl_context context);
-     #+end_src
-
-     #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
-qmckl_exit_code qmckl_finalize_basis(qmckl_context context) {
-
-  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return qmckl_failwith( context,
-                           QMCKL_INVALID_CONTEXT,
-                           "qmckl_finalize_basis",
-                           NULL);
-  }
-
-  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
-  assert (ctx != NULL);
-
-  int64_t nucl_num = 0;
-
-  qmckl_exit_code rc = qmckl_get_nucleus_num(context, &nucl_num);
-  if (rc != QMCKL_SUCCESS) return rc;
-
-  /* nucleus_prim_index */
-  {
-    qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-    mem_info.size = (ctx->nucleus.num + (int64_t) 1) * sizeof(int64_t);
-
-    ctx->ao_basis.nucleus_prim_index = (int64_t*) qmckl_malloc(context, mem_info);
-
-    if (ctx->ao_basis.nucleus_prim_index == NULL) {
-      return qmckl_failwith( context,
-                             QMCKL_ALLOCATION_FAILED,
-                             "ao_basis.nucleus_prim_index",
-                             NULL);
-    }
-
-    for (int64_t i=0 ; i<nucl_num ; ++i) {
-      int64_t shell_idx = ctx->ao_basis.nucleus_index[i];
-      ctx->ao_basis.nucleus_prim_index[i] = ctx->ao_basis.shell_prim_index[shell_idx];
-    }
-    ctx->ao_basis.nucleus_prim_index[nucl_num] = ctx->ao_basis.prim_num;
-  }
-
-
-  /* Normalize coefficients */
-  {
-    qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-    mem_info.size = ctx->ao_basis.prim_num * sizeof(double);
-
-    ctx->ao_basis.coefficient_normalized = (double *) qmckl_malloc(context, mem_info);
-
-    if (ctx->ao_basis.coefficient_normalized == NULL) {
-      return qmckl_failwith( context,
-                             QMCKL_ALLOCATION_FAILED,
-                             "ao_basis.coefficient_normalized",
-                             NULL);
-    }
-
-    for (int64_t ishell=0 ; ishell < ctx->ao_basis.shell_num ; ++ishell) {
-      for (int64_t iprim=ctx->ao_basis.shell_prim_index[ishell] ;
-           iprim < ctx->ao_basis.shell_prim_index[ishell]+ctx->ao_basis.shell_prim_num[ishell] ;
-           ++iprim) {
-        ctx->ao_basis.coefficient_normalized[iprim] =
-          ctx->ao_basis.coefficient[iprim] * ctx->ao_basis.prim_factor[iprim] *
-          ctx->ao_basis.shell_factor[ishell];
-      }
-    }
-  }
-
-
-  /* Find max angular momentum on each nucleus */
-  {
-    qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-    mem_info.size = ctx->nucleus.num * sizeof(int32_t);
-
-    ctx->ao_basis.nucleus_max_ang_mom = (int32_t *) qmckl_malloc(context, mem_info);
-
-    if (ctx->ao_basis.nucleus_max_ang_mom == NULL) {
-      return qmckl_failwith( context,
-                             QMCKL_ALLOCATION_FAILED,
-                             "ao_basis.nucleus_max_ang_mom",
-                             NULL);
-    }
-
-    for (int64_t inucl=0 ; inucl < nucl_num ; ++inucl) {
-      ctx->ao_basis.nucleus_max_ang_mom[inucl] = 0;
-      for (int64_t ishell=ctx->ao_basis.nucleus_index[inucl]  ;
-           ishell < ctx->ao_basis.nucleus_index[inucl] + ctx->ao_basis.nucleus_shell_num[inucl] ;
-           ++ishell) {
-        ctx->ao_basis.nucleus_max_ang_mom[inucl] =
-          ctx->ao_basis.nucleus_max_ang_mom[inucl] > ctx->ao_basis.shell_ang_mom[ishell] ?
-          ctx->ao_basis.nucleus_max_ang_mom[inucl] : ctx->ao_basis.shell_ang_mom[ishell] ;
-      }
-    }
-  }
-
-  /* Find distance beyond which all AOs are zero.
-     The distance is obtained by sqrt(log(cutoff)*range) */
-  {
-    if (ctx->ao_basis.type == 'G') {
-      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-      mem_info.size = ctx->nucleus.num * sizeof(double);
-
-      ctx->ao_basis.nucleus_range = (double *) qmckl_malloc(context, mem_info);
-
-      if (ctx->ao_basis.nucleus_range == NULL) {
-        return qmckl_failwith( context,
-                               QMCKL_ALLOCATION_FAILED,
-                               "ao_basis.nucleus_range",
-                               NULL);
-      }
-
-      for (int64_t inucl=0 ; inucl < ctx->nucleus.num ; ++inucl) {
-        ctx->ao_basis.nucleus_range[inucl] = 0.;
-        for (int64_t ishell=ctx->ao_basis.nucleus_index[inucl]  ;
-             ishell < ctx->ao_basis.nucleus_index[inucl] + ctx->ao_basis.nucleus_shell_num[inucl] ;
-             ++ishell) {
-          for (int64_t iprim=ctx->ao_basis.shell_prim_index[ishell] ;
-               iprim < ctx->ao_basis.shell_prim_index[ishell] + ctx->ao_basis.shell_prim_num[ishell] ;
-               ++iprim) {
-            double range = 1./ctx->ao_basis.exponent[iprim];
-            ctx->ao_basis.nucleus_range[inucl] =
-              ctx->ao_basis.nucleus_range[inucl] > range ?
-              ctx->ao_basis.nucleus_range[inucl] : range;
-          }
-        }
-      }
-    }
-  }
-  /* TODO : sort the basis set here */
-  return QMCKL_SUCCESS;
-}
-     #+end_src
-
 **** Fortran interface
 
       #+begin_src f90 :tangle (eval fh_func) :comments org
@@ -1472,8 +1334,7 @@ end interface
 *** Access functions
 
     ~size_max~ is the dimension of the input array, which should be
-    equal of larger than the value given in the table of the [[Context]]
-    section.
+    equal of larger than the value given in the table of section [[Context]].
 
 **** C interface
 
@@ -2595,15 +2456,160 @@ for (int64_t i=0 ; i < ao_num ; ++i) {
 
    The following data is computed as described in the next sections:
 
-   |--------------------------+----------------------------------+-----------------------------------------------------------------------------------------------|
-   | Variable                 | Type                             | Description                                                                                   |
-   |--------------------------+----------------------------------+-----------------------------------------------------------------------------------------------|
-   | ~primitive_vgl~          | ~double[5][elec_num][prim_num]~  | Value, gradients, Laplacian of the primitives at electron positions                           |
-   | ~primitive_vgl_date~     | ~uint64_t~                       | Last modification date of Value, gradients, Laplacian of the primitives at electron positions |
-   | ~shell_vgl~              | ~double[5][elec_num][shell_num]~ | Value, gradients, Laplacian of the primitives at electron positions                           |
-   | ~shell_vgl_date~         | ~uint64_t~                       | Last modification date of Value, gradients, Laplacian of the AOs at electron positions    |
-   | ~ao_vgl~                 | ~double[5][elec_num][ao_num]~    | Value, gradients, Laplacian of the primitives at electron positions                           |
-   | ~ao_vgl_date~            | ~uint64_t~                       | Last modification date of Value, gradients, Laplacian of the AOs at electron positions    |
+   |----------------------+----------------------------------+-----------------------------------------------------------------------------------------------|
+   | Variable             | Type                             | Description                                                                                   |
+   |----------------------+----------------------------------+-----------------------------------------------------------------------------------------------|
+   | ~primitive_vgl~      | ~double[5][elec_num][prim_num]~  | Value, gradients, Laplacian of the primitives at electron positions                           |
+   | ~primitive_vgl_date~ | ~uint64_t~                       | Last modification date of Value, gradients, Laplacian of the primitives at electron positions |
+   | ~shell_vgl~          | ~double[5][elec_num][shell_num]~ | Value, gradients, Laplacian of the primitives at electron positions                           |
+   | ~shell_vgl_date~     | ~uint64_t~                       | Last modification date of Value, gradients, Laplacian of the AOs at electron positions        |
+   | ~ao_vgl~             | ~double[5][elec_num][ao_num]~    | Value, gradients, Laplacian of the primitives at electron positions                           |
+   | ~ao_vgl_date~        | ~uint64_t~                       | Last modification date of Value, gradients, Laplacian of the AOs at electron positions        |
+
+   
+*** After initialization
+    
+    When the basis set is completely entered, extra data structures may be
+    computed to accelerate the calculations. The primitives within each
+    contraction are sorted in ascending order of their exponents, such
+    that as soon as a primitive is zero all the following functions
+    vanish. Also, it is possible to compute a nuclear radius beyond which
+    all the primitives are zero up to the numerical accuracy defined in
+    the context.
+
+      #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_finalize_basis (qmckl_context context);
+      #+end_src
+
+      #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
+qmckl_exit_code qmckl_finalize_basis(qmckl_context context) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_finalize_basis",
+                           NULL);
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  int64_t nucl_num = 0;
+
+  qmckl_exit_code rc = qmckl_get_nucleus_num(context, &nucl_num);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  /* nucleus_prim_index */
+  {
+    qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+    mem_info.size = (ctx->nucleus.num + (int64_t) 1) * sizeof(int64_t);
+
+    ctx->ao_basis.nucleus_prim_index = (int64_t*) qmckl_malloc(context, mem_info);
+
+    if (ctx->ao_basis.nucleus_prim_index == NULL) {
+      return qmckl_failwith( context,
+                             QMCKL_ALLOCATION_FAILED,
+                             "ao_basis.nucleus_prim_index",
+                             NULL);
+    }
+
+    for (int64_t i=0 ; i<nucl_num ; ++i) {
+      int64_t shell_idx = ctx->ao_basis.nucleus_index[i];
+      ctx->ao_basis.nucleus_prim_index[i] = ctx->ao_basis.shell_prim_index[shell_idx];
+    }
+    ctx->ao_basis.nucleus_prim_index[nucl_num] = ctx->ao_basis.prim_num;
+  }
+
+
+  /* Normalize coefficients */
+  {
+    qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+    mem_info.size = ctx->ao_basis.prim_num * sizeof(double);
+
+    ctx->ao_basis.coefficient_normalized = (double *) qmckl_malloc(context, mem_info);
+
+    if (ctx->ao_basis.coefficient_normalized == NULL) {
+      return qmckl_failwith( context,
+                             QMCKL_ALLOCATION_FAILED,
+                             "ao_basis.coefficient_normalized",
+                             NULL);
+    }
+
+    for (int64_t ishell=0 ; ishell < ctx->ao_basis.shell_num ; ++ishell) {
+      for (int64_t iprim=ctx->ao_basis.shell_prim_index[ishell] ;
+           iprim < ctx->ao_basis.shell_prim_index[ishell]+ctx->ao_basis.shell_prim_num[ishell] ;
+           ++iprim) {
+        ctx->ao_basis.coefficient_normalized[iprim] =
+          ctx->ao_basis.coefficient[iprim] * ctx->ao_basis.prim_factor[iprim] *
+          ctx->ao_basis.shell_factor[ishell];
+      }
+    }
+  }
+
+
+  /* Find max angular momentum on each nucleus */
+  {
+    qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+    mem_info.size = ctx->nucleus.num * sizeof(int32_t);
+
+    ctx->ao_basis.nucleus_max_ang_mom = (int32_t *) qmckl_malloc(context, mem_info);
+
+    if (ctx->ao_basis.nucleus_max_ang_mom == NULL) {
+      return qmckl_failwith( context,
+                             QMCKL_ALLOCATION_FAILED,
+                             "ao_basis.nucleus_max_ang_mom",
+                             NULL);
+    }
+
+    for (int64_t inucl=0 ; inucl < nucl_num ; ++inucl) {
+      ctx->ao_basis.nucleus_max_ang_mom[inucl] = 0;
+      for (int64_t ishell=ctx->ao_basis.nucleus_index[inucl]  ;
+           ishell < ctx->ao_basis.nucleus_index[inucl] + ctx->ao_basis.nucleus_shell_num[inucl] ;
+           ++ishell) {
+        ctx->ao_basis.nucleus_max_ang_mom[inucl] =
+          ctx->ao_basis.nucleus_max_ang_mom[inucl] > ctx->ao_basis.shell_ang_mom[ishell] ?
+          ctx->ao_basis.nucleus_max_ang_mom[inucl] : ctx->ao_basis.shell_ang_mom[ishell] ;
+      }
+    }
+  }
+
+  /* Find distance beyond which all AOs are zero.
+     The distance is obtained by sqrt(log(cutoff)*range) */
+  {
+    if (ctx->ao_basis.type == 'G') {
+      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+      mem_info.size = ctx->nucleus.num * sizeof(double);
+
+      ctx->ao_basis.nucleus_range = (double *) qmckl_malloc(context, mem_info);
+
+      if (ctx->ao_basis.nucleus_range == NULL) {
+        return qmckl_failwith( context,
+                               QMCKL_ALLOCATION_FAILED,
+                               "ao_basis.nucleus_range",
+                               NULL);
+      }
+
+      for (int64_t inucl=0 ; inucl < ctx->nucleus.num ; ++inucl) {
+        ctx->ao_basis.nucleus_range[inucl] = 0.;
+        for (int64_t ishell=ctx->ao_basis.nucleus_index[inucl]  ;
+             ishell < ctx->ao_basis.nucleus_index[inucl] + ctx->ao_basis.nucleus_shell_num[inucl] ;
+             ++ishell) {
+          for (int64_t iprim=ctx->ao_basis.shell_prim_index[ishell] ;
+               iprim < ctx->ao_basis.shell_prim_index[ishell] + ctx->ao_basis.shell_prim_num[ishell] ;
+               ++iprim) {
+            double range = 1./ctx->ao_basis.exponent[iprim];
+            ctx->ao_basis.nucleus_range[inucl] =
+              ctx->ao_basis.nucleus_range[inucl] > range ?
+              ctx->ao_basis.nucleus_range[inucl] : range;
+          }
+        }
+      }
+    }
+  }
+  /* TODO : sort the basis set here */
+  return QMCKL_SUCCESS;
+}
+      #+end_src
 
 *** Access functions
 
@@ -2613,9 +2619,10 @@ qmckl_get_ao_basis_primitive_vgl (qmckl_context context,
                                   double* const primitive_vgl,
                                   const int64_t size_max);
     #+end_src
-
+    
     Returns the array of values, gradients an Laplacian of primitive
     basis functions evaluated at the current coordinates.
+    See section [[Computation of primitives]].
 
     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
 qmckl_exit_code
@@ -2667,7 +2674,6 @@ qmckl_get_ao_basis_primitive_vgl (qmckl_context context,
     end interface
     #+end_src
 
-    
 
     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
 qmckl_exit_code
@@ -2675,6 +2681,9 @@ qmckl_get_ao_basis_shell_vgl (qmckl_context context,
                               double* const shell_vgl,
                               const int64_t size_max);
     #+end_src
+
+    Returns the array of values, gradients an Laplacian of contracted shells
+    evaluated at the current coordinates. See section [[Computation of shells]].
 
     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
 qmckl_exit_code
@@ -2724,6 +2733,67 @@ qmckl_get_ao_basis_shell_vgl (qmckl_context context,
         integer (c_int64_t) , intent(in)  , value :: size_max
       end function
     end interface
+    #+end_src
+
+
+    #+begin_src c :comments org :tangle (eval h_func) :noweb yes
+qmckl_exit_code
+qmckl_get_ao_basis_ao_vgl (qmckl_context context,
+                           double* const ao_vgl,
+                           const int64_t size_max);
+    #+end_src
+
+    Returns the array of values, gradients an Laplacian of the atomic orbitals
+    evaluated at the current coordinates.
+    See section [[Combining radial and polynomial parts]].
+    
+    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code
+qmckl_get_ao_basis_ao_vgl (qmckl_context context,
+                           double* const ao_vgl,
+                           const int64_t size_max)
+{
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_get_ao_vgl",
+                           NULL);
+  }
+
+  qmckl_exit_code rc;
+
+  rc = qmckl_provide_ao_vgl(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  size_t sze = ctx->ao_basis.ao_num * 5 * ctx->electron.num;
+  if (size_max < sze) {
+    return qmckl_failwith( context,
+                           QMCKL_FAILURE,
+                           "qmckl_get_ao_basis_ao_vgl",
+                           "input array too small");
+  }
+  memcpy(ao_vgl, ctx->ao_basis.ao_vgl, sze * sizeof(double));
+
+  return QMCKL_SUCCESS;
+}
+    #+end_src
+
+    #+begin_src f90 :tangle (eval fh_func) :comments org :exports none
+  interface
+     integer(c_int32_t) function qmckl_get_ao_basis_ao_vgl (context, &
+          ao_vgl, size_max) bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       implicit none
+       integer (c_int64_t) , intent(in)  , value :: context
+       double precision,     intent(out)         :: ao_vgl(*)
+       integer (c_int64_t) , intent(in)  , value :: size_max
+     end function qmckl_get_ao_basis_ao_vgl
+  end interface
     #+end_src
 
 * Radial part
@@ -2856,8 +2926,8 @@ end function qmckl_ao_gaussian_vgl
 
    #+begin_src f90 :tangle (eval fh_func) :exports none
   interface
-     integer(c_int32_t) function qmckl_ao_gaussian_vgl(context, X, R, n, A, VGL, ldv) &
-          bind(C)
+     integer(c_int32_t) function qmckl_ao_gaussian_vgl(context, &
+          X, R, n, A, VGL, ldv) bind(C)
        use, intrinsic :: iso_c_binding
        integer (c_int64_t) , intent(in) , value :: context
        integer (c_int64_t) , intent(in) , value :: ldv
@@ -2946,22 +3016,20 @@ assert(0 == test_qmckl_ao_gaussian_vgl(context));
 ** TODO General functions for Radial functions on a grid           :noexport:
 ** TODO Helper functions to accelerate calculations                :noexport:
 
-  |--------------------------+----------------------------------+-----------------------------------------------------------------------------------------------|
-  | Variable                 | Type                             | Description                                                                                   |
-  |--------------------------+----------------------------------+-----------------------------------------------------------------------------------------------|
-  | ~coefficient_normalized~ | ~double[prim_num]~               | Normalized primitive coefficients                                                             |
-  | ~nucleus_prim_index~     | ~int64_t[nucl_num]~              | Index of the first primitive for each nucleus                                                 |
-  | ~nucleus_max_ang_mom~    | ~int32_t[nucl_num]~              | Maximum angular momentum for each nucleus                                                     |
-  | ~nucleus_range~          | ~double[nucl_num]~               | Distance beyond which all the AOs are zero                                                    |
-  |--------------------------+----------------------------------+-----------------------------------------------------------------------------------------------|
-  | ~nucl_shell_index~       | ~int64_t[nucl_num]~              | Index of the first shell for each nucleus                                                     |
-  | ~exponent_sorted~        | ~double[prim_num]~               | Array of exponents for sorted primitives                                                      |
-  | ~coeff_norm_sorted~      | ~double[prim_num]~               | Array of normalized coefficients for sorted primitives                                        |
-  | ~prim_factor_sorted~     | ~double[prim_num]~               | Normalization factors of the sorted primtives                                                 |
+  |--------------------------+---------------------+--------------------------------------------------------|
+  | Variable                 | Type                | Description                                            |
+  |--------------------------+---------------------+--------------------------------------------------------|
+  | ~coefficient_normalized~ | ~double[prim_num]~  | Normalized primitive coefficients                      |
+  | ~nucleus_prim_index~     | ~int64_t[nucl_num]~ | Index of the first primitive for each nucleus          |
+  | ~nucleus_max_ang_mom~    | ~int32_t[nucl_num]~ | Maximum angular momentum for each nucleus              |
+  | ~nucleus_range~          | ~double[nucl_num]~  | Distance beyond which all the AOs are zero             |
+  |--------------------------+---------------------+--------------------------------------------------------|
+  | ~nucl_shell_index~       | ~int64_t[nucl_num]~ | Index of the first shell for each nucleus              |
+  | ~exponent_sorted~        | ~double[prim_num]~  | Array of exponents for sorted primitives               |
+  | ~coeff_norm_sorted~      | ~double[prim_num]~  | Array of normalized coefficients for sorted primitives |
+  | ~prim_factor_sorted~     | ~double[prim_num]~  | Normalization factors of the sorted primtives          |
 
 ** Computation of primitives
-
-*** Compute
    :PROPERTIES:
    :Name:     qmckl_compute_ao_basis_primitive_gaussian_vgl
    :CRetType: qmckl_exit_code
@@ -2969,36 +3037,36 @@ assert(0 == test_qmckl_ao_gaussian_vgl(context));
    :END:
 
    #+NAME: qmckl_ao_basis_primitive_gaussian_vgl_args
-  | Variable             | Type                            | In/Out | Description                                      |
-  |----------------------+---------------------------------+--------+--------------------------------------------------|
-  | ~context~            | ~qmckl_context~                 | in     | Global state                                     |
-  | ~prim_num~           | ~int64_t~                       | in     | Number of primitives                             |
-  | ~elec_num~           | ~int64_t~                       | in     | Number of electrons                              |
-  | ~nucl_num~           | ~int64_t~                       | in     | Number of nuclei                                 |
-  | ~nucleus_prim_index~ | ~int64_t[nucl_num]~             | in     | Index of the 1st primitive of each nucleus       |
-  | ~elec_coord~         | ~double[3][elec_num]~           | in     | Electron coordinates                             |
-  | ~nucl_coord~         | ~double[3][elec_num]~           | in     | Nuclear coordinates                              |
-  | ~expo~               | ~double[prim_num]~              | in     | Exponents of the primitives                      |
-  | ~primitive_vgl~      | ~double[5][elec_num][prim_num]~ | out    | Value, gradients and Laplacian of the primitives |
+   | Variable             | Type                            | In/Out | Description                                      |
+   |----------------------+---------------------------------+--------+--------------------------------------------------|
+   | ~context~            | ~qmckl_context~                 | in     | Global state                                     |
+   | ~prim_num~           | ~int64_t~                       | in     | Number of primitives                             |
+   | ~elec_num~           | ~int64_t~                       | in     | Number of electrons                              |
+   | ~nucl_num~           | ~int64_t~                       | in     | Number of nuclei                                 |
+   | ~nucleus_prim_index~ | ~int64_t[nucl_num]~             | in     | Index of the 1st primitive of each nucleus       |
+   | ~elec_coord~         | ~double[3][elec_num]~           | in     | Electron coordinates                             |
+   | ~nucl_coord~         | ~double[3][elec_num]~           | in     | Nuclear coordinates                              |
+   | ~expo~               | ~double[prim_num]~              | in     | Exponents of the primitives                      |
+   | ~primitive_vgl~      | ~double[5][elec_num][prim_num]~ | out    | Value, gradients and Laplacian of the primitives |
 
-    #+CALL: generate_c_header(table=qmckl_ao_basis_primitive_gaussian_vgl_args,rettyp=get_value("CRetType"),fname="qmckl_compute_ao_basis_primitive_gaussian_vgl"))
+   #+CALL: generate_c_header(table=qmckl_ao_basis_primitive_gaussian_vgl_args,rettyp=get_value("CRetType"),fname="qmckl_compute_ao_basis_primitive_gaussian_vgl"))
 
-    #+RESULTS:
-    #+begin_src c :tangle (eval h_func) :comments org
-qmckl_exit_code qmckl_compute_ao_basis_primitive_gaussian_vgl (
-          const qmckl_context context,
-          const int64_t prim_num,
-          const int64_t elec_num,
-          const int64_t nucl_num,
-          const int64_t nucleus_prim_index,
-          const double elec_coord,
-          const double nucl_coord,
-          const double expo,
-          double* const primitive_vgl ); 
-    #+end_src
+   #+RESULTS:
+   #+begin_src c :tangle (eval h_func) :comments org
+   qmckl_exit_code qmckl_compute_ao_basis_primitive_gaussian_vgl (
+         const qmckl_context context,
+         const int64_t prim_num,
+         const int64_t elec_num,
+         const int64_t nucl_num,
+         const int64_t* nucleus_prim_index,
+         const double* elec_coord,
+         const double* nucl_coord,
+         const double* expo,
+         double* const primitive_vgl ); 
+   #+end_src
 
 
-    #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+   #+begin_src f90 :comments org :tangle (eval f) :noweb yes
 integer function qmckl_compute_ao_basis_primitive_gaussian_vgl_f( &
      context, prim_num, elec_num, nucl_num,                       &
      nucleus_prim_index, elec_coord, nucl_coord,                  &
@@ -3051,51 +3119,51 @@ integer function qmckl_compute_ao_basis_primitive_gaussian_vgl_f( &
   end do
 
 end function qmckl_compute_ao_basis_primitive_gaussian_vgl_f
-    #+end_src
+   #+end_src
 
-    #+CALL: generate_c_interface(table=qmckl_ao_basis_primitive_gaussian_vgl_args,rettyp=get_value("CRetType"),fname="qmckl_compute_ao_basis_primitive_gaussian_vgl"))
+   #+CALL: generate_c_interface(table=qmckl_ao_basis_primitive_gaussian_vgl_args,rettyp=get_value("CRetType"),fname="qmckl_compute_ao_basis_primitive_gaussian_vgl"))
 
-    #+RESULTS:
-    #+begin_src f90 :tangle (eval f) :comments org :exports none
-    integer(c_int32_t) function qmckl_compute_ao_basis_primitive_gaussian_vgl &
-        (context, &
-         prim_num, &
-         elec_num, &
-         nucl_num, &
-         nucleus_prim_index, &
-         elec_coord, &
-         nucl_coord, &
-         expo, &
-         primitive_vgl) &
-        bind(C) result(info)
+   #+RESULTS:
+   #+begin_src f90 :tangle (eval f) :comments org :exports none
+   integer(c_int32_t) function qmckl_compute_ao_basis_primitive_gaussian_vgl &
+       (context, &
+        prim_num, &
+        elec_num, &
+        nucl_num, &
+        nucleus_prim_index, &
+        elec_coord, &
+        nucl_coord, &
+        expo, &
+        primitive_vgl) &
+       bind(C) result(info)
 
-      use, intrinsic :: iso_c_binding
-      implicit none
+     use, intrinsic :: iso_c_binding
+     implicit none
 
-      integer (c_int64_t) , intent(in)  , value :: context
-      integer (c_int64_t) , intent(in)  , value :: prim_num
-      integer (c_int64_t) , intent(in)  , value :: elec_num
-      integer (c_int64_t) , intent(in)  , value :: nucl_num
-      integer (c_int64_t) , intent(in)  , value :: nucleus_prim_index
-      real    (c_double ) , intent(in)  , value :: elec_coord
-      real    (c_double ) , intent(in)  , value :: nucl_coord
-      real    (c_double ) , intent(in)  , value :: expo
-      real    (c_double ) , intent(out)         :: primitive_vgl
+     integer (c_int64_t) , intent(in)  , value :: context
+     integer (c_int64_t) , intent(in)  , value :: prim_num
+     integer (c_int64_t) , intent(in)  , value :: elec_num
+     integer (c_int64_t) , intent(in)  , value :: nucl_num
+     integer (c_int64_t) , intent(in)          :: nucleus_prim_index(nucl_num)
+     real    (c_double ) , intent(in)          :: elec_coord(elec_num,3)
+     real    (c_double ) , intent(in)          :: nucl_coord(elec_num,3)
+     real    (c_double ) , intent(in)          :: expo(prim_num)
+     real    (c_double ) , intent(out)         :: primitive_vgl(prim_num,elec_num,5)
 
-      integer(c_int32_t), external :: qmckl_compute_ao_basis_primitive_gaussian_vgl_f
-      info = qmckl_compute_ao_basis_primitive_gaussian_vgl_f &
-             (context, &
-         prim_num, &
-         elec_num, &
-         nucl_num, &
-         nucleus_prim_index, &
-         elec_coord, &
-         nucl_coord, &
-         expo, &
-         primitive_vgl)
+     integer(c_int32_t), external :: qmckl_compute_ao_basis_primitive_gaussian_vgl_f
+     info = qmckl_compute_ao_basis_primitive_gaussian_vgl_f &
+            (context, &
+        prim_num, &
+        elec_num, &
+        nucl_num, &
+        nucleus_prim_index, &
+        elec_coord, &
+        nucl_coord, &
+        expo, &
+        primitive_vgl)
 
-    end function qmckl_compute_ao_basis_primitive_gaussian_vgl
-    #+end_src
+   end function qmckl_compute_ao_basis_primitive_gaussian_vgl
+   #+end_src
 
 *** Provide                                                        :noexport:
 
@@ -3218,44 +3286,44 @@ print ( "[7][4][26] : %e"% lf(a,x,y))
     : [7][3][26] : 3.495056e-03
     : [7][4][26] : 2.040013e-02
 
-     #+begin_src c :tangle (eval c_test) :exports none
+    #+begin_src c :tangle (eval c_test) :exports none
 {
 #define walk_num chbrclf_walk_num
 #define elec_num chbrclf_elec_num
 #define prim_num chbrclf_prim_num
 
-int64_t elec_up_num   = chbrclf_elec_up_num;
-int64_t elec_dn_num   = chbrclf_elec_dn_num;
-double* elec_coord    = &(chbrclf_elec_coord[0][0][0]);
+  int64_t elec_up_num   = chbrclf_elec_up_num;
+  int64_t elec_dn_num   = chbrclf_elec_dn_num;
+  double* elec_coord    = &(chbrclf_elec_coord[0][0][0]);
 
-rc = qmckl_set_electron_num (context, elec_up_num, elec_dn_num);
-assert (rc == QMCKL_SUCCESS);
+  rc = qmckl_set_electron_num (context, elec_up_num, elec_dn_num);
+  assert (rc == QMCKL_SUCCESS);
 
-rc = qmckl_set_electron_walk_num (context, walk_num);
-assert (rc == QMCKL_SUCCESS);
+  rc = qmckl_set_electron_walk_num (context, walk_num);
+  assert (rc == QMCKL_SUCCESS);
 
-assert(qmckl_electron_provided(context));
+  assert(qmckl_electron_provided(context));
 
-rc = qmckl_set_electron_coord (context, 'N', elec_coord);
-assert(rc == QMCKL_SUCCESS);
+  rc = qmckl_set_electron_coord (context, 'N', elec_coord);
+  assert(rc == QMCKL_SUCCESS);
 
 
 
-double prim_vgl[5][elec_num][prim_num];
+  double prim_vgl[5][elec_num][prim_num];
 
-rc = qmckl_get_ao_basis_primitive_vgl(context, &(prim_vgl[0][0][0]));
-assert (rc == QMCKL_SUCCESS);
+  rc = qmckl_get_ao_basis_primitive_vgl(context, &(prim_vgl[0][0][0]));
+  assert (rc == QMCKL_SUCCESS);
 
-assert( fabs(prim_vgl[0][26][7] - ( 1.0501570432064878E-003)) < 1.e-14 );
-assert( fabs(prim_vgl[1][26][7] - (-7.5014974095310560E-004)) < 1.e-14 );
-assert( fabs(prim_vgl[2][26][7] - (-3.8250692897610380E-003)) < 1.e-14 );
-assert( fabs(prim_vgl[3][26][7] - ( 3.4950559194080275E-003)) < 1.e-14 );
-assert( fabs(prim_vgl[4][26][7] - ( 2.0392163767356572E-002)) < 1.e-14 );
+  assert( fabs(prim_vgl[0][26][7] - ( 1.0501570432064878E-003)) < 1.e-14 );
+  assert( fabs(prim_vgl[1][26][7] - (-7.5014974095310560E-004)) < 1.e-14 );
+  assert( fabs(prim_vgl[2][26][7] - (-3.8250692897610380E-003)) < 1.e-14 );
+  assert( fabs(prim_vgl[3][26][7] - ( 3.4950559194080275E-003)) < 1.e-14 );
+  assert( fabs(prim_vgl[4][26][7] - ( 2.0392163767356572E-002)) < 1.e-14 );
 
 }
 
 
-     #+end_src
+    #+end_src
 
 *** Ideas for improvement                                          :noexport:
 
@@ -3288,31 +3356,29 @@ for (j=0 ; j<elec_num ; ++j) {
     #+end_src
 
 ** Computation of shells
-
-*** Compute
    :PROPERTIES:
    :Name:     qmckl_compute_ao_basis_shell_gaussian_vgl
    :CRetType: qmckl_exit_code
    :FRetType: qmckl_exit_code
    :END:
 
-    #+NAME: qmckl_ao_basis_shell_gaussian_vgl_args
-  | Variable            | Type                             | In/Out | Description                                  |
-  |---------------------+----------------------------------+--------+----------------------------------------------|
-  | ~context~           | ~qmckl_context~                  | in     | Global state                                 |
-  | ~prim_num~          | ~int64_t~                        | in     | Number of primitives                         |
-  | ~shell_num~         | ~int64_t~                        | in     | Number of shells                             |
-  | ~elec_num~          | ~int64_t~                        | in     | Number of electrons                          |
-  | ~nucl_num~          | ~int64_t~                        | in     | Number of nuclei                             |
-  | ~nucleus_shell_num~ | ~int64_t[nucl_num]~              | in     | Number of shells for each nucleus            |
-  | ~nucleus_index~     | ~int64_t[nucl_num]~              | in     | Index of the 1st shell of each nucleus       |
-  | ~shell_prim_index~  | ~int64_t[shell_num]~             | in     | Index of the 1st primitive of each shell     |
-  | ~shell_prim_num~    | ~int64_t[shell_num]~             | in     | Number of primitives per shell               |
-  | ~elec_coord~        | ~double[3][elec_num]~            | in     | Electron coordinates                         |
-  | ~nucl_coord~        | ~double[3][elec_num]~            | in     | Nuclear coordinates                          |
-  | ~expo~              | ~double[prim_num]~               | in     | Exponents of the primitives                  |
-  | ~coef_normalized~   | ~double[prim_num]~               | in     | Coefficients of the primitives               |
-  | ~shell_vgl~         | ~double[5][elec_num][shell_num]~ | out    | Value, gradients and Laplacian of the shells |
+   #+NAME: qmckl_ao_basis_shell_gaussian_vgl_args
+   | Variable            | Type                             | In/Out | Description                                  |
+   |---------------------+----------------------------------+--------+----------------------------------------------|
+   | ~context~           | ~qmckl_context~                  | in     | Global state                                 |
+   | ~prim_num~          | ~int64_t~                        | in     | Number of primitives                         |
+   | ~shell_num~         | ~int64_t~                        | in     | Number of shells                             |
+   | ~elec_num~          | ~int64_t~                        | in     | Number of electrons                          |
+   | ~nucl_num~          | ~int64_t~                        | in     | Number of nuclei                             |
+   | ~nucleus_shell_num~ | ~int64_t[nucl_num]~              | in     | Number of shells for each nucleus            |
+   | ~nucleus_index~     | ~int64_t[nucl_num]~              | in     | Index of the 1st shell of each nucleus       |
+   | ~shell_prim_index~  | ~int64_t[shell_num]~             | in     | Index of the 1st primitive of each shell     |
+   | ~shell_prim_num~    | ~int64_t[shell_num]~             | in     | Number of primitives per shell               |
+   | ~elec_coord~        | ~double[3][elec_num]~            | in     | Electron coordinates                         |
+   | ~nucl_coord~        | ~double[3][elec_num]~            | in     | Nuclear coordinates                          |
+   | ~expo~              | ~double[prim_num]~               | in     | Exponents of the primitives                  |
+   | ~coef_normalized~   | ~double[prim_num]~               | in     | Coefficients of the primitives               |
+   | ~shell_vgl~         | ~double[5][elec_num][shell_num]~ | out    | Value, gradients and Laplacian of the shells |
 
    #+CALL: generate_c_header(table=qmckl_ao_basis_shell_gaussian_vgl_args,rettyp=get_value("CRetType"),fname="qmckl_compute_ao_basis_shell_gaussian_vgl"))
 
@@ -3324,18 +3390,18 @@ for (j=0 ; j<elec_num ; ++j) {
          const int64_t shell_num,
          const int64_t elec_num,
          const int64_t nucl_num,
-         const int64_t nucleus_shell_num,
-         const int64_t nucleus_index,
-         const int64_t shell_prim_index,
-         const int64_t shell_prim_num,
-         const double elec_coord,
-         const double nucl_coord,
-         const double expo,
-         const double coef_normalized,
+         const int64_t* nucleus_shell_num,
+         const int64_t* nucleus_index,
+         const int64_t* shell_prim_index,
+         const int64_t* shell_prim_num,
+         const double* elec_coord,
+         const double* nucl_coord,
+         const double* expo,
+         const double* coef_normalized,
          double* const shell_vgl ); 
    #+end_src
 
-    #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+   #+begin_src f90 :comments org :tangle (eval f) :noweb yes
 integer function qmckl_compute_ao_basis_shell_gaussian_vgl_f( &
      context, prim_num, shell_num, elec_num, nucl_num,        &
      nucleus_shell_num, nucleus_index, shell_prim_index,      &
@@ -3360,6 +3426,8 @@ integer function qmckl_compute_ao_basis_shell_gaussian_vgl_f( &
   double precision      , intent(out) :: shell_vgl(shell_num,elec_num,5)
 
   integer*8 :: inucl, iprim, ielec, ishell
+  integer*8 :: ishell_start, ishell_end
+  integer*8 :: iprim_start , iprim_end
   double precision :: x, y, z, two_a, ar2, r2, v, cutoff
 
   info = QMCKL_SUCCESS
@@ -3370,6 +3438,10 @@ integer function qmckl_compute_ao_basis_shell_gaussian_vgl_f( &
 
   do inucl=1,nucl_num
 
+     ! C is zero-based, so shift bounds by one
+     ishell_start = nucleus_index(inucl) + 1
+     ishell_end   = nucleus_index(inucl) + nucleus_shell_num(inucl)
+
      do ielec = 1, elec_num
 
         x = elec_coord(ielec,1) - nucl_coord(inucl,1)
@@ -3378,8 +3450,7 @@ integer function qmckl_compute_ao_basis_shell_gaussian_vgl_f( &
 
         r2 = x*x + y*y + z*z
 
-        do ishell=nucleus_index(inucl)+1, nucleus_index(inucl)+nucleus_shell_num(inucl)
-           ! C is zero-based, so shift bounds by one
+        do ishell=ishell_start, ishell_end
 
            shell_vgl(ishell, ielec, 1) = 0.d0
            shell_vgl(ishell, ielec, 2) = 0.d0
@@ -3387,7 +3458,10 @@ integer function qmckl_compute_ao_basis_shell_gaussian_vgl_f( &
            shell_vgl(ishell, ielec, 4) = 0.d0
            shell_vgl(ishell, ielec, 5) = 0.d0
 
-           do iprim = shell_prim_index(ishell)+1, shell_prim_index(ishell)+shell_prim_num(ishell)
+           iprim_start = shell_prim_index(ishell) + 1
+           iprim_end   = shell_prim_index(ishell) + shell_prim_num(ishell)
+
+           do iprim = iprim_start, iprim_end
 
               ar2 = expo(iprim)*r2
               if (ar2 > cutoff) then
@@ -3420,66 +3494,66 @@ integer function qmckl_compute_ao_basis_shell_gaussian_vgl_f( &
   end do
 
 end function qmckl_compute_ao_basis_shell_gaussian_vgl_f
-    #+end_src
+   #+end_src
 
-    #+CALL: generate_c_interface(table=qmckl_ao_basis_shell_gaussian_vgl_args,rettyp=get_value("CRetType"),fname="qmckl_compute_ao_basis_shell_gaussian_vgl"))
+   #+CALL: generate_c_interface(table=qmckl_ao_basis_shell_gaussian_vgl_args,rettyp=get_value("CRetType"),fname="qmckl_compute_ao_basis_shell_gaussian_vgl"))
 
-    #+RESULTS:
-    #+begin_src f90 :tangle (eval f) :comments org :exports none
-    integer(c_int32_t) function qmckl_compute_ao_basis_shell_gaussian_vgl &
-        (context, &
-         prim_num, &
-         shell_num, &
-         elec_num, &
-         nucl_num, &
-         nucleus_shell_num, &
-         nucleus_index, &
-         shell_prim_index, &
-         shell_prim_num, &
-         elec_coord, &
-         nucl_coord, &
-         expo, &
-         coef_normalized, &
-         shell_vgl) &
-        bind(C) result(info)
+   #+RESULTS:
+   #+begin_src f90 :tangle (eval f) :comments org :exports none
+   integer(c_int32_t) function qmckl_compute_ao_basis_shell_gaussian_vgl &
+       (context, &
+        prim_num, &
+        shell_num, &
+        elec_num, &
+        nucl_num, &
+        nucleus_shell_num, &
+        nucleus_index, &
+        shell_prim_index, &
+        shell_prim_num, &
+        elec_coord, &
+        nucl_coord, &
+        expo, &
+        coef_normalized, &
+        shell_vgl) &
+       bind(C) result(info)
 
-      use, intrinsic :: iso_c_binding
-      implicit none
+     use, intrinsic :: iso_c_binding
+     implicit none
 
-      integer (c_int64_t) , intent(in)  , value :: context
-      integer (c_int64_t) , intent(in)  , value :: prim_num
-      integer (c_int64_t) , intent(in)  , value :: shell_num
-      integer (c_int64_t) , intent(in)  , value :: elec_num
-      integer (c_int64_t) , intent(in)  , value :: nucl_num
-      integer (c_int64_t) , intent(in)  , value :: nucleus_shell_num
-      integer (c_int64_t) , intent(in)  , value :: nucleus_index
-      integer (c_int64_t) , intent(in)  , value :: shell_prim_index
-      integer (c_int64_t) , intent(in)  , value :: shell_prim_num
-      real    (c_double ) , intent(in)  , value :: elec_coord
-      real    (c_double ) , intent(in)  , value :: nucl_coord
-      real    (c_double ) , intent(in)  , value :: expo
-      real    (c_double ) , intent(in)  , value :: coef_normalized
-      real    (c_double ) , intent(out)         :: shell_vgl
+     integer (c_int64_t) , intent(in)  , value :: context
+     integer (c_int64_t) , intent(in)  , value :: prim_num
+     integer (c_int64_t) , intent(in)  , value :: shell_num
+     integer (c_int64_t) , intent(in)  , value :: elec_num
+     integer (c_int64_t) , intent(in)  , value :: nucl_num
+     integer (c_int64_t) , intent(in)          :: nucleus_shell_num(nucl_num)
+     integer (c_int64_t) , intent(in)          :: nucleus_index(nucl_num)
+     integer (c_int64_t) , intent(in)          :: shell_prim_index(shell_num)
+     integer (c_int64_t) , intent(in)          :: shell_prim_num(shell_num)
+     real    (c_double ) , intent(in)          :: elec_coord(elec_num,3)
+     real    (c_double ) , intent(in)          :: nucl_coord(elec_num,3)
+     real    (c_double ) , intent(in)          :: expo(prim_num)
+     real    (c_double ) , intent(in)          :: coef_normalized(prim_num)
+     real    (c_double ) , intent(out)         :: shell_vgl(shell_num,elec_num,5)
 
-      integer(c_int32_t), external :: qmckl_compute_ao_basis_shell_gaussian_vgl_f
-      info = qmckl_compute_ao_basis_shell_gaussian_vgl_f &
-             (context, &
-         prim_num, &
-         shell_num, &
-         elec_num, &
-         nucl_num, &
-         nucleus_shell_num, &
-         nucleus_index, &
-         shell_prim_index, &
-         shell_prim_num, &
-         elec_coord, &
-         nucl_coord, &
-         expo, &
-         coef_normalized, &
-         shell_vgl)
+     integer(c_int32_t), external :: qmckl_compute_ao_basis_shell_gaussian_vgl_f
+     info = qmckl_compute_ao_basis_shell_gaussian_vgl_f &
+            (context, &
+        prim_num, &
+        shell_num, &
+        elec_num, &
+        nucl_num, &
+        nucleus_shell_num, &
+        nucleus_index, &
+        shell_prim_index, &
+        shell_prim_num, &
+        elec_coord, &
+        nucl_coord, &
+        expo, &
+        coef_normalized, &
+        shell_vgl)
 
-    end function qmckl_compute_ao_basis_shell_gaussian_vgl
-    #+end_src
+   end function qmckl_compute_ao_basis_shell_gaussian_vgl
+   #+end_src
 
 *** Provide                                                        :noexport:
 
@@ -3537,19 +3611,19 @@ qmckl_exit_code qmckl_provide_ao_basis_shell_vgl(qmckl_context context)
     qmckl_exit_code rc;
     if (ctx->ao_basis.type == 'G') {
       rc = qmckl_compute_ao_basis_shell_gaussian_vgl(context,
-                                                         ctx->ao_basis.prim_num,
-                                                         ctx->ao_basis.shell_num,
-                                                         ctx->electron.num,
-                                                         ctx->nucleus.num,
-                                                         ctx->ao_basis.nucleus_shell_num,
-                                                         ctx->ao_basis.nucleus_index,
-                                                         ctx->ao_basis.shell_prim_index,
-                                                         ctx->ao_basis.shell_prim_num,
-                                                         ctx->electron.coord_new,
-                                                         ctx->nucleus.coord,
-                                                         ctx->ao_basis.exponent,
-                                                         ctx->ao_basis.coefficient_normalized,
-                                                         ctx->ao_basis.shell_vgl);
+                                                     ctx->ao_basis.prim_num,
+                                                     ctx->ao_basis.shell_num,
+                                                     ctx->electron.num,
+                                                     ctx->nucleus.num,
+                                                     ctx->ao_basis.nucleus_shell_num,
+                                                     ctx->ao_basis.nucleus_index,
+                                                     ctx->ao_basis.shell_prim_index,
+                                                     ctx->ao_basis.shell_prim_num,
+                                                     ctx->electron.coord_new,
+                                                     ctx->nucleus.coord,
+                                                     ctx->ao_basis.exponent,
+                                                     ctx->ao_basis.coefficient_normalized,
+                                                     ctx->ao_basis.shell_vgl);
     } else {
       return qmckl_failwith( context,
                              QMCKL_FAILURE,
@@ -3625,48 +3699,48 @@ print ( "[1][4][26]  : %25.15e"% lf(a,x,y))
     : [1][3][26]  :     2.809546963133958e-02
     : [1][4][26]  :     1.903338597841753e-02
 
-     #+begin_src c :tangle (eval c_test) :exports none
+    #+begin_src c :tangle (eval c_test) :exports none
 {
 #define walk_num chbrclf_walk_num
 #define elec_num chbrclf_elec_num
 #define shell_num chbrclf_shell_num
 
-int64_t elec_up_num   = chbrclf_elec_up_num;
-int64_t elec_dn_num   = chbrclf_elec_dn_num;
-double* elec_coord    = &(chbrclf_elec_coord[0][0][0]);
+  int64_t elec_up_num   = chbrclf_elec_up_num;
+  int64_t elec_dn_num   = chbrclf_elec_dn_num;
+  double* elec_coord    = &(chbrclf_elec_coord[0][0][0]);
 
-rc = qmckl_set_electron_num (context, elec_up_num, elec_dn_num);
-assert (rc == QMCKL_SUCCESS);
+  rc = qmckl_set_electron_num (context, elec_up_num, elec_dn_num);
+  assert (rc == QMCKL_SUCCESS);
 
-rc = qmckl_set_electron_walk_num (context, walk_num);
-assert (rc == QMCKL_SUCCESS);
+  rc = qmckl_set_electron_walk_num (context, walk_num);
+  assert (rc == QMCKL_SUCCESS);
 
-assert(qmckl_electron_provided(context));
+  assert(qmckl_electron_provided(context));
 
-rc = qmckl_set_electron_coord (context, 'N', elec_coord);
-assert(rc == QMCKL_SUCCESS);
+  rc = qmckl_set_electron_coord (context, 'N', elec_coord);
+  assert(rc == QMCKL_SUCCESS);
 
 
-double shell_vgl[5][elec_num][shell_num];
+  double shell_vgl[5][elec_num][shell_num];
 
-rc = qmckl_get_ao_basis_shell_vgl(context, &(shell_vgl[0][0][0]));
-assert (rc == QMCKL_SUCCESS);
+  rc = qmckl_get_ao_basis_shell_vgl(context, &(shell_vgl[0][0][0]));
+  assert (rc == QMCKL_SUCCESS);
 
-printf(" shell_vgl[1][0][26]  %25.15e\n", shell_vgl[0][26][1]);
-printf(" shell_vgl[1][1][26]  %25.15e\n", shell_vgl[1][26][1]);
-printf(" shell_vgl[1][2][26]  %25.15e\n", shell_vgl[2][26][1]);
-printf(" shell_vgl[1][3][26]  %25.15e\n", shell_vgl[3][26][1]);
-printf(" shell_vgl[1][4][26]  %25.15e\n", shell_vgl[4][26][1]);
+  printf(" shell_vgl[1][0][26]  %25.15e\n", shell_vgl[0][26][1]);
+  printf(" shell_vgl[1][1][26]  %25.15e\n", shell_vgl[1][26][1]);
+  printf(" shell_vgl[1][2][26]  %25.15e\n", shell_vgl[2][26][1]);
+  printf(" shell_vgl[1][3][26]  %25.15e\n", shell_vgl[3][26][1]);
+  printf(" shell_vgl[1][4][26]  %25.15e\n", shell_vgl[4][26][1]);
 
-assert( fabs(shell_vgl[0][26][1] - ( 3.564393437193868e-02)) < 1.e-14 );
-assert( fabs(shell_vgl[1][26][1] - (-6.030177987072189e-03)) < 1.e-14 );
-assert( fabs(shell_vgl[2][26][1] - (-3.074832579537582e-02)) < 1.e-14 );
-assert( fabs(shell_vgl[3][26][1] - ( 2.809546963519935e-02)) < 1.e-14 );
-assert( fabs(shell_vgl[4][26][1] - ( 1.896046117183968e-02)) < 1.e-14 );
+  assert( fabs(shell_vgl[0][26][1] - ( 3.564393437193868e-02)) < 1.e-14 );
+  assert( fabs(shell_vgl[1][26][1] - (-6.030177987072189e-03)) < 1.e-14 );
+  assert( fabs(shell_vgl[2][26][1] - (-3.074832579537582e-02)) < 1.e-14 );
+  assert( fabs(shell_vgl[3][26][1] - ( 2.809546963519935e-02)) < 1.e-14 );
+  assert( fabs(shell_vgl[4][26][1] - ( 1.896046117183968e-02)) < 1.e-14 );
 
 }
 
-     #+end_src
+    #+end_src
      
 * Polynomial part
 
@@ -3721,13 +3795,13 @@ assert( fabs(shell_vgl[4][26][1] - ( 1.896046117183968e-02)) < 1.e-14 );
 
    #+RESULTS:
    #+begin_src c :tangle (eval h_func) :comments org
-qmckl_exit_code qmckl_ao_power (
-                                const qmckl_context context,
-                                const int64_t n,
-                                const double X,
-                                const int32_t LMAX,
-                                double* const P,
-                                const int64_t ldp ); 
+   qmckl_exit_code qmckl_ao_power (
+         const qmckl_context context,
+         const int64_t n,
+         const double* X,
+         const int32_t* LMAX,
+         double* const P,
+         const int64_t ldp ); 
    #+end_src
 
    #+begin_src f90 :tangle (eval f)
@@ -3776,36 +3850,6 @@ integer function qmckl_ao_power_f(context, n, X, LMAX, P, ldp) result(info)
 end function qmckl_ao_power_f
    #+end_src
 
-   
-*** C interface                                                    :noexport:
-
-   #+CALL: generate_c_interface(table=qmckl_ao_power_args,rettyp=get_value("CRetType"),fname="qmckl_ao_power")
-
-   #+RESULTS:
-   #+begin_src f90 :tangle (eval f) :comments org :exports none
-  integer(c_int32_t) function qmckl_ao_power &
-      (context, n, X, LMAX, P, ldp) &
-      bind(C) result(info)
-
-    use, intrinsic :: iso_c_binding
-    implicit none
-
-    integer (c_int64_t) , intent(in)  , value :: context
-    integer (c_int64_t) , intent(in)  , value :: n
-    real    (c_double ) , intent(in)  , value :: X
-    integer (c_int32_t) , intent(in)  , value :: LMAX
-    real    (c_double ) , intent(out)         :: P
-    integer (c_int64_t) , intent(in)  , value :: ldp
-
-    integer(c_int32_t), external :: qmckl_ao_power_f
-    info = qmckl_ao_power_f &
-           (context, n, X, LMAX, P, ldp)
-
-  end function qmckl_ao_power
-   #+end_src
-
-*** Fortran interface
-
     #+CALL: generate_f_interface(table=qmckl_ao_power_args,rettyp=get_value("CRetType"),fname="qmckl_ao_power")
 
     #+RESULTS:
@@ -3820,14 +3864,39 @@ end function qmckl_ao_power_f
 
         integer (c_int64_t) , intent(in)  , value :: context
         integer (c_int64_t) , intent(in)  , value :: n
-        real    (c_double ) , intent(in)  , value :: X
-        integer (c_int32_t) , intent(in)  , value :: LMAX
-        real    (c_double ) , intent(out)         :: P
+        real    (c_double ) , intent(in)          :: X(n)
+        integer (c_int32_t) , intent(in)          :: LMAX(n)
+        real    (c_double ) , intent(out)         :: P(ldp,n)
         integer (c_int64_t) , intent(in)  , value :: ldp
 
       end function qmckl_ao_power
     end interface
     #+end_src
+
+   #+CALL: generate_c_interface(table=qmckl_ao_power_args,rettyp=get_value("CRetType"),fname="qmckl_ao_power")
+
+   #+RESULTS:
+   #+begin_src f90 :tangle (eval f) :comments org :exports none
+   integer(c_int32_t) function qmckl_ao_power &
+       (context, n, X, LMAX, P, ldp) &
+       bind(C) result(info)
+
+     use, intrinsic :: iso_c_binding
+     implicit none
+
+     integer (c_int64_t) , intent(in)  , value :: context
+     integer (c_int64_t) , intent(in)  , value :: n
+     real    (c_double ) , intent(in)          :: X(n)
+     integer (c_int32_t) , intent(in)          :: LMAX(n)
+     real    (c_double ) , intent(out)         :: P(ldp,n)
+     integer (c_int64_t) , intent(in)  , value :: ldp
+
+     integer(c_int32_t), external :: qmckl_ao_power_f
+     info = qmckl_ao_power_f &
+            (context, n, X, LMAX, P, ldp)
+
+   end function qmckl_ao_power
+   #+end_src
 
 *** Test                                                           :noexport:
 
@@ -3922,19 +3991,21 @@ assert(0 == test_qmckl_ao_power(context));
    angular momentum up to ~lmax~.
 
    #+NAME: qmckl_ao_polynomial_vgl_args
-   | qmckl_context | context     | in    | Global state                                         |
-   | double        | X[3]        | in    | Array containing the coordinates of the points       |
-   | double        | R[3]        | in    | Array containing the x,y,z coordinates of the center |
-   | int32_t       | lmax        | in    | Maximum angular momentum                             |
-   | int64_t       | n           | inout | Number of computed polynomials                       |
-   | int32_t       | L[n][ldl]   | out   | Contains a,b,c for all ~n~ results                   |
-   | int64_t       | ldl         | in    | Leading dimension of ~L~                             |
-   | double        | VGL[n][ldv] | out   | Value, gradients and Laplacian of the polynomials    |
-   | int64_t       | ldv         | in    | Leading dimension of array ~VGL~                     |
+   | Variable  | Type              | In/Out | Description                                          |
+   |-----------+-------------------+--------+------------------------------------------------------|
+   | ~context~ | ~qmckl_context~   | in     | Global state                                         |
+   | ~X~       | ~double[3]~       | in     | Array containing the coordinates of the points       |
+   | ~R~       | ~double[3]~       | in     | Array containing the x,y,z coordinates of the center |
+   | ~lmax~    | ~int32_t~         | in     | Maximum angular momentum                             |
+   | ~n~       | ~int64_t~         | inout  | Number of computed polynomials                       |
+   | ~L~       | ~int32_t[n][ldl]~ | out    | Contains a,b,c for all ~n~ results                   |
+   | ~ldl~     | ~int64_t~         | in     | Leading dimension of ~L~                             |
+   | ~VGL~     | ~double[n][ldv]~  | out    | Value, gradients and Laplacian of the polynomials    |
+   | ~ldv~     | ~int64_t~         | in     | Leading dimension of array ~VGL~                     |
 
-*** Requirements
+   Requirements:
 
-    - ~context~ is not ~QMCKL_NULL_CONTEXT~
+    - ~context~ \ne ~QMCKL_NULL_CONTEXT~
     - ~n~ > 0
     - ~lmax~ >= 0
     - ~ldl~ >= 3
@@ -3951,8 +4022,6 @@ assert(0 == test_qmckl_ao_power(context));
         string made by a*"x" + b*"y" + c*"z" (in Python notation).
         For example, with a=0, b=2 and c=1 the string is "yyz"
 
-*** C Header
-
     #+CALL: generate_c_header(table=qmckl_ao_polynomial_vgl_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
 
     #+RESULTS:
@@ -3966,12 +4035,13 @@ assert(0 == test_qmckl_ao_power(context));
           int32_t* const L,
           const int64_t ldl,
           double* const VGL,
-          const int64_t ldv );
+          const int64_t ldv ); 
     #+end_src
 
-*** Source
+
     #+begin_src f90 :tangle (eval f)
-integer function qmckl_ao_polynomial_vgl_f(context, X, R, lmax, n, L, ldl, VGL, ldv) result(info)
+integer function qmckl_ao_polynomial_vgl_f (context,    &
+     X, R, lmax, n, L, ldl, VGL, ldv) result(info)
   use qmckl
   implicit none
   integer*8 , intent(in)  :: context
@@ -4099,8 +4169,6 @@ integer function qmckl_ao_polynomial_vgl_f(context, X, R, lmax, n, L, ldl, VGL, 
 end function qmckl_ao_polynomial_vgl_f
     #+end_src
 
-*** C interface
-
     #+CALL: generate_c_interface(table=qmckl_ao_polynomial_vgl_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
 
     #+RESULTS:
@@ -4129,8 +4197,6 @@ end function qmckl_ao_polynomial_vgl_f
     end function qmckl_ao_polynomial_vgl
     #+end_src
 
-*** Fortran interface
-
     #+CALL: generate_f_interface(table=qmckl_ao_polynomial_vgl_args,rettyp=get_value("FRetType"),fname=get_value("Name"))
 
     #+RESULTS:
@@ -4157,7 +4223,7 @@ end function qmckl_ao_polynomial_vgl_f
     end interface
     #+end_src
 
-*** Test
+*** Test                                                           :noexport:
 
     #+begin_src f90 :tangle (eval f_test)
 integer(c_int32_t) function test_qmckl_ao_polynomial_vgl(context) bind(C)
@@ -4257,53 +4323,242 @@ end function test_qmckl_ao_polynomial_vgl
     #+end_src
 
 * Combining radial and polynomial parts
+   :PROPERTIES:
+   :Name:     qmckl_compute_ao_vgl
+   :CRetType: qmckl_exit_code
+   :FRetType: qmckl_exit_code
+   :END:
 
-*** Get
+    #+NAME: qmckl_ao_vgl_args
+   | Variable              | Type                             | In/Out | Description                                  |
+   |-----------------------+----------------------------------+--------+----------------------------------------------|
+   | ~context~             | ~qmckl_context~                  | in     | Global state                                 |
+   | ~ao_num~              | ~int64_t~                        | in     | Number of AOs                                |
+   | ~shell_num~           | ~int64_t~                        | in     | Number of shells                             |
+   | ~elec_num~            | ~int64_t~                        | in     | Number of electrons                          |
+   | ~nucl_num~            | ~int64_t~                        | in     | Number of nuclei                             |
+   | ~elec_coord~          | ~double[3][elec_num]~            | in     | Electron coordinates                         |
+   | ~nucl_coord~          | ~double[3][nucl_num]~            | in     | Nuclear  coordinates                         |
+   | ~nucleus_index~       | ~int64_t[nucl_num]~              | in     | Index of the 1st shell of each nucleus       |
+   | ~nucleus_shell_num~   | ~int64_t[nucl_num]~              | in     | Number of shells per nucleus                 |
+   | ~nucleus_range~       | ~double[nucl_num]~               | in     | Range beyond which all is zero               |
+   | ~nucleus_max_ang_mom~ | ~int32_t[nucl_num]~              | in     | Maximum angular momentum per nucleus         |
+   | ~shell_ang_mom~       | ~int32_t[shell_num]~             | in     | Angular momentum of each shell               |
+   | ~ao_factor~           | ~double[ao_num]~                 | in     | Normalization factor of the AOs              |
+   | ~shell_vgl~           | ~double[5][elec_num][shell_num]~ | in     | Value, gradients and Laplacian of the shells |
+   | ~ao_vgl~              | ~double[5][elec_num][ao_num]~    | out    | Value, gradients and Laplacian of the AOs    |
 
-    #+begin_src c :comments org :tangle (eval h_func) :noweb yes
-qmckl_exit_code qmckl_get_ao_vgl(qmckl_context context, double* const ao_vgl);
+    #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+integer function qmckl_compute_ao_vgl_f(context, &
+     ao_num, shell_num, elec_num, nucl_num, &
+     elec_coord, nucl_coord, nucleus_index, nucleus_shell_num, &
+     nucleus_range, nucleus_max_ang_mom, shell_ang_mom, &
+     ao_factor, shell_vgl, ao_vgl) &
+     result(info)
+  use qmckl
+  implicit none
+  integer(qmckl_context), intent(in)  :: context
+  integer*8             , intent(in)  :: ao_num
+  integer*8             , intent(in)  :: shell_num
+  integer*8             , intent(in)  :: elec_num
+  integer*8             , intent(in)  :: nucl_num
+  double precision      , intent(in)  :: elec_coord(elec_num,3)
+  double precision      , intent(in)  :: nucl_coord(nucl_num,3)
+  integer*8             , intent(in)  :: nucleus_index(nucl_num)
+  integer*8             , intent(in)  :: nucleus_shell_num(nucl_num)
+  double precision      , intent(in)  :: nucleus_range(nucl_num)
+  integer               , intent(in)  :: nucleus_max_ang_mom(nucl_num)
+  integer               , intent(in)  :: shell_ang_mom(shell_num)
+  double precision      , intent(in)  :: ao_factor(ao_num)
+  double precision      , intent(in)  :: shell_vgl(shell_num,elec_num,5)
+  double precision      , intent(out) :: ao_vgl(ao_num,elec_num,5)
+
+  double precision  :: e_coord(3), n_coord(3)
+  integer*8         :: n_poly
+  integer           :: l, il, k
+  integer*8         :: ielec, inucl, ishell
+  integer*8         :: ishell_start, ishell_end
+  integer           :: lstart(0:20)
+  double precision  :: x, y, z, r2
+  double precision  :: cutoff
+  integer, external :: qmckl_ao_polynomial_vgl_f
+
+  double precision, allocatable  :: poly_vgl(:,:)
+  integer         , allocatable  :: powers(:,:)
+
+  allocate(poly_vgl(5,ao_num), powers(3,ao_num))
+
+  ! Pre-computed data
+  do l=0,20
+     lstart(l) = l*(l+1)*(l+2)/6 +1
+  end do
+
+  info = QMCKL_SUCCESS
+
+  ! Don't compute polynomials when the radial part is zero.
+  ! TODO : Use numerical precision here
+  cutoff = -dlog(1.d-15)
+
+  do ielec = 1, elec_num
+     e_coord(1) = elec_coord(ielec,1)
+     e_coord(2) = elec_coord(ielec,2)
+     e_coord(3) = elec_coord(ielec,3)
+     k=1
+     do inucl=1,nucl_num
+        n_coord(1) = nucl_coord(inucl,1)
+        n_coord(2) = nucl_coord(inucl,2)
+        n_coord(3) = nucl_coord(inucl,3)
+
+        ! Test if the electron is in the range of the nucleus
+        x = e_coord(1) - n_coord(1)
+        y = e_coord(2) - n_coord(2)
+        z = e_coord(3) - n_coord(3)
+
+        r2 = x*x + z*z + z*z
+
+        if (r2 > cutoff*nucleus_range(inucl)) then
+           cycle
+        end if
+
+        ! Compute polynomials
+        info = qmckl_ao_polynomial_vgl_f(context, e_coord, n_coord, &
+             nucleus_max_ang_mom(inucl), n_poly, powers, 3_8, &
+             poly_vgl, 5_8)
+
+        ! Loop over shells
+        ishell_start = nucleus_index(inucl) + 1
+        ishell_end   = nucleus_index(inucl) + nucleus_shell_num(inucl)
+        do ishell = ishell_start, ishell_end
+           l = shell_ang_mom(ishell)
+           do il = lstart(l), lstart(l+1)-1
+              ! Value
+              ao_vgl(k,ielec,1) = &
+                   poly_vgl(1,il) * shell_vgl(ishell,ielec,1) * ao_factor(k)
+
+              ! Grad_x
+              ao_vgl(k,ielec,2) = ( &
+                   poly_vgl(2,il) * shell_vgl(ishell,ielec,1) + &
+                   poly_vgl(1,il) * shell_vgl(ishell,ielec,2) &
+                   ) * ao_factor(k)
+
+              ! Grad_y
+              ao_vgl(k,ielec,3) = ( &
+                   poly_vgl(3,il) * shell_vgl(ishell,ielec,1) + &
+                   poly_vgl(1,il) * shell_vgl(ishell,ielec,3) &
+                   ) * ao_factor(k)
+
+              ! Grad_z
+              ao_vgl(k,ielec,4) = ( &
+                   poly_vgl(4,il) * shell_vgl(ishell,ielec,1) + &
+                   poly_vgl(1,il) * shell_vgl(ishell,ielec,4) &
+                   ) * ao_factor(k)
+
+              ! Lapl_z
+              ao_vgl(k,ielec,5) = ( &
+                   poly_vgl(5,il) * shell_vgl(ishell,ielec,1) + &
+                   poly_vgl(1,il) * shell_vgl(ishell,ielec,5) + &
+                   2.d0 * ( &
+                   poly_vgl(2,il) * shell_vgl(ishell,ielec,2) + &
+                   poly_vgl(3,il) * shell_vgl(ishell,ielec,3) + &
+                   poly_vgl(4,il) * shell_vgl(ishell,ielec,4) ) &
+                   ) * ao_factor(k)
+
+              k = k+1
+           end do
+        end do
+     end do
+  end do
+
+  deallocate(poly_vgl, powers)
+end function qmckl_compute_ao_vgl_f
     #+end_src
 
-    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
-qmckl_exit_code qmckl_get_ao_vgl(qmckl_context context, double* const ao_vgl) {
+#  #+CALL: generate_c_header(table=qmckl_ao_vgl_args,rettyp=get_value("CRetType"),fname="qmckl_compute_ao_vgl"))
+#  (Commented because the header needs to go into h_private_func
 
-  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return qmckl_failwith( context,
-                           QMCKL_INVALID_CONTEXT,
-                           "qmckl_get_ao_vgl",
-                           NULL);
-  }
-
-  qmckl_exit_code rc;
-
-  rc = qmckl_provide_ao_vgl(context);
-  if (rc != QMCKL_SUCCESS) return rc;
-
-  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
-  assert (ctx != NULL);
-
-  size_t sze = ctx->ao_basis.ao_num * 5 * ctx->electron.num;
-  memcpy(ao_vgl, ctx->ao_basis.ao_vgl, sze * sizeof(double));
-
-  return QMCKL_SUCCESS;
-}
+    #+RESULTS:
+    #+begin_src c :tangle (eval h_private_func) :comments org
+    qmckl_exit_code qmckl_compute_ao_vgl (
+          const qmckl_context context,
+          const int64_t ao_num,
+          const int64_t shell_num,
+          const int64_t elec_num,
+          const int64_t nucl_num,
+          const double* elec_coord,
+          const double* nucl_coord,
+          const int64_t* nucleus_index,
+          const int64_t* nucleus_shell_num,
+          const double* nucleus_range,
+          const int32_t* nucleus_max_ang_mom,
+          const int32_t* shell_ang_mom,
+          const double* ao_factor,
+          const double* shell_vgl,
+          double* const ao_vgl );
     #+end_src
 
-    #+begin_src f90 :tangle (eval fh_func) :comments org :exports none
-    interface
-      integer(c_int32_t) function qmckl_get_ao_vgl (context, ao_vgl) &
-          bind(C)
-        use, intrinsic :: iso_c_binding
-        import
-        implicit none
+    #+CALL: generate_c_interface(table=qmckl_ao_vgl_args,rettyp=get_value("CRetType"),fname="qmckl_compute_ao_vgl"))
 
-        integer (c_int64_t) , intent(in)  , value :: context
-        double precision,     intent(out)         :: ao_vgl(*)
-      end function
-    end interface
+    #+RESULTS:
+    #+begin_src f90 :tangle (eval f) :comments org :exports none
+    integer(c_int32_t) function qmckl_compute_ao_vgl &
+        (context, &
+         ao_num, &
+         shell_num, &
+         elec_num, &
+         nucl_num, &
+         elec_coord, &
+         nucl_coord, &
+         nucleus_index, &
+         nucleus_shell_num, &
+         nucleus_range, &
+         nucleus_max_ang_mom, &
+         shell_ang_mom, &
+         ao_factor, &
+         shell_vgl, &
+         ao_vgl) &
+        bind(C) result(info)
+
+      use, intrinsic :: iso_c_binding
+      implicit none
+
+      integer (c_int64_t) , intent(in)  , value :: context
+      integer (c_int64_t) , intent(in)  , value :: ao_num
+      integer (c_int64_t) , intent(in)  , value :: shell_num
+      integer (c_int64_t) , intent(in)  , value :: elec_num
+      integer (c_int64_t) , intent(in)  , value :: nucl_num
+      real    (c_double ) , intent(in)          :: elec_coord(elec_num,3)
+      real    (c_double ) , intent(in)          :: nucl_coord(nucl_num,3)
+      integer (c_int64_t) , intent(in)          :: nucleus_index(nucl_num)
+      integer (c_int64_t) , intent(in)          :: nucleus_shell_num(nucl_num)
+      real    (c_double ) , intent(in)          :: nucleus_range(nucl_num)
+      integer (c_int32_t) , intent(in)          :: nucleus_max_ang_mom(nucl_num)
+      integer (c_int32_t) , intent(in)          :: shell_ang_mom(shell_num)
+      real    (c_double ) , intent(in)          :: ao_factor(ao_num)
+      real    (c_double ) , intent(in)          :: shell_vgl(shell_num,elec_num,5)
+      real    (c_double ) , intent(out)         :: ao_vgl(ao_num,elec_num,5)
+
+      integer(c_int32_t), external :: qmckl_compute_ao_vgl_f
+      info = qmckl_compute_ao_vgl_f &
+             (context, &
+         ao_num, &
+         shell_num, &
+         elec_num, &
+         nucl_num, &
+         elec_coord, &
+         nucl_coord, &
+         nucleus_index, &
+         nucleus_shell_num, &
+         nucleus_range, &
+         nucleus_max_ang_mom, &
+         shell_ang_mom, &
+         ao_factor, &
+         shell_vgl, &
+         ao_vgl)
+
+    end function qmckl_compute_ao_vgl
     #+end_src
 
-*** Provide
+*** Provide                                                        :noexport:
 
     #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
 qmckl_exit_code qmckl_provide_ao_vgl(qmckl_context context);
@@ -4390,235 +4645,7 @@ qmckl_exit_code qmckl_provide_ao_vgl(qmckl_context context)
 }
     #+end_src
 
-*** Compute
-   :PROPERTIES:
-   :Name:     qmckl_compute_ao_vgl
-   :CRetType: qmckl_exit_code
-   :FRetType: qmckl_exit_code
-   :END:
-
-    #+NAME: qmckl_ao_vgl_args
-   | ~qmckl_context~ | ~context~                           | in  | Global state                                 |
-   | ~int64_t~       | ~ao_num~                            | in  | Number of AOs                                |
-   | ~int64_t~       | ~shell_num~                         | in  | Number of shells                             |
-   | ~int64_t~       | ~elec_num~                          | in  | Number of electrons                          |
-   | ~int64_t~       | ~nucl_num~                          | in  | Number of nuclei                             |
-   | ~double~        | ~elec_coord[3][elec_num]~           | in  | Electron coordinates                         |
-   | ~double~        | ~nucl_coord[3][nucl_num]~           | in  | Nuclear  coordinates                         |
-   | ~int64_t~       | ~nucleus_index[nucl_num]~           | in  | Index of the 1st shell of each nucleus       |
-   | ~int64_t~       | ~nucleus_shell_num[nucl_num]~       | in  | Number of shells per nucleus                 |
-   | ~double~        | ~nucleus_range[nucl_num]~           | in  | Range beyond which all is zero               |
-   | ~int32_t~       | ~nucleus_max_ang_mom[nucl_num]~     | in  | Maximum angular momentum per nucleus         |
-   | ~int32_t~       | ~shell_ang_mom[shell_num]~          | in  | Angular momentum of each shell               |
-   | ~double~        | ~ao_factor[ao_num]~                 | in  | Normalization factor of the AOs              |
-   | ~double~        | ~shell_vgl[5][elec_num][shell_num]~ | in  | Value, gradients and Laplacian of the shells |
-   | ~double~        | ~ao_vgl[5][elec_num][ao_num]~       | out | Value, gradients and Laplacian of the AOs    |
-
-    #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_ao_vgl_f(context, &
-     ao_num, shell_num, elec_num, nucl_num, &
-     elec_coord, nucl_coord, nucleus_index, nucleus_shell_num, &
-     nucleus_range, nucleus_max_ang_mom, shell_ang_mom, &
-     ao_factor, shell_vgl, ao_vgl) &
-     result(info)
-  use qmckl
-  implicit none
-  integer(qmckl_context), intent(in)  :: context
-  integer*8             , intent(in)  :: ao_num
-  integer*8             , intent(in)  :: shell_num
-  integer*8             , intent(in)  :: elec_num
-  integer*8             , intent(in)  :: nucl_num
-  double precision      , intent(in)  :: elec_coord(elec_num,3)
-  double precision      , intent(in)  :: nucl_coord(nucl_num,3)
-  integer*8             , intent(in)  :: nucleus_index(nucl_num)
-  integer*8             , intent(in)  :: nucleus_shell_num(nucl_num)
-  double precision      , intent(in)  :: nucleus_range(nucl_num)
-  integer               , intent(in)  :: nucleus_max_ang_mom(nucl_num)
-  integer               , intent(in)  :: shell_ang_mom(shell_num)
-  double precision      , intent(in)  :: ao_factor(ao_num)
-  double precision      , intent(in)  :: shell_vgl(shell_num,elec_num,5)
-  double precision      , intent(out) :: ao_vgl(ao_num,elec_num,5)
-
-  double precision  :: e_coord(3), n_coord(3)
-  integer*8         :: n_poly
-  integer           :: l, il, k
-  integer*8         :: ielec, inucl, ishell
-  integer           :: lstart(0:20)
-  double precision  :: x, y, z, r2
-  double precision  :: cutoff
-  integer, external :: qmckl_ao_polynomial_vgl_f
-
-  double precision, allocatable  :: poly_vgl(:,:)
-  integer         , allocatable  :: powers(:,:)
-
-  allocate(poly_vgl(5,ao_num), powers(3,ao_num))
-
-  ! Pre-computed data
-  do l=0,20
-     lstart(l) = l*(l+1)*(l+2)/6 +1
-  end do
-
-  info = QMCKL_SUCCESS
-
-  ! Don't compute polynomials when the radial part is zero.
-  ! TODO : Use numerical precision here
-  cutoff = -dlog(1.d-15)
-
-  do ielec = 1, elec_num
-     e_coord(1) = elec_coord(ielec,1)
-     e_coord(2) = elec_coord(ielec,2)
-     e_coord(3) = elec_coord(ielec,3)
-     k=1
-     do inucl=1,nucl_num
-        n_coord(1) = nucl_coord(inucl,1)
-        n_coord(2) = nucl_coord(inucl,2)
-        n_coord(3) = nucl_coord(inucl,3)
-
-        ! Test if the electron is in the range of the nucleus
-        x = e_coord(1) - n_coord(1)
-        y = e_coord(2) - n_coord(2)
-        z = e_coord(3) - n_coord(3)
-
-        r2 = x*x + z*z + z*z
-
-        if (r2 > cutoff*nucleus_range(inucl)) then
-           cycle
-        end if
-
-        ! Compute polynomials
-        info = qmckl_ao_polynomial_vgl_f(context, e_coord, n_coord, &
-             nucleus_max_ang_mom(inucl), n_poly, powers, 3_8, &
-             poly_vgl, 5_8)
-
-        ! Loop over shells
-        do ishell = nucleus_index(inucl)+1, nucleus_index(inucl)+nucleus_shell_num(inucl)
-           l = shell_ang_mom(ishell)
-           do il = lstart(l), lstart(l+1)-1
-              ! Value
-              ao_vgl(k,ielec,1) = &
-                   poly_vgl(1,il) * shell_vgl(ishell,ielec,1) * ao_factor(k)
-
-              ! Grad_x
-              ao_vgl(k,ielec,2) = ( &
-                   poly_vgl(2,il) * shell_vgl(ishell,ielec,1) + &
-                   poly_vgl(1,il) * shell_vgl(ishell,ielec,2) &
-                   ) * ao_factor(k)
-
-              ! Grad_y
-              ao_vgl(k,ielec,3) = ( &
-                   poly_vgl(3,il) * shell_vgl(ishell,ielec,1) + &
-                   poly_vgl(1,il) * shell_vgl(ishell,ielec,3) &
-                   ) * ao_factor(k)
-
-              ! Grad_z
-              ao_vgl(k,ielec,4) = ( &
-                   poly_vgl(4,il) * shell_vgl(ishell,ielec,1) + &
-                   poly_vgl(1,il) * shell_vgl(ishell,ielec,4) &
-                   ) * ao_factor(k)
-
-              ! Lapl_z
-              ao_vgl(k,ielec,5) = ( &
-                   poly_vgl(5,il) * shell_vgl(ishell,ielec,1) + &
-                   poly_vgl(1,il) * shell_vgl(ishell,ielec,5) + &
-                   2.d0 * ( &
-                   poly_vgl(2,il) * shell_vgl(ishell,ielec,2) + &
-                   poly_vgl(3,il) * shell_vgl(ishell,ielec,3) + &
-                   poly_vgl(4,il) * shell_vgl(ishell,ielec,4) ) &
-                   ) * ao_factor(k)
-
-              k = k+1
-           end do
-        end do
-     end do
-  end do
-
-  deallocate(poly_vgl, powers)
-end function qmckl_compute_ao_vgl_f
-    #+end_src
-
-#   #+CALL: generate_c_header(table=qmckl_ao_vgl_args,rettyp=get_value("CRetType"),fname="qmckl_compute_ao_vgl"))
-
-    #+RESULTS:
-    #+begin_src c :tangle (eval h_private_func) :comments org
-    qmckl_exit_code qmckl_compute_ao_vgl (
-          const qmckl_context context,
-          const int64_t ao_num,
-          const int64_t shell_num,
-          const int64_t elec_num,
-          const int64_t nucl_num,
-          const double* elec_coord,
-          const double* nucl_coord,
-          const int64_t* nucleus_index,
-          const int64_t* nucleus_shell_num,
-          const double* nucleus_range,
-          const int32_t* nucleus_max_ang_mom,
-          const int32_t* shell_ang_mom,
-          const double* ao_factor,
-          const double* shell_vgl,
-          double* const ao_vgl );
-    #+end_src
-
-    #+CALL: generate_c_interface(table=qmckl_ao_vgl_args,rettyp=get_value("CRetType"),fname="qmckl_compute_ao_vgl"))
-
-    #+RESULTS:
-    #+begin_src f90 :tangle (eval f) :comments org :exports none
-    integer(c_int32_t) function qmckl_compute_ao_vgl &
-        (context, &
-         ao_num, &
-         shell_num, &
-         elec_num, &
-         nucl_num, &
-         elec_coord, &
-         nucl_coord, &
-         nucleus_index, &
-         nucleus_shell_num, &
-         nucleus_range, &
-         nucleus_max_ang_mom, &
-         shell_ang_mom, &
-         ao_factor, &
-         shell_vgl, &
-         ao_vgl) &
-        bind(C) result(info)
-
-      use, intrinsic :: iso_c_binding
-      implicit none
-
-      integer (c_int64_t) , intent(in)  , value :: context
-      integer (c_int64_t) , intent(in)  , value :: ao_num
-      integer (c_int64_t) , intent(in)  , value :: shell_num
-      integer (c_int64_t) , intent(in)  , value :: elec_num
-      integer (c_int64_t) , intent(in)  , value :: nucl_num
-      real    (c_double ) , intent(in)          :: elec_coord(elec_num,3)
-      real    (c_double ) , intent(in)          :: nucl_coord(nucl_num,3)
-      integer (c_int64_t) , intent(in)          :: nucleus_index(nucl_num)
-      integer (c_int64_t) , intent(in)          :: nucleus_shell_num(nucl_num)
-      real    (c_double ) , intent(in)          :: nucleus_range(nucl_num)
-      integer (c_int32_t) , intent(in)          :: nucleus_max_ang_mom(nucl_num)
-      integer (c_int32_t) , intent(in)          :: shell_ang_mom(shell_num)
-      real    (c_double ) , intent(in)          :: ao_factor(ao_num)
-      real    (c_double ) , intent(in)          :: shell_vgl(shell_num,elec_num,5)
-      real    (c_double ) , intent(out)         :: ao_vgl(ao_num,elec_num,5)
-
-      integer(c_int32_t), external :: qmckl_compute_ao_vgl_f
-      info = qmckl_compute_ao_vgl_f &
-             (context, &
-         ao_num, &
-         shell_num, &
-         elec_num, &
-         nucl_num, &
-         elec_coord, &
-         nucl_coord, &
-         nucleus_index, &
-         nucleus_shell_num, &
-         nucleus_range, &
-         nucleus_max_ang_mom, &
-         shell_ang_mom, &
-         ao_factor, &
-         shell_vgl, &
-         ao_vgl)
-
-    end function qmckl_compute_ao_vgl
-    #+end_src
+*** Test                                                           :noexport:
 
     #+begin_src python :results output :exports none
 import numpy as np
@@ -4695,8 +4722,6 @@ print ( "[1][26][224] : %25.15e"%(df(a,x,y,1)* (x[2] - y[2]) * (x[2] - y[2])) )
     [0][26][224] :     7.175074806631758e-10
     [1][26][224] :    -3.843880138733679e-09
     #+end_example
-
-*** Test
 
      #+begin_src c :tangle (eval c_test) :exports none
 {
