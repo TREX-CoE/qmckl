@@ -250,8 +250,8 @@ def main():
     tmp = "EXTRA_DIST += "
     r = subprocess.check_output("git ls-tree --name-only -r HEAD".split())
     for line in r.splitlines():
-       if "share/qmckl/test_data/" in line:
-         tmp += " \\\n   " + line
+       if b"share/qmckl/test_data/" in line:
+         tmp += " \\\n   " + line.decode('utf8')
     tmp += "\n"
     output += tmp.split("\n")
 
