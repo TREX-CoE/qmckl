@@ -76,19 +76,14 @@ ln_s_verbose   = $(ln_s_verbose_@AM_V@)
 ln_s_verbose_  = $(ln_s_verbose_@AM_DEFAULT_V@)
 ln_s_verbose_0 = @echo "  LN_S     $<";
 
-htmldir = share/doc/qmckl/html
-textdir = share/doc/qmckl/text
-htmlize_el=$(htmldir)/htmlize.el
+htmldir = $(datadir)/html
+textdir = $(datadir)/text
+htmlize_el = share/doc/qmckl/html/htmlize.el
 dist_html_DATA = $(HTML_FILES) \
-        $(htmldir)/index.html \
-        $(htmldir)/qmckl.css
+        share/doc/qmckl/html/qmckl.css \
+        share/doc/qmckl/html/index.html
 
 dist_text_DATA = $(TEXT_FILES)
-
-$(htmldir)/index.html: $(htmldir)/README.html
-	$(ln_s_verbose)cd $(htmldir)/ && \
-        rm -rf index.html && \
-	$(LN_S) README.html index.html
 
 
 html-local: $(dist_html_DATA)
@@ -99,16 +94,15 @@ doc: html text
 
 if QMCKL_DEVEL
 
-
 if VFC_CI
 AM_LDFLAGS=-lvfc_probes -lvfc_probes_f
 endif
 
-dist_src_DATA = $(ORG_FILES) $(TANGLED_FILES) $(EXPORTED_FILES) $(test_qmckl_f)
+EXTRA_DIST += $(ORG_FILES) $(TANGLED_FILES) $(EXPORTED_FILES) $(test_qmckl_f)
 
 BUILT_SOURCES = $(C_FILES) $(F_FILES) $(FH_FUNC_FILES) $(FH_TYPE_FILES) $(H_FUNC_FILES) $(H_TYPE_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES) $(src_qmckl_f) $(test_qmckl_f) $(qmckl_h) $(header_tests)
 
-CLEANFILES += $(BUILT_SOURCES) $(C_TEST_FILES) $(F_TEST_FILES) $(TANGLED_FILES) $(C_TEST_FILES) $(F_TEST_FILES) $(src_qmckl_f) $(test_qmckl_f) $(qmckl_h) $(HTML_FILES) $(TEXT_FILES) $(htmldir)/index.html $(EXPORTED_FILES) $(header_tests) 
+CLEANFILES += $(BUILT_SOURCES) $(C_TEST_FILES) $(F_TEST_FILES) $(TANGLED_FILES) $(C_TEST_FILES) $(F_TEST_FILES) $(src_qmckl_f) $(test_qmckl_f) $(qmckl_h) $(HTML_FILES) $(TEXT_FILES) $(EXPORTED_FILES) $(header_tests) 
 
 EXTRA_DIST +=                 \
     tools/build_doc.sh        \

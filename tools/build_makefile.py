@@ -244,7 +244,6 @@ def main():
         output += [ prefix + "_SOURCES = " + \
                     " ".join(TESTS[f]),
                     prefix + "_LDADD   = src/libqmckl.la",
-                    prefix + "_LDFLAGS = -no-install",
                     "" ]
 
     tmp = "EXTRA_DIST += "
