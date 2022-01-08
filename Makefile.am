@@ -76,8 +76,8 @@ ln_s_verbose   = $(ln_s_verbose_@AM_V@)
 ln_s_verbose_  = $(ln_s_verbose_@AM_DEFAULT_V@)
 ln_s_verbose_0 = @echo "  LN_S     $<";
 
-htmldir = $(datadir)/html
-textdir = $(datadir)/text
+htmldir = $(docdir)/html
+textdir = $(docdir)/text
 htmlize_el = share/doc/qmckl/html/htmlize.el
 dist_html_DATA = $(HTML_FILES) \
         share/doc/qmckl/html/qmckl.css \
