@@ -78,7 +78,9 @@ ln_s_verbose_0 = @echo "  LN_S     $<";
 
 htmldir = $(docdir)/html
 textdir = $(docdir)/text
-htmlize_el = share/doc/qmckl/html/htmlize.el
+htmldir_loc = share/doc/qmckl/html
+textdir_loc = share/doc/qmckl/text
+htmlize_el = $(htmldir_loc)/htmlize.el
 dist_html_DATA = $(HTML_FILES) \
         share/doc/qmckl/html/qmckl.css \
         share/doc/qmckl/html/index.html
@@ -150,8 +152,8 @@ $(src_qmckl_f): $(FH_FUNC_FILES) $(FH_TYPE_FILES)
 	$(cat_h_verbose)top_builddir=$(abs_top_builddir) srcdir=$(abs_srcdir) src_qmckl_f=$(src_qmckl_f) $(srcdir)/tools/build_qmckl_f.sh
 
 $(htmlize_el):
-	$(MKDIR_P) $(htmldir)
-	$(MKDIR_P) $(textdir)
+	$(MKDIR_P) $(htmldir_loc)
+	$(MKDIR_P) $(textdir_loc)
 	abs_srcdir=$(abs_srcdir) $(srcdir)/tools/install_htmlize.sh $(htmlize_el)
 
 tests/chbrclf.h: $(qmckl_h)
