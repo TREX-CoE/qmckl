@@ -22,28 +22,34 @@ int main() {
 * Matrix operations
 
 ** ~qmckl_dgemm~
-   
-   Matrix multiply: $C_{ij} = \beta C_{ij} + \alpha \sum_{k} A_{ik} \cdot B_{kj}$ using Fortran ~matmul~ function.
 
-   TODO: Add description about the external library dependence.
+   Matrix multiplication:
+
+   \[
+   C_{ij} = \beta C_{ij} + \alpha \sum_{k} A_{ik} \cdot B_{kj}
+   \]
+
+#  TODO: Add description about the external library dependence.
 
    #+NAME: qmckl_dgemm_args
-   | qmckl_context | context  | in  | Global state                          |
-   | bool          | TransA   | in  | Number of rows of the input matrix    |
-   | bool          | TransB   | in  | Number of rows of the input matrix    |
-   | int64_t       | m        | in  | Number of rows of the input matrix    |
-   | int64_t       | n        | in  | Number of columns of the input matrix |
-   | int64_t       | k        | in  | Number of columns of the input matrix |
-   | double        | alpha    | in  | Number of columns of the input matrix |
-   | double        | A[][lda] | in  | Array containing the matrix $A$       |
-   | int64_t       | lda      | in  | Leading dimension of array ~A~        |
-   | double        | B[][ldb] | in  | Array containing the matrix $B$       |
-   | int64_t       | ldb      | in  | Leading dimension of array ~B~        |
-   | double        | beta     | in  | Array containing the matrix $B$       |
-   | double        | C[][ldc] | out | Array containing the matrix $B$       |
-   | int64_t       | ldc      | in  | Leading dimension of array ~B~        |
+   | Variable  | Type            | In/Out | Description                           |
+   |-----------+-----------------+--------+---------------------------------------|
+   | ~context~ | ~qmckl_context~ | in     | Global state                          |
+   | ~TransA~  | ~char~          | in     | 'T' is transposed                     |
+   | ~TransB~  | ~char~          | in     | 'T' is transposed                     |
+   | ~m~       | ~int64_t~       | in     | Number of rows of the input matrix    |
+   | ~n~       | ~int64_t~       | in     | Number of columns of the input matrix |
+   | ~k~       | ~int64_t~       | in     | Number of columns of the input matrix |
+   | ~alpha~   | ~double~        | in     | Number of columns of the input matrix |
+   | ~A~       | ~double[][lda]~ | in     | Array containing the matrix $A$       |
+   | ~lda~     | ~int64_t~       | in     | Leading dimension of array ~A~        |
+   | ~B~       | ~double[][ldb]~ | in     | Array containing the matrix $B$       |
+   | ~ldb~     | ~int64_t~       | in     | Leading dimension of array ~B~        |
+   | ~beta~    | ~double~        | in     | Array containing the matrix $B$       |
+   | ~C~       | ~double[][ldc]~ | out    | Array containing the matrix $B$       |
+   | ~ldc~     | ~int64_t~       | in     | Leading dimension of array ~B~        |
 
-*** Requirements
+   Requirements:
 
     - ~context~ is not ~QMCKL_NULL_CONTEXT~
     - ~m > 0~
@@ -55,268 +61,171 @@ int main() {
     - ~A~ is allocated with at least $m \times k \times 8$ bytes
     - ~B~ is allocated with at least $k \times n \times 8$ bytes
     - ~C~ is allocated with at least $m \times n \times 8$ bytes
-      
-*** C header
 
     #+CALL: generate_c_header(table=qmckl_dgemm_args,rettyp="qmckl_exit_code",fname="qmckl_dgemm")
 
     #+RESULTS:
-    #+BEGIN_src c :tangle (eval h_func) :comments org
+    #+begin_src c :tangle (eval h_func) :comments org
     qmckl_exit_code qmckl_dgemm (
-	  const qmckl_context context,
-	  const bool TransA,
-	  const bool TransB,
-	  const int64_t m,
-	  const int64_t n,
-	  const int64_t k,
-	  const double alpha,
-	  const double* A,
-	  const int64_t lda,
-	  const double* B,
-	  const int64_t ldb,
-	  const double beta,
-	  double* const C,
-	  const int64_t ldc );
-    #+END_src
+          const qmckl_context context,
+          const char TransA,
+          const char TransB,
+          const int64_t m,
+          const int64_t n,
+          const int64_t k,
+          const double alpha,
+          const double* A,
+          const int64_t lda,
+          const double* B,
+          const int64_t ldb,
+          const double beta,
+          double* const C,
+          const int64_t ldc );
+    #+end_src
 
-*** Source
     #+begin_src f90 :tangle (eval f)
-integer function qmckl_dgemm_f(context, TransA, TransB, m, n, k, alpha, A, LDA, B, LDB, beta, C, LDC) &
+integer function qmckl_dgemm_f(context, TransA, TransB, &
+     m, n, k, alpha, A, LDA, B, LDB, beta, C, LDC) &
      result(info)
   use qmckl
   implicit none
   integer(qmckl_context), intent(in)  :: context
-  logical*8             , intent(in)  :: TransA, TransB
+  character             , intent(in)  :: TransA, TransB
   integer*8             , intent(in)  :: m, n, k
-  real*8                , intent(in)  :: alpha, beta
+  double precision      , intent(in)  :: alpha, beta
   integer*8             , intent(in)  :: lda
-  real*8                , intent(in)  :: A(lda,*)
+  double precision      , intent(in)  :: A(lda,*)
   integer*8             , intent(in)  :: ldb
-  real*8                , intent(in)  :: B(ldb,*)
+  double precision      , intent(in)  :: B(ldb,*)
   integer*8             , intent(in)  :: ldc
-  real*8                , intent(out) :: C(ldc,*)
-
-  real*8, allocatable  :: AT(:,:), BT(:,:), CT(:,:)
-  integer*4            :: qmckl_dgemm_N_N_f
-  integer*8            :: i,j,l, LDA_2, LDB_2
+  double precision      , intent(out) :: C(ldc,*)
 
   info = QMCKL_SUCCESS
 
-  if (TransA) then
-     allocate(AT(m,k))
-     do i = 1, k
-        do j = 1, m
-           AT(j,i) = A(i,j)
-        end do
-     end do
-     LDA_2 = M
-  else
-     LDA_2 = LDA
-  endif
-  
-  if (TransB) then
-     allocate(BT(k,n))
-     do i = 1, n
-        do j = 1, k
-           BT(j,i) = B(i,j)
-        end do
-     end do
-     LDB_2 = K
-  else
-     LDB_2 = LDB
-  endif
-  
   if (context == QMCKL_NULL_CONTEXT) then
      info = QMCKL_INVALID_CONTEXT
      return
   endif
-  
+
   if (m <= 0_8) then
      info = QMCKL_INVALID_ARG_4
      return
   endif
-  
+
   if (n <= 0_8) then
      info = QMCKL_INVALID_ARG_5
      return
   endif
-  
+
   if (k <= 0_8) then
      info = QMCKL_INVALID_ARG_6
      return
   endif
-  
-  if (LDA_2 /= m) then
+
+  if (LDA <= 0) then
      info = QMCKL_INVALID_ARG_9
      return
   endif
 
-  if (LDB_2 /= k) then
-     info = QMCKL_INVALID_ARG_10
-     return
-  endif
-
-  if (LDC /= m) then
-     info = QMCKL_INVALID_ARG_13
-     return
-  endif
-
-  if (TransA) then
-     info = qmckl_dgemm_N_N_f(context, m, n, k, alpha, AT, LDA_2, B, LDB_2, beta, c, LDC)
-  else if (TransB) then
-     info = qmckl_dgemm_N_N_f(context, m, n, k, alpha, A, LDA_2, BT, LDB_2, beta, c, LDC)
-  else if (TransA .and. TransB) then
-     info = qmckl_dgemm_N_N_f(context, m, n, k, alpha, AT, LDA_2, BT, LDB_2, beta, c, LDC)
-  else
-     info = qmckl_dgemm_N_N_f(context, m, n, k, alpha, A, LDA_2, B, LDB_2, beta, c, LDC)
-  endif
-
-end function qmckl_dgemm_f
-
-integer function qmckl_dgemm_N_N_f(context, m, n, k, alpha, A, LDA, B, LDB, beta, C, LDC) &
-     result(info)
-  use qmckl
-  implicit none
-  integer(qmckl_context)  , intent(in)  :: context
-  integer*8  , intent(in)  :: m, n, k
-  real*8     , intent(in)  :: alpha, beta
-  integer*8  , intent(in)  :: lda
-  real*8     , intent(in)  :: A(lda,k)
-  integer*8  , intent(in)  :: ldb
-  real*8     , intent(in)  :: B(ldb,n)
-  integer*8  , intent(in)  :: ldc
-  real*8     , intent(out) :: C(ldc,n)
-  
-  integer*8 :: i,j,l, LDA_2, LDB_2
-  
-  info = QMCKL_SUCCESS
-  
-  if (context == QMCKL_NULL_CONTEXT) then
-     info = QMCKL_INVALID_CONTEXT
-     return
-  endif
-  
-  if (m <= 0_8) then
-     info = QMCKL_INVALID_ARG_2
-     return
-  endif
-
-  if (n <= 0_8) then
-     info = QMCKL_INVALID_ARG_3
-     return
-  endif
-
-  if (k <= 0_8) then
-     info = QMCKL_INVALID_ARG_4
-     return
-  endif
-
-  if (LDA /= m) then
-     info = QMCKL_INVALID_ARG_7
-     return
-  endif
-
-  if (LDB /= k) then
-     info = QMCKL_INVALID_ARG_8
-     return
-  endif
-
-  if (LDC /= m) then
+  if (LDB <= 0) then
      info = QMCKL_INVALID_ARG_11
      return
   endif
 
-  if (alpha == 1.0d0 .and. beta == 0.0d0) then
-     C = matmul(A,B)
-  else
-     C = beta*C + alpha*matmul(A,B)
+  if (LDC <= 0) then
+     info = QMCKL_INVALID_ARG_14
+     return
   endif
 
-end function qmckl_dgemm_N_N_f
+  call dgemm(transA, transB, int(m,4), int(n,4), int(k,4), &
+       alpha, A, int(LDA,4), B, int(LDB,4), beta, C, int(LDC,4))
+
+end function qmckl_dgemm_f
     #+end_src
-    
+
 *** C interface                                                    :noexport:
 
     #+CALL: generate_c_interface(table=qmckl_dgemm_args,rettyp="qmckl_exit_code",fname="qmckl_dgemm")
 
     #+RESULTS:
-    #+BEGIN_src f90 :tangle (eval f) :comments org :exports none
+    #+begin_src f90 :tangle (eval f) :comments org :exports none
     integer(c_int32_t) function qmckl_dgemm &
-	(context, TransA, TransB, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc) &
-	bind(C) result(info)
+        (context, TransA, TransB, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc) &
+        bind(C) result(info)
 
       use, intrinsic :: iso_c_binding
       implicit none
 
       integer (c_int64_t) , intent(in)  , value :: context
-      logical*8           , intent(in)  , value :: TransA
-      logical*8           , intent(in)  , value :: TransB
+      character           , intent(in)  , value :: TransA
+      character           , intent(in)  , value :: TransB
       integer (c_int64_t) , intent(in)  , value :: m
       integer (c_int64_t) , intent(in)  , value :: n
       integer (c_int64_t) , intent(in)  , value :: k
       real    (c_double ) , intent(in)  , value :: alpha
-      integer (c_int64_t) , intent(in)  , value :: lda
       real    (c_double ) , intent(in)          :: A(lda,*)
-      integer (c_int64_t) , intent(in)  , value :: ldb
+      integer (c_int64_t) , intent(in)  , value :: lda
       real    (c_double ) , intent(in)          :: B(ldb,*)
+      integer (c_int64_t) , intent(in)  , value :: ldb
       real    (c_double ) , intent(in)  , value :: beta
-      integer (c_int64_t) , intent(in)  , value :: ldc
       real    (c_double ) , intent(out)         :: C(ldc,*)
+      integer (c_int64_t) , intent(in)  , value :: ldc
 
       integer(c_int32_t), external :: qmckl_dgemm_f
       info = qmckl_dgemm_f &
-	     (context, TransA, TransB, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc)
+             (context, TransA, TransB, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc)
 
     end function qmckl_dgemm
-    #+END_src
-    
+    #+end_src
+
 
     #+CALL: generate_f_interface(table=qmckl_dgemm_args,rettyp="qmckl_exit_code",fname="qmckl_dgemm")
 
     #+RESULTS:
     #+begin_src f90 :tangle (eval fh_func) :comments org :exports none
-  interface
-     integer(c_int32_t) function qmckl_dgemm &
+    interface
+      integer(c_int32_t) function qmckl_dgemm &
           (context, TransA, TransB, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc) &
           bind(C)
-       use, intrinsic :: iso_c_binding
-       import
-       implicit none
-       
-       integer (c_int64_t) , intent(in)  , value :: context
-       logical*8           , intent(in)  , value :: TransA
-       logical*8           , intent(in)  , value :: TransB
-       integer (c_int64_t) , intent(in)  , value :: m
-       integer (c_int64_t) , intent(in)  , value :: n
-       integer (c_int64_t) , intent(in)  , value :: k
-       real    (c_double ) , intent(in)  , value :: alpha
-       integer (c_int64_t) , intent(in)  , value :: lda
-       real    (c_double ) , intent(in)          :: A(lda,*)
-       integer (c_int64_t) , intent(in)  , value :: ldb
-       real    (c_double ) , intent(in)          :: B(ldb,*)
-       real    (c_double ) , intent(in)  , value :: beta
-       integer (c_int64_t) , intent(in)  , value :: ldc
-       real    (c_double ) , intent(out)         :: C(ldc,*)
-       
-     end function qmckl_dgemm
-  end interface
+        use, intrinsic :: iso_c_binding
+        import
+        implicit none
+
+        integer (c_int64_t) , intent(in)  , value :: context
+        character           , intent(in)  , value :: TransA
+        character           , intent(in)  , value :: TransB
+        integer (c_int64_t) , intent(in)  , value :: m
+        integer (c_int64_t) , intent(in)  , value :: n
+        integer (c_int64_t) , intent(in)  , value :: k
+        real    (c_double ) , intent(in)  , value :: alpha
+        real    (c_double ) , intent(in)          :: A(lda,*)
+        integer (c_int64_t) , intent(in)  , value :: lda
+        real    (c_double ) , intent(in)          :: B(ldb,*)
+        integer (c_int64_t) , intent(in)  , value :: ldb
+        real    (c_double ) , intent(in)  , value :: beta
+        real    (c_double ) , intent(out)         :: C(ldc,*)
+        integer (c_int64_t) , intent(in)  , value :: ldc
+
+      end function qmckl_dgemm
+    end interface
     #+end_src
-    
+
 *** Test                                                           :noexport:
+
     #+begin_src f90 :tangle (eval f_test)
 integer(qmckl_exit_code) function test_qmckl_dgemm(context) bind(C)
   use qmckl
   implicit none
   integer(qmckl_context), intent(in), value :: context
-  
+
   double precision, allocatable :: A(:,:), B(:,:), C(:,:), D(:,:)
   integer*8                     :: m, n, k, LDA, LDB, LDC
   integer*8                     :: i,j,l
-  logical*8                     :: TransA, TransB
+  character                     :: TransA, TransB
   double precision              :: x, alpha, beta
-  
-  TransA = .False.
-  TransB = .False.
+
+  TransA = 'N'
+  TransB = 'N'
   m = 1_8
   k = 4_8
   n = 6_8
@@ -325,7 +234,7 @@ integer(qmckl_exit_code) function test_qmckl_dgemm(context) bind(C)
   LDC = m
 
   allocate( A(LDA,k), B(LDB,n) , C(LDC,n), D(LDC,n))
-  
+
   A = 0.d0
   B = 0.d0
   C = 0.d0
@@ -337,19 +246,19 @@ integer(qmckl_exit_code) function test_qmckl_dgemm(context) bind(C)
         A(i,j) = -10.d0 + dble(i+j)
      end do
   end do
-  
+
   do j=1,n
      do i=1,k
         B(i,j) = -10.d0 + dble(i+j)
      end do
   end do
-  
+
   test_qmckl_dgemm = qmckl_dgemm(context, TransA, TransB, m, n, k, alpha, A, LDA, B, LDB, beta, C, LDC)
-  
+
   if (test_qmckl_dgemm /= QMCKL_SUCCESS) return
-  
+
   test_qmckl_dgemm = QMCKL_FAILURE
-  
+
   x = 0.d0
   do j=1,n
      do i=1,m
@@ -359,11 +268,11 @@ integer(qmckl_exit_code) function test_qmckl_dgemm(context) bind(C)
         x = x + (D(i,j) - C(i,j))**2
      end do
   end do
-  
+
   if (dabs(x) <= 1.d-12) then
      test_qmckl_dgemm = QMCKL_SUCCESS
   endif
-  
+
   deallocate(A,B,C,D)
 
 end function test_qmckl_dgemm
@@ -375,330 +284,275 @@ assert(QMCKL_SUCCESS == test_qmckl_dgemm(context));
     #+end_src
 
 ** ~qmckl_adjugate~
-   
+
    Given a matrix $\mathbf{A}$, the adjugate matrix
    $\text{adj}(\mathbf{A})$ is the transpose of the cofactors matrix
    of $\mathbf{A}$.
 
    \[
-   \text{adj}(\mathbf{A}) = \text{det}(\mathbf{A}) \, \mathbf{A}^{-1}
+   \mathbf{B} = \text{adj}(\mathbf{A}) = \text{det}(\mathbf{A}) \, \mathbf{A}^{-1}
    \]
 
    See also: https://en.wikipedia.org/wiki/Adjugate_matrix
 
    #+NAME: qmckl_adjugate_args
-   | qmckl_context | context  | in    | Global state                                   |
-   | int64_t       | n        | in    | Number of rows and columns of the input matrix |
-   | int64_t       | lda      | in    | Leading dimension of array ~A~                 |
-   | double        | A[][lda] | inout | Array containing the $n \times n$ matrix $A$   |
-   | double        | det_l    | inout | determinant of $A$                             |
-   
-*** Requirements
+   | Variable  | Type            | In/Out | Description                                    |
+   |-----------+-----------------+--------+------------------------------------------------|
+   | ~context~ | ~qmckl_context~ | in     | Global state                                   |
+   | ~n~       | ~int64_t~       | in     | Number of rows and columns of the input matrix |
+   | ~A~       | ~double[][lda]~ | in     | Array containing the $n \times n$ matrix $A$   |
+   | ~lda~     | ~int64_t~       | in     | Leading dimension of array ~A~                 |
+   | ~B~       | ~double[][ldb]~ | out    | Adjugate of $A$                                |
+   | ~ldb~     | ~int64_t~       | in     | Leading dimension of array ~B~                 |
+   | ~det_l~   | ~double~        | inout  | determinant of $A$                             |
+
+   Requirements:
 
     - ~context~ is not ~QMCKL_NULL_CONTEXT~
     - ~n > 0~
     - ~lda >= m~
     - ~A~ is allocated with at least $m \times m \times 8$ bytes
-      
-*** C header
+    - ~ldb >= m~
+    - ~B~ is allocated with at least $m \times m \times 8$ bytes
 
     #+CALL: generate_c_header(table=qmckl_adjugate_args,rettyp="qmckl_exit_code",fname="qmckl_adjugate")
-    
+
     #+RESULTS:
     #+begin_src c :tangle (eval h_func) :comments org
     qmckl_exit_code qmckl_adjugate (
-	  const qmckl_context context,
-	  const int64_t n,
-	  const int64_t lda,
-	  double* A,
-	  double det_l ); 
+          const qmckl_context context,
+          const int64_t n,
+          const double* A,
+          const int64_t lda,
+          double* const B,
+          const int64_t ldb,
+          double* det_l );
     #+end_src
-    
-*** Source
 
    For small matrices (\le 5\times 5), we use specialized routines
    for performance motivations. For larger sizes, we rely on the
    LAPACK library.
-   
+
     #+begin_src f90 :tangle (eval f)
-integer function qmckl_adjugate_f(context, na, LDA, A, det_l) &
+integer function qmckl_adjugate_f(context, na, A, LDA, B, ldb, det_l) &
      result(info)
   use qmckl
   implicit none
   integer(qmckl_context)  , intent(in)  :: context
-  double precision, intent(inout)       :: A (LDA,na)
+  double precision, intent(in)          :: A (LDA,*)
   integer*8, intent(in)                 :: LDA
+  double precision, intent(out)         :: B (LDB,*)
+  integer*8, intent(in)                 :: LDB
   integer*8, intent(in)                 :: na
   double precision, intent(inout)       :: det_l
 
   integer    :: i,j
-  
-  !TODO CHECK ARGUMENTS
+
   info = QMCKL_SUCCESS
-  
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (na <= 0_8) then
+     info = QMCKL_INVALID_ARG_2
+     return
+  endif
+
+  if (LDA <= 0_8) then
+     info = QMCKL_INVALID_ARG_4
+     return
+  endif
+
+  if (LDA < na) then
+     info = QMCKL_INVALID_ARG_4
+     return
+  endif
+
   select case (na)
-  case default
-     call adjugate_general(context, na, LDA, A, det_l)
   case (5)
-     call adjugate5(a,LDA,na,det_l)
+     call adjugate5(A,LDA,B,LDB,na,det_l)
   case (4)
-     call adjugate4(a,LDA,na,det_l)
+     call adjugate4(A,LDA,B,LDB,na,det_l)
   case (3)
-     call adjugate3(a,LDA,na,det_l)
+     call adjugate3(A,LDA,B,LDB,na,det_l)
   case (2)
-     call adjugate2(a,LDA,na,det_l)
+     call adjugate2(A,LDA,B,LDB,na,det_l)
   case (1)
-     call adjugate1(a,LDA,na,det_l)
-  case (0)
-      det_l=1.d0
+    det_l = a(1,1)
+    b(1,1) = 1.d0
+  case default
+     call adjugate_general(context, na, A, LDA, B, LDB, det_l)
   end select
-   
+
 end function qmckl_adjugate_f
     #+end_src
 
-    #+begin_src f90 :tangle (eval f)
-subroutine adjugate1(a,LDA,na,det_l)
+    #+begin_src f90 :tangle (eval f) :exports none
+subroutine adjugate2(A,LDA,B,LDB,na,det_l)
   implicit none
-  double precision, intent(inout) :: a (LDA,na)
-  integer*8, intent(in)             :: LDA
-  integer*8, intent(in)             :: na
+  double precision, intent(in)    :: A (LDA,na)
+  double precision, intent(out)   :: B (LDA,na)
+  integer*8, intent(in)           :: LDA, LDB
+  integer*8, intent(in)           :: na
   double precision, intent(inout) :: det_l
-  
-  call cofactor1(a,LDA,na,det_l)
-end subroutine adjugate1
 
-subroutine adjugate2(a,LDA,na,det_l)
-  implicit none
-  double precision, intent(inout) :: a (LDA,na)
-  integer*8, intent(in)             :: LDA
-  integer*8, intent(in)             :: na
-  double precision, intent(inout) :: det_l
-  double precision :: b(2,2)
-  
-  call cofactor2(a,LDA,na,det_l)
-  
-  ! Calculate the transpose
-  b(1,1) = a(1,1)
-  b(1,2) = a(2,1)
-  b(2,1) = a(1,2)
-  b(2,2) = a(2,2)
-  a(1,1) = b(1,1)
-  a(1,2) = b(1,2)
-  a(2,1) = b(2,1)
-  a(2,2) = b(2,2)
+  double precision :: C(2,2)
+
+  call cofactor2(A,LDA,C,2_8,na,det_l)
+
+  B(1,1) = C(1,1)
+  B(2,1) = C(1,2)
+  B(1,2) = C(2,1)
+  B(2,2) = C(2,2)
+
 end subroutine adjugate2
 
-subroutine adjugate3(a,LDA,na,det_l)
+subroutine adjugate3(a,LDA,B,LDB,na,det_l)
   implicit none
-  double precision, intent(inout) :: a (LDA,na)
-  integer*8, intent(in)             :: LDA
-  integer*8, intent(in)             :: na
+  double precision, intent(in)    :: A (LDA,na)
+  double precision, intent(out)   :: B (LDA,na)
+  integer*8, intent(in)           :: LDA, LDB
+  integer*8, intent(in)           :: na
   double precision, intent(inout) :: det_l
-  double precision :: b(3,3)
-  
-  call cofactor3(a,LDA,na,det_l)
-  
-  ! Calculate the transpose
-  b(1,1) = a(1,1)
-  b(1,2) = a(2,1)
-  b(1,3) = a(3,1)
-  b(2,1) = a(1,2)
-  b(2,2) = a(2,2)
-  b(2,3) = a(3,2)
-  b(3,1) = a(1,3)
-  b(3,2) = a(2,3)
-  b(3,3) = a(3,3)
-  ! copy
-  a(1,1) = b(1,1)
-  a(2,1) = b(2,1)
-  a(3,1) = b(3,1)
-  a(1,2) = b(1,2)
-  a(2,2) = b(2,2)
-  a(3,2) = b(3,2)
-  a(1,3) = b(1,3)
-  a(2,3) = b(2,3)
-  a(3,3) = b(3,3)
+
+  double precision :: C(4,3)
+
+  call cofactor3(A,LDA,C,4_8,na,det_l)
+
+  B(1,1) = C(1,1)
+  B(1,2) = C(2,1)
+  B(1,3) = C(3,1)
+  B(2,1) = C(1,2)
+  B(2,2) = C(2,2)
+  B(2,3) = C(3,2)
+  B(3,1) = C(1,3)
+  B(3,2) = C(2,3)
+  B(3,3) = C(3,3)
+
 end subroutine adjugate3
 
-subroutine adjugate4(a,LDA,na,det_l)
+subroutine adjugate4(a,LDA,B,LDB,na,det_l)
   implicit none
-  double precision, intent(inout) :: a (LDA,na)
-  integer*8, intent(in)             :: LDA
-  integer*8, intent(in)             :: na
+  double precision, intent(in)    :: A (LDA,na)
+  double precision, intent(out)   :: B (LDA,na)
+  integer*8, intent(in)           :: LDA, LDB
+  integer*8, intent(in)           :: na
   double precision, intent(inout) :: det_l
-  double precision :: b(4,4)
-  
-  call cofactor4(a,LDA,na,det_l)
-  
-  ! Calculate the transpose
-  b(1,1) = a(1,1)
-  b(1,2) = a(2,1)
-  b(1,3) = a(3,1)
-  b(1,4) = a(4,1)
-  b(2,1) = a(1,2)
-  b(2,2) = a(2,2)
-  b(2,3) = a(3,2)
-  b(2,4) = a(4,2)
-  b(3,1) = a(1,3)
-  b(3,2) = a(2,3)
-  b(3,3) = a(3,3)
-  b(3,4) = a(4,3)
-  b(4,1) = a(1,4)
-  b(4,2) = a(2,4)
-  b(4,3) = a(3,4)
-  b(4,4) = a(4,4)
-  ! copy
-  a(1,1) = b(1,1)
-  a(2,1) = b(2,1)
-  a(3,1) = b(3,1)
-  a(4,1) = b(4,1)
-  a(1,2) = b(1,2)
-  a(2,2) = b(2,2)
-  a(3,2) = b(3,2)
-  a(4,2) = b(4,2)
-  a(1,3) = b(1,3)
-  a(2,3) = b(2,3)
-  a(3,3) = b(3,3)
-  a(4,3) = b(4,3)
-  a(1,4) = b(1,4)
-  a(2,4) = b(2,4)
-  a(3,4) = b(3,4)
-  a(4,4) = b(4,4)
+
+  double precision :: C(4,4)
+
+  call cofactor4(A,LDA,B,4_8,na,det_l)
+
+  B(1,1) = C(1,1)
+  B(1,2) = C(2,1)
+  B(1,3) = C(3,1)
+  B(1,4) = C(4,1)
+  B(2,1) = C(1,2)
+  B(2,2) = C(2,2)
+  B(2,3) = C(3,2)
+  B(2,4) = C(4,2)
+  B(3,1) = C(1,3)
+  B(3,2) = C(2,3)
+  B(3,3) = C(3,3)
+  B(3,4) = C(4,3)
+  B(4,1) = C(1,4)
+  B(4,2) = C(2,4)
+  B(4,3) = C(3,4)
+  B(4,4) = C(4,4)
+
 end subroutine adjugate4
 
-subroutine adjugate5(a,LDA,na,det_l)
+subroutine adjugate5(A,LDA,B,LDB,na,det_l)
   implicit none
-  double precision, intent(inout) :: a (LDA,na)
-  integer*8, intent(in)             :: LDA
-  integer*8, intent(in)             :: na
+  double precision, intent(in)    :: A (LDA,na)
+  double precision, intent(out)   :: B (LDA,na)
+  integer*8, intent(in)           :: LDA, LDB
+  integer*8, intent(in)           :: na
   double precision, intent(inout) :: det_l
-  double precision :: b(5,5)
-  
-  call cofactor5(a,LDA,na,det_l)
-  
-  ! Calculate the transpose
-  b(1,1) = a(1,1)
-  b(1,2) = a(2,1)
-  b(1,3) = a(3,1)
-  b(1,4) = a(4,1)
-  b(1,5) = a(5,1)
-  b(2,1) = a(1,2)
-  b(2,2) = a(2,2)
-  b(2,3) = a(3,2)
-  b(2,4) = a(4,2)
-  b(2,5) = a(5,2)
-  b(3,1) = a(1,3)
-  b(3,2) = a(2,3)
-  b(3,3) = a(3,3)
-  b(3,4) = a(4,3)
-  b(3,5) = a(5,3)
-  b(4,1) = a(1,4)
-  b(4,2) = a(2,4)
-  b(4,3) = a(3,4)
-  b(4,4) = a(4,4)
-  b(4,5) = a(5,4)
-  b(5,1) = a(1,5)
-  b(5,2) = a(2,5)
-  b(5,3) = a(3,5)
-  b(5,4) = a(4,5)
-  b(5,5) = a(5,5)
-  ! copy
-  a(1,1) = b(1,1)
-  a(2,1) = b(2,1)
-  a(3,1) = b(3,1)
-  a(4,1) = b(4,1)
-  a(5,1) = b(5,1)
-  a(1,2) = b(1,2)
-  a(2,2) = b(2,2)
-  a(3,2) = b(3,2)
-  a(4,2) = b(4,2)
-  a(5,2) = b(5,2)
-  a(1,3) = b(1,3)
-  a(2,3) = b(2,3)
-  a(3,3) = b(3,3)
-  a(4,3) = b(4,3)
-  a(5,3) = b(5,3)
-  a(1,4) = b(1,4)
-  a(2,4) = b(2,4)
-  a(3,4) = b(3,4)
-  a(4,4) = b(4,4)
-  a(5,4) = b(5,4)
-  a(1,5) = b(1,5)
-  a(2,5) = b(2,5)
-  a(3,5) = b(3,5)
-  a(4,5) = b(4,5)
-  a(5,5) = b(5,5)
+
+  double precision  :: C(8,5)
+
+  call cofactor5(A,LDA,C,8_8,na,det_l)
+
+  B(1,1) = C(1,1)
+  B(1,2) = C(2,1)
+  B(1,3) = C(3,1)
+  B(1,4) = C(4,1)
+  B(1,5) = C(5,1)
+  B(2,1) = C(1,2)
+  B(2,2) = C(2,2)
+  B(2,3) = C(3,2)
+  B(2,4) = C(4,2)
+  B(2,5) = C(5,2)
+  B(3,1) = C(1,3)
+  B(3,2) = C(2,3)
+  B(3,3) = C(3,3)
+  B(3,4) = C(4,3)
+  B(3,5) = C(5,3)
+  B(4,1) = C(1,4)
+  B(4,2) = C(2,4)
+  B(4,3) = C(3,4)
+  B(4,4) = C(4,4)
+  B(4,5) = C(5,4)
+  B(5,1) = C(1,5)
+  B(5,2) = C(2,5)
+  B(5,3) = C(3,5)
+  B(5,4) = C(4,5)
+  B(5,5) = C(5,5)
+
 end subroutine adjugate5
 
-subroutine cofactor1(a,LDA,na,det_l)
+subroutine cofactor2(a,LDA,b,LDB,na,det_l)
   implicit none
-  double precision, intent(inout) :: a (LDA,na)
-  integer*8, intent(in)             :: LDA
-  integer*8, intent(in)             :: na
-  double precision, intent(inout) :: det_l
-  
-  det_l = a(1,1)
-  a(1,1) = 1.d0
-end subroutine cofactor1
-
-subroutine cofactor2(a,LDA,na,det_l)
-  implicit none
-  double precision :: a (LDA,na)
-  integer*8        :: LDA
+  double precision, intent(in)    :: A (LDA,na)
+  double precision, intent(out)   :: B (LDA,na)
+  integer*8, intent(in)           :: LDA, LDB
   integer*8        :: na
   double precision :: det_l
-  double precision :: b(2,2)
-  
-  b(1,1) = a(1,1)
-  b(2,1) = a(2,1)
-  b(1,2) = a(1,2)
-  b(2,2) = a(2,2)
-  det_l = a(1,1)*a(2,2) - a(1,2)*a(2,1)
-  a(1,1) = b(2,2)
-  a(2,1) = -b(2,1)
-  a(1,2) = -b(1,2)
-  a(2,2) = b(1,1)
+
+  det_l  =  a(1,1)*a(2,2) - a(1,2)*a(2,1)
+  b(1,1) =  a(2,2)
+  b(2,1) = -a(2,1)
+  b(1,2) = -a(1,2)
+  b(2,2) =  a(1,1)
 end subroutine cofactor2
 
-subroutine cofactor3(a,LDA,na,det_l)
+subroutine cofactor3(a,LDA,b,LDB,na,det_l)
   implicit none
-  double precision, intent(inout) :: a (LDA,na)
-  integer*8, intent(in)             :: LDA
-  integer*8, intent(in)             :: na
+  double precision, intent(in)    :: A (LDA,na)
+  double precision, intent(out)   :: B (LDA,na)
+  integer*8, intent(in)           :: LDA, LDB
+  integer*8, intent(in)           :: na
   double precision, intent(inout) :: det_l
-  double precision :: b(4,3)
   integer :: i
+
   det_l = a(1,1)*(a(2,2)*a(3,3)-a(2,3)*a(3,2)) &
          -a(1,2)*(a(2,1)*a(3,3)-a(2,3)*a(3,1)) &
          +a(1,3)*(a(2,1)*a(3,2)-a(2,2)*a(3,1))
 
-  do i=1,4
-     b(i,1) = a(i,1)
-     b(i,2) = a(i,2)
-     b(i,3) = a(i,3)
-  end do
+  b(1,1) =  a(2,2)*a(3,3) - a(2,3)*a(3,2)
+  b(2,1) =  a(2,3)*a(3,1) - a(2,1)*a(3,3)
+  b(3,1) =  a(2,1)*a(3,2) - a(2,2)*a(3,1)
 
-  a(1,1) =  b(2,2)*b(3,3) - b(2,3)*b(3,2)
-  a(2,1) =  b(2,3)*b(3,1) - b(2,1)*b(3,3)
-  a(3,1) =  b(2,1)*b(3,2) - b(2,2)*b(3,1)
-  
-  a(1,2) =  b(1,3)*b(3,2) - b(1,2)*b(3,3)
-  a(2,2) =  b(1,1)*b(3,3) - b(1,3)*b(3,1)
-  a(3,2) =  b(1,2)*b(3,1) - b(1,1)*b(3,2)
-  
-  a(1,3) =  b(1,2)*b(2,3) - b(1,3)*b(2,2)
-  a(2,3) =  b(1,3)*b(2,1) - b(1,1)*b(2,3)
-  a(3,3) =  b(1,1)*b(2,2) - b(1,2)*b(2,1)
-  
+  b(1,2) =  a(1,3)*a(3,2) - a(1,2)*a(3,3)
+  b(2,2) =  a(1,1)*a(3,3) - a(1,3)*a(3,1)
+  b(3,2) =  a(1,2)*a(3,1) - a(1,1)*a(3,2)
+
+  b(1,3) =  a(1,2)*a(2,3) - a(1,3)*a(2,2)
+  b(2,3) =  a(1,3)*a(2,1) - a(1,1)*a(2,3)
+  b(3,3) =  a(1,1)*a(2,2) - a(1,2)*a(2,1)
+
 end subroutine cofactor3
 
-subroutine cofactor4(a,LDA,na,det_l)
+subroutine cofactor4(a,LDA,b,LDB,na,det_l)
   implicit none
-  double precision, intent(inout) :: a (LDA,na)
-  integer*8, intent(in)             :: LDA
-  integer*8, intent(in)             :: na
+  double precision, intent(in)    :: A (LDA,na)
+  double precision, intent(out)   :: B (LDA,na)
+  integer*8, intent(in)           :: LDA, LDB
+  integer*8, intent(in)           :: na
   double precision, intent(inout) :: det_l
-  double precision :: b(4,4)
   integer :: i,j
   det_l =  a(1,1)*(a(2,2)*(a(3,3)*a(4,4)-a(3,4)*a(4,3))  &
                   -a(2,3)*(a(3,2)*a(4,4)-a(3,4)*a(4,2))  &
@@ -712,42 +566,36 @@ subroutine cofactor4(a,LDA,na,det_l)
           -a(1,4)*(a(2,1)*(a(3,2)*a(4,3)-a(3,3)*a(4,2))  &
                   -a(2,2)*(a(3,1)*a(4,3)-a(3,3)*a(4,1))  &
                   +a(2,3)*(a(3,1)*a(4,2)-a(3,2)*a(4,1)))
-  do i=1,4
-     b(1,i) = a(1,i)
-     b(2,i) = a(2,i)
-     b(3,i) = a(3,i)
-     b(4,i) = a(4,i)
-  end do
-  
-  a(1,1) =  b(2,2)*(b(3,3)*b(4,4)-b(3,4)*b(4,3))-b(2,3)*(b(3,2)*b(4,4)-b(3,4)*b(4,2))+b(2,4)*(b(3,2)*b(4,3)-b(3,3)*b(4,2))
-  a(2,1) = -b(2,1)*(b(3,3)*b(4,4)-b(3,4)*b(4,3))+b(2,3)*(b(3,1)*b(4,4)-b(3,4)*b(4,1))-b(2,4)*(b(3,1)*b(4,3)-b(3,3)*b(4,1))
-  a(3,1) =  b(2,1)*(b(3,2)*b(4,4)-b(3,4)*b(4,2))-b(2,2)*(b(3,1)*b(4,4)-b(3,4)*b(4,1))+b(2,4)*(b(3,1)*b(4,2)-b(3,2)*b(4,1))
-  a(4,1) = -b(2,1)*(b(3,2)*b(4,3)-b(3,3)*b(4,2))+b(2,2)*(b(3,1)*b(4,3)-b(3,3)*b(4,1))-b(2,3)*(b(3,1)*b(4,2)-b(3,2)*b(4,1))
-  
-  a(1,2) = -b(1,2)*(b(3,3)*b(4,4)-b(3,4)*b(4,3))+b(1,3)*(b(3,2)*b(4,4)-b(3,4)*b(4,2))-b(1,4)*(b(3,2)*b(4,3)-b(3,3)*b(4,2))
-  a(2,2) =  b(1,1)*(b(3,3)*b(4,4)-b(3,4)*b(4,3))-b(1,3)*(b(3,1)*b(4,4)-b(3,4)*b(4,1))+b(1,4)*(b(3,1)*b(4,3)-b(3,3)*b(4,1))
-  a(3,2) = -b(1,1)*(b(3,2)*b(4,4)-b(3,4)*b(4,2))+b(1,2)*(b(3,1)*b(4,4)-b(3,4)*b(4,1))-b(1,4)*(b(3,1)*b(4,2)-b(3,2)*b(4,1))
-  a(4,2) =  b(1,1)*(b(3,2)*b(4,3)-b(3,3)*b(4,2))-b(1,2)*(b(3,1)*b(4,3)-b(3,3)*b(4,1))+b(1,3)*(b(3,1)*b(4,2)-b(3,2)*b(4,1))
-  
-  a(1,3) =  b(1,2)*(b(2,3)*b(4,4)-b(2,4)*b(4,3))-b(1,3)*(b(2,2)*b(4,4)-b(2,4)*b(4,2))+b(1,4)*(b(2,2)*b(4,3)-b(2,3)*b(4,2))
-  a(2,3) = -b(1,1)*(b(2,3)*b(4,4)-b(2,4)*b(4,3))+b(1,3)*(b(2,1)*b(4,4)-b(2,4)*b(4,1))-b(1,4)*(b(2,1)*b(4,3)-b(2,3)*b(4,1))
-  a(3,3) =  b(1,1)*(b(2,2)*b(4,4)-b(2,4)*b(4,2))-b(1,2)*(b(2,1)*b(4,4)-b(2,4)*b(4,1))+b(1,4)*(b(2,1)*b(4,2)-b(2,2)*b(4,1))
-  a(4,3) = -b(1,1)*(b(2,2)*b(4,3)-b(2,3)*b(4,2))+b(1,2)*(b(2,1)*b(4,3)-b(2,3)*b(4,1))-b(1,3)*(b(2,1)*b(4,2)-b(2,2)*b(4,1))
-  
-  a(1,4) = -b(1,2)*(b(2,3)*b(3,4)-b(2,4)*b(3,3))+b(1,3)*(b(2,2)*b(3,4)-b(2,4)*b(3,2))-b(1,4)*(b(2,2)*b(3,3)-b(2,3)*b(3,2))
-  a(2,4) =  b(1,1)*(b(2,3)*b(3,4)-b(2,4)*b(3,3))-b(1,3)*(b(2,1)*b(3,4)-b(2,4)*b(3,1))+b(1,4)*(b(2,1)*b(3,3)-b(2,3)*b(3,1))
-  a(3,4) = -b(1,1)*(b(2,2)*b(3,4)-b(2,4)*b(3,2))+b(1,2)*(b(2,1)*b(3,4)-b(2,4)*b(3,1))-b(1,4)*(b(2,1)*b(3,2)-b(2,2)*b(3,1))
-  a(4,4) =  b(1,1)*(b(2,2)*b(3,3)-b(2,3)*b(3,2))-b(1,2)*(b(2,1)*b(3,3)-b(2,3)*b(3,1))+b(1,3)*(b(2,1)*b(3,2)-b(2,2)*b(3,1))
-  
+
+  b(1,1) =  a(2,2)*(a(3,3)*a(4,4)-a(3,4)*a(4,3))-a(2,3)*(a(3,2)*a(4,4)-a(3,4)*a(4,2))+a(2,4)*(a(3,2)*a(4,3)-a(3,3)*a(4,2))
+  b(2,1) = -a(2,1)*(a(3,3)*a(4,4)-a(3,4)*a(4,3))+a(2,3)*(a(3,1)*a(4,4)-a(3,4)*a(4,1))-a(2,4)*(a(3,1)*a(4,3)-a(3,3)*a(4,1))
+  b(3,1) =  a(2,1)*(a(3,2)*a(4,4)-a(3,4)*a(4,2))-a(2,2)*(a(3,1)*a(4,4)-a(3,4)*a(4,1))+a(2,4)*(a(3,1)*a(4,2)-a(3,2)*a(4,1))
+  b(4,1) = -a(2,1)*(a(3,2)*a(4,3)-a(3,3)*a(4,2))+a(2,2)*(a(3,1)*a(4,3)-a(3,3)*a(4,1))-a(2,3)*(a(3,1)*a(4,2)-a(3,2)*a(4,1))
+
+  b(1,2) = -a(1,2)*(a(3,3)*a(4,4)-a(3,4)*a(4,3))+a(1,3)*(a(3,2)*a(4,4)-a(3,4)*a(4,2))-a(1,4)*(a(3,2)*a(4,3)-a(3,3)*a(4,2))
+  b(2,2) =  a(1,1)*(a(3,3)*a(4,4)-a(3,4)*a(4,3))-a(1,3)*(a(3,1)*a(4,4)-a(3,4)*a(4,1))+a(1,4)*(a(3,1)*a(4,3)-a(3,3)*a(4,1))
+  b(3,2) = -a(1,1)*(a(3,2)*a(4,4)-a(3,4)*a(4,2))+a(1,2)*(a(3,1)*a(4,4)-a(3,4)*a(4,1))-a(1,4)*(a(3,1)*a(4,2)-a(3,2)*a(4,1))
+  b(4,2) =  a(1,1)*(a(3,2)*a(4,3)-a(3,3)*a(4,2))-a(1,2)*(a(3,1)*a(4,3)-a(3,3)*a(4,1))+a(1,3)*(a(3,1)*a(4,2)-a(3,2)*a(4,1))
+
+  b(1,3) =  a(1,2)*(a(2,3)*a(4,4)-a(2,4)*a(4,3))-a(1,3)*(a(2,2)*a(4,4)-a(2,4)*a(4,2))+a(1,4)*(a(2,2)*a(4,3)-a(2,3)*a(4,2))
+  b(2,3) = -a(1,1)*(a(2,3)*a(4,4)-a(2,4)*a(4,3))+a(1,3)*(a(2,1)*a(4,4)-a(2,4)*a(4,1))-a(1,4)*(a(2,1)*a(4,3)-a(2,3)*a(4,1))
+  b(3,3) =  a(1,1)*(a(2,2)*a(4,4)-a(2,4)*a(4,2))-a(1,2)*(a(2,1)*a(4,4)-a(2,4)*a(4,1))+a(1,4)*(a(2,1)*a(4,2)-a(2,2)*a(4,1))
+  b(4,3) = -a(1,1)*(a(2,2)*a(4,3)-a(2,3)*a(4,2))+a(1,2)*(a(2,1)*a(4,3)-a(2,3)*a(4,1))-a(1,3)*(a(2,1)*a(4,2)-a(2,2)*a(4,1))
+
+  b(1,4) = -a(1,2)*(a(2,3)*a(3,4)-a(2,4)*a(3,3))+a(1,3)*(a(2,2)*a(3,4)-a(2,4)*a(3,2))-a(1,4)*(a(2,2)*a(3,3)-a(2,3)*a(3,2))
+  b(2,4) =  a(1,1)*(a(2,3)*a(3,4)-a(2,4)*a(3,3))-a(1,3)*(a(2,1)*a(3,4)-a(2,4)*a(3,1))+a(1,4)*(a(2,1)*a(3,3)-a(2,3)*a(3,1))
+  b(3,4) = -a(1,1)*(a(2,2)*a(3,4)-a(2,4)*a(3,2))+a(1,2)*(a(2,1)*a(3,4)-a(2,4)*a(3,1))-a(1,4)*(a(2,1)*a(3,2)-a(2,2)*a(3,1))
+  b(4,4) =  a(1,1)*(a(2,2)*a(3,3)-a(2,3)*a(3,2))-a(1,2)*(a(2,1)*a(3,3)-a(2,3)*a(3,1))+a(1,3)*(a(2,1)*a(3,2)-a(2,2)*a(3,1))
+
 end subroutine cofactor4
 
-subroutine cofactor5(a,LDA,na,det_l)
+subroutine cofactor5(A,LDA,B,LDB,na,det_l)
   implicit none
-  double precision, intent(inout) :: a (LDA,na)
-  integer*8, intent(in)             :: LDA
-  integer*8, intent(in)             :: na
+  double precision, intent(in)    :: A (LDA,na)
+  double precision, intent(out)   :: B (LDA,na)
+  integer*8, intent(in)           :: LDA, LDB
+  integer*8, intent(in)           :: na
   double precision, intent(inout) :: det_l
-  double precision :: b(5,5)
   integer :: i,j
 
  det_l = a(1,1)*(a(2,2)*(a(3,3)*(a(4,4)*a(5,5)-a(4,5)*a(5,4))-a(3,4)*( &
@@ -788,219 +636,145 @@ subroutine cofactor5(a,LDA,na,det_l)
  a(5,2))-a(3,2)*(a(4,1)*a(5,3)-a(4,3)*a(5,1))+a(3,3)*(a(4,1)*a(5,2)- &
  a(4,2)*a(5,1))))
 
- do i=1,5
-    b(1,i) = a(1,i)
-    b(2,i) = a(2,i)
-    b(3,i) = a(3,i)
-    b(4,i) = a(4,i)
-    b(5,i) = a(5,i)
- end do
- 
- a(1,1) = &
- (b(2,2)*(b(3,3)*(b(4,4)*b(5,5)-b(4,5)*b(5,4))-b(3,4)*(b(4,3)*b(5,5)-b(4,5)*b(5,3))+b(3,5)*(b(4,3)*b(5,4)-b(4,4)*b(5,3)))-b(2,3)* &
- (b(3,2)*(b(4,4)*b(5,5)-b(4,5)*b(5,4))-b(3,4)*(b(4,2)*b(5,5)-b(4,5)*b(5,2))+b(3,5)*(b(4,2)*b(5,4)-b(4,4)*b(5,2)))+b(2,4)* &
- (b(3,2)*(b(4,3)*b(5,5)-b(4,5)*b(5,3))-b(3,3)*(b(4,2)*b(5,5)-b(4,5)*b(5,2))+b(3,5)*(b(4,2)*b(5,3)-b(4,3)*b(5,2)))-b(2,5)* &
- (b(3,2)*(b(4,3)*b(5,4)-b(4,4)*b(5,3))-b(3,3)*(b(4,2)*b(5,4)-b(4,4)*b(5,2))+b(3,4)*(b(4,2)*b(5,3)-b(4,3)*b(5,2))))
- a(2,1) = &
- (-b(2,1)*(b(3,3)*(b(4,4)*b(5,5)-b(4,5)*b(5,4))-b(3,4)*(b(4,3)*b(5,5)-b(4,5)*b(5,3))+b(3,5)*(b(4,3)*b(5,4)-b(4,4)*b(5,3)))+b(2,3)* &
- (b(3,1)*(b(4,4)*b(5,5)-b(4,5)*b(5,4))-b(3,4)*(b(4,1)*b(5,5)-b(4,5)*b(5,1))+b(3,5)*(b(4,1)*b(5,4)-b(4,4)*b(5,1)))-b(2,4)* &
- (b(3,1)*(b(4,3)*b(5,5)-b(4,5)*b(5,3))-b(3,3)*(b(4,1)*b(5,5)-b(4,5)*b(5,1))+b(3,5)*(b(4,1)*b(5,3)-b(4,3)*b(5,1)))+b(2,5)* &
- (b(3,1)*(b(4,3)*b(5,4)-b(4,4)*b(5,3))-b(3,3)*(b(4,1)*b(5,4)-b(4,4)*b(5,1))+b(3,4)*(b(4,1)*b(5,3)-b(4,3)*b(5,1))))
- a(3,1) = &
- (b(2,1)*(b(3,2)*(b(4,4)*b(5,5)-b(4,5)*b(5,4))-b(3,4)*(b(4,2)*b(5,5)-b(4,5)*b(5,2))+b(3,5)*(b(4,2)*b(5,4)-b(4,4)*b(5,2)))-b(2,2)* &
- (b(3,1)*(b(4,4)*b(5,5)-b(4,5)*b(5,4))-b(3,4)*(b(4,1)*b(5,5)-b(4,5)*b(5,1))+b(3,5)*(b(4,1)*b(5,4)-b(4,4)*b(5,1)))+b(2,4)* &
- (b(3,1)*(b(4,2)*b(5,5)-b(4,5)*b(5,2))-b(3,2)*(b(4,1)*b(5,5)-b(4,5)*b(5,1))+b(3,5)*(b(4,1)*b(5,2)-b(4,2)*b(5,1)))-b(2,5)* &
- (b(3,1)*(b(4,2)*b(5,4)-b(4,4)*b(5,2))-b(3,2)*(b(4,1)*b(5,4)-b(4,4)*b(5,1))+b(3,4)*(b(4,1)*b(5,2)-b(4,2)*b(5,1))))
- a(4,1) = &
- (-b(2,1)*(b(3,2)*(b(4,3)*b(5,5)-b(4,5)*b(5,3))-b(3,3)*(b(4,2)*b(5,5)-b(4,5)*b(5,2))+b(3,5)*(b(4,2)*b(5,3)-b(4,3)*b(5,2)))+b(2,2)* &
- (b(3,1)*(b(4,3)*b(5,5)-b(4,5)*b(5,3))-b(3,3)*(b(4,1)*b(5,5)-b(4,5)*b(5,1))+b(3,5)*(b(4,1)*b(5,3)-b(4,3)*b(5,1)))-b(2,3)* &
- (b(3,1)*(b(4,2)*b(5,5)-b(4,5)*b(5,2))-b(3,2)*(b(4,1)*b(5,5)-b(4,5)*b(5,1))+b(3,5)*(b(4,1)*b(5,2)-b(4,2)*b(5,1)))+b(2,5)* &
- (b(3,1)*(b(4,2)*b(5,3)-b(4,3)*b(5,2))-b(3,2)*(b(4,1)*b(5,3)-b(4,3)*b(5,1))+b(3,3)*(b(4,1)*b(5,2)-b(4,2)*b(5,1))))
- a(5,1) = &
- (b(2,1)*(b(3,2)*(b(4,3)*b(5,4)-b(4,4)*b(5,3))-b(3,3)*(b(4,2)*b(5,4)-b(4,4)*b(5,2))+b(3,4)*(b(4,2)*b(5,3)-b(4,3)*b(5,2)))-b(2,2)* &
- (b(3,1)*(b(4,3)*b(5,4)-b(4,4)*b(5,3))-b(3,3)*(b(4,1)*b(5,4)-b(4,4)*b(5,1))+b(3,4)*(b(4,1)*b(5,3)-b(4,3)*b(5,1)))+b(2,3)* &
- (b(3,1)*(b(4,2)*b(5,4)-b(4,4)*b(5,2))-b(3,2)*(b(4,1)*b(5,4)-b(4,4)*b(5,1))+b(3,4)*(b(4,1)*b(5,2)-b(4,2)*b(5,1)))-b(2,4)* &
- (b(3,1)*(b(4,2)*b(5,3)-b(4,3)*b(5,2))-b(3,2)*(b(4,1)*b(5,3)-b(4,3)*b(5,1))+b(3,3)*(b(4,1)*b(5,2)-b(4,2)*b(5,1))))
+ b(1,1) = &
+ (a(2,2)*(a(3,3)*(a(4,4)*a(5,5)-a(4,5)*a(5,4))-a(3,4)*(a(4,3)*a(5,5)-a(4,5)*a(5,3))+a(3,5)*(a(4,3)*a(5,4)-a(4,4)*a(5,3)))-a(2,3)* &
+ (a(3,2)*(a(4,4)*a(5,5)-a(4,5)*a(5,4))-a(3,4)*(a(4,2)*a(5,5)-a(4,5)*a(5,2))+a(3,5)*(a(4,2)*a(5,4)-a(4,4)*a(5,2)))+a(2,4)* &
+ (a(3,2)*(a(4,3)*a(5,5)-a(4,5)*a(5,3))-a(3,3)*(a(4,2)*a(5,5)-a(4,5)*a(5,2))+a(3,5)*(a(4,2)*a(5,3)-a(4,3)*a(5,2)))-a(2,5)* &
+ (a(3,2)*(a(4,3)*a(5,4)-a(4,4)*a(5,3))-a(3,3)*(a(4,2)*a(5,4)-a(4,4)*a(5,2))+a(3,4)*(a(4,2)*a(5,3)-a(4,3)*a(5,2))))
+ b(2,1) = &
+ (-a(2,1)*(a(3,3)*(a(4,4)*a(5,5)-a(4,5)*a(5,4))-a(3,4)*(a(4,3)*a(5,5)-a(4,5)*a(5,3))+a(3,5)*(a(4,3)*a(5,4)-a(4,4)*a(5,3)))+a(2,3)* &
+ (a(3,1)*(a(4,4)*a(5,5)-a(4,5)*a(5,4))-a(3,4)*(a(4,1)*a(5,5)-a(4,5)*a(5,1))+a(3,5)*(a(4,1)*a(5,4)-a(4,4)*a(5,1)))-a(2,4)* &
+ (a(3,1)*(a(4,3)*a(5,5)-a(4,5)*a(5,3))-a(3,3)*(a(4,1)*a(5,5)-a(4,5)*a(5,1))+a(3,5)*(a(4,1)*a(5,3)-a(4,3)*a(5,1)))+a(2,5)* &
+ (a(3,1)*(a(4,3)*a(5,4)-a(4,4)*a(5,3))-a(3,3)*(a(4,1)*a(5,4)-a(4,4)*a(5,1))+a(3,4)*(a(4,1)*a(5,3)-a(4,3)*a(5,1))))
+ b(3,1) = &
+ (a(2,1)*(a(3,2)*(a(4,4)*a(5,5)-a(4,5)*a(5,4))-a(3,4)*(a(4,2)*a(5,5)-a(4,5)*a(5,2))+a(3,5)*(a(4,2)*a(5,4)-a(4,4)*a(5,2)))-a(2,2)* &
+ (a(3,1)*(a(4,4)*a(5,5)-a(4,5)*a(5,4))-a(3,4)*(a(4,1)*a(5,5)-a(4,5)*a(5,1))+a(3,5)*(a(4,1)*a(5,4)-a(4,4)*a(5,1)))+a(2,4)* &
+ (a(3,1)*(a(4,2)*a(5,5)-a(4,5)*a(5,2))-a(3,2)*(a(4,1)*a(5,5)-a(4,5)*a(5,1))+a(3,5)*(a(4,1)*a(5,2)-a(4,2)*a(5,1)))-a(2,5)* &
+ (a(3,1)*(a(4,2)*a(5,4)-a(4,4)*a(5,2))-a(3,2)*(a(4,1)*a(5,4)-a(4,4)*a(5,1))+a(3,4)*(a(4,1)*a(5,2)-a(4,2)*a(5,1))))
+ b(4,1) = &
+ (-a(2,1)*(a(3,2)*(a(4,3)*a(5,5)-a(4,5)*a(5,3))-a(3,3)*(a(4,2)*a(5,5)-a(4,5)*a(5,2))+a(3,5)*(a(4,2)*a(5,3)-a(4,3)*a(5,2)))+a(2,2)* &
+ (a(3,1)*(a(4,3)*a(5,5)-a(4,5)*a(5,3))-a(3,3)*(a(4,1)*a(5,5)-a(4,5)*a(5,1))+a(3,5)*(a(4,1)*a(5,3)-a(4,3)*a(5,1)))-a(2,3)* &
+ (a(3,1)*(a(4,2)*a(5,5)-a(4,5)*a(5,2))-a(3,2)*(a(4,1)*a(5,5)-a(4,5)*a(5,1))+a(3,5)*(a(4,1)*a(5,2)-a(4,2)*a(5,1)))+a(2,5)* &
+ (a(3,1)*(a(4,2)*a(5,3)-a(4,3)*a(5,2))-a(3,2)*(a(4,1)*a(5,3)-a(4,3)*a(5,1))+a(3,3)*(a(4,1)*a(5,2)-a(4,2)*a(5,1))))
+ b(5,1) = &
+ (a(2,1)*(a(3,2)*(a(4,3)*a(5,4)-a(4,4)*a(5,3))-a(3,3)*(a(4,2)*a(5,4)-a(4,4)*a(5,2))+a(3,4)*(a(4,2)*a(5,3)-a(4,3)*a(5,2)))-a(2,2)* &
+ (a(3,1)*(a(4,3)*a(5,4)-a(4,4)*a(5,3))-a(3,3)*(a(4,1)*a(5,4)-a(4,4)*a(5,1))+a(3,4)*(a(4,1)*a(5,3)-a(4,3)*a(5,1)))+a(2,3)* &
+ (a(3,1)*(a(4,2)*a(5,4)-a(4,4)*a(5,2))-a(3,2)*(a(4,1)*a(5,4)-a(4,4)*a(5,1))+a(3,4)*(a(4,1)*a(5,2)-a(4,2)*a(5,1)))-a(2,4)* &
+ (a(3,1)*(a(4,2)*a(5,3)-a(4,3)*a(5,2))-a(3,2)*(a(4,1)*a(5,3)-a(4,3)*a(5,1))+a(3,3)*(a(4,1)*a(5,2)-a(4,2)*a(5,1))))
 
- a(1,2) = &
- (-b(1,2)*(b(3,3)*(b(4,4)*b(5,5)-b(4,5)*b(5,4))-b(3,4)*(b(4,3)*b(5,5)-b(4,5)*b(5,3))+b(3,5)*(b(4,3)*b(5,4)-b(4,4)*b(5,3)))+b(1,3)* &
- (b(3,2)*(b(4,4)*b(5,5)-b(4,5)*b(5,4))-b(3,4)*(b(4,2)*b(5,5)-b(4,5)*b(5,2))+b(3,5)*(b(4,2)*b(5,4)-b(4,4)*b(5,2)))-b(1,4)* &
- (b(3,2)*(b(4,3)*b(5,5)-b(4,5)*b(5,3))-b(3,3)*(b(4,2)*b(5,5)-b(4,5)*b(5,2))+b(3,5)*(b(4,2)*b(5,3)-b(4,3)*b(5,2)))+b(1,5)* &
- (b(3,2)*(b(4,3)*b(5,4)-b(4,4)*b(5,3))-b(3,3)*(b(4,2)*b(5,4)-b(4,4)*b(5,2))+b(3,4)*(b(4,2)*b(5,3)-b(4,3)*b(5,2))))
- a(2,2) = &
- (b(1,1)*(b(3,3)*(b(4,4)*b(5,5)-b(4,5)*b(5,4))-b(3,4)*(b(4,3)*b(5,5)-b(4,5)*b(5,3))+b(3,5)*(b(4,3)*b(5,4)-b(4,4)*b(5,3)))-b(1,3)* &
- (b(3,1)*(b(4,4)*b(5,5)-b(4,5)*b(5,4))-b(3,4)*(b(4,1)*b(5,5)-b(4,5)*b(5,1))+b(3,5)*(b(4,1)*b(5,4)-b(4,4)*b(5,1)))+b(1,4)* &
- (b(3,1)*(b(4,3)*b(5,5)-b(4,5)*b(5,3))-b(3,3)*(b(4,1)*b(5,5)-b(4,5)*b(5,1))+b(3,5)*(b(4,1)*b(5,3)-b(4,3)*b(5,1)))-b(1,5)* &
- (b(3,1)*(b(4,3)*b(5,4)-b(4,4)*b(5,3))-b(3,3)*(b(4,1)*b(5,4)-b(4,4)*b(5,1))+b(3,4)*(b(4,1)*b(5,3)-b(4,3)*b(5,1))))
- a(3,2) = &
- (-b(1,1)*(b(3,2)*(b(4,4)*b(5,5)-b(4,5)*b(5,4))-b(3,4)*(b(4,2)*b(5,5)-b(4,5)*b(5,2))+b(3,5)*(b(4,2)*b(5,4)-b(4,4)*b(5,2)))+b(1,2)* &
- (b(3,1)*(b(4,4)*b(5,5)-b(4,5)*b(5,4))-b(3,4)*(b(4,1)*b(5,5)-b(4,5)*b(5,1))+b(3,5)*(b(4,1)*b(5,4)-b(4,4)*b(5,1)))-b(1,4)* &
- (b(3,1)*(b(4,2)*b(5,5)-b(4,5)*b(5,2))-b(3,2)*(b(4,1)*b(5,5)-b(4,5)*b(5,1))+b(3,5)*(b(4,1)*b(5,2)-b(4,2)*b(5,1)))+b(1,5)* &
- (b(3,1)*(b(4,2)*b(5,4)-b(4,4)*b(5,2))-b(3,2)*(b(4,1)*b(5,4)-b(4,4)*b(5,1))+b(3,4)*(b(4,1)*b(5,2)-b(4,2)*b(5,1))))
- a(4,2) = &
- (b(1,1)*(b(3,2)*(b(4,3)*b(5,5)-b(4,5)*b(5,3))-b(3,3)*(b(4,2)*b(5,5)-b(4,5)*b(5,2))+b(3,5)*(b(4,2)*b(5,3)-b(4,3)*b(5,2)))-b(1,2)* &
- (b(3,1)*(b(4,3)*b(5,5)-b(4,5)*b(5,3))-b(3,3)*(b(4,1)*b(5,5)-b(4,5)*b(5,1))+b(3,5)*(b(4,1)*b(5,3)-b(4,3)*b(5,1)))+b(1,3)* &
- (b(3,1)*(b(4,2)*b(5,5)-b(4,5)*b(5,2))-b(3,2)*(b(4,1)*b(5,5)-b(4,5)*b(5,1))+b(3,5)*(b(4,1)*b(5,2)-b(4,2)*b(5,1)))-b(1,5)* &
- (b(3,1)*(b(4,2)*b(5,3)-b(4,3)*b(5,2))-b(3,2)*(b(4,1)*b(5,3)-b(4,3)*b(5,1))+b(3,3)*(b(4,1)*b(5,2)-b(4,2)*b(5,1))))
- a(5,2) = &
- (-b(1,1)*(b(3,2)*(b(4,3)*b(5,4)-b(4,4)*b(5,3))-b(3,3)*(b(4,2)*b(5,4)-b(4,4)*b(5,2))+b(3,4)*(b(4,2)*b(5,3)-b(4,3)*b(5,2)))+b(1,2)* &
- (b(3,1)*(b(4,3)*b(5,4)-b(4,4)*b(5,3))-b(3,3)*(b(4,1)*b(5,4)-b(4,4)*b(5,1))+b(3,4)*(b(4,1)*b(5,3)-b(4,3)*b(5,1)))-b(1,3)* &
- (b(3,1)*(b(4,2)*b(5,4)-b(4,4)*b(5,2))-b(3,2)*(b(4,1)*b(5,4)-b(4,4)*b(5,1))+b(3,4)*(b(4,1)*b(5,2)-b(4,2)*b(5,1)))+b(1,4)* &
- (b(3,1)*(b(4,2)*b(5,3)-b(4,3)*b(5,2))-b(3,2)*(b(4,1)*b(5,3)-b(4,3)*b(5,1))+b(3,3)*(b(4,1)*b(5,2)-b(4,2)*b(5,1))))
+ b(1,2) = &
+ (-a(1,2)*(a(3,3)*(a(4,4)*a(5,5)-a(4,5)*a(5,4))-a(3,4)*(a(4,3)*a(5,5)-a(4,5)*a(5,3))+a(3,5)*(a(4,3)*a(5,4)-a(4,4)*a(5,3)))+a(1,3)* &
+ (a(3,2)*(a(4,4)*a(5,5)-a(4,5)*a(5,4))-a(3,4)*(a(4,2)*a(5,5)-a(4,5)*a(5,2))+a(3,5)*(a(4,2)*a(5,4)-a(4,4)*a(5,2)))-a(1,4)* &
+ (a(3,2)*(a(4,3)*a(5,5)-a(4,5)*a(5,3))-a(3,3)*(a(4,2)*a(5,5)-a(4,5)*a(5,2))+a(3,5)*(a(4,2)*a(5,3)-a(4,3)*a(5,2)))+a(1,5)* &
+ (a(3,2)*(a(4,3)*a(5,4)-a(4,4)*a(5,3))-a(3,3)*(a(4,2)*a(5,4)-a(4,4)*a(5,2))+a(3,4)*(a(4,2)*a(5,3)-a(4,3)*a(5,2))))
+ b(2,2) = &
+ (a(1,1)*(a(3,3)*(a(4,4)*a(5,5)-a(4,5)*a(5,4))-a(3,4)*(a(4,3)*a(5,5)-a(4,5)*a(5,3))+a(3,5)*(a(4,3)*a(5,4)-a(4,4)*a(5,3)))-a(1,3)* &
+ (a(3,1)*(a(4,4)*a(5,5)-a(4,5)*a(5,4))-a(3,4)*(a(4,1)*a(5,5)-a(4,5)*a(5,1))+a(3,5)*(a(4,1)*a(5,4)-a(4,4)*a(5,1)))+a(1,4)* &
+ (a(3,1)*(a(4,3)*a(5,5)-a(4,5)*a(5,3))-a(3,3)*(a(4,1)*a(5,5)-a(4,5)*a(5,1))+a(3,5)*(a(4,1)*a(5,3)-a(4,3)*a(5,1)))-a(1,5)* &
+ (a(3,1)*(a(4,3)*a(5,4)-a(4,4)*a(5,3))-a(3,3)*(a(4,1)*a(5,4)-a(4,4)*a(5,1))+a(3,4)*(a(4,1)*a(5,3)-a(4,3)*a(5,1))))
+ b(3,2) = &
+ (-a(1,1)*(a(3,2)*(a(4,4)*a(5,5)-a(4,5)*a(5,4))-a(3,4)*(a(4,2)*a(5,5)-a(4,5)*a(5,2))+a(3,5)*(a(4,2)*a(5,4)-a(4,4)*a(5,2)))+a(1,2)* &
+ (a(3,1)*(a(4,4)*a(5,5)-a(4,5)*a(5,4))-a(3,4)*(a(4,1)*a(5,5)-a(4,5)*a(5,1))+a(3,5)*(a(4,1)*a(5,4)-a(4,4)*a(5,1)))-a(1,4)* &
+ (a(3,1)*(a(4,2)*a(5,5)-a(4,5)*a(5,2))-a(3,2)*(a(4,1)*a(5,5)-a(4,5)*a(5,1))+a(3,5)*(a(4,1)*a(5,2)-a(4,2)*a(5,1)))+a(1,5)* &
+ (a(3,1)*(a(4,2)*a(5,4)-a(4,4)*a(5,2))-a(3,2)*(a(4,1)*a(5,4)-a(4,4)*a(5,1))+a(3,4)*(a(4,1)*a(5,2)-a(4,2)*a(5,1))))
+ b(4,2) = &
+ (a(1,1)*(a(3,2)*(a(4,3)*a(5,5)-a(4,5)*a(5,3))-a(3,3)*(a(4,2)*a(5,5)-a(4,5)*a(5,2))+a(3,5)*(a(4,2)*a(5,3)-a(4,3)*a(5,2)))-a(1,2)* &
+ (a(3,1)*(a(4,3)*a(5,5)-a(4,5)*a(5,3))-a(3,3)*(a(4,1)*a(5,5)-a(4,5)*a(5,1))+a(3,5)*(a(4,1)*a(5,3)-a(4,3)*a(5,1)))+a(1,3)* &
+ (a(3,1)*(a(4,2)*a(5,5)-a(4,5)*a(5,2))-a(3,2)*(a(4,1)*a(5,5)-a(4,5)*a(5,1))+a(3,5)*(a(4,1)*a(5,2)-a(4,2)*a(5,1)))-a(1,5)* &
+ (a(3,1)*(a(4,2)*a(5,3)-a(4,3)*a(5,2))-a(3,2)*(a(4,1)*a(5,3)-a(4,3)*a(5,1))+a(3,3)*(a(4,1)*a(5,2)-a(4,2)*a(5,1))))
+ b(5,2) = &
+ (-a(1,1)*(a(3,2)*(a(4,3)*a(5,4)-a(4,4)*a(5,3))-a(3,3)*(a(4,2)*a(5,4)-a(4,4)*a(5,2))+a(3,4)*(a(4,2)*a(5,3)-a(4,3)*a(5,2)))+a(1,2)* &
+ (a(3,1)*(a(4,3)*a(5,4)-a(4,4)*a(5,3))-a(3,3)*(a(4,1)*a(5,4)-a(4,4)*a(5,1))+a(3,4)*(a(4,1)*a(5,3)-a(4,3)*a(5,1)))-a(1,3)* &
+ (a(3,1)*(a(4,2)*a(5,4)-a(4,4)*a(5,2))-a(3,2)*(a(4,1)*a(5,4)-a(4,4)*a(5,1))+a(3,4)*(a(4,1)*a(5,2)-a(4,2)*a(5,1)))+a(1,4)* &
+ (a(3,1)*(a(4,2)*a(5,3)-a(4,3)*a(5,2))-a(3,2)*(a(4,1)*a(5,3)-a(4,3)*a(5,1))+a(3,3)*(a(4,1)*a(5,2)-a(4,2)*a(5,1))))
 
- a(1,3) = &
- (b(1,2)*(b(2,3)*(b(4,4)*b(5,5)-b(4,5)*b(5,4))-b(2,4)*(b(4,3)*b(5,5)-b(4,5)*b(5,3))+b(2,5)*(b(4,3)*b(5,4)-b(4,4)*b(5,3)))-b(1,3)* &
- (b(2,2)*(b(4,4)*b(5,5)-b(4,5)*b(5,4))-b(2,4)*(b(4,2)*b(5,5)-b(4,5)*b(5,2))+b(2,5)*(b(4,2)*b(5,4)-b(4,4)*b(5,2)))+b(1,4)* &
- (b(2,2)*(b(4,3)*b(5,5)-b(4,5)*b(5,3))-b(2,3)*(b(4,2)*b(5,5)-b(4,5)*b(5,2))+b(2,5)*(b(4,2)*b(5,3)-b(4,3)*b(5,2)))-b(1,5)* &
- (b(2,2)*(b(4,3)*b(5,4)-b(4,4)*b(5,3))-b(2,3)*(b(4,2)*b(5,4)-b(4,4)*b(5,2))+b(2,4)*(b(4,2)*b(5,3)-b(4,3)*b(5,2))))
- a(2,3) = &
- (-b(1,1)*(b(2,3)*(b(4,4)*b(5,5)-b(4,5)*b(5,4))-b(2,4)*(b(4,3)*b(5,5)-b(4,5)*b(5,3))+b(2,5)*(b(4,3)*b(5,4)-b(4,4)*b(5,3)))+b(1,3)* &
- (b(2,1)*(b(4,4)*b(5,5)-b(4,5)*b(5,4))-b(2,4)*(b(4,1)*b(5,5)-b(4,5)*b(5,1))+b(2,5)*(b(4,1)*b(5,4)-b(4,4)*b(5,1)))-b(1,4)* &
- (b(2,1)*(b(4,3)*b(5,5)-b(4,5)*b(5,3))-b(2,3)*(b(4,1)*b(5,5)-b(4,5)*b(5,1))+b(2,5)*(b(4,1)*b(5,3)-b(4,3)*b(5,1)))+b(1,5)* &
- (b(2,1)*(b(4,3)*b(5,4)-b(4,4)*b(5,3))-b(2,3)*(b(4,1)*b(5,4)-b(4,4)*b(5,1))+b(2,4)*(b(4,1)*b(5,3)-b(4,3)*b(5,1))))
- a(3,3) = &
- (b(1,1)*(b(2,2)*(b(4,4)*b(5,5)-b(4,5)*b(5,4))-b(2,4)*(b(4,2)*b(5,5)-b(4,5)*b(5,2))+b(2,5)*(b(4,2)*b(5,4)-b(4,4)*b(5,2)))-b(1,2)* &
- (b(2,1)*(b(4,4)*b(5,5)-b(4,5)*b(5,4))-b(2,4)*(b(4,1)*b(5,5)-b(4,5)*b(5,1))+b(2,5)*(b(4,1)*b(5,4)-b(4,4)*b(5,1)))+b(1,4)* &
- (b(2,1)*(b(4,2)*b(5,5)-b(4,5)*b(5,2))-b(2,2)*(b(4,1)*b(5,5)-b(4,5)*b(5,1))+b(2,5)*(b(4,1)*b(5,2)-b(4,2)*b(5,1)))-b(1,5)* &
- (b(2,1)*(b(4,2)*b(5,4)-b(4,4)*b(5,2))-b(2,2)*(b(4,1)*b(5,4)-b(4,4)*b(5,1))+b(2,4)*(b(4,1)*b(5,2)-b(4,2)*b(5,1))))
- a(4,3) = &
- (-b(1,1)*(b(2,2)*(b(4,3)*b(5,5)-b(4,5)*b(5,3))-b(2,3)*(b(4,2)*b(5,5)-b(4,5)*b(5,2))+b(2,5)*(b(4,2)*b(5,3)-b(4,3)*b(5,2)))+b(1,2)* &
- (b(2,1)*(b(4,3)*b(5,5)-b(4,5)*b(5,3))-b(2,3)*(b(4,1)*b(5,5)-b(4,5)*b(5,1))+b(2,5)*(b(4,1)*b(5,3)-b(4,3)*b(5,1)))-b(1,3)* &
- (b(2,1)*(b(4,2)*b(5,5)-b(4,5)*b(5,2))-b(2,2)*(b(4,1)*b(5,5)-b(4,5)*b(5,1))+b(2,5)*(b(4,1)*b(5,2)-b(4,2)*b(5,1)))+b(1,5)* &
- (b(2,1)*(b(4,2)*b(5,3)-b(4,3)*b(5,2))-b(2,2)*(b(4,1)*b(5,3)-b(4,3)*b(5,1))+b(2,3)*(b(4,1)*b(5,2)-b(4,2)*b(5,1))))
- a(5,3) = &
- (b(1,1)*(b(2,2)*(b(4,3)*b(5,4)-b(4,4)*b(5,3))-b(2,3)*(b(4,2)*b(5,4)-b(4,4)*b(5,2))+b(2,4)*(b(4,2)*b(5,3)-b(4,3)*b(5,2)))-b(1,2)* &
- (b(2,1)*(b(4,3)*b(5,4)-b(4,4)*b(5,3))-b(2,3)*(b(4,1)*b(5,4)-b(4,4)*b(5,1))+b(2,4)*(b(4,1)*b(5,3)-b(4,3)*b(5,1)))+b(1,3)* &
- (b(2,1)*(b(4,2)*b(5,4)-b(4,4)*b(5,2))-b(2,2)*(b(4,1)*b(5,4)-b(4,4)*b(5,1))+b(2,4)*(b(4,1)*b(5,2)-b(4,2)*b(5,1)))-b(1,4)* &
- (b(2,1)*(b(4,2)*b(5,3)-b(4,3)*b(5,2))-b(2,2)*(b(4,1)*b(5,3)-b(4,3)*b(5,1))+b(2,3)*(b(4,1)*b(5,2)-b(4,2)*b(5,1))))
+ b(1,3) = &
+ (a(1,2)*(a(2,3)*(a(4,4)*a(5,5)-a(4,5)*a(5,4))-a(2,4)*(a(4,3)*a(5,5)-a(4,5)*a(5,3))+a(2,5)*(a(4,3)*a(5,4)-a(4,4)*a(5,3)))-a(1,3)* &
+ (a(2,2)*(a(4,4)*a(5,5)-a(4,5)*a(5,4))-a(2,4)*(a(4,2)*a(5,5)-a(4,5)*a(5,2))+a(2,5)*(a(4,2)*a(5,4)-a(4,4)*a(5,2)))+a(1,4)* &
+ (a(2,2)*(a(4,3)*a(5,5)-a(4,5)*a(5,3))-a(2,3)*(a(4,2)*a(5,5)-a(4,5)*a(5,2))+a(2,5)*(a(4,2)*a(5,3)-a(4,3)*a(5,2)))-a(1,5)* &
+ (a(2,2)*(a(4,3)*a(5,4)-a(4,4)*a(5,3))-a(2,3)*(a(4,2)*a(5,4)-a(4,4)*a(5,2))+a(2,4)*(a(4,2)*a(5,3)-a(4,3)*a(5,2))))
+ b(2,3) = &
+ (-a(1,1)*(a(2,3)*(a(4,4)*a(5,5)-a(4,5)*a(5,4))-a(2,4)*(a(4,3)*a(5,5)-a(4,5)*a(5,3))+a(2,5)*(a(4,3)*a(5,4)-a(4,4)*a(5,3)))+a(1,3)* &
+ (a(2,1)*(a(4,4)*a(5,5)-a(4,5)*a(5,4))-a(2,4)*(a(4,1)*a(5,5)-a(4,5)*a(5,1))+a(2,5)*(a(4,1)*a(5,4)-a(4,4)*a(5,1)))-a(1,4)* &
+ (a(2,1)*(a(4,3)*a(5,5)-a(4,5)*a(5,3))-a(2,3)*(a(4,1)*a(5,5)-a(4,5)*a(5,1))+a(2,5)*(a(4,1)*a(5,3)-a(4,3)*a(5,1)))+a(1,5)* &
+ (a(2,1)*(a(4,3)*a(5,4)-a(4,4)*a(5,3))-a(2,3)*(a(4,1)*a(5,4)-a(4,4)*a(5,1))+a(2,4)*(a(4,1)*a(5,3)-a(4,3)*a(5,1))))
+ b(3,3) = &
+ (a(1,1)*(a(2,2)*(a(4,4)*a(5,5)-a(4,5)*a(5,4))-a(2,4)*(a(4,2)*a(5,5)-a(4,5)*a(5,2))+a(2,5)*(a(4,2)*a(5,4)-a(4,4)*a(5,2)))-a(1,2)* &
+ (a(2,1)*(a(4,4)*a(5,5)-a(4,5)*a(5,4))-a(2,4)*(a(4,1)*a(5,5)-a(4,5)*a(5,1))+a(2,5)*(a(4,1)*a(5,4)-a(4,4)*a(5,1)))+a(1,4)* &
+ (a(2,1)*(a(4,2)*a(5,5)-a(4,5)*a(5,2))-a(2,2)*(a(4,1)*a(5,5)-a(4,5)*a(5,1))+a(2,5)*(a(4,1)*a(5,2)-a(4,2)*a(5,1)))-a(1,5)* &
+ (a(2,1)*(a(4,2)*a(5,4)-a(4,4)*a(5,2))-a(2,2)*(a(4,1)*a(5,4)-a(4,4)*a(5,1))+a(2,4)*(a(4,1)*a(5,2)-a(4,2)*a(5,1))))
+ b(4,3) = &
+ (-a(1,1)*(a(2,2)*(a(4,3)*a(5,5)-a(4,5)*a(5,3))-a(2,3)*(a(4,2)*a(5,5)-a(4,5)*a(5,2))+a(2,5)*(a(4,2)*a(5,3)-a(4,3)*a(5,2)))+a(1,2)* &
+ (a(2,1)*(a(4,3)*a(5,5)-a(4,5)*a(5,3))-a(2,3)*(a(4,1)*a(5,5)-a(4,5)*a(5,1))+a(2,5)*(a(4,1)*a(5,3)-a(4,3)*a(5,1)))-a(1,3)* &
+ (a(2,1)*(a(4,2)*a(5,5)-a(4,5)*a(5,2))-a(2,2)*(a(4,1)*a(5,5)-a(4,5)*a(5,1))+a(2,5)*(a(4,1)*a(5,2)-a(4,2)*a(5,1)))+a(1,5)* &
+ (a(2,1)*(a(4,2)*a(5,3)-a(4,3)*a(5,2))-a(2,2)*(a(4,1)*a(5,3)-a(4,3)*a(5,1))+a(2,3)*(a(4,1)*a(5,2)-a(4,2)*a(5,1))))
+ b(5,3) = &
+ (a(1,1)*(a(2,2)*(a(4,3)*a(5,4)-a(4,4)*a(5,3))-a(2,3)*(a(4,2)*a(5,4)-a(4,4)*a(5,2))+a(2,4)*(a(4,2)*a(5,3)-a(4,3)*a(5,2)))-a(1,2)* &
+ (a(2,1)*(a(4,3)*a(5,4)-a(4,4)*a(5,3))-a(2,3)*(a(4,1)*a(5,4)-a(4,4)*a(5,1))+a(2,4)*(a(4,1)*a(5,3)-a(4,3)*a(5,1)))+a(1,3)* &
+ (a(2,1)*(a(4,2)*a(5,4)-a(4,4)*a(5,2))-a(2,2)*(a(4,1)*a(5,4)-a(4,4)*a(5,1))+a(2,4)*(a(4,1)*a(5,2)-a(4,2)*a(5,1)))-a(1,4)* &
+ (a(2,1)*(a(4,2)*a(5,3)-a(4,3)*a(5,2))-a(2,2)*(a(4,1)*a(5,3)-a(4,3)*a(5,1))+a(2,3)*(a(4,1)*a(5,2)-a(4,2)*a(5,1))))
 
- a(1,4) = &
- (-b(1,2)*(b(2,3)*(b(3,4)*b(5,5)-b(3,5)*b(5,4))-b(2,4)*(b(3,3)*b(5,5)-b(3,5)*b(5,3))+b(2,5)*(b(3,3)*b(5,4)-b(3,4)*b(5,3)))+b(1,3)* &
- (b(2,2)*(b(3,4)*b(5,5)-b(3,5)*b(5,4))-b(2,4)*(b(3,2)*b(5,5)-b(3,5)*b(5,2))+b(2,5)*(b(3,2)*b(5,4)-b(3,4)*b(5,2)))-b(1,4)* &
- (b(2,2)*(b(3,3)*b(5,5)-b(3,5)*b(5,3))-b(2,3)*(b(3,2)*b(5,5)-b(3,5)*b(5,2))+b(2,5)*(b(3,2)*b(5,3)-b(3,3)*b(5,2)))+b(1,5)* &
- (b(2,2)*(b(3,3)*b(5,4)-b(3,4)*b(5,3))-b(2,3)*(b(3,2)*b(5,4)-b(3,4)*b(5,2))+b(2,4)*(b(3,2)*b(5,3)-b(3,3)*b(5,2))))
- a(2,4) = &
- (b(1,1)*(b(2,3)*(b(3,4)*b(5,5)-b(3,5)*b(5,4))-b(2,4)*(b(3,3)*b(5,5)-b(3,5)*b(5,3))+b(2,5)*(b(3,3)*b(5,4)-b(3,4)*b(5,3)))-b(1,3)* &
- (b(2,1)*(b(3,4)*b(5,5)-b(3,5)*b(5,4))-b(2,4)*(b(3,1)*b(5,5)-b(3,5)*b(5,1))+b(2,5)*(b(3,1)*b(5,4)-b(3,4)*b(5,1)))+b(1,4)* &
- (b(2,1)*(b(3,3)*b(5,5)-b(3,5)*b(5,3))-b(2,3)*(b(3,1)*b(5,5)-b(3,5)*b(5,1))+b(2,5)*(b(3,1)*b(5,3)-b(3,3)*b(5,1)))-b(1,5)* &
- (b(2,1)*(b(3,3)*b(5,4)-b(3,4)*b(5,3))-b(2,3)*(b(3,1)*b(5,4)-b(3,4)*b(5,1))+b(2,4)*(b(3,1)*b(5,3)-b(3,3)*b(5,1))))
- a(3,4) = &
- (-b(1,1)*(b(2,2)*(b(3,4)*b(5,5)-b(3,5)*b(5,4))-b(2,4)*(b(3,2)*b(5,5)-b(3,5)*b(5,2))+b(2,5)*(b(3,2)*b(5,4)-b(3,4)*b(5,2)))+b(1,2)* &
- (b(2,1)*(b(3,4)*b(5,5)-b(3,5)*b(5,4))-b(2,4)*(b(3,1)*b(5,5)-b(3,5)*b(5,1))+b(2,5)*(b(3,1)*b(5,4)-b(3,4)*b(5,1)))-b(1,4)* &
- (b(2,1)*(b(3,2)*b(5,5)-b(3,5)*b(5,2))-b(2,2)*(b(3,1)*b(5,5)-b(3,5)*b(5,1))+b(2,5)*(b(3,1)*b(5,2)-b(3,2)*b(5,1)))+b(1,5)* &
- (b(2,1)*(b(3,2)*b(5,4)-b(3,4)*b(5,2))-b(2,2)*(b(3,1)*b(5,4)-b(3,4)*b(5,1))+b(2,4)*(b(3,1)*b(5,2)-b(3,2)*b(5,1))))
- a(4,4) = &
- (b(1,1)*(b(2,2)*(b(3,3)*b(5,5)-b(3,5)*b(5,3))-b(2,3)*(b(3,2)*b(5,5)-b(3,5)*b(5,2))+b(2,5)*(b(3,2)*b(5,3)-b(3,3)*b(5,2)))-b(1,2)* &
- (b(2,1)*(b(3,3)*b(5,5)-b(3,5)*b(5,3))-b(2,3)*(b(3,1)*b(5,5)-b(3,5)*b(5,1))+b(2,5)*(b(3,1)*b(5,3)-b(3,3)*b(5,1)))+b(1,3)* &
- (b(2,1)*(b(3,2)*b(5,5)-b(3,5)*b(5,2))-b(2,2)*(b(3,1)*b(5,5)-b(3,5)*b(5,1))+b(2,5)*(b(3,1)*b(5,2)-b(3,2)*b(5,1)))-b(1,5)* &
- (b(2,1)*(b(3,2)*b(5,3)-b(3,3)*b(5,2))-b(2,2)*(b(3,1)*b(5,3)-b(3,3)*b(5,1))+b(2,3)*(b(3,1)*b(5,2)-b(3,2)*b(5,1))))
- a(5,4) = &
- (-b(1,1)*(b(2,2)*(b(3,3)*b(5,4)-b(3,4)*b(5,3))-b(2,3)*(b(3,2)*b(5,4)-b(3,4)*b(5,2))+b(2,4)*(b(3,2)*b(5,3)-b(3,3)*b(5,2)))+b(1,2)* &
- (b(2,1)*(b(3,3)*b(5,4)-b(3,4)*b(5,3))-b(2,3)*(b(3,1)*b(5,4)-b(3,4)*b(5,1))+b(2,4)*(b(3,1)*b(5,3)-b(3,3)*b(5,1)))-b(1,3)* &
- (b(2,1)*(b(3,2)*b(5,4)-b(3,4)*b(5,2))-b(2,2)*(b(3,1)*b(5,4)-b(3,4)*b(5,1))+b(2,4)*(b(3,1)*b(5,2)-b(3,2)*b(5,1)))+b(1,4)* &
- (b(2,1)*(b(3,2)*b(5,3)-b(3,3)*b(5,2))-b(2,2)*(b(3,1)*b(5,3)-b(3,3)*b(5,1))+b(2,3)*(b(3,1)*b(5,2)-b(3,2)*b(5,1))))
+ b(1,4) = &
+ (-a(1,2)*(a(2,3)*(a(3,4)*a(5,5)-a(3,5)*a(5,4))-a(2,4)*(a(3,3)*a(5,5)-a(3,5)*a(5,3))+a(2,5)*(a(3,3)*a(5,4)-a(3,4)*a(5,3)))+a(1,3)* &
+ (a(2,2)*(a(3,4)*a(5,5)-a(3,5)*a(5,4))-a(2,4)*(a(3,2)*a(5,5)-a(3,5)*a(5,2))+a(2,5)*(a(3,2)*a(5,4)-a(3,4)*a(5,2)))-a(1,4)* &
+ (a(2,2)*(a(3,3)*a(5,5)-a(3,5)*a(5,3))-a(2,3)*(a(3,2)*a(5,5)-a(3,5)*a(5,2))+a(2,5)*(a(3,2)*a(5,3)-a(3,3)*a(5,2)))+a(1,5)* &
+ (a(2,2)*(a(3,3)*a(5,4)-a(3,4)*a(5,3))-a(2,3)*(a(3,2)*a(5,4)-a(3,4)*a(5,2))+a(2,4)*(a(3,2)*a(5,3)-a(3,3)*a(5,2))))
+ b(2,4) = &
+ (a(1,1)*(a(2,3)*(a(3,4)*a(5,5)-a(3,5)*a(5,4))-a(2,4)*(a(3,3)*a(5,5)-a(3,5)*a(5,3))+a(2,5)*(a(3,3)*a(5,4)-a(3,4)*a(5,3)))-a(1,3)* &
+ (a(2,1)*(a(3,4)*a(5,5)-a(3,5)*a(5,4))-a(2,4)*(a(3,1)*a(5,5)-a(3,5)*a(5,1))+a(2,5)*(a(3,1)*a(5,4)-a(3,4)*a(5,1)))+a(1,4)* &
+ (a(2,1)*(a(3,3)*a(5,5)-a(3,5)*a(5,3))-a(2,3)*(a(3,1)*a(5,5)-a(3,5)*a(5,1))+a(2,5)*(a(3,1)*a(5,3)-a(3,3)*a(5,1)))-a(1,5)* &
+ (a(2,1)*(a(3,3)*a(5,4)-a(3,4)*a(5,3))-a(2,3)*(a(3,1)*a(5,4)-a(3,4)*a(5,1))+a(2,4)*(a(3,1)*a(5,3)-a(3,3)*a(5,1))))
+ b(3,4) = &
+ (-a(1,1)*(a(2,2)*(a(3,4)*a(5,5)-a(3,5)*a(5,4))-a(2,4)*(a(3,2)*a(5,5)-a(3,5)*a(5,2))+a(2,5)*(a(3,2)*a(5,4)-a(3,4)*a(5,2)))+a(1,2)* &
+ (a(2,1)*(a(3,4)*a(5,5)-a(3,5)*a(5,4))-a(2,4)*(a(3,1)*a(5,5)-a(3,5)*a(5,1))+a(2,5)*(a(3,1)*a(5,4)-a(3,4)*a(5,1)))-a(1,4)* &
+ (a(2,1)*(a(3,2)*a(5,5)-a(3,5)*a(5,2))-a(2,2)*(a(3,1)*a(5,5)-a(3,5)*a(5,1))+a(2,5)*(a(3,1)*a(5,2)-a(3,2)*a(5,1)))+a(1,5)* &
+ (a(2,1)*(a(3,2)*a(5,4)-a(3,4)*a(5,2))-a(2,2)*(a(3,1)*a(5,4)-a(3,4)*a(5,1))+a(2,4)*(a(3,1)*a(5,2)-a(3,2)*a(5,1))))
+ b(4,4) = &
+ (a(1,1)*(a(2,2)*(a(3,3)*a(5,5)-a(3,5)*a(5,3))-a(2,3)*(a(3,2)*a(5,5)-a(3,5)*a(5,2))+a(2,5)*(a(3,2)*a(5,3)-a(3,3)*a(5,2)))-a(1,2)* &
+ (a(2,1)*(a(3,3)*a(5,5)-a(3,5)*a(5,3))-a(2,3)*(a(3,1)*a(5,5)-a(3,5)*a(5,1))+a(2,5)*(a(3,1)*a(5,3)-a(3,3)*a(5,1)))+a(1,3)* &
+ (a(2,1)*(a(3,2)*a(5,5)-a(3,5)*a(5,2))-a(2,2)*(a(3,1)*a(5,5)-a(3,5)*a(5,1))+a(2,5)*(a(3,1)*a(5,2)-a(3,2)*a(5,1)))-a(1,5)* &
+ (a(2,1)*(a(3,2)*a(5,3)-a(3,3)*a(5,2))-a(2,2)*(a(3,1)*a(5,3)-a(3,3)*a(5,1))+a(2,3)*(a(3,1)*a(5,2)-a(3,2)*a(5,1))))
+ b(5,4) = &
+ (-a(1,1)*(a(2,2)*(a(3,3)*a(5,4)-a(3,4)*a(5,3))-a(2,3)*(a(3,2)*a(5,4)-a(3,4)*a(5,2))+a(2,4)*(a(3,2)*a(5,3)-a(3,3)*a(5,2)))+a(1,2)* &
+ (a(2,1)*(a(3,3)*a(5,4)-a(3,4)*a(5,3))-a(2,3)*(a(3,1)*a(5,4)-a(3,4)*a(5,1))+a(2,4)*(a(3,1)*a(5,3)-a(3,3)*a(5,1)))-a(1,3)* &
+ (a(2,1)*(a(3,2)*a(5,4)-a(3,4)*a(5,2))-a(2,2)*(a(3,1)*a(5,4)-a(3,4)*a(5,1))+a(2,4)*(a(3,1)*a(5,2)-a(3,2)*a(5,1)))+a(1,4)* &
+ (a(2,1)*(a(3,2)*a(5,3)-a(3,3)*a(5,2))-a(2,2)*(a(3,1)*a(5,3)-a(3,3)*a(5,1))+a(2,3)*(a(3,1)*a(5,2)-a(3,2)*a(5,1))))
 
- a(1,5) = &
- (b(1,2)*(b(2,3)*(b(3,4)*b(4,5)-b(3,5)*b(4,4))-b(2,4)*(b(3,3)*b(4,5)-b(3,5)*b(4,3))+b(2,5)*(b(3,3)*b(4,4)-b(3,4)*b(4,3)))-b(1,3)* &
- (b(2,2)*(b(3,4)*b(4,5)-b(3,5)*b(4,4))-b(2,4)*(b(3,2)*b(4,5)-b(3,5)*b(4,2))+b(2,5)*(b(3,2)*b(4,4)-b(3,4)*b(4,2)))+b(1,4)* &
- (b(2,2)*(b(3,3)*b(4,5)-b(3,5)*b(4,3))-b(2,3)*(b(3,2)*b(4,5)-b(3,5)*b(4,2))+b(2,5)*(b(3,2)*b(4,3)-b(3,3)*b(4,2)))-b(1,5)* &
- (b(2,2)*(b(3,3)*b(4,4)-b(3,4)*b(4,3))-b(2,3)*(b(3,2)*b(4,4)-b(3,4)*b(4,2))+b(2,4)*(b(3,2)*b(4,3)-b(3,3)*b(4,2))))
- a(2,5) = &
- (-b(1,1)*(b(2,3)*(b(3,4)*b(4,5)-b(3,5)*b(4,4))-b(2,4)*(b(3,3)*b(4,5)-b(3,5)*b(4,3))+b(2,5)*(b(3,3)*b(4,4)-b(3,4)*b(4,3)))+b(1,3)* &
- (b(2,1)*(b(3,4)*b(4,5)-b(3,5)*b(4,4))-b(2,4)*(b(3,1)*b(4,5)-b(3,5)*b(4,1))+b(2,5)*(b(3,1)*b(4,4)-b(3,4)*b(4,1)))-b(1,4)* &
- (b(2,1)*(b(3,3)*b(4,5)-b(3,5)*b(4,3))-b(2,3)*(b(3,1)*b(4,5)-b(3,5)*b(4,1))+b(2,5)*(b(3,1)*b(4,3)-b(3,3)*b(4,1)))+b(1,5)* &
- (b(2,1)*(b(3,3)*b(4,4)-b(3,4)*b(4,3))-b(2,3)*(b(3,1)*b(4,4)-b(3,4)*b(4,1))+b(2,4)*(b(3,1)*b(4,3)-b(3,3)*b(4,1))))
- a(3,5) = &
- (b(1,1)*(b(2,2)*(b(3,4)*b(4,5)-b(3,5)*b(4,4))-b(2,4)*(b(3,2)*b(4,5)-b(3,5)*b(4,2))+b(2,5)*(b(3,2)*b(4,4)-b(3,4)*b(4,2)))-b(1,2)* &
- (b(2,1)*(b(3,4)*b(4,5)-b(3,5)*b(4,4))-b(2,4)*(b(3,1)*b(4,5)-b(3,5)*b(4,1))+b(2,5)*(b(3,1)*b(4,4)-b(3,4)*b(4,1)))+b(1,4)* &
- (b(2,1)*(b(3,2)*b(4,5)-b(3,5)*b(4,2))-b(2,2)*(b(3,1)*b(4,5)-b(3,5)*b(4,1))+b(2,5)*(b(3,1)*b(4,2)-b(3,2)*b(4,1)))-b(1,5)* &
- (b(2,1)*(b(3,2)*b(4,4)-b(3,4)*b(4,2))-b(2,2)*(b(3,1)*b(4,4)-b(3,4)*b(4,1))+b(2,4)*(b(3,1)*b(4,2)-b(3,2)*b(4,1))))
- a(4,5) = &
- (-b(1,1)*(b(2,2)*(b(3,3)*b(4,5)-b(3,5)*b(4,3))-b(2,3)*(b(3,2)*b(4,5)-b(3,5)*b(4,2))+b(2,5)*(b(3,2)*b(4,3)-b(3,3)*b(4,2)))+b(1,2)* &
- (b(2,1)*(b(3,3)*b(4,5)-b(3,5)*b(4,3))-b(2,3)*(b(3,1)*b(4,5)-b(3,5)*b(4,1))+b(2,5)*(b(3,1)*b(4,3)-b(3,3)*b(4,1)))-b(1,3)* &
- (b(2,1)*(b(3,2)*b(4,5)-b(3,5)*b(4,2))-b(2,2)*(b(3,1)*b(4,5)-b(3,5)*b(4,1))+b(2,5)*(b(3,1)*b(4,2)-b(3,2)*b(4,1)))+b(1,5)* &
- (b(2,1)*(b(3,2)*b(4,3)-b(3,3)*b(4,2))-b(2,2)*(b(3,1)*b(4,3)-b(3,3)*b(4,1))+b(2,3)*(b(3,1)*b(4,2)-b(3,2)*b(4,1))))
- a(5,5) = &
- (b(1,1)*(b(2,2)*(b(3,3)*b(4,4)-b(3,4)*b(4,3))-b(2,3)*(b(3,2)*b(4,4)-b(3,4)*b(4,2))+b(2,4)*(b(3,2)*b(4,3)-b(3,3)*b(4,2)))-b(1,2)* &
- (b(2,1)*(b(3,3)*b(4,4)-b(3,4)*b(4,3))-b(2,3)*(b(3,1)*b(4,4)-b(3,4)*b(4,1))+b(2,4)*(b(3,1)*b(4,3)-b(3,3)*b(4,1)))+b(1,3)* &
- (b(2,1)*(b(3,2)*b(4,4)-b(3,4)*b(4,2))-b(2,2)*(b(3,1)*b(4,4)-b(3,4)*b(4,1))+b(2,4)*(b(3,1)*b(4,2)-b(3,2)*b(4,1)))-b(1,4)* &
- (b(2,1)*(b(3,2)*b(4,3)-b(3,3)*b(4,2))-b(2,2)*(b(3,1)*b(4,3)-b(3,3)*b(4,1))+b(2,3)*(b(3,1)*b(4,2)-b(3,2)*b(4,1))))
+ b(1,5) = &
+ (a(1,2)*(a(2,3)*(a(3,4)*a(4,5)-a(3,5)*a(4,4))-a(2,4)*(a(3,3)*a(4,5)-a(3,5)*a(4,3))+a(2,5)*(a(3,3)*a(4,4)-a(3,4)*a(4,3)))-a(1,3)* &
+ (a(2,2)*(a(3,4)*a(4,5)-a(3,5)*a(4,4))-a(2,4)*(a(3,2)*a(4,5)-a(3,5)*a(4,2))+a(2,5)*(a(3,2)*a(4,4)-a(3,4)*a(4,2)))+a(1,4)* &
+ (a(2,2)*(a(3,3)*a(4,5)-a(3,5)*a(4,3))-a(2,3)*(a(3,2)*a(4,5)-a(3,5)*a(4,2))+a(2,5)*(a(3,2)*a(4,3)-a(3,3)*a(4,2)))-a(1,5)* &
+ (a(2,2)*(a(3,3)*a(4,4)-a(3,4)*a(4,3))-a(2,3)*(a(3,2)*a(4,4)-a(3,4)*a(4,2))+a(2,4)*(a(3,2)*a(4,3)-a(3,3)*a(4,2))))
+ b(2,5) = &
+ (-a(1,1)*(a(2,3)*(a(3,4)*a(4,5)-a(3,5)*a(4,4))-a(2,4)*(a(3,3)*a(4,5)-a(3,5)*a(4,3))+a(2,5)*(a(3,3)*a(4,4)-a(3,4)*a(4,3)))+a(1,3)* &
+ (a(2,1)*(a(3,4)*a(4,5)-a(3,5)*a(4,4))-a(2,4)*(a(3,1)*a(4,5)-a(3,5)*a(4,1))+a(2,5)*(a(3,1)*a(4,4)-a(3,4)*a(4,1)))-a(1,4)* &
+ (a(2,1)*(a(3,3)*a(4,5)-a(3,5)*a(4,3))-a(2,3)*(a(3,1)*a(4,5)-a(3,5)*a(4,1))+a(2,5)*(a(3,1)*a(4,3)-a(3,3)*a(4,1)))+a(1,5)* &
+ (a(2,1)*(a(3,3)*a(4,4)-a(3,4)*a(4,3))-a(2,3)*(a(3,1)*a(4,4)-a(3,4)*a(4,1))+a(2,4)*(a(3,1)*a(4,3)-a(3,3)*a(4,1))))
+ b(3,5) = &
+ (a(1,1)*(a(2,2)*(a(3,4)*a(4,5)-a(3,5)*a(4,4))-a(2,4)*(a(3,2)*a(4,5)-a(3,5)*a(4,2))+a(2,5)*(a(3,2)*a(4,4)-a(3,4)*a(4,2)))-a(1,2)* &
+ (a(2,1)*(a(3,4)*a(4,5)-a(3,5)*a(4,4))-a(2,4)*(a(3,1)*a(4,5)-a(3,5)*a(4,1))+a(2,5)*(a(3,1)*a(4,4)-a(3,4)*a(4,1)))+a(1,4)* &
+ (a(2,1)*(a(3,2)*a(4,5)-a(3,5)*a(4,2))-a(2,2)*(a(3,1)*a(4,5)-a(3,5)*a(4,1))+a(2,5)*(a(3,1)*a(4,2)-a(3,2)*a(4,1)))-a(1,5)* &
+ (a(2,1)*(a(3,2)*a(4,4)-a(3,4)*a(4,2))-a(2,2)*(a(3,1)*a(4,4)-a(3,4)*a(4,1))+a(2,4)*(a(3,1)*a(4,2)-a(3,2)*a(4,1))))
+ b(4,5) = &
+ (-a(1,1)*(a(2,2)*(a(3,3)*a(4,5)-a(3,5)*a(4,3))-a(2,3)*(a(3,2)*a(4,5)-a(3,5)*a(4,2))+a(2,5)*(a(3,2)*a(4,3)-a(3,3)*a(4,2)))+a(1,2)* &
+ (a(2,1)*(a(3,3)*a(4,5)-a(3,5)*a(4,3))-a(2,3)*(a(3,1)*a(4,5)-a(3,5)*a(4,1))+a(2,5)*(a(3,1)*a(4,3)-a(3,3)*a(4,1)))-a(1,3)* &
+ (a(2,1)*(a(3,2)*a(4,5)-a(3,5)*a(4,2))-a(2,2)*(a(3,1)*a(4,5)-a(3,5)*a(4,1))+a(2,5)*(a(3,1)*a(4,2)-a(3,2)*a(4,1)))+a(1,5)* &
+ (a(2,1)*(a(3,2)*a(4,3)-a(3,3)*a(4,2))-a(2,2)*(a(3,1)*a(4,3)-a(3,3)*a(4,1))+a(2,3)*(a(3,1)*a(4,2)-a(3,2)*a(4,1))))
+ b(5,5) = &
+ (a(1,1)*(a(2,2)*(a(3,3)*a(4,4)-a(3,4)*a(4,3))-a(2,3)*(a(3,2)*a(4,4)-a(3,4)*a(4,2))+a(2,4)*(a(3,2)*a(4,3)-a(3,3)*a(4,2)))-a(1,2)* &
+ (a(2,1)*(a(3,3)*a(4,4)-a(3,4)*a(4,3))-a(2,3)*(a(3,1)*a(4,4)-a(3,4)*a(4,1))+a(2,4)*(a(3,1)*a(4,3)-a(3,3)*a(4,1)))+a(1,3)* &
+ (a(2,1)*(a(3,2)*a(4,4)-a(3,4)*a(4,2))-a(2,2)*(a(3,1)*a(4,4)-a(3,4)*a(4,1))+a(2,4)*(a(3,1)*a(4,2)-a(3,2)*a(4,1)))-a(1,4)* &
+ (a(2,1)*(a(3,2)*a(4,3)-a(3,3)*a(4,2))-a(2,2)*(a(3,1)*a(4,3)-a(3,3)*a(4,1))+a(2,3)*(a(3,1)*a(4,2)-a(3,2)*a(4,1))))
 
 end
     #+end_src
 
-    #+begin_src f90 :tangle (eval f)
-subroutine adjugate_general(context, na, LDA, A, det_l)
-  use qmckl
-  implicit none
-  integer(qmckl_context)  , intent(in)  :: context
-  double precision, intent(inout)       :: A (LDA,na)
-  integer*8, intent(in)                 :: LDA
-  integer*8, intent(in)                 :: na
-  double precision, intent(inout)       :: det_l
-
-  double precision :: work(LDA*max(na,64))
-  integer          :: inf
-  integer          :: ipiv(LDA)
-  integer          :: lwork
-  integer          :: i, j
-
-    #+end_src
-
-    For larger matrices, we first compute the LU factorization $LU=A$
-    using the ~dgetrf~ routine.
-
-    #+begin_src f90 :tangle (eval f)
-  call dgetrf(na, na, a, LDA, ipiv, inf )
-    #+end_src
-
-    By convention, the determinant of $L$ is equal to one, so the
-    determinant of $A$ is equal to the determinant of $U$, which is
-    simply computed as the product of its diagonal elements.
-
-    #+begin_src f90 :tangle (eval f)
-  det_l = 1.d0
-  j=0
-  do i=1,na
-   j = j+min(abs(ipiv(i)-i),1)
-   det_l = det_l*a(i,i)
-  enddo
-    #+end_src
-
-    As ~dgetrf~ returns $PLU=A$ where $P$ is a permutation matrix, the
-    sign of the determinant is computed as $-1^m$ where $m$ is the
-    number of permutations.
-    
-    #+begin_src f90 :tangle (eval f)
-  if (iand(j,1) /= 0)  then
-    det_l = -det_l
-  endif
-    #+end_src
-
-    Then, the inverse of $A$ is computed using ~dgetri~:
-    
-    #+begin_src f90 :tangle (eval f)
-  lwork = SIZE(work)
-  call dgetri(na, a, LDA, ipiv, work, lwork, inf )
-    #+end_src
-
-    and the adjugate matrix is computed as the product of the
-    determinant with the inverse:
-
-    #+begin_src f90 :tangle (eval f)
-  a(:,:) = a(:,:)*det_l
-
-end subroutine adjugate_general
-    #+end_src
-
-*** C interface                                                    :noexport:
-    
     #+CALL: generate_c_interface(table=qmckl_adjugate_args,rettyp="qmckl_exit_code",fname="qmckl_adjugate")
 
     #+RESULTS:
     #+begin_src f90 :tangle (eval f) :comments org :exports none
     integer(c_int32_t) function qmckl_adjugate &
-        (context, n, lda, A, det_l) &
+        (context, n, A, lda, B, ldb, det_l) &
         bind(C) result(info)
 
       use, intrinsic :: iso_c_binding
@@ -1008,13 +782,15 @@ end subroutine adjugate_general
 
       integer (c_int64_t) , intent(in)  , value :: context
       integer (c_int64_t) , intent(in)  , value :: n
+      real    (c_double ) , intent(in)          :: A(lda,*)
       integer (c_int64_t) , intent(in)  , value :: lda
-      real    (c_double ) , intent(inout)        :: A(lda,*)
+      real    (c_double ) , intent(out)         :: B(ldb,*)
+      integer (c_int64_t) , intent(in)  , value :: ldb
       real    (c_double ) , intent(inout)        :: det_l
 
       integer(c_int32_t), external :: qmckl_adjugate_f
       info = qmckl_adjugate_f &
-             (context, n, lda, A, det_l)
+             (context, n, A, lda, B, ldb, det_l)
 
     end function qmckl_adjugate
     #+end_src
@@ -1025,7 +801,7 @@ end subroutine adjugate_general
     #+begin_src f90 :tangle (eval fh_func) :comments org :exports none
     interface
       integer(c_int32_t) function qmckl_adjugate &
-          (context, n, lda, A, det_l) &
+          (context, n, A, lda, B, ldb, det_l) &
           bind(C)
         use, intrinsic :: iso_c_binding
         import
@@ -1033,14 +809,89 @@ end subroutine adjugate_general
 
         integer (c_int64_t) , intent(in)  , value :: context
         integer (c_int64_t) , intent(in)  , value :: n
+        real    (c_double ) , intent(in)          :: A(lda,*)
         integer (c_int64_t) , intent(in)  , value :: lda
-        real    (c_double ) , intent(inout)        :: A(lda,*)
+        real    (c_double ) , intent(out)         :: B(ldb,*)
+        integer (c_int64_t) , intent(in)  , value :: ldb
         real    (c_double ) , intent(inout)        :: det_l
 
       end function qmckl_adjugate
     end interface
     #+end_src
-    
+
+
+    #+begin_src f90 :tangle (eval f)
+subroutine adjugate_general(context, na, A, LDA, B, LDB, det_l)
+  use qmckl
+  implicit none
+  integer(qmckl_context), intent(in) :: context
+  double precision, intent(in)       :: A (LDA,na)
+  integer*8, intent(in)              :: LDA
+  double precision, intent(out)      :: B (LDB,na)
+  integer*8, intent(in)              :: LDB
+  integer*8, intent(in)              :: na
+  double precision, intent(inout)    :: det_l
+
+  double precision :: work(LDA*max(na,64))
+  integer          :: inf
+  integer          :: ipiv(LDA)
+  integer          :: lwork
+  integer(8)       :: i, j
+
+    #+end_src
+
+    We first copy the array ~A~ into array ~B~.
+
+    #+begin_src f90 :tangle (eval f)
+  B(1:na,1:na) = A(1:na,1:na)
+    #+end_src
+
+    Then, we compute the LU factorization $LU=A$
+    using the ~dgetrf~ routine.
+
+    #+begin_src f90 :tangle (eval f)
+  call dgetrf(na, na, B, LDB, ipiv, inf )
+    #+end_src
+
+    By convention, the determinant of $L$ is equal to one, so the
+    determinant of $A$ is equal to the determinant of $U$, which is
+    simply computed as the product of its diagonal elements.
+
+    #+begin_src f90 :tangle (eval f)
+  det_l = 1.d0
+  j=0_8
+  do i=1,na
+   j = j+min(abs(ipiv(i)-i),1)
+   det_l = det_l*B(i,i)
+  enddo
+    #+end_src
+
+    As ~dgetrf~ returns $PLU=A$ where $P$ is a permutation matrix, the
+    sign of the determinant is computed as $-1^m$ where $m$ is the
+    number of permutations.
+
+    #+begin_src f90 :tangle (eval f)
+  if (iand(j,1_8) /= 0_8)  then
+    det_l = -det_l
+  endif
+    #+end_src
+
+    Then, the inverse of $A$ is computed using ~dgetri~:
+
+    #+begin_src f90 :tangle (eval f)
+  lwork = SIZE(work)
+  call dgetri(na, B, LDB, ipiv, work, lwork, inf )
+    #+end_src
+
+    and the adjugate matrix is computed as the product of the
+    determinant with the inverse:
+
+    #+begin_src f90 :tangle (eval f)
+  B(:,:) = B(:,:)*det_l
+
+end subroutine adjugate_general
+    #+end_src
+
 *** Test                                                           :noexport:
 
     #+begin_src f90 :tangle (eval f_test)
@@ -1048,15 +899,15 @@ integer(qmckl_exit_code) function test_qmckl_adjugate(context) bind(C)
   use qmckl
   implicit none
   integer(qmckl_context), intent(in), value :: context
-  
+
   double precision, allocatable :: A(:,:), B(:,:)
   integer*8                     :: m, n, k, LDA, LDB
   integer*8                     :: i,j,l
   double precision              :: x, det_l, det_l_ref
 
-  LDA = 6
-  LDB = 6
-  
+  LDA = 6_8
+  LDB = 6_8
+
   allocate( A(LDA,6), B(LDB,6))
 
   A = 0.1d0
@@ -1068,9 +919,9 @@ integer(qmckl_exit_code) function test_qmckl_adjugate(context) bind(C)
   A(6,6) = 6.0d0;
 
   test_qmckl_adjugate = QMCKL_SUCCESS
-  
+
     #+end_src
-    
+
     #+begin_src python :results output :output drawer
 import numpy as np
 import numpy.linalg as la
@@ -1088,8 +939,7 @@ print ("#+begin_src f90 :tangle (eval f_test)")
 
 for i in range(N):
     print ("! N = ", i+1)
-    print (f"  B(:,:) = A(:,:)")
-    print (f"  test_qmckl_adjugate = qmckl_adjugate(context, {i+1}_8, LDB, B, det_l)")
+    print (f"  test_qmckl_adjugate = qmckl_adjugate(context, {i+1}_8, A, LDA, B, LDB, det_l)")
     print (f"  if (test_qmckl_adjugate /= QMCKL_SUCCESS) return")
     print (f"  if (dabs((det_l - ({la.det(A[0:i+1,0:i+1])}d0))/det_l) > 1.d-13) then")
     print (f"      print *, 'N = {i+1}: det = ', det_l, {la.det(A[0:i+1,0:i+1])}d0")
@@ -1108,17 +958,17 @@ for i in range(N):
     print (f"      return")
     print (f"  end if")
     print (f"")
-  
+
 
 print ("#+end_src")
 #    print(adj(A[0:i+1,0:i+1]))
     #+end_src
 
     #+RESULTS:
-    #+begin_src f90 :tangle (eval f_test)
+    #+begin_example
+    ,#+begin_src f90 :tangle (eval f_test)
     ! N =  1
-      B(:,:) = A(:,:)
-      test_qmckl_adjugate = qmckl_adjugate(context, 1_8, LDB, B, det_l)
+      test_qmckl_adjugate = qmckl_adjugate(context, 1_8, A, LDA, B, LDB, det_l)
       if (test_qmckl_adjugate /= QMCKL_SUCCESS) return
       if (dabs((det_l - (1.0d0))/det_l) > 1.d-13) then
           print *, 'N = 1: det = ', det_l, 1.0d0
@@ -1135,8 +985,7 @@ print ("#+end_src")
       end if
 
     ! N =  2
-      B(:,:) = A(:,:)
-      test_qmckl_adjugate = qmckl_adjugate(context, 2_8, LDB, B, det_l)
+      test_qmckl_adjugate = qmckl_adjugate(context, 2_8, A, LDA, B, LDB, det_l)
       if (test_qmckl_adjugate /= QMCKL_SUCCESS) return
       if (dabs((det_l - (1.99d0))/det_l) > 1.d-13) then
           print *, 'N = 2: det = ', det_l, 1.99d0
@@ -1156,8 +1005,7 @@ print ("#+end_src")
       end if
 
     ! N =  3
-      B(:,:) = A(:,:)
-      test_qmckl_adjugate = qmckl_adjugate(context, 3_8, LDB, B, det_l)
+      test_qmckl_adjugate = qmckl_adjugate(context, 3_8, A, LDA, B, LDB, det_l)
       if (test_qmckl_adjugate /= QMCKL_SUCCESS) return
       if (dabs((det_l - (5.942000000000001d0))/det_l) > 1.d-13) then
           print *, 'N = 3: det = ', det_l, 5.942000000000001d0
@@ -1182,8 +1030,7 @@ print ("#+end_src")
       end if
 
     ! N =  4
-      B(:,:) = A(:,:)
-      test_qmckl_adjugate = qmckl_adjugate(context, 4_8, LDB, B, det_l)
+      test_qmckl_adjugate = qmckl_adjugate(context, 4_8, A, LDA, B, LDB, det_l)
       if (test_qmckl_adjugate /= QMCKL_SUCCESS) return
       if (dabs((det_l - (23.669700000000006d0))/det_l) > 1.d-13) then
           print *, 'N = 4: det = ', det_l, 23.669700000000006d0
@@ -1215,8 +1062,7 @@ print ("#+end_src")
       end if
 
     ! N =  5
-      B(:,:) = A(:,:)
-      test_qmckl_adjugate = qmckl_adjugate(context, 5_8, LDB, B, det_l)
+      test_qmckl_adjugate = qmckl_adjugate(context, 5_8, A, LDA, B, LDB, det_l)
       if (test_qmckl_adjugate /= QMCKL_SUCCESS) return
       if (dabs((det_l - (117.91554000000008d0))/det_l) > 1.d-13) then
           print *, 'N = 5: det = ', det_l, 117.91554000000008d0
@@ -1257,8 +1103,7 @@ print ("#+end_src")
       end if
 
     ! N =  6
-      B(:,:) = A(:,:)
-      test_qmckl_adjugate = qmckl_adjugate(context, 6_8, LDB, B, det_l)
+      test_qmckl_adjugate = qmckl_adjugate(context, 6_8, A, LDA, B, LDB, det_l)
       if (test_qmckl_adjugate /= QMCKL_SUCCESS) return
       if (dabs((det_l - (705.1783350000001d0))/det_l) > 1.d-13) then
           print *, 'N = 6: det = ', det_l, 705.1783350000001d0
@@ -1309,21 +1154,21 @@ print ("#+end_src")
           return
       end if
 
-    #+end_src
-
+    ,#+end_src
+    #+end_example
 
     #+begin_src f90 :tangle (eval f_test)
-  
+
   deallocate(A,B)
 
 end function test_qmckl_adjugate
     #+end_src
-    
+
     #+begin_src c :comments link :tangle (eval c_test)
 qmckl_exit_code test_qmckl_adjugate(qmckl_context context);
 assert(QMCKL_SUCCESS == test_qmckl_adjugate(context));
     #+end_src
-    
+
 * End of files                                                     :noexport:
 
    #+begin_src c :comments link :tangle (eval c_test)

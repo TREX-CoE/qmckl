@@ -236,15 +236,15 @@ def main():
     output+= ["",
               "## Test files",
               "",
+              "$(header_tests): $(TANGLED_FILES)",
               "$(test_qmckl_fo): $(test_qmckl_f)"]
     output += ["",
                 "check_PROGRAMS = $(TESTS)" ]
     for f in sorted(TESTS.keys()):
         prefix = "tests_" + f.rsplit("/",1)[-1]
         output += [ prefix + "_SOURCES = " + \
-                    " ".join(TESTS[f]),
+                    " ".join(TESTS[f]) + " $(header_tests)",
                     prefix + "_LDADD   = src/libqmckl.la",
-                    prefix + "_LDFLAGS = -no-install",
                     "" ]
 
     tmp = "EXTRA_DIST += "

@@ -75,6 +75,7 @@ AC_PROG_CC
 m4_version_prereq([2.70],[], [AC_PROG_CC_C99])
 AS_IF([test "$ac_cv_prog_cc_c99" = "no"], [AC_MSG_ERROR([The compiler does not support C99])])
 AC_PROG_CC_C_O
+AC_PROG_F77
 AC_PROG_FC
 AC_PROG_FC_C_O
 AC_FC_SRCEXT([f90])
