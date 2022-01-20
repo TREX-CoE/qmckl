@@ -7,18 +7,543 @@
 (org-babel-lob-ingest "../tools/lib.org")
 #+end_src
 
+  #+begin_src c :tangle (eval h_private_type)
+#ifndef QMCKL_BLAS_HPT
+#define QMCKL_BLAS_HPT
+  #+end_src
+
+  #+begin_src c :tangle (eval h_private_func)
+#ifndef QMCKL_BLAS_HPF
+#define QMCKL_BLAS_HPF
+#include "qmckl_blas_private_type.h"
+  #+end_src
+
+  #+begin_src c :tangle (eval c)
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#ifdef HAVE_STDINT_H
+#include <stdint.h>
+#elif HAVE_INTTYPES_H
+#include <inttypes.h>
+#endif
+
+#include <stdlib.h>
+#include <string.h>
+#include <stdbool.h>
+#include <assert.h>
+#include <math.h>
+
+#include "qmckl.h"
+#include "qmckl_context_private_type.h"
+#include "qmckl_memory_private_type.h"
+#include "qmckl_memory_private_func.h"
+#include "qmckl_blas_private_type.h"
+#include "qmckl_blas_private_func.h"
+  #+end_src
+
   #+begin_src c :comments link :tangle (eval c_test) :noweb yes
 #include "qmckl.h"
 #include "assert.h"
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
+
+#include "qmckl_blas_private_type.h"
+#include "qmckl_blas_private_func.h"
+
 int main() {
   qmckl_context context;
   context = qmckl_context_create();
 
   #+end_src
 
+* Data types
+  
+** Vector
+   
+  | Variable | Type      | Description             |
+  |----------+-----------+-------------------------|
+  | ~size~   | ~int64_t~ | Dimension of the vector |
+  | ~data~   | ~double*~ | Elements                |
+
+   #+begin_src c :comments org :tangle (eval h_private_type)
+typedef struct qmckl_vector {
+  int64_t size;
+  double* data;
+} qmckl_vector;
+   #+end_src
+
+
+   #+begin_src c :comments org :tangle (eval h_private_func)
+qmckl_vector
+qmckl_vector_alloc( qmckl_context context, 
+                    const int64_t size);
+   #+end_src
+
+   Allocates a new vector. If the allocation failed the size is zero.
+
+   #+begin_src c :comments org :tangle (eval c)
+qmckl_vector
+qmckl_vector_alloc( qmckl_context context, 
+                    const int64_t size)
+{
+  /* Should always be true by contruction */
+  assert (size > (int64_t) 0);
+  
+  qmckl_vector result;
+  result.size = size;
+
+  qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+  mem_info.size = size * sizeof(double);
+  result.data = (double*) qmckl_malloc (context, mem_info);
+
+  if (result.data == NULL) {
+    result.size = (int64_t) 0;
+  }
+
+  return result;
+}
+   #+end_src
+   
+   #+begin_src c :comments org :tangle (eval h_private_func)
+qmckl_exit_code
+qmckl_vector_free( qmckl_context context, 
+                   qmckl_vector vector);
+   #+end_src
+
+   #+begin_src c :comments org :tangle (eval c)
+qmckl_exit_code
+qmckl_vector_free( qmckl_context context, 
+                   qmckl_vector vector)
+{
+  /* Always true */
+  assert (vector.data != NULL);
+  
+  qmckl_exit_code rc;
+  
+  rc = qmckl_free(context, vector.data);
+  if (rc != QMCKL_SUCCESS) {
+    return rc;
+  }
+
+  vector.size = (int64_t) 0;
+  vector.data = NULL;
+  return QMCKL_SUCCESS;
+}
+   #+end_src
+
+** Matrix
+   
+  | Variable | Type         | Description                 |
+  |----------+--------------+-----------------------------|
+  | ~size~   | ~int64_t[2]~ | Dimension of each component |
+  | ~data~   | ~double*~    | Elements                    |
+
+  The dimensions use Fortran ordering: two elements differing by one
+  in the first dimension are consecutive in memory.
+  
+   #+begin_src c :comments org :tangle (eval h_private_type)
+typedef struct qmckl_matrix {
+  int64_t size[2];
+  double* data;
+} qmckl_matrix;
+   #+end_src
+
+
+   #+begin_src c :comments org :tangle (eval h_private_func)
+qmckl_matrix
+qmckl_matrix_alloc( qmckl_context context, 
+                    const int64_t size1,
+                    const int64_t size2);
+   #+end_src
+
+   Allocates a new matrix. If the allocation failed the sizes are zero.
+
+   #+begin_src c :comments org :tangle (eval c)
+qmckl_matrix
+qmckl_matrix_alloc( qmckl_context context, 
+                    const int64_t size1,
+                    const int64_t size2)
+{
+  /* Should always be true by contruction */
+  assert (size1 * size2 > (int64_t) 0);
+  
+  qmckl_matrix result;
+
+  result.size[0] = size1;
+  result.size[1] = size2;
+
+  qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+  mem_info.size = size1 * size2 * sizeof(double);
+  result.data = (double*) qmckl_malloc (context, mem_info);
+
+  if (result.data == NULL) {
+    result.size[0] = (int64_t) 0;
+    result.size[1] = (int64_t) 0;
+  }
+
+  return result;
+}
+   #+end_src
+   
+   #+begin_src c :comments org :tangle (eval h_private_func)
+qmckl_exit_code
+qmckl_matrix_free( qmckl_context context, 
+                   qmckl_matrix matrix);
+   #+end_src
+
+   #+begin_src c :comments org :tangle (eval c)
+qmckl_exit_code
+qmckl_matrix_free( qmckl_context context, 
+                   qmckl_matrix matrix)
+{
+  /* Always true */
+  assert (matrix.data != NULL);
+  
+  qmckl_exit_code rc;
+  
+  rc = qmckl_free(context, matrix.data);
+  if (rc != QMCKL_SUCCESS) {
+    return rc;
+  }
+  matrix.data = NULL;
+  matrix.size[0] = (int64_t) 0;
+  matrix.size[1] = (int64_t) 0;
+
+  return QMCKL_SUCCESS;
+}
+   #+end_src
+
+** Tensor
+   
+  | Variable | Type                              | Description                 |
+  |----------+-----------------------------------+-----------------------------|
+  | ~order~  | ~int64_t~                         | Order of the tensor         |
+  | ~size~   | ~int64_t[QMCKL_TENSOR_ORDER_MAX]~ | Dimension of each component |
+  | ~data~   | ~double*~                         | Elements                    |
+
+  The dimensions use Fortran ordering: two elements differing by one
+  in the first dimension are consecutive in memory.
+  
+   #+begin_src c :comments org :tangle (eval h_private_type)
+#define QMCKL_TENSOR_ORDER_MAX 16
+
+typedef struct qmckl_tensor {
+  int64_t order;
+  int64_t size[QMCKL_TENSOR_ORDER_MAX];
+  double* data;
+} qmckl_tensor;
+   #+end_src
+
+
+   #+begin_src c :comments org :tangle (eval h_private_func)
+qmckl_tensor
+qmckl_tensor_alloc( qmckl_context context, 
+                    const int64_t order,
+                    const int64_t* size);
+   #+end_src
+
+   Allocates memory for a tensor. If the allocation failed, the size
+   is zero.
+
+   #+begin_src c :comments org :tangle (eval c)
+qmckl_tensor
+qmckl_tensor_alloc( qmckl_context context, 
+                    const int64_t  order,
+                    const int64_t* size)
+{
+  /* Should always be true by contruction */
+  assert (order > 0);
+  assert (order <= QMCKL_TENSOR_ORDER_MAX);
+  assert (size  != NULL);
+  
+  qmckl_tensor result;
+  result.order = order;
+
+  int64_t prod_size = (int64_t) 1;
+  for (int64_t i=0 ; i<order ; ++i) {
+    assert (size[i] > (int64_t) 0);
+    result.size[i] = size[i];
+    prod_size *= size[i];
+  }
+
+  qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+  mem_info.size = prod_size * sizeof(double);
+
+  result.data = (double*) qmckl_malloc (context, mem_info);
+
+  if (result.data == NULL) {
+    memset(&result, 0, sizeof(qmckl_tensor));
+  }
+
+  return result;
+}
+   #+end_src
+   
+   #+begin_src c :comments org :tangle (eval h_private_func)
+qmckl_exit_code
+qmckl_tensor_free( qmckl_context context, 
+                   qmckl_tensor tensor);
+   #+end_src
+
+   #+begin_src c :comments org :tangle (eval c)
+qmckl_exit_code
+qmckl_tensor_free( qmckl_context context, 
+                   qmckl_tensor tensor)
+{
+  /* Always true */
+  assert (tensor.data != NULL);
+  
+  qmckl_exit_code rc;
+  
+  rc = qmckl_free(context, tensor.data);
+  if (rc != QMCKL_SUCCESS) {
+    return rc;
+  }
+  
+  memset(&tensor, 0, sizeof(qmckl_tensor));
+
+  return QMCKL_SUCCESS;
+}
+   #+end_src
+
+** Reshaping
+
+   Reshaping occurs in-place and the pointer to the data is copied.
+   
+*** Vector -> Matrix
+
+    #+begin_src c :comments org :tangle (eval h_private_func)
+qmckl_matrix
+qmckl_matrix_of_vector(const qmckl_vector vector,
+                       const int64_t size1,
+                       const int64_t size2);
+    #+end_src
+
+    Reshapes a vector into a matrix.
+
+    #+begin_src c :comments org :tangle (eval c)
+qmckl_matrix
+qmckl_matrix_of_vector(const qmckl_vector vector,
+                       const int64_t size1,
+                       const int64_t size2)
+{ 
+  /* Always true */
+  assert (size1 * size2 == vector.size);
+
+  qmckl_matrix result;
+
+  result.size[0] = size1;
+  result.size[1] = size2;
+  result.data    = vector.data;
+
+  return result;
+}
+    #+end_src
+
+*** Vector -> Tensor
+
+    #+begin_src c :comments org :tangle (eval h_private_func)
+qmckl_tensor
+qmckl_tensor_of_vector(const qmckl_vector vector,
+                       const int64_t order,
+                       const int64_t* size);
+    #+end_src
+
+    Reshapes a vector into a tensor.
+
+    #+begin_src c :comments org :tangle (eval c)
+qmckl_tensor
+qmckl_tensor_of_vector(const qmckl_vector vector,
+                       const int64_t order,
+                       const int64_t* size)
+{ 
+  qmckl_tensor result;
+
+  int64_t prod_size = 1;
+  for (int64_t i=0 ; i<order ; ++i) {
+    result.size[i] = size[i];
+    prod_size *= size[i];
+  }
+  assert (prod_size == vector.size);
+
+  result.data = vector.data;
+
+  return result;
+}
+    #+end_src
+
+*** Matrix -> Vector
+
+    #+begin_src c :comments org :tangle (eval h_private_func)
+qmckl_vector
+qmckl_vector_of_matrix(const qmckl_matrix matrix,
+                       const int64_t size);
+    #+end_src
+
+    Reshapes a matrix into a vector.
+
+    #+begin_src c :comments org :tangle (eval c)
+qmckl_vector
+qmckl_vector_of_matrix(const qmckl_matrix matrix,
+                       const int64_t size)
+{ 
+  /* Always true */
+  assert (matrix.size[0] * matrix.size[1] == size);
+
+  qmckl_vector result;
+
+  result.size = size;
+  result.data = matrix.data;
+
+  return result;
+}
+    #+end_src
+
+*** Matrix -> Tensor
+
+    #+begin_src c :comments org :tangle (eval h_private_func)
+qmckl_tensor
+qmckl_tensor_of_matrix(const qmckl_matrix matrix,
+                       const int64_t order,
+                       const int64_t* size);
+    #+end_src
+
+    Reshapes a matrix into a tensor.
+
+    #+begin_src c :comments org :tangle (eval c)
+qmckl_tensor
+qmckl_tensor_of_matrix(const qmckl_matrix matrix,
+                       const int64_t order,
+                       const int64_t* size)
+{ 
+  qmckl_tensor result;
+
+  int64_t prod_size = 1;
+  for (int64_t i=0 ; i<order ; ++i) {
+    result.size[i] = size[i];
+    prod_size *= size[i];
+  }
+  assert (prod_size == matrix.size[0] * matrix.size[1]);
+
+  result.data = matrix.data;
+
+  return result;
+}
+    #+end_src
+
+*** Tensor -> Vector
+
+    #+begin_src c :comments org :tangle (eval h_private_func)
+qmckl_vector
+qmckl_vector_of_tensor(const qmckl_tensor tensor,
+                       const int64_t size);
+    #+end_src
+
+    Reshapes a tensor into a vector.
+
+    #+begin_src c :comments org :tangle (eval c)
+qmckl_vector
+qmckl_vector_of_tensor(const qmckl_tensor tensor,
+                       const int64_t size)
+{ 
+  /* Always true */
+  int64_t prod_size = (int64_t) 1;
+  for (int64_t i=0 ; i<tensor.order ; i++) {
+    prod_size *= tensor.size[i];
+  }
+  assert (prod_size == size);
+
+  qmckl_vector result;
+
+  result.size = size;
+  result.data = tensor.data;
+
+  return result;
+}
+    #+end_src
+
+*** Tensor -> Matrix
+
+    #+begin_src c :comments org :tangle (eval h_private_func)
+qmckl_matrix
+qmckl_matrix_of_tensor(const qmckl_tensor tensor,
+                       const int64_t size1,
+                       const int64_t size2);
+    #+end_src
+
+    Reshapes a tensor into a vector.
+
+    #+begin_src c :comments org :tangle (eval c)
+qmckl_matrix
+qmckl_matrix_of_tensor(const qmckl_tensor tensor,
+                       const int64_t size1,
+                       const int64_t size2)
+{ 
+  /* Always true */
+  int64_t prod_size = (int64_t) 1;
+  for (int64_t i=0 ; i<tensor.order ; i++) {
+    prod_size *= tensor.size[i];
+  }
+  assert (prod_size == size1 * size2);
+
+  qmckl_matrix result;
+
+  result.size[0] = size1;
+  result.size[1] = size2;
+  result.data = tensor.data;
+
+  return result;
+}
+    #+end_src
+
+** Access macros
+
+    #+begin_src c :comments org :tangle (eval h_private_func)
+#define qmckl_vec(v, i) v.data[i]
+#define qmckl_mat(m, i, j) m.data[(i) + (j)*m.size[0]]
+
+#define qmckl_ten3(t, i, j, k) t.data[(i) + m.size[0]*((j) + size[1]*(k))]
+#define qmckl_ten4(t, i, j, k, l) t.data[(i) + m.size[0]*((j) + size[1]*((k) + size[2]*(l)))]
+#define qmckl_ten5(t, i, j, k, l, m) t.data[(i) + m.size[0]*((j) + size[1]*((k) + size[2]*((l) + size[3]*(m))))]
+    #+end_src
+  
+** Tests
+
+    #+begin_src c :comments link :tangle (eval c_test)
+{
+  int64_t m = 3;
+  int64_t n = 4;
+  int64_t p = m*n;
+  qmckl_vector vec = qmckl_vector_alloc(context, p);
+
+  for (int64_t i=0 ; i<p ; ++i) 
+    qmckl_vec(vec, i) = (double) i;
+
+  for (int64_t i=0 ; i<p ; ++i) 
+    assert( vec.data[i] == (double) i );
+
+  qmckl_matrix mat = qmckl_matrix_of_vector(vec, m, n);
+  assert (mat.size[0] == m);
+  assert (mat.size[1] == n);
+  assert (mat.data == vec.data);
+  
+  for (int64_t j=0 ; j<n ; ++j)
+    for (int64_t i=0 ; i<m ; ++i)
+      assert ( qmckl_mat(mat, i, j) == qmckl_vec(vec, i+j*m)) ;
+
+  qmckl_vector vec2 = qmckl_vector_of_matrix(mat, p);
+  assert (vec2.size == p);
+  assert (vec2.data == vec.data);
+  for (int64_t i=0 ; i<p ; ++i) 
+      assert ( qmckl_vec(vec2, i) == qmckl_vec(vec, i) ) ;
+
+  qmckl_vector_free(context, vec);
+
+}
+    #+end_src
 * Matrix operations
 
 ** ~qmckl_dgemm~
@@ -1169,6 +1694,15 @@ assert(QMCKL_SUCCESS == test_qmckl_adjugate(context));
     #+end_src
 
 * End of files                                                     :noexport:
+
+
+  #+begin_src c :tangle (eval h_private_type)
+#endif
+  #+end_src
+
+  #+begin_src c :tangle (eval h_private_func)
+#endif
+  #+end_src
 
    #+begin_src c :comments link :tangle (eval c_test)
   assert (qmckl_context_destroy(context) == QMCKL_SUCCESS);
