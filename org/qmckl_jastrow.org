@@ -4216,6 +4216,8 @@ assert(fabs(een_rescaled_n_deriv_e[0][5][0][1][2]-0.001593334817691633  )  < 1.e
 qmckl_exit_code qmckl_get_jastrow_dim_cord_vect(qmckl_context context, int64_t* const dim_cord_vect);
 qmckl_exit_code qmckl_get_jastrow_cord_vect_full(qmckl_context context, double* const cord_vect_full);
 qmckl_exit_code qmckl_get_jastrow_lkpm_combined_index(qmckl_context context, int64_t* const lkpm_combined_index);
+qmckl_exit_code qmckl_get_jastrow_tmp_c(qmckl_context context, double* const tmp_c);
+qmckl_exit_code qmckl_get_jastrow_dtmp_c(qmckl_context context, double* const dtmp_c);
     #+end_src
 
     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
@@ -4283,6 +4285,60 @@ qmckl_exit_code qmckl_get_jastrow_lkpm_combined_index(qmckl_context context, int
 
   return QMCKL_SUCCESS;
 }
+
+qmckl_exit_code qmckl_get_jastrow_tmp_c(qmckl_context context, double* const tmp_c)
+{
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_exit_code rc;
+
+  rc = qmckl_provide_dim_cord_vect(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_cord_vect_full(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_tmp_c(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  size_t sze = (ctx->jastrow.cord_num) * (ctx->jastrow.cord_num + 1) 
+               * ctx->electron.num * ctx->nucleus.num * ctx->electron.walk_num;
+  memcpy(tmp_c, ctx->jastrow.tmp_c, sze * sizeof(double));
+
+  return QMCKL_SUCCESS;
+}
+
+qmckl_exit_code qmckl_get_jastrow_dtmp_c(qmckl_context context, double* const dtmp_c)
+{
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_exit_code rc;
+
+  rc = qmckl_provide_dim_cord_vect(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_cord_vect_full(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_dtmp_c(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  size_t sze = (ctx->jastrow.cord_num) * (ctx->jastrow.cord_num + 1) 
+               *4* ctx->electron.num * ctx->nucleus.num * ctx->electron.walk_num;
+  memcpy(dtmp_c, ctx->jastrow.dtmp_c, sze * sizeof(double));
+
+  return QMCKL_SUCCESS;
+}
     #+end_src
     
 *** Provide                                                        :noexport:
@@ -4292,6 +4348,7 @@ qmckl_exit_code qmckl_provide_dim_cord_vect(qmckl_context context);
 qmckl_exit_code qmckl_provide_cord_vect_full(qmckl_context context);
 qmckl_exit_code qmckl_provide_lkpm_combined_index(qmckl_context context);
 qmckl_exit_code qmckl_provide_tmp_c(qmckl_context context);
+qmckl_exit_code qmckl_provide_dtmp_c(qmckl_context context);
     #+end_src
 
     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
@@ -4931,7 +4988,16 @@ integer function qmckl_compute_tmp_c_f(context, cord_num, elec_num, nucl_num, &
                      tmp_c(1,1,0,i,nw),LDC)
   end do
   end do
+  !do kk=0, cord_num-1
+  !do i=1,nucl_num
+  !  do j=1,elec_num
+  !    print *,tmp_c(j,i,:,kk,1)
+  !  end do
+  !end do
+  !end do
 
+  deallocate(een_rescaled_e_T)
+  deallocate(een_rescaled_n_T)
 end function qmckl_compute_tmp_c_f
     #+end_src
 
@@ -5083,7 +5149,19 @@ integer function qmckl_compute_dtmp_c_f(context, cord_num, elec_num, nucl_num, &
                      dtmp_c(1,1,1,0,i,nw),LDC)
   end do
   end do
+  !do kk=0, cord_num-1
+  !do i=1,nucl_num
+  !  do j=1,elec_num
+  !    print *,dtmp_c(j,1,i,:,kk,1)
+  !    print *,dtmp_c(j,2,i,:,kk,1)
+  !    print *,dtmp_c(j,3,i,:,kk,1)
+  !    print *,dtmp_c(j,4,i,:,kk,1)
+  !  end do
+  !end do
+  !end do
 
+  deallocate(een_rescaled_e_deriv_e_T)
+  deallocate(een_rescaled_n_T)
 end function qmckl_compute_dtmp_c_f
     #+end_src
 
@@ -5201,9 +5279,17 @@ lkpm_of_cindex = np.array(lkpm_combined_index).T
     #+RESULTS: helper_funcs
 
      #+begin_src c :tangle (eval c_test)
-//assert(qmckl_electron_provided(context));
-//
+assert(qmckl_electron_provided(context));
 
+double tmp_c[walk_num][cord_num][cord_num+1][nucl_num][elec_num];
+rc = qmckl_get_jastrow_tmp_c(context, &(tmp_c[0][0][0][0][0]));
+
+double dtmp_c[walk_num][cord_num][cord_num+1][nucl_num][4][elec_num];
+rc = qmckl_get_jastrow_dtmp_c(context, &(dtmp_c[0][0][0][0][0][0]));
+
+assert(fabs(tmp_c[0][0][1][0][0] - 2.7083473948352403) < 1e-12);
+//printf("%3.5f = ",dtmp_c[0][0][1][0][0][0]);
+//assert(fabs(dtmp_c[0][0][1][0][0][0] + 0.237440520852232) < 1e-12);
      #+end_src
 
 ** Electron-electron-nucleus Jastrow \(f_{een}\)
@@ -5298,7 +5384,7 @@ qmckl_exit_code qmckl_provide_factor_een(qmckl_context context)
     }
     
     qmckl_exit_code rc =
-      qmckl_compute_factor_een_naive(context,
+      qmckl_compute_factor_een(context,
                               ctx->electron.walk_num,
                               ctx->electron.num,
                               ctx->nucleus.num,
@@ -5306,7 +5392,7 @@ qmckl_exit_code qmckl_provide_factor_een(qmckl_context context)
                               ctx->jastrow.dim_cord_vect,
                               ctx->jastrow.cord_vect_full,
                               ctx->jastrow.lkpm_combined_index,
-                              ctx->jastrow.een_rescaled_e,
+                              ctx->jastrow.tmp_c,
                               ctx->jastrow.een_rescaled_n,
                               ctx->jastrow.factor_een);
     if (rc != QMCKL_SUCCESS) {
@@ -5810,6 +5896,19 @@ qmckl_exit_code qmckl_provide_factor_een_deriv_e(qmckl_context context)
                               ctx->jastrow.een_rescaled_e_deriv_e,
                               ctx->jastrow.een_rescaled_n_deriv_e,
                               ctx->jastrow.factor_een_deriv_e);
+      //qmckl_compute_factor_een_deriv_e(context,
+      //                        ctx->electron.walk_num,
+      //                        ctx->electron.num,
+      //                        ctx->nucleus.num,
+      //                        ctx->jastrow.cord_num,
+      //                        ctx->jastrow.dim_cord_vect,
+      //                        ctx->jastrow.cord_vect_full,
+      //                        ctx->jastrow.lkpm_combined_index,
+      //                        ctx->jastrow.tmp_c,
+      //                        ctx->jastrow.dtmp_c,
+      //                        ctx->jastrow.een_rescaled_n,
+      //                        ctx->jastrow.een_rescaled_n_deriv_e,
+      //                        ctx->jastrow.factor_een_deriv_e);
     if (rc != QMCKL_SUCCESS) {
       return rc;
     }
