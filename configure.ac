@@ -176,6 +176,22 @@ AX_BLAS([], [AC_MSG_ERROR([BLAS was not found.])])
 ## LAPACK
 AX_LAPACK([], [AC_MSG_ERROR([LAPACK was not found.])])
 
+
+# Specific options required with some compilers
+case $FC in
+
+ ifort*)
+      FCFLAGS="$FCFLAGS -nofor-main"
+      ;;
+
+ gfortran*)
+      # Order is important here
+      FCFLAGS="-cpp $FCFLAGS"
+      ;;
+esac
+
+
+
 # Options.
 
 AC_ARG_ENABLE(debug, [AS_HELP_STRING([--enable-debug],[compile for debugging])], ok=$enableval, ok=no)
@@ -281,13 +297,6 @@ AC_ARG_ENABLE([vfc_ci],
   *) AC_MSG_ERROR([bad value ${enableval} for --enable_vfc_ci]) ;;
 esac],[vfc_ci=false])
 AM_CONDITIONAL([VFC_CI], [test x$vfc_ci = xtrue])
-
-# Enable Fortran preprocessor
-if test "$FC" = "gfortran"; then
-  AC_MSG_NOTICE(gfortran detected)
-  # Arguments order is important here
-  FCFLAGS="-cpp $FCFLAGS"
-fi
 
 if test "$FC" = "verificarlo-f"; then
   AC_MSG_NOTICE(verificarlo-f detected)

@@ -53,7 +53,7 @@ src_qmckl_f   = src/qmckl_f.f90
 src_qmckl_fo  = src/qmckl_f.o
 header_tests  = tests/chbrclf.h tests/n2.h
 
-fortrandir = $(datadir)/fortran
+fortrandir = $(datadir)/qmckl/fortran
 fortran_DATA = $(src_qmckl_f)
 
 QMCKL_TEST_DIR = $(abs_srcdir)/share/qmckl/test_data/
