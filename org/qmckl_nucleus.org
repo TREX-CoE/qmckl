@@ -67,42 +67,42 @@ int main() {
 
   The following data stored in the context:
 
-  |------------------------+----------------+-------------------------------------------|
-  | ~uninitialized~        | int32_t        | Keeps bit set for uninitialized data      |
-  | ~num~                  | int64_t        | Total number of nuclei                    |
-  | ~provided~             | bool           | If true, ~nucleus~ is valid               |
-  | ~charge~               | double[num]    | Nuclear charges                           |
-  | ~coord~                | double[3][num] | Nuclear coordinates, in transposed format |
-  | ~coord_date~           | int64_t        | Nuclear coordinates, date if modified     |
-  | ~rescale_factor_kappa~ | double         | The distance scaling factor               |
+  |------------------------+--------------+-------------------------------------------|
+  | ~uninitialized~        | int32_t      | Keeps bit set for uninitialized data      |
+  | ~num~                  | int64_t      | Total number of nuclei                    |
+  | ~provided~             | bool         | If true, ~nucleus~ is valid               |
+  | ~charge~               | qmckl_vector | Nuclear charges                           |
+  | ~coord~                | qmckl_matrix | Nuclear coordinates, in transposed format |
+  | ~coord_date~           | int64_t      | Nuclear coordinates, date if modified     |
+  | ~rescale_factor_kappa~ | double       | The distance scaling factor               |
 
   Computed data:
   
-  |-----------------------------+------------------+------------------------------------------------------------|
-  | ~nn_distance~               | double[num][num] | Nucleus-nucleus distances                                  |
-  | ~nn_distance_date~          | int64_t          | Date when Nucleus-nucleus distances were computed          |
-  | ~nn_distance_rescaled~      | double[num][num] | Nucleus-nucleus rescaled distances                         |
-  | ~nn_distance_rescaled_date~ | int64_t          | Date when Nucleus-nucleus rescaled distances were computed |
-  | ~repulsion~                 | double           | Nuclear repulsion energy                                   |
-  | ~repulsion_date~            | int64_t          | Date when the nuclear repulsion energy was computed        |
+  |-----------------------------+--------------+------------------------------------------------------------|
+  | ~nn_distance~               | qmckl_matrix | Nucleus-nucleus distances                                  |
+  | ~nn_distance_date~          | int64_t      | Date when Nucleus-nucleus distances were computed          |
+  | ~nn_distance_rescaled~      | qmckl_matrix | Nucleus-nucleus rescaled distances                         |
+  | ~nn_distance_rescaled_date~ | int64_t      | Date when Nucleus-nucleus rescaled distances were computed |
+  | ~repulsion~                 | double       | Nuclear repulsion energy                                   |
+  | ~repulsion_date~            | int64_t      | Date when the nuclear repulsion energy was computed        |
 
 ** Data structure
 
    #+begin_src c :comments org :tangle (eval h_private_type)
 typedef struct qmckl_nucleus_struct {
-  int64_t   num;
-  int64_t   repulsion_date;
-  int64_t   nn_distance_date;
-  int64_t   nn_distance_rescaled_date;
-  int64_t   coord_date;
-  double*   coord;
-  double*   charge;
-  double*   nn_distance;
-  double*   nn_distance_rescaled;
-  double    repulsion;
-  double    rescale_factor_kappa;
-  int32_t   uninitialized;
-  bool      provided;
+  int64_t      num;
+  int64_t      repulsion_date;
+  int64_t      nn_distance_date;
+  int64_t      nn_distance_rescaled_date;
+  int64_t      coord_date;
+  qmckl_vector charge;
+  qmckl_matrix coord;
+  qmckl_matrix nn_distance;
+  qmckl_matrix nn_distance_rescaled;
+  double       repulsion;
+  double       rescale_factor_kappa;
+  int32_t      uninitialized;
+  bool         provided;
 } qmckl_nucleus_struct;
 
    #+end_src
@@ -138,20 +138,18 @@ qmckl_exit_code qmckl_init_nucleus(qmckl_context context) {
    #+end_src
 
 ** Access functions
-
-   #+begin_src c :comments org :tangle (eval h_func) :exports none
-qmckl_exit_code qmckl_get_nucleus_num    (const qmckl_context context, int64_t* const num);
-qmckl_exit_code qmckl_get_nucleus_charge (const qmckl_context context, double* const charge);
-qmckl_exit_code qmckl_get_nucleus_coord  (const qmckl_context context, const char transp, double* const coord);
-
-qmckl_exit_code qmckl_get_nucleus_rescale_factor (const qmckl_context context, double* const rescale_factor_kappa);
-   #+end_src
-
    #+NAME:post
    #+begin_src c  :exports none
 if ( (ctx->nucleus.uninitialized & mask) != 0) {
   return NULL;
 }
+   #+end_src
+
+
+   #+begin_src c :comments org :tangle (eval h_func) :exports none
+qmckl_exit_code
+qmckl_get_nucleus_num(const qmckl_context context,
+                      int64_t* const num);
    #+end_src
 
    #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
@@ -187,10 +185,22 @@ qmckl_get_nucleus_num (const qmckl_context context, int64_t* const num) {
 
   return QMCKL_SUCCESS;
 }
+   #+end_src
 
 
+   #+begin_src c :comments org :tangle (eval h_func) :exports none
 qmckl_exit_code
-qmckl_get_nucleus_charge (const qmckl_context context, double* const charge) {
+qmckl_get_nucleus_charge(const qmckl_context context,
+                         double* const charge,
+                         const int64_t size_max);
+   #+end_src
+
+   #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
+qmckl_exit_code
+qmckl_get_nucleus_charge (const qmckl_context context,
+                          double* const charge,
+                          const int64_t size_max)
+{
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return QMCKL_INVALID_CONTEXT;
@@ -215,16 +225,31 @@ qmckl_get_nucleus_charge (const qmckl_context context, double* const charge) {
                            "nucleus data is not provided");
   }
 
-  assert (ctx->nucleus.charge != NULL);
+  assert (ctx->nucleus.charge.data != NULL);
 
-  int64_t nucl_num = ctx->nucleus.num;
+  if (ctx->nucleus.num > size_max) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_3,
+                           "qmckl_get_nucleus_charge",
+                           "Array too small");
+  }
 
-  memcpy(charge, ctx->nucleus.charge, nucl_num*sizeof(double));
+  qmckl_exit_code rc;
+  rc = qmckl_double_of_vector(context, ctx->nucleus.charge, charge, size_max);
 
-  return QMCKL_SUCCESS;
+  return rc;
 }
 
+   #+end_src
 
+
+   #+begin_src c :comments org :tangle (eval h_func) :exports none
+qmckl_exit_code
+qmckl_get_nucleus_rescale_factor(const qmckl_context context,
+                                 double* const rescale_factor_kappa);
+   #+end_src
+
+   #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
 qmckl_exit_code
 qmckl_get_nucleus_rescale_factor (const qmckl_context context,
                                   double* const rescale_factor_kappa)
@@ -250,10 +275,24 @@ qmckl_get_nucleus_rescale_factor (const qmckl_context context,
 
   return QMCKL_SUCCESS;
 }
+   #+end_src
 
 
+   #+begin_src c :comments org :tangle (eval h_func) :exports none
 qmckl_exit_code
-qmckl_get_nucleus_coord (const qmckl_context context, const char transp, double* const coord) {
+qmckl_get_nucleus_coord(const qmckl_context context,
+                        const char transp,
+                        double* const coord,
+                        const int64_t size_max);
+   #+end_src
+
+   #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
+qmckl_exit_code
+qmckl_get_nucleus_coord (const qmckl_context context,
+                         const char transp,
+                         double* const coord,
+                         const int64_t size_max)
+{
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return QMCKL_INVALID_CONTEXT;
@@ -285,25 +324,21 @@ qmckl_get_nucleus_coord (const qmckl_context context, const char transp, double*
                            "nucleus data is not provided");
   }
 
-  int64_t nucl_num = ctx->nucleus.num;
+  assert (ctx->nucleus.coord.data != NULL);
 
-  assert (ctx->nucleus.coord != NULL);
+  qmckl_exit_code rc;
 
   if (transp == 'N') {
-    qmckl_exit_code rc;
-
-    rc = qmckl_transpose(context, nucl_num, 3,
-                         ctx->nucleus.coord, nucl_num,
-                         coord, 3);
+    qmckl_matrix At = qmckl_matrix_alloc(context, 3, ctx->nucleus.coord.size[0]);
+    rc = qmckl_transpose(context, ctx->nucleus.coord, At);
     if (rc != QMCKL_SUCCESS) return rc;
-
+    rc = qmckl_double_of_matrix(context, At, coord, size_max);
+    qmckl_matrix_free(context, At);
   } else {
-
-    memcpy(coord, ctx->nucleus.coord, 3*nucl_num*sizeof(double));
-
+    rc = qmckl_double_of_matrix(context, ctx->nucleus.coord, coord, size_max);
   }
 
-  return QMCKL_SUCCESS;
+  return rc;
 }
    #+end_src
 
@@ -330,51 +365,6 @@ bool qmckl_nucleus_provided(const qmckl_context context) {
 
 ** Initialization functions
 
-   To set the data relative to the nuclei in the context, the
-   following functions need to be called.
-
-   #+begin_src c :comments org :tangle (eval h_func)
-qmckl_exit_code  qmckl_set_nucleus_num    (qmckl_context context, const int64_t num);
-qmckl_exit_code  qmckl_set_nucleus_charge (qmckl_context context, const double* charge);
-qmckl_exit_code  qmckl_set_nucleus_coord  (qmckl_context context, const char transp, const double* coord);
-
-qmckl_exit_code  qmckl_set_nucleus_rescale_factor (qmckl_context context, const double rescale_factor_kappa);
-   #+end_src
-
-    #+begin_src f90 :tangle (eval fh_func) :comments org :exports none
-interface
-  integer(c_int32_t) function qmckl_set_nucleus_num(context, num) &
-    bind(C)
-    use, intrinsic :: iso_c_binding
-    import
-    implicit none
-    integer (c_int64_t) , intent(in)  , value :: context
-    integer (c_int64_t) , intent(in)  , value :: num
-  end function
-end interface
-interface
-  integer(c_int32_t) function qmckl_set_nucleus_charge(context, charge) &
-    bind(C)
-    use, intrinsic :: iso_c_binding
-    import
-    implicit none
-    integer (c_int64_t) , intent(in)  , value :: context
-    real    (c_double)  , intent(in)          :: charge(*)
-  end function
-end interface
-interface
-  integer(c_int32_t) function qmckl_set_nucleus_coord(context, transp, coord) &
-    bind(C)
-    use, intrinsic :: iso_c_binding
-    import
-    implicit none
-    integer (c_int64_t) , intent(in)  , value :: context
-    character(c_char)   , intent(in)  , value :: transp
-    real    (c_double)  , intent(in)          :: coord(*)
-  end function
-end interface
-    #+end_src
-
    #+NAME:pre2
    #+begin_src c :exports none
 if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
@@ -392,12 +382,22 @@ ctx->nucleus.provided = (ctx->nucleus.uninitialized == 0);
 return QMCKL_SUCCESS;
    #+end_src
 
+   To set the data relative to the nuclei in the context, the
+   following functions need to be called.
 
-   To set the number of nuclei, use
+   #+begin_src c :comments org :tangle (eval h_func)
+qmckl_exit_code
+qmckl_set_nucleus_num(qmckl_context context,
+                      const int64_t num);
+   #+end_src
+
+   Sets the number of nuclei.
 
    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
 qmckl_exit_code
-qmckl_set_nucleus_num(qmckl_context context, const int64_t num) {
+qmckl_set_nucleus_num(qmckl_context context,
+                      const int64_t num)
+{
   <<pre2>>
 
   if (num <= 0) {
@@ -415,11 +415,35 @@ qmckl_set_nucleus_num(qmckl_context context, const int64_t num) {
 }
    #+end_src
 
-    The following function sets the nuclear charges of all the atoms.
+    #+begin_src f90 :tangle (eval fh_func) :comments org :exports none
+interface
+  integer(c_int32_t) function qmckl_set_nucleus_num(context, num) &
+    bind(C)
+    use, intrinsic :: iso_c_binding
+    import
+    implicit none
+    integer (c_int64_t) , intent(in)  , value :: context
+    integer (c_int64_t) , intent(in)  , value :: num
+  end function
+end interface
+    #+end_src
+
+
+   #+begin_src c :comments org :tangle (eval h_func)
+qmckl_exit_code
+qmckl_set_nucleus_charge(qmckl_context context,
+                         const double* charge,
+                         const int64_t size_max);
+   #+end_src
+
+    Sets the nuclear charges of all the atoms.
 
    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
 qmckl_exit_code
-qmckl_set_nucleus_charge(qmckl_context context, const double* charge) {
+qmckl_set_nucleus_charge(qmckl_context context,
+                         const double* charge,
+                         const int64_t size_max)
+{
   <<pre2>>
 
   if (charge == NULL) {
@@ -437,34 +461,126 @@ qmckl_set_nucleus_charge(qmckl_context context, const double* charge) {
   rc = qmckl_get_nucleus_num(context, &num);
   if (rc != QMCKL_SUCCESS) return rc;
 
-  if (ctx->nucleus.charge != NULL) {
-    qmckl_free(context, ctx->nucleus.charge);
-    ctx->nucleus.charge= NULL;
-  }
-
-  qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-  mem_info.size = num*sizeof(double);
-
-  assert (ctx->nucleus.charge == NULL);
-  ctx->nucleus.charge = (double*) qmckl_malloc(context, mem_info);
-  if (ctx->nucleus.charge == NULL) {
+  if (num > size_max) {
     return qmckl_failwith( context,
-                           QMCKL_ALLOCATION_FAILED,
+                           QMCKL_INVALID_ARG_3,
                            "qmckl_set_nucleus_charge",
-                           NULL);
+                           "Array too small");
   }
-  ctx->nucleus.charge= memcpy(ctx->nucleus.charge, charge, num*sizeof(double));
-  assert (ctx->nucleus.charge != NULL);
+
+  ctx->nucleus.charge = qmckl_vector_alloc(context, num);
+  rc = qmckl_vector_of_double(context, charge, num, &(ctx->nucleus.charge));
 
   <<post2>>
 }
     #+end_src
 
-    The following function sets the rescale parameter for the nuclear distances.
+    #+begin_src f90 :tangle (eval fh_func) :comments org :exports none
+interface
+  integer(c_int32_t) function qmckl_set_nucleus_charge(context, charge, size_max) &
+    bind(C)
+    use, intrinsic :: iso_c_binding
+    import
+    implicit none
+    integer (c_int64_t) , intent(in)  , value :: context
+    real    (c_double)  , intent(in)          :: charge(*)
+    integer (c_int64_t) , intent(in)  , value :: size_max
+  end function
+end interface
+    #+end_src
+
+
+    
+   #+begin_src c :comments org :tangle (eval h_func)
+qmckl_exit_code
+qmckl_set_nucleus_coord(qmckl_context context,
+                        const char transp,
+                        const double* coord,
+                        const int64_t size_max);
+   #+end_src
+
+    Sets the nuclear coordinates of all the atoms. The coordinates
+    are be given in atomic units.
 
    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
 qmckl_exit_code
-qmckl_set_nucleus_rescale_factor(qmckl_context context, const double rescale_factor_kappa) {
+qmckl_set_nucleus_coord(qmckl_context context,
+                        const char transp,
+                        const double* coord,
+                        const int64_t size_max)
+{
+  <<pre2>>
+
+  qmckl_exit_code rc;
+
+  int32_t mask = 1 << 2;
+
+  const int64_t nucl_num = (int64_t) ctx->nucleus.num;
+
+  if (ctx->nucleus.coord.data != NULL) {
+    rc = qmckl_matrix_free(context, ctx->nucleus.coord);
+    if (rc != QMCKL_SUCCESS) return rc;
+  }
+
+  ctx->nucleus.coord = qmckl_matrix_alloc(context, nucl_num, 3);
+
+  if (ctx->nucleus.coord.data == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_ALLOCATION_FAILED,
+                           "qmckl_set_nucleus_coord",
+                           NULL);
+  }
+
+  if (size_max < 3*nucl_num) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_4,
+                           "qmckl_set_nucleus_coord",
+                           "Array too small");
+  }
+
+  if (transp == 'N') {
+    qmckl_matrix At;
+    At = qmckl_matrix_alloc(context, 3, nucl_num);
+    rc = qmckl_matrix_of_double(context, coord, 3*nucl_num, &At);
+    if (rc != QMCKL_SUCCESS) return rc;
+    rc = qmckl_transpose(context, At, ctx->nucleus.coord);
+  } else {
+    rc = qmckl_matrix_of_double(context, coord, nucl_num*3, &(ctx->nucleus.coord));
+  }
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  <<post2>>
+}
+    #+end_src
+
+    #+begin_src f90 :tangle (eval fh_func) :comments org :exports none
+interface
+  integer(c_int32_t) function qmckl_set_nucleus_coord(context, transp, coord, size_max) &
+    bind(C)
+    use, intrinsic :: iso_c_binding
+    import
+    implicit none
+    integer (c_int64_t) , intent(in)  , value :: context
+    character(c_char)   , intent(in)  , value :: transp
+    real    (c_double)  , intent(in)          :: coord(*)
+    integer (c_int64_t) , intent(in)  , value :: size_max
+  end function
+end interface
+    #+end_src
+
+   #+begin_src c :comments org :tangle (eval h_func)
+qmckl_exit_code
+qmckl_set_nucleus_rescale_factor(qmckl_context context,
+                                 const double kappa);
+   #+end_src
+
+    Sets the rescale parameter for the nuclear distances.
+
+   #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code
+qmckl_set_nucleus_rescale_factor(qmckl_context context,
+                                 const double rescale_factor_kappa)
+{
   <<pre2>>
 
   if (rescale_factor_kappa <= 0.0) {
@@ -480,50 +596,17 @@ qmckl_set_nucleus_rescale_factor(qmckl_context context, const double rescale_fac
 }
     #+end_src
 
-    The following function sets the nuclear coordinates of all the
-    atoms. The coordinates should be given in atomic units.
-
-   #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
-qmckl_exit_code
-qmckl_set_nucleus_coord(qmckl_context context, const char transp, const double* coord) {
-  <<pre2>>
-
-  int64_t nucl_num = (int64_t) 0;
-  qmckl_exit_code rc;
-
-  int32_t mask = 1 << 2;
-
-  rc = qmckl_get_nucleus_num(context, &nucl_num);
-  if (rc != QMCKL_SUCCESS) return rc;
-
-  if (ctx->nucleus.coord != NULL) {
-    qmckl_free(context, ctx->nucleus.coord);
-    ctx->nucleus.coord = NULL;
-  }
-
-  qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-  mem_info.size = 3*nucl_num*sizeof(double);
-
-  assert(ctx->nucleus.coord == NULL);
-
-  ctx->nucleus.coord = (double*) qmckl_malloc(context, mem_info);
-  if (coord == NULL) {
-    return qmckl_failwith( context,
-                           QMCKL_ALLOCATION_FAILED,
-                           "qmckl_set_nucleus_coord",
-                           NULL);
-  }
-  if (transp == 'N') {
-    rc = qmckl_transpose(context, 3, nucl_num,
-                         coord, 3,
-                         ctx->nucleus.coord, nucl_num);
-    if (rc != QMCKL_SUCCESS) return rc;
-  } else {
-    memcpy(ctx->nucleus.coord, coord, 3*nucl_num*sizeof(double));
-  }
-
-  <<post2>>
-}
+    #+begin_src f90 :tangle (eval fh_func) :comments org :exports none
+interface
+  integer(c_int32_t) function qmckl_set_rescale_factor(context, kappa) &
+    bind(C)
+    use, intrinsic :: iso_c_binding
+    import
+    implicit none
+    integer (c_int64_t) , intent(in)  , value :: context
+    real    (c_double)  , intent(in)  , value :: kappa
+  end function
+end interface
     #+end_src
 
 ** Test
@@ -568,15 +651,15 @@ assert(k == nucl_rescale_factor_kappa);
 
 double nucl_coord2[3*nucl_num];
 
-rc = qmckl_get_nucleus_coord (context, 'T', nucl_coord2);
+rc = qmckl_get_nucleus_coord (context, 'T', nucl_coord2, 3*nucl_num);
 assert(rc == QMCKL_NOT_PROVIDED);
 
-rc = qmckl_set_nucleus_coord (context, 'T', &(nucl_coord[0]));
+rc = qmckl_set_nucleus_coord (context, 'T', &(nucl_coord[0]), 3*nucl_num);
 assert(rc == QMCKL_SUCCESS);
 
 assert(!qmckl_nucleus_provided(context));
 
-rc = qmckl_get_nucleus_coord (context, 'N', nucl_coord2);
+rc = qmckl_get_nucleus_coord (context, 'N', nucl_coord2, 3*nucl_num);
 assert(rc == QMCKL_SUCCESS);
 for (size_t k=0 ; k<3 ; ++k) {
   for (size_t i=0 ; i<nucl_num ; ++i) {
@@ -584,7 +667,7 @@ for (size_t k=0 ; k<3 ; ++k) {
   }
 }
 
-rc = qmckl_get_nucleus_coord (context, 'T', nucl_coord2);
+rc = qmckl_get_nucleus_coord (context, 'T', nucl_coord2, 3*nucl_num);
 assert(rc == QMCKL_SUCCESS);
 for (size_t i=0 ; i<3*nucl_num ; ++i) {
   assert( nucl_coord[i] == nucl_coord2[i] );
@@ -592,13 +675,13 @@ for (size_t i=0 ; i<3*nucl_num ; ++i) {
 
 double nucl_charge2[nucl_num];
 
-rc = qmckl_get_nucleus_charge(context, nucl_charge2);
+rc = qmckl_get_nucleus_charge(context, nucl_charge2, nucl_num);
 assert(rc == QMCKL_NOT_PROVIDED);
 
-rc = qmckl_set_nucleus_charge(context, nucl_charge);
+rc = qmckl_set_nucleus_charge(context, nucl_charge, nucl_num);
 assert(rc == QMCKL_SUCCESS);
 
-rc = qmckl_get_nucleus_charge(context, nucl_charge2);
+rc = qmckl_get_nucleus_charge(context, nucl_charge2, nucl_num);
 assert(rc == QMCKL_SUCCESS);
 for (size_t i=0 ; i<nucl_num ; ++i) {
   assert( nucl_charge[i] == nucl_charge2[i] );
@@ -621,11 +704,17 @@ assert(qmckl_nucleus_provided(context));
 *** Get
 
     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
-qmckl_exit_code qmckl_get_nucleus_nn_distance(qmckl_context context, double* distance);
+qmckl_exit_code
+qmckl_get_nucleus_nn_distance(qmckl_context context,
+                              double* distance,
+                              const int64_t size_max);
     #+end_src
 
     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
-qmckl_exit_code qmckl_get_nucleus_nn_distance(qmckl_context context, double* distance)
+qmckl_exit_code
+qmckl_get_nucleus_nn_distance(qmckl_context context,
+                              double* distance,
+                              const int64_t size_max)
 {
   /* Check input parameters */
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
@@ -638,22 +727,29 @@ qmckl_exit_code qmckl_get_nucleus_nn_distance(qmckl_context context, double* dis
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
   assert (ctx != NULL);
 
-  size_t sze = ctx->nucleus.num * ctx->nucleus.num;
-  memcpy(distance, ctx->nucleus.nn_distance, sze * sizeof(double));
+  const int64_t sze = ctx->nucleus.num * ctx->nucleus.num;
+  if (sze > size_max) {
+    return qmckl_failwith(context,
+                          QMCKL_INVALID_ARG_3,
+                          "qmckl_get_nucleus_nn_distance",
+                          "Array too small");
+  }
+  rc = qmckl_double_of_matrix(context, ctx->nucleus.nn_distance, distance, size_max);
 
-  return QMCKL_SUCCESS;
+  return rc;
 }
     #+end_src
 
     #+begin_src f90 :tangle (eval fh_func) :comments org :exports none
 interface
-  integer(c_int32_t) function qmckl_get_nucleus_nn_distance(context, distance) &
+  integer(c_int32_t) function qmckl_get_nucleus_nn_distance(context, distance, size_max) &
     bind(C)
     use, intrinsic :: iso_c_binding
     import
     implicit none
     integer (c_int64_t) , intent(in)  , value :: context
     real    (c_double ) , intent(out)         :: distance(*)
+    integer (c_int64_t) , intent(in)  , value :: size_max
   end function
 end interface
     #+end_src
@@ -678,26 +774,23 @@ qmckl_exit_code qmckl_provide_nn_distance(qmckl_context context)
   if (!ctx->nucleus.provided) return QMCKL_NOT_PROVIDED;
 
   /* Allocate array */
-  if (ctx->nucleus.nn_distance == NULL) {
+  if (ctx->nucleus.nn_distance.data == NULL) {
+    ctx->nucleus.nn_distance =
+      qmckl_matrix_alloc(context, ctx->nucleus.num, ctx->nucleus.num);
 
-    qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-    mem_info.size = ctx->nucleus.num * ctx->nucleus.num * sizeof(double);
-    double* nn_distance = (double*) qmckl_malloc(context, mem_info);
-
-    if (nn_distance == NULL) {
+    if (ctx->nucleus.nn_distance.data == NULL) {
       return qmckl_failwith( context,
                              QMCKL_ALLOCATION_FAILED,
                              "qmckl_nn_distance",
                              NULL);
     }
-    ctx->nucleus.nn_distance = nn_distance;
   }
 
   qmckl_exit_code rc =
     qmckl_compute_nn_distance(context,
                               ctx->nucleus.num,
-                              ctx->nucleus.coord,
-                              ctx->nucleus.nn_distance);
+                              ctx->nucleus.coord.data,
+                              ctx->nucleus.nn_distance.data);
   if (rc != QMCKL_SUCCESS) {
     return rc;
   }
@@ -788,7 +881,7 @@ qmckl_exit_code qmckl_compute_nn_distance (
 assert(qmckl_nucleus_provided(context));
 
 double distance[nucl_num*nucl_num];
-rc = qmckl_get_nucleus_nn_distance(context, distance);
+rc = qmckl_get_nucleus_nn_distance(context, distance, nucl_num*nucl_num);
 assert(distance[0] == 0.);
 assert(distance[1] == distance[nucl_num]);
 assert(fabs(distance[1]-2.070304721365169) < 1.e-12);
@@ -800,11 +893,17 @@ assert(fabs(distance[1]-2.070304721365169) < 1.e-12);
 *** Get
 
     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
-qmckl_exit_code qmckl_get_nucleus_nn_distance_rescaled(qmckl_context context, double* distance_rescaled);
+qmckl_exit_code
+qmckl_get_nucleus_nn_distance_rescaled(qmckl_context context,
+                                       double* distance_rescaled,
+                                       const int64_t size_max);
     #+end_src
 
     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
-qmckl_exit_code qmckl_get_nucleus_nn_distance_rescaled(qmckl_context context, double* distance_rescaled)
+qmckl_exit_code
+qmckl_get_nucleus_nn_distance_rescaled(qmckl_context context,
+                                       double* distance_rescaled,
+                                       const int64_t size_max)
 {
   /* Check input parameters */
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
@@ -817,11 +916,33 @@ qmckl_exit_code qmckl_get_nucleus_nn_distance_rescaled(qmckl_context context, do
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
   assert (ctx != NULL);
 
-  size_t sze = ctx->nucleus.num * ctx->nucleus.num;
-  memcpy(distance_rescaled, ctx->nucleus.nn_distance_rescaled, sze * sizeof(double));
-
-  return QMCKL_SUCCESS;
+  const int64_t sze = ctx->nucleus.num * ctx->nucleus.num;
+  if (sze > size_max) {
+    return qmckl_failwith(context,
+                          QMCKL_INVALID_ARG_3,
+                          "qmckl_get_nucleus_nn_distance_rescaled",
+                          "Array too small");
+  }
+  rc = qmckl_double_of_matrix(context,
+                              ctx->nucleus.nn_distance_rescaled,
+                              distance_rescaled,
+                              size_max);
+  return rc;
 }
+    #+end_src
+
+    #+begin_src f90 :tangle (eval fh_func) :comments org :exports none
+interface
+  integer(c_int32_t) function qmckl_get_nucleus_nn_distance_rescaled(context, distance_rescaled, size_max) &
+    bind(C)
+    use, intrinsic :: iso_c_binding
+    import
+    implicit none
+    integer (c_int64_t) , intent(in)  , value :: context
+    real    (c_double ) , intent(out)         :: distance_rescaled(*)
+    integer (c_int64_t) , intent(in)  , value :: size_max
+  end function
+end interface
     #+end_src
 
 *** Provide                                                        :noexport:
@@ -844,27 +965,24 @@ qmckl_exit_code qmckl_provide_nn_distance_rescaled(qmckl_context context)
   if (!ctx->nucleus.provided) return QMCKL_NOT_PROVIDED;
 
   /* Allocate array */
-  if (ctx->nucleus.nn_distance_rescaled == NULL) {
+  if (ctx->nucleus.nn_distance_rescaled.data == NULL) {
+    ctx->nucleus.nn_distance_rescaled =
+      qmckl_matrix_alloc(context, ctx->nucleus.num, ctx->nucleus.num);
 
-    qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-    mem_info.size = ctx->nucleus.num * ctx->nucleus.num * sizeof(double);
-    double* nn_distance_rescaled = (double*) qmckl_malloc(context, mem_info);
-
-    if (nn_distance_rescaled == NULL) {
+    if (ctx->nucleus.nn_distance_rescaled.data == NULL) {
       return qmckl_failwith( context,
                              QMCKL_ALLOCATION_FAILED,
                              "qmckl_nn_distance_rescaled",
                              NULL);
     }
-    ctx->nucleus.nn_distance_rescaled = nn_distance_rescaled;
   }
 
   qmckl_exit_code rc =
     qmckl_compute_nn_distance_rescaled(context,
                               ctx->nucleus.num,
                               ctx->nucleus.rescale_factor_kappa,
-                              ctx->nucleus.coord,
-                              ctx->nucleus.nn_distance_rescaled);
+                              ctx->nucleus.coord.data,
+                              ctx->nucleus.nn_distance_rescaled.data);
   if (rc != QMCKL_SUCCESS) {
     return rc;
   }
@@ -959,7 +1077,7 @@ qmckl_exit_code qmckl_compute_nn_distance_rescaled (
 //assert(qmckl_nucleus_provided(context));
 //
 //double distance[nucl_num*nucl_num];
-//rc = qmckl_get_nucleus_nn_distance(context, distance);
+//rc = qmckl_get_nucleus_nn_distance(context, distance, nucl_num*nucl_num);
 //assert(distance[0] == 0.);
 //assert(distance[1] == distance[nucl_num]);
 //assert(fabs(distance[1]-2.070304721365169) < 1.e-12);
@@ -975,11 +1093,11 @@ qmckl_exit_code qmckl_compute_nn_distance_rescaled (
 *** Get
 
     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
-qmckl_exit_code qmckl_get_nucleus_repulsion(qmckl_context context, double* energy);
+qmckl_exit_code qmckl_get_nucleus_repulsion(qmckl_context context, double* const energy);
     #+end_src
 
     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
-qmckl_exit_code qmckl_get_nucleus_repulsion(qmckl_context context, double* energy)
+qmckl_exit_code qmckl_get_nucleus_repulsion(qmckl_context context, double* const energy)
 {
   /* Check input parameters */
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
@@ -1037,8 +1155,8 @@ qmckl_exit_code qmckl_provide_nucleus_repulsion(qmckl_context context)
 
   rc = qmckl_compute_nucleus_repulsion(context,
                                 ctx->nucleus.num,
-                                ctx->nucleus.charge,
-                                ctx->nucleus.nn_distance,
+                                ctx->nucleus.charge.data,
+                                ctx->nucleus.nn_distance.data,
                                 &(ctx->nucleus.repulsion));
   if (rc != QMCKL_SUCCESS) {
     return rc;
