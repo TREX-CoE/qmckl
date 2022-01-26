@@ -26,6 +26,7 @@ up-spin and down-spin electrons, and the electron coordinates.
   #+begin_src c :tangle (eval c_test) :noweb yes
 #include "qmckl.h"
 #include <assert.h>
+#include <stdio.h>
 #include <math.h>
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -68,22 +69,22 @@ int main() {
 
   The following data stored in the context:
 
-  | Variable                  | Type                       | Description                               |
-  |---------------------------+----------------------------+-------------------------------------------|
-  | ~uninitialized~           | ~int32_t~                  | Keeps bit set for uninitialized data      |
-  | ~num~                     | ~int64_t~                  | Total number of electrons                 |
-  | ~up_num~                  | ~int64_t~                  | Number of up-spin electrons               |
-  | ~down_num~                | ~int64_t~                  | Number of down-spin electrons             |
-  | ~walk_num~                | ~int64_t~                  | Number of walkers                         |
-  | ~rescale_factor_kappa_ee~ | ~double~                   | The distance scaling factor               |
-  | ~rescale_factor_kappa_en~ | ~double~                   | The distance scaling factor               |
-  | ~provided~                | ~bool~                     | If true, ~electron~ is valid              |
-  | ~coord_new~               | ~double[walk_num][3][num]~ | New set of electron coordinates           |
-  | ~coord_old~               | ~double[walk_num][3][num]~ | Old set of electron coordinates           |
-  | ~coord_new_date~          | ~uint64_t~                 | Last modification date of the coordinates |
+  | Variable                  | Type           | Description                                                   |
+  |---------------------------+----------------+---------------------------------------------------------------|
+  | ~uninitialized~           | ~int32_t~      | Keeps bit set for uninitialized data                          |
+  | ~num~                     | ~int64_t~      | Total number of electrons                                     |
+  | ~up_num~                  | ~int64_t~      | Number of up-spin electrons                                   |
+  | ~down_num~                | ~int64_t~      | Number of down-spin electrons                                 |
+  | ~walk_num~                | ~int64_t~      | Number of walkers                                             |
+  | ~rescale_factor_kappa_ee~ | ~double~       | The distance scaling factor                                   |
+  | ~rescale_factor_kappa_en~ | ~double~       | The distance scaling factor                                   |
+  | ~provided~                | ~bool~         | If true, ~electron~ is valid                                  |
+  | ~coord_new~               | ~qmckl_matrix~ | Current set of electron coordinates. Pointer to ~ctx->points~ |
+  | ~coord_old~               | ~qmckl_matrix~ | Old set of electron coordinates                               |
+  | ~coord_new_date~          | ~uint64_t~     | Last modification date of the coordinates                     |
 
   Computed data:
-  
+
   | Variable                            | Type                                 | Description                                                          |
   |-------------------------------------+--------------------------------------+----------------------------------------------------------------------|
   | ~ee_distance~                       | ~double[walk_num][num][num]~         | Electron-electron distances                                          |
@@ -107,33 +108,33 @@ int main() {
 
    #+begin_src c :comments org :tangle (eval h_private_type)
 typedef struct qmckl_electron_struct {
-  int64_t   num;
-  int64_t   up_num;
-  int64_t   down_num;
-  int64_t   walk_num;
-  double    rescale_factor_kappa_ee;
-  double    rescale_factor_kappa_en;
-  int64_t   coord_new_date;
-  int64_t   ee_distance_date;
-  int64_t   en_distance_date;
-  int64_t   ee_pot_date;
-  int64_t   en_pot_date;
-  int64_t   ee_distance_rescaled_date;
-  int64_t   ee_distance_rescaled_deriv_e_date;
-  int64_t   en_distance_rescaled_date;
-  int64_t   en_distance_rescaled_deriv_e_date;
-  double*   coord_new;
-  double*   coord_old;
-  double*   ee_distance;
-  double*   en_distance;
-  double*   ee_pot;
-  double*   en_pot;
-  double*   ee_distance_rescaled;
-  double*   ee_distance_rescaled_deriv_e;
-  double*   en_distance_rescaled;
-  double*   en_distance_rescaled_deriv_e;
-  int32_t   uninitialized;
-  bool      provided;
+  int64_t        num;
+  int64_t        up_num;
+  int64_t        down_num;
+  int64_t        walk_num;
+  double         rescale_factor_kappa_ee;
+  double         rescale_factor_kappa_en;
+  int64_t        coord_new_date;
+  int64_t        ee_distance_date;
+  int64_t        en_distance_date;
+  int64_t        ee_pot_date;
+  int64_t        en_pot_date;
+  int64_t        ee_distance_rescaled_date;
+  int64_t        ee_distance_rescaled_deriv_e_date;
+  int64_t        en_distance_rescaled_date;
+  int64_t        en_distance_rescaled_deriv_e_date;
+  qmckl_matrix   coord_new;
+  qmckl_matrix   coord_old;
+  double*        ee_distance;
+  double*        en_distance;
+  double*        ee_pot;
+  double*        en_pot;
+  double*        ee_distance_rescaled;
+  double*        ee_distance_rescaled_deriv_e;
+  double*        en_distance_rescaled;
+  double*        en_distance_rescaled_deriv_e;
+  int32_t        uninitialized;
+  bool           provided;
 } qmckl_electron_struct;
 
    #+end_src
@@ -145,10 +146,10 @@ typedef struct qmckl_electron_struct {
    Some values are initialized by default, and are not concerned by
    this mechanism.
 
-   #+begin_src c :comments org :tangle (eval h_private_func) 
+   #+begin_src c :comments org :tangle (eval h_private_func)
 qmckl_exit_code qmckl_init_electron(qmckl_context context);
    #+end_src
-   
+
    #+begin_src c :comments org :tangle (eval c)
 qmckl_exit_code qmckl_init_electron(qmckl_context context) {
 
@@ -168,8 +169,8 @@ qmckl_exit_code qmckl_init_electron(qmckl_context context) {
   return QMCKL_SUCCESS;
 }
    #+end_src
-   
-   
+
+
       #+begin_src c :comments org :tangle (eval h_func)
 bool qmckl_electron_provided (const qmckl_context context);
       #+end_src
@@ -203,7 +204,7 @@ if ( (ctx->electron.uninitialized & mask) != 0) {
   return NULL;
 }
       #+end_src
-      
+
 *** Number of electrons
 
       #+begin_src c :comments org :tangle (eval h_func) :exports none
@@ -394,27 +395,34 @@ qmckl_get_electron_rescale_factor_en (const qmckl_context context, double* const
 *** Electron coordinates
 
     Returns the current electron coordinates. The pointer is assumed
-    to point on a memory block of size ~size_max~ \ge ~3 * elec_num * walk_num~. 
+    to point on a memory block of size ~size_max~ \ge ~3 * elec_num * walk_num~.
     The order of the indices is:
 
-    |         | Normal                    | Transposed                |
-    |---------+---------------------------+---------------------------|
-    | C       | ~[walk_num][elec_num][3]~ | ~[walk_num][3][elec_num]~ |
-    | Fortran | ~(3,elec_num,walk_num)~   | ~(elec_num,3,walk_num)~   |
+    |         | Normal                   | Transposed               |
+    |---------+--------------------------+--------------------------|
+    | C       | ~[walk_num*elec_num][3]~ | ~[3][walk_num*elec_num]~ |
+    | Fortran | ~(3,walk_num*elec_num)~ | ~(walk_num*elec_num, 3)~ |
 
 
       #+begin_src c :comments org :tangle (eval h_func) :exports none
-qmckl_exit_code qmckl_get_electron_coord (const qmckl_context context, const char transp, double* const coord);
+qmckl_exit_code
+qmckl_get_electron_coord (const qmckl_context context,
+                          const char transp,
+                          double* const coord,
+                          const int64_t size_max);
       #+end_src
+
+      As the ~coord_new~ attribute is a pointer equal to ~points~,
+      returning the current electron coordinates is equivalent to
+      returning the current points.
 
       #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
 qmckl_exit_code
-qmckl_get_electron_coord (const qmckl_context context, const char transp, double* const coord) {
-
-  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return QMCKL_INVALID_CONTEXT;
-  }
-
+qmckl_get_electron_coord (const qmckl_context context,
+                          const char transp,
+                          double* const coord,
+                          const int64_t size_max)
+{
   if (transp != 'N' && transp != 'T') {
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_2,
@@ -429,42 +437,32 @@ qmckl_get_electron_coord (const qmckl_context context, const char transp, double
                            "coord is a null pointer");
   }
 
+  if (size_max <= 0) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_4,
+                           "qmckl_get_electron_coord",
+                           "size_max should be > 0");
+  }
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_INVALID_CONTEXT;
+  }
+
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
   assert (ctx != NULL);
 
-  if ( !(ctx->electron.provided) ) {
+  if (!ctx->electron.provided) {
     return qmckl_failwith( context,
                            QMCKL_NOT_PROVIDED,
                            "qmckl_get_electron_coord",
-                           "electron data is not provided");
+                           NULL);
   }
 
-  int64_t elec_num = ctx->electron.num;
-  int64_t walk_num = ctx->electron.walk_num;
+  assert (ctx->point.coord.data == ctx->electron.coord_new.data);
+  assert (ctx->point.coord.size[0] == ctx->electron.coord_new.size[0]);
+  assert (ctx->point.coord.size[1] == ctx->electron.coord_new.size[1]);
 
-  assert (ctx->electron.coord_new != NULL);
-
-  double* ptr1 = ctx->electron.coord_new;
-  double* ptr2 = coord;
-
-  if (transp == 'N') {
-
-    for (int64_t i=0 ; i<walk_num ; ++i) {
-      qmckl_exit_code rc;
-      rc = qmckl_transpose(context, elec_num, 3,
-                           ptr1, elec_num, ptr2, 3);
-      if (rc != QMCKL_SUCCESS) return rc;
-      ptr1 += elec_num * 3;
-      ptr2 += elec_num * 3;
-    }
-
-  } else {
-
-    memcpy(ptr2, ptr1, 3*elec_num*walk_num*sizeof(double));
-
-  }
-  
-  return QMCKL_SUCCESS;
+  return qmckl_get_point(context, transp, coord, size_max);
 }
 
       #+end_src
@@ -500,20 +498,23 @@ ctx->electron.uninitialized &= ~mask;
 ctx->electron.provided = (ctx->electron.uninitialized == 0);
 
 if (ctx->electron.provided) {
-  if (ctx->electron.coord_new != NULL) {
-    qmckl_free(context, ctx->electron.coord_new);
-    ctx->electron.coord_new = NULL;
+  if (ctx->electron.coord_new.data != NULL) {
+    const qmckl_exit_code rc = qmckl_matrix_free(context, ctx->electron.coord_new);
+    assert (rc == QMCKL_SUCCESS);
   }
-  if (ctx->electron.coord_old != NULL) {
-    qmckl_free(context, ctx->electron.coord_old);
-    ctx->electron.coord_old = NULL;
+  if (ctx->electron.coord_old.data != NULL) {
+    const qmckl_exit_code rc = qmckl_matrix_free(context, ctx->electron.coord_old);
+    assert (rc == QMCKL_SUCCESS);
   }
 
-  qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-  mem_info.size = ctx->electron.num * ctx->electron.walk_num * 3 * sizeof(double);
+  const int64_t walk_num = ctx->electron.walk_num;
+  const int64_t elec_num = ctx->electron.num;
 
-  double* coord_new = (double*) qmckl_malloc(context, mem_info);
-  if (coord_new == NULL) {
+  const int64_t point_num = walk_num * elec_num;
+
+  qmckl_matrix coord_new = qmckl_matrix_alloc(context, point_num, 3);
+
+  if (coord_new.data == NULL) {
     return qmckl_failwith( context,
                            QMCKL_ALLOCATION_FAILED,
                            "qmckl_set_electron_num",
@@ -521,8 +522,9 @@ if (ctx->electron.provided) {
   }
   ctx->electron.coord_new = coord_new;
 
-  double* coord_old = (double*) qmckl_malloc(context, mem_info);
-  if (coord_old == NULL) {
+  qmckl_matrix coord_old = qmckl_matrix_alloc(context, point_num, 3);
+
+  if (coord_old.data == NULL) {
     return qmckl_failwith( context,
                            QMCKL_ALLOCATION_FAILED,
                            "qmckl_set_electron_num",
@@ -530,6 +532,8 @@ if (ctx->electron.provided) {
   }
   ctx->electron.coord_old = coord_old;
 
+  ctx->point.num   = point_num;
+  ctx->point.coord = coord_new;
  }
 
 return QMCKL_SUCCESS;
@@ -636,18 +640,19 @@ interface
     import
     implicit none
 
-    integer (c_int64_t) , intent(in)  , value :: context                                  
+    integer (c_int64_t) , intent(in)  , value :: context
     integer (c_int64_t) , intent(in)  , value :: alpha
-    integer (c_int64_t) , intent(in)  , value :: beta 
+    integer (c_int64_t) , intent(in)  , value :: beta
   end function
 end interface
+
 interface
   integer(c_int32_t) function qmckl_set_electron_walk_num(context, walk_num) bind(C)
     use, intrinsic :: iso_c_binding
     import
     implicit none
 
-    integer (c_int64_t) , intent(in)  , value :: context                                  
+    integer (c_int64_t) , intent(in)  , value :: context
     integer (c_int64_t) , intent(in)  , value :: walk_num
   end function
 end interface
@@ -658,6 +663,9 @@ end interface
     of coordinates are swapped, and the new coordinates are
     overwritten. This can be done only when the data relative to
     electrons have been set.
+
+    ~size_max~ should be equal to ~elec_num * walk_num * 3~, to be symmetric
+    with ~qmckl_get_electron_coord~.
 
     Important: changing the electron coordinates increments the date
     in the context.
@@ -686,10 +694,7 @@ qmckl_set_electron_coord(qmckl_context context,
                            "coord is a null pointer");
   }
 
-  int64_t elec_num;
-  qmckl_exit_code rc;
-  rc = qmckl_get_electron_num(context, &elec_num);
-  if (rc != QMCKL_SUCCESS) return rc;
+  const int64_t elec_num = ctx->electron.num;
 
   if (elec_num == 0L) {
     return qmckl_failwith( context,
@@ -698,9 +703,9 @@ qmckl_set_electron_coord(qmckl_context context,
                            "elec_num is not set");
   }
 
-  int64_t walk_num;
-  rc = qmckl_get_electron_walk_num(context, &walk_num);
-  if (rc != QMCKL_SUCCESS) return rc;
+  const int64_t walk_num = ctx->electron.walk_num;
+
+  const int64_t point_num = ctx->point.num ;
 
   if (walk_num == 0L) {
     return qmckl_failwith( context,
@@ -709,41 +714,18 @@ qmckl_set_electron_coord(qmckl_context context,
                            "walk_num is not set");
   }
 
-  if (size_max < walk_num*3*elec_num) {
-    return qmckl_failwith( context,
-                           QMCKL_INVALID_ARG_4,
-                           "qmckl_set_electron_coord",
-                           "destination array is too small");
-  }
-
-  /* If num and walk_num are set, the arrays should be allocated */
-  assert (ctx->electron.coord_old != NULL);
-  assert (ctx->electron.coord_new != NULL);
-
-  /* Increment the date of the context */
-  ctx->date += 1UL;
+  assert(point_num == elec_num * walk_num);
 
   /* Swap pointers */
-  double * swap;
-  swap = ctx->electron.coord_old;
-  ctx->electron.coord_old = ctx->electron.coord_new;
-  ctx->electron.coord_new = swap;
+  ctx->point.coord         = ctx->electron.coord_old;
+  ctx->electron.coord_old  = ctx->electron.coord_new ;
 
-  double* ptr1 = ctx->electron.coord_new;
-  if (transp == 'N') {
+  qmckl_exit_code rc;
+  rc = qmckl_set_point(context, transp, coord, size_max/3);
+  assert (rc == QMCKL_SUCCESS);
 
-    for (int64_t i=0 ; i<walk_num ; ++i) {
-      rc = qmckl_transpose(context, 3, elec_num,
-                           &(coord[i*3*elec_num]), 3, ptr1, elec_num);
-      if (rc != QMCKL_SUCCESS) return rc;
-      ptr1 += elec_num * 3;
-    }
-    
-  } else {
+  ctx->electron.coord_new  = ctx->point.coord ;
 
-    memcpy(ptr1, coord, 3*elec_num*walk_num*sizeof(double));
-
-  }
   ctx->electron.coord_new_date = ctx->date;
 
   return QMCKL_SUCCESS;
@@ -758,8 +740,8 @@ interface
     import
     implicit none
 
-    integer (c_int64_t) , intent(in)  , value :: context                                  
-    character           , intent(in)  , value :: transp 
+    integer (c_int64_t) , intent(in)  , value :: context
+    character           , intent(in)  , value :: transp
     double precision    , intent(in)          :: coord(*)
     integer (c_int64_t) , intent(in)  , value :: size_max
   end function
@@ -865,9 +847,10 @@ assert(rc == QMCKL_SUCCESS);
 
 double elec_coord2[walk_num*3*elec_num];
 
-rc = qmckl_get_electron_coord (context, 'N', elec_coord2);
+rc = qmckl_get_electron_coord (context, 'N', elec_coord2, walk_num*3*elec_num);
 assert(rc == QMCKL_SUCCESS);
-for (int64_t i=0 ; i<3*elec_num ; ++i) {
+for (int64_t i=0 ; i<3*elec_num*walk_num ; ++i) {
+  printf("%f %f\n",  elec_coord[i],  elec_coord2[i]);
   assert( elec_coord[i] == elec_coord2[i] );
  }
 
@@ -882,7 +865,7 @@ for (int64_t i=0 ; i<3*elec_num ; ++i) {
   the dependencies are more recent than the date of the data to
   compute. If it is the case, then the data is recomputed and the
   current date is stored.
- 
+
 ** Electron-electron distances
 
 *** Get
@@ -969,7 +952,7 @@ qmckl_exit_code qmckl_provide_ee_distance(qmckl_context context)
       qmckl_compute_ee_distance(context,
                                 ctx->electron.num,
                                 ctx->electron.walk_num,
-                                ctx->electron.coord_new,
+                                ctx->electron.coord_new.data,
                                 ctx->electron.ee_distance);
     if (rc != QMCKL_SUCCESS) {
       return rc;
@@ -995,7 +978,7 @@ qmckl_exit_code qmckl_provide_ee_distance(qmckl_context context)
     | ~context~     | ~qmckl_context~                        | in     | Global state                |
     | ~elec_num~    | ~int64_t~                              | in     | Number of electrons         |
     | ~walk_num~    | ~int64_t~                              | in     | Number of walkers           |
-    | ~coord~       | ~double[walk_num][3][elec_num]~        | in     | Electron coordinates        |
+    | ~coord~       | ~double[3][walk_num][elec_num]~  | in     | Electron coordinates        |
     | ~ee_distance~ | ~double[walk_num][elec_num][elec_num]~ | out    | Electron-electron distances |
 
     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
@@ -1006,10 +989,11 @@ integer function qmckl_compute_ee_distance_f(context, elec_num, walk_num, coord,
   integer(qmckl_context), intent(in)  :: context
   integer*8             , intent(in)  :: elec_num
   integer*8             , intent(in)  :: walk_num
-  double precision      , intent(in)  :: coord(elec_num,3,walk_num)
+  double precision      , intent(in)  :: coord(elec_num,walk_num,3)
   double precision      , intent(out) :: ee_distance(elec_num,elec_num,walk_num)
 
-  integer*8 :: k
+  integer*8 :: k, i, j
+  double precision :: x, y, z
 
   info = QMCKL_SUCCESS
 
@@ -1030,8 +1014,8 @@ integer function qmckl_compute_ee_distance_f(context, elec_num, walk_num, coord,
 
   do k=1,walk_num
      info = qmckl_distance(context, 'T', 'T', elec_num, elec_num, &
-          coord(1,1,k), elec_num, &
-          coord(1,1,k), elec_num, &
+          coord(1,k,1), elec_num * walk_num, &
+          coord(1,k,1), elec_num * walk_num, &
           ee_distance(1,1,k), elec_num)
      if (info /= QMCKL_SUCCESS) then
         exit
@@ -1075,7 +1059,7 @@ qmckl_exit_code qmckl_compute_ee_distance (
     #+end_src
 
 *** Test
-    
+
     #+begin_src python :results output :exports none
 import numpy as np
 
@@ -1210,7 +1194,7 @@ qmckl_exit_code qmckl_provide_ee_distance_rescaled(qmckl_context context)
                                 ctx->electron.num,
                                 ctx->electron.rescale_factor_kappa_en,
                                 ctx->electron.walk_num,
-                                ctx->electron.coord_new,
+                                ctx->electron.coord_new.data,
                                 ctx->electron.ee_distance_rescaled);
     if (rc != QMCKL_SUCCESS) {
       return rc;
@@ -1274,8 +1258,8 @@ integer function qmckl_compute_ee_distance_rescaled_f(context, elec_num, rescale
 
   do k=1,walk_num
      info = qmckl_distance_rescaled(context, 'T', 'T', elec_num, elec_num, &
-          coord(1,1,k), elec_num, &
-          coord(1,1,k), elec_num, &
+          coord(1,k,1), elec_num * walk_num, &
+          coord(1,k,1), elec_num * walk_num, &
           ee_distance_rescaled(1,1,k), elec_num, rescale_factor_kappa_ee)
      if (info /= QMCKL_SUCCESS) then
         exit
@@ -1376,12 +1360,12 @@ assert(fabs(ee_distance_rescaled[elec_num*elec_num+1]-0.9985724058042633) < 1.e-
 
      #+end_src
 
-** Electron-electron rescaled distance gradients and laplacian with respect to electron coords 
+** Electron-electron rescaled distance gradients and laplacian with respect to electron coords
 
-  The rescaled distances which is given as $R = (1 - \exp{-\kappa r})/\kappa$ 
+  The rescaled distances which is given as $R = (1 - \exp{-\kappa r})/\kappa$
   needs to be perturbed with respect to the electorn coordinates.
-  This data is stored in the ~ee_distance_rescaled_deriv_e~ tensor. The 
-  The first three elements of this three index tensor ~[4][num][num]~ gives the 
+  This data is stored in the ~ee_distance_rescaled_deriv_e~ tensor. The
+  The first three elements of this three index tensor ~[4][num][num]~ gives the
   derivatives in the x, y, and z directions $dx, dy, dz$ and the last index
   gives the Laplacian $\partial x^2 + \partial y^2 + \partial z^2$.
 
@@ -1414,7 +1398,7 @@ qmckl_exit_code qmckl_get_electron_ee_distance_rescaled_deriv_e(qmckl_context co
     #+end_src
 
 *** Provide                                                        :noexport:
-    
+
     #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
 qmckl_exit_code qmckl_provide_ee_distance_rescaled_deriv_e(qmckl_context context);
     #+end_src
@@ -1456,7 +1440,7 @@ qmckl_exit_code qmckl_provide_ee_distance_rescaled_deriv_e(qmckl_context context
                                 ctx->electron.num,
                                 ctx->electron.rescale_factor_kappa_en,
                                 ctx->electron.walk_num,
-                                ctx->electron.coord_new,
+                                ctx->electron.coord_new.data,
                                 ctx->electron.ee_distance_rescaled_deriv_e);
     if (rc != QMCKL_SUCCESS) {
       return rc;
@@ -1604,7 +1588,7 @@ rc = qmckl_get_electron_ee_distance_rescaled_deriv_e(context, ee_distance_rescal
      #+end_src
 
 ** Electron-electron potential
-   
+
    ~ee_pot~ calculates the ~ee~ potential energy.
 
    \[
@@ -1641,7 +1625,7 @@ qmckl_exit_code qmckl_get_electron_ee_potential(qmckl_context context, double* c
   return QMCKL_SUCCESS;
 }
     #+end_src
-    
+
 *** Provide                                                        :noexport:
 
     #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
@@ -1770,7 +1754,7 @@ end function qmckl_compute_ee_potential_f
 	  const int64_t elec_num,
 	  const int64_t walk_num,
 	  const double* ee_distance,
-	  double* const ee_pot ); 
+	  double* const ee_pot );
     #+end_src
 
     #+CALL: generate_c_interface(table=qmckl_ee_potential_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
@@ -1897,8 +1881,8 @@ qmckl_exit_code qmckl_provide_en_distance(qmckl_context context)
                                 ctx->electron.num,
                                 ctx->nucleus.num,
                                 ctx->electron.walk_num,
-                                ctx->electron.coord_new,
-                                ctx->nucleus.coord,
+                                ctx->electron.coord_new.data,
+                                ctx->nucleus.coord.data,
                                 ctx->electron.en_distance);
     if (rc != QMCKL_SUCCESS) {
       return rc;
@@ -1938,7 +1922,7 @@ integer function qmckl_compute_en_distance_f(context, elec_num, nucl_num, walk_n
   integer*8             , intent(in)  :: elec_num
   integer*8             , intent(in)  :: nucl_num
   integer*8             , intent(in)  :: walk_num
-  double precision      , intent(in)  :: elec_coord(elec_num,3,walk_num)
+  double precision      , intent(in)  :: elec_coord(elec_num,walk_num,3)
   double precision      , intent(in)  :: nucl_coord(nucl_num,3)
   double precision      , intent(out) :: en_distance(elec_num,nucl_num,walk_num)
 
@@ -1968,7 +1952,7 @@ integer function qmckl_compute_en_distance_f(context, elec_num, nucl_num, walk_n
 
   do k=1,walk_num
      info = qmckl_distance(context, 'T', 'T', elec_num, nucl_num, &
-          elec_coord(1,1,k), elec_num, &
+          elec_coord(1,k,1), elec_num * walk_num, &
           nucl_coord, nucl_num, &
           en_distance(1,1,k), elec_num)
      if (info /= QMCKL_SUCCESS) then
@@ -2005,7 +1989,7 @@ qmckl_exit_code qmckl_compute_en_distance (
       integer (c_int64_t) , intent(in)  , value :: elec_num
       integer (c_int64_t) , intent(in)  , value :: nucl_num
       integer (c_int64_t) , intent(in)  , value :: walk_num
-      real    (c_double ) , intent(in)          :: elec_coord(elec_num,3,walk_num)
+      real    (c_double ) , intent(in)          :: elec_coord(elec_num,walk_num,3)
       real    (c_double ) , intent(in)          :: nucl_coord(elec_num,3)
       real    (c_double ) , intent(out)         :: en_distance(elec_num,nucl_num,walk_num)
 
@@ -2052,10 +2036,10 @@ assert(qmckl_electron_provided(context));
 rc = qmckl_set_nucleus_num (context, nucl_num);
 assert(rc == QMCKL_SUCCESS);
 
-rc = qmckl_set_nucleus_charge (context, charge);
+rc = qmckl_set_nucleus_charge (context, charge, nucl_num);
 assert (rc == QMCKL_SUCCESS);
 
-rc = qmckl_set_nucleus_coord (context, 'T', nucl_coord);
+rc = qmckl_set_nucleus_coord (context, 'T', nucl_coord, 3*nucl_num);
 assert (rc == QMCKL_SUCCESS);
 
 assert(qmckl_nucleus_provided(context));
@@ -2088,7 +2072,7 @@ assert(fabs(en_distance[1][0][1] - 3.1804527583077356) < 1.e-12);
 
 ** Electron-nucleus rescaled distances
 
-   ~en_distance_rescaled~ stores the matrix of the rescaled distances between 
+   ~en_distance_rescaled~ stores the matrix of the rescaled distances between
    electrons and nuclei.
 
    \[
@@ -2102,6 +2086,7 @@ assert(fabs(en_distance[1][0][1] - 3.1804527583077356) < 1.e-12);
     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
 qmckl_exit_code qmckl_get_electron_en_distance_rescaled(qmckl_context context, double* distance_rescaled);
     #+end_src
+
 
     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
 qmckl_exit_code qmckl_get_electron_en_distance_rescaled(qmckl_context context, double* distance_rescaled)
@@ -2173,8 +2158,8 @@ qmckl_exit_code qmckl_provide_en_distance_rescaled(qmckl_context context)
                                 ctx->nucleus.num,
                                 ctx->electron.rescale_factor_kappa_en,
                                 ctx->electron.walk_num,
-                                ctx->electron.coord_new,
-                                ctx->nucleus.coord,
+                                ctx->electron.coord_new.data,
+                                ctx->nucleus.coord.data,
                                 ctx->electron.en_distance_rescaled);
     if (rc != QMCKL_SUCCESS) {
       return rc;
@@ -2217,7 +2202,7 @@ integer function qmckl_compute_en_distance_rescaled_f(context, elec_num, nucl_nu
   integer*8             , intent(in)  :: nucl_num
   double precision      , intent(in)  :: rescale_factor_kappa_en
   integer*8             , intent(in)  :: walk_num
-  double precision      , intent(in)  :: elec_coord(elec_num,3,walk_num)
+  double precision      , intent(in)  :: elec_coord(elec_num,walk_num,3)
   double precision      , intent(in)  :: nucl_coord(nucl_num,3)
   double precision      , intent(out) :: en_distance_rescaled(elec_num,nucl_num,walk_num)
 
@@ -2253,7 +2238,7 @@ integer function qmckl_compute_en_distance_rescaled_f(context, elec_num, nucl_nu
 
   do k=1,walk_num
      info = qmckl_distance_rescaled(context, 'T', 'T', elec_num, nucl_num, &
-          elec_coord(1,1,k), elec_num, &
+          elec_coord(1,k,1), elec_num*walk_num, &
           nucl_coord, nucl_num, &
           en_distance_rescaled(1,1,k), elec_num, rescale_factor_kappa_en)
      if (info /= QMCKL_SUCCESS) then
@@ -2292,7 +2277,7 @@ qmckl_exit_code qmckl_compute_en_distance_rescaled (
       integer (c_int64_t) , intent(in)  , value :: nucl_num
       real    (c_double ) , intent(in)  , value :: rescale_factor_kappa_en
       integer (c_int64_t) , intent(in)  , value :: walk_num
-      real    (c_double ) , intent(in)          :: elec_coord(elec_num,3,walk_num)
+      real    (c_double ) , intent(in)          :: elec_coord(elec_num,walk_num,3)
       real    (c_double ) , intent(in)          :: nucl_coord(elec_num,3)
       real    (c_double ) , intent(out)         :: en_distance_rescaled(elec_num,nucl_num,walk_num)
 
@@ -2341,10 +2326,10 @@ assert(qmckl_electron_provided(context));
 rc = qmckl_set_nucleus_num (context, nucl_num);
 assert(rc == QMCKL_SUCCESS);
 
-rc = qmckl_set_nucleus_charge (context, charge);
+rc = qmckl_set_nucleus_charge (context, charge, nucl_num);
 assert (rc == QMCKL_SUCCESS);
 
-rc = qmckl_set_nucleus_coord (context, 'T', nucl_coord);
+rc = qmckl_set_nucleus_coord (context, 'T', nucl_coord, 3*nucl_num);
 assert (rc == QMCKL_SUCCESS);
 
 assert(qmckl_nucleus_provided(context));
@@ -2378,10 +2363,10 @@ assert(fabs(en_distance_rescaled[1][0][1] - 0.9584331688679852) < 1.e-12);
 
 ** Electron-nucleus rescaled distance gradients and laplacian with respect to electron coords
 
-  The rescaled distances which is given as $R = (1 - \exp{-\kappa r})/\kappa$ 
+  The rescaled distances which is given as $R = (1 - \exp{-\kappa r})/\kappa$
   needs to be perturbed with respect to the nuclear coordinates.
-  This data is stored in the ~en_distance_rescaled_deriv_e~ tensor. The 
-  The first three elements of this three index tensor ~[4][nucl_num][elec_num]~ gives the 
+  This data is stored in the ~en_distance_rescaled_deriv_e~ tensor. The
+  The first three elements of this three index tensor ~[4][nucl_num][elec_num]~ gives the
   derivatives in the x, y, and z directions $dx, dy, dz$ and the last index
   gives the Laplacian $\partial x^2 + \partial y^2 + \partial z^2$.
 
@@ -2461,8 +2446,8 @@ qmckl_exit_code qmckl_provide_en_distance_rescaled_deriv_e(qmckl_context context
                                 ctx->nucleus.num,
                                 ctx->electron.rescale_factor_kappa_en,
                                 ctx->electron.walk_num,
-                                ctx->electron.coord_new,
-                                ctx->nucleus.coord,
+                                ctx->electron.coord_new.data,
+                                ctx->nucleus.coord.data,
                                 ctx->electron.en_distance_rescaled_deriv_e);
     if (rc != QMCKL_SUCCESS) {
       return rc;
@@ -2506,7 +2491,7 @@ integer function qmckl_compute_en_distance_rescaled_deriv_e_f(context, elec_num,
   integer*8             , intent(in)  :: nucl_num
   double precision      , intent(in)  :: rescale_factor_kappa_en
   integer*8             , intent(in)  :: walk_num
-  double precision      , intent(in)  :: elec_coord(elec_num,3,walk_num)
+  double precision      , intent(in)  :: elec_coord(elec_num,walk_num,3)
   double precision      , intent(in)  :: nucl_coord(nucl_num,3)
   double precision      , intent(out) :: en_distance_rescaled_deriv_e(elec_num,nucl_num,walk_num)
 
@@ -2542,7 +2527,7 @@ integer function qmckl_compute_en_distance_rescaled_deriv_e_f(context, elec_num,
 
   do k=1,walk_num
      info = qmckl_distance_rescaled_deriv_e(context, 'T', 'T', elec_num, nucl_num, &
-          elec_coord(1,1,k), elec_num, &
+          elec_coord(1,k,1), elec_num*walk_num, &
           nucl_coord, nucl_num, &
           en_distance_rescaled_deriv_e(1,1,k), elec_num, rescale_factor_kappa_en)
      if (info /= QMCKL_SUCCESS) then
@@ -2581,7 +2566,7 @@ qmckl_exit_code qmckl_compute_en_distance_rescaled_deriv_e (
       integer (c_int64_t) , intent(in)  , value :: nucl_num
       real    (c_double ) , intent(in)  , value :: rescale_factor_kappa_en
       integer (c_int64_t) , intent(in)  , value :: walk_num
-      real    (c_double ) , intent(in)          :: elec_coord(elec_num,3,walk_num)
+      real    (c_double ) , intent(in)          :: elec_coord(elec_num,walk_num,3)
       real    (c_double ) , intent(in)          :: nucl_coord(elec_num,3)
       real    (c_double ) , intent(out)         :: en_distance_rescaled_deriv_e(elec_num,nucl_num,walk_num)
 
@@ -2593,7 +2578,7 @@ qmckl_exit_code qmckl_compute_en_distance_rescaled_deriv_e (
     #+end_src
 
 *** Test
-    
+
     #+begin_src python :results output :exports none
 import numpy as np
 
@@ -2611,10 +2596,10 @@ assert(rc == QMCKL_SUCCESS);
 rc = qmckl_set_nucleus_rescale_factor (context, nucl_rescale_factor_kappa);
 assert(rc == QMCKL_SUCCESS);
 
-rc = qmckl_set_nucleus_charge (context, charge);
+rc = qmckl_set_nucleus_charge (context, charge, nucl_num);
 assert (rc == QMCKL_SUCCESS);
 
-rc = qmckl_set_nucleus_coord (context, 'T', nucl_coord);
+rc = qmckl_set_nucleus_coord (context, 'T', nucl_coord, 3*nucl_num);
 assert (rc == QMCKL_SUCCESS);
 
 assert(qmckl_nucleus_provided(context));
@@ -2656,7 +2641,7 @@ assert (rc == QMCKL_SUCCESS);
 
    where \(\mathcal{V}_{en}\) is the ~en~ potential, \[r_{iA}\] the ~en~
    distance and \[Z_A\] is the nuclear charge.
-   
+
 *** Get
 
     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
@@ -2684,7 +2669,7 @@ qmckl_exit_code qmckl_get_electron_en_potential(qmckl_context context, double* c
   return QMCKL_SUCCESS;
 }
     #+end_src
-    
+
 *** Provide                                                        :noexport:
 
     #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
@@ -2732,7 +2717,7 @@ qmckl_exit_code qmckl_provide_en_potential(qmckl_context context)
                                 ctx->electron.num,
                                 ctx->nucleus.num,
                                 ctx->electron.walk_num,
-                                ctx->nucleus.charge,
+                                ctx->nucleus.charge.data,
                                 ctx->electron.en_distance,
                                 ctx->electron.en_pot);
     if (rc != QMCKL_SUCCESS) {
@@ -2822,7 +2807,7 @@ end function qmckl_compute_en_potential_f
 	  const int64_t walk_num,
 	  const double* charge,
 	  const double* en_distance,
-	  double* const en_pot ); 
+	  double* const en_pot );
     #+end_src
 
     #+CALL: generate_c_interface(table=qmckl_en_potential_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
@@ -2858,7 +2843,7 @@ double en_pot[walk_num];
 rc = qmckl_get_electron_en_potential(context, &(en_pot[0]));
 assert (rc == QMCKL_SUCCESS);
      #+end_src
-    
+
 ** Generate initial coordinates
 
 *** Compute                                                        :noexport:
@@ -2872,11 +2857,11 @@ subroutine draw_init_points
   integer                        :: iwalk
   logical, allocatable           :: do_elec(:)
   integer                        :: acc_num
-  
+
   real, allocatable              :: xmin(:,:)
-  
+
   integer                        :: i, j, k, l, kk
-  
+
   real                           :: norm
   allocate (do_elec(elec_num), xmin(3,elec_num))
   xmin = -huge(1.)
@@ -2890,7 +2875,7 @@ subroutine draw_init_points
   call rinfo( irp_here, 'Norm : ', norm )
   call rinfo( irp_here, 'mo_scale: ' , mo_scale )
   mo_coef_transp = mo_coef_transp/norm
-  
+
   double precision               :: qmc_ranf
   real                           :: mo_max
   do i=1,elec_alpha_num
@@ -2907,7 +2892,7 @@ subroutine draw_init_points
     xmin(2,i) = nucl_coord(l,2)
     xmin(3,i) = nucl_coord(l,3)
   enddo
-  
+
   call iinfo(irp_here, 'Det num = ', det_num )
   do k=1,elec_beta_num
     i = k+elec_alpha_num
@@ -2924,10 +2909,10 @@ subroutine draw_init_points
     xmin(2,i) = nucl_coord(l,2)
     xmin(3,i) = nucl_coord(l,3)
   enddo
-  
+
   call rinfo( irp_here, 'time step =', time_step )
   do iwalk=1,walk_num
-    print *, 'Generating initial positions for walker', iwalk 
+    print *, 'Generating initial positions for walker', iwalk
     acc_num = 0
     do_elec = .True.
     integer :: iter
@@ -2949,7 +2934,7 @@ subroutine draw_init_points
         TOUCH elec_coord
         re_compute = minval(nucl_elec_dist(1:nucl_num,1:elec_num))
       enddo
-      
+
       do i=1,elec_alpha_num
         if (do_elec(i)) then
           if ( mo_value_transp(i,i)**2 >= qmc_ranf()) then
@@ -2958,7 +2943,7 @@ subroutine draw_init_points
           endif
         endif
       enddo
-      
+
       do i=1,elec_beta_num
         if (do_elec(i+elec_alpha_num)) then
           if ( mo_value_transp(i,i+elec_alpha_num)**2 >= qmc_ranf()) then
@@ -2967,9 +2952,9 @@ subroutine draw_init_points
           endif
         endif
       enddo
-      
+
     enddo
-    
+
     do l=1,3
       do i=1,elec_num+1
         elec_coord_full(i,l,iwalk) = elec_coord(i,l)
@@ -2982,7 +2967,7 @@ subroutine draw_init_points
   endif
   SOFT_TOUCH elec_coord elec_coord_full
   deallocate (do_elec, xmin)
-  
+
 end
     # end_src
 

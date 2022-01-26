@@ -17,11 +17,14 @@ walkers.
 #ifndef QMCKL_POINT_HPT
 #define QMCKL_POINT_HPT
 #include <stdbool.h>
+#include "qmckl_blas_private_type.h"
   #+end_src
 
   #+begin_src c :tangle (eval h_private_func)
 #ifndef QMCKL_POINT_HPF
 #define QMCKL_POINT_HPF
+#include "qmckl_blas_private_type.h"
+#include "qmckl_blas_private_func.h"
   #+end_src
 
   #+begin_src c :tangle (eval c_test) :noweb yes
@@ -33,6 +36,8 @@ walkers.
 #endif
 
 #include "chbrclf.h"
+#include "qmckl_blas_private_type.h"
+#include "qmckl_blas_private_func.h"
 
 int main() {
   qmckl_context context;
@@ -61,44 +66,41 @@ int main() {
 #include "qmckl.h"
 #include "qmckl_context_private_type.h"
 #include "qmckl_memory_private_type.h"
-#include "qmckl_memory_private_func.h"
+#include "qmckl_blas_private_type.h"
+
 #include "qmckl_point_private_func.h"
+#include "qmckl_memory_private_func.h"
+#include "qmckl_blas_private_func.h"
   #+end_src
 
 * Context
 
   The following data stored in the context:
 
-  | Variable  | Type          | Description            |
-  |-----------+---------------+------------------------|
-  | ~num~     | ~int64_t~     | Total number of points |
-  | ~coord_x~ | ~double[num]~ | X coordinates          |
-  | ~coord_y~ | ~double[num]~ | Y coordinates          |
-  | ~coord_z~ | ~double[num]~ | Z coordinates          |
+  | Variable | Type           | Description                               |
+  |----------+----------------+-------------------------------------------|
+  | ~num~    | ~int64_t~      | Total number of points                    |
+  | ~date~   | ~uint64_t~     | Last modification date of the coordinates |
+  | ~coord~  | ~qmckl_matrix~ | ~num~ \times 3 matrix3                    |
 
-  We consider that 'transposed' and 'normal' storage follows the convention:
-
-  |         | Normal           | Transposed       |
-  |---------+------------------+------------------|
-  | C       | ~[point_num][3]~ | ~[3][point_num]~ |
-  | Fortran | ~(3,point_num)~  | ~(point_num,3)~  |
+  We consider that the matrix is stored 'transposed' and 'normal'
+  corresponds to the 3 \times ~num~ matrix.
 
 ** Data structure
 
    #+begin_src c :comments org :tangle (eval h_private_type)
 typedef struct qmckl_point_struct {
-  double*   coord_x;
-  double*   coord_y;
-  double*   coord_z;
-  int64_t   num;
+  int64_t      num;
+  uint64_t     date;
+  qmckl_matrix coord;
 } qmckl_point_struct;
 
    #+end_src
 
-   #+begin_src c :comments org :tangle (eval h_private_func) 
+   #+begin_src c :comments org :tangle (eval h_private_func)
 qmckl_exit_code qmckl_init_point(qmckl_context context);
    #+end_src
-   
+
    #+begin_src c :comments org :tangle (eval c)
 qmckl_exit_code qmckl_init_point(qmckl_context context) {
 
@@ -109,16 +111,7 @@ qmckl_exit_code qmckl_init_point(qmckl_context context) {
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
   assert (ctx != NULL);
 
-  qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-  mem_info.size = sizeof(qmckl_point_struct);
-  ctx->point = (qmckl_point_struct*) qmckl_malloc(context, mem_info);
-  if (ctx->point == NULL) {
-    return qmckl_failwith( context,
-                           QMCKL_ALLOCATION_FAILED,
-                           "qmckl_init_point",
-                           NULL);
-  }
-  memset(ctx->point, 0, sizeof(qmckl_point_struct)); 
+  memset(&(ctx->point), 0, sizeof(qmckl_point_struct));
 
   return QMCKL_SUCCESS;
 }
@@ -139,7 +132,7 @@ qmckl_exit_code qmckl_get_point_num (const qmckl_context context, int64_t* const
       #+end_src
 
        Returns the number of points stored in the context.
-       
+
    #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
 qmckl_exit_code
 qmckl_get_point_num (const qmckl_context context, int64_t* const num) {
@@ -157,10 +150,9 @@ qmckl_get_point_num (const qmckl_context context, int64_t* const num) {
 
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
   assert (ctx != NULL);
-  assert (ctx->point != NULL);
 
-  assert (ctx->point->num > (int64_t) 0);
-  ,*num = ctx->point->num;
+  assert (ctx->point.num >= (int64_t) 0);
+  ,*num = ctx->point.num;
   return QMCKL_SUCCESS;
 }
       #+end_src
@@ -172,16 +164,17 @@ interface
     import
     implicit none
 
-    integer (c_int64_t) , intent(in)  , value :: context                                  
-    integer (c_int64_t) , intent(out)         :: num 
+    integer (c_int64_t) , intent(in)  , value :: context
+    integer (c_int64_t) , intent(out)         :: num
   end function
 end interface
    #+end_src
 
 *** Point coordinates
-    
+
   #+begin_src c :comments org :tangle (eval h_func) :exports none
 qmckl_exit_code qmckl_get_point(const qmckl_context context,
+                                const char transp,
                                 double* const coord,
                                 const int64_t size_max);
   #+end_src
@@ -193,6 +186,7 @@ qmckl_exit_code qmckl_get_point(const qmckl_context context,
   #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
 qmckl_exit_code
 qmckl_get_point(const qmckl_context context,
+                const char transp,
                 double* const coord,
                 const int64_t size_max)
 {
@@ -210,13 +204,11 @@ qmckl_get_point(const qmckl_context context,
 
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
   assert (ctx != NULL);
-  assert (ctx->point != NULL);
 
-  int64_t point_num = ctx->point->num;
+  int64_t point_num = ctx->point.num;
+  if (point_num == 0) return QMCKL_NOT_PROVIDED;
 
-  assert (ctx->point->coord_x != NULL);
-  assert (ctx->point->coord_y != NULL);
-  assert (ctx->point->coord_z != NULL);
+  assert (ctx->point.coord.data != NULL);
 
   if (size_max < 3*point_num) {
     return qmckl_failwith( context,
@@ -225,211 +217,119 @@ qmckl_get_point(const qmckl_context context,
                            "size_max too small");
   }
 
-
-  double * ptr = coord;
-  for (int64_t i=0 ; i<point_num ; ++i) {
-    ,*ptr = ctx->point->coord_x[i]; ++ptr;
-    ,*ptr = ctx->point->coord_y[i]; ++ptr;
-    ,*ptr = ctx->point->coord_z[i]; ++ptr;
+  qmckl_exit_code rc;
+  if (transp == 'N') {
+    qmckl_matrix At = qmckl_matrix_alloc( context, 3, point_num);
+    rc = qmckl_transpose( context, ctx->point.coord, At );
+    if (rc != QMCKL_SUCCESS) return rc;
+    rc = qmckl_double_of_matrix( context, At, coord, size_max);
+    if (rc != QMCKL_SUCCESS) return rc;
+    rc = qmckl_matrix_free(context, At);
+  } else {
+    rc = qmckl_double_of_matrix( context, ctx->point.coord, coord, size_max);
   }
-  
-  return QMCKL_SUCCESS;
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  return rc;
 }
 
       #+end_src
 
   #+begin_src f90 :comments org :tangle (eval fh_func) :noweb yes
 interface
-  integer(c_int32_t) function qmckl_get_point(context, coord, size_max) bind(C)
+  integer(c_int32_t) function qmckl_get_point(context, transp, coord, size_max) bind(C)
     use, intrinsic :: iso_c_binding
     import
     implicit none
 
     integer (c_int64_t) , intent(in)  , value :: context
+    character(c_char)   , intent(in)  , value :: transp
     real    (c_double ) , intent(out)         :: coord(*)
     integer (c_int64_t) , intent(in)          :: size_max
   end function
 end interface
    #+end_src
 
-      
-  #+begin_src c :comments org :tangle (eval h_func) :exports none
-qmckl_exit_code qmckl_get_point_xyz (const qmckl_context context,
-                                     double* const coord_x,
-                                     double* const coord_y,
-                                     double* const coord_z,
-                                     const int64_t size_max);
-     #+end_src
-
-    Returns the point coordinates in three different arrays, one for
-    each component x,y,z.
-    The pointers are assumed to point on a memory block of size
-    ~size_max~ \ge ~point_num~.
-
-  #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
-qmckl_exit_code
-qmckl_get_point_xyz (const qmckl_context context,
-                     double* const coord_x,
-                     double* const coord_y,
-                     double* const coord_z,
-                     const int64_t size_max)
-{
-
-  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return QMCKL_INVALID_CONTEXT;
-  }
-
-  if (coord_x == NULL) {
-    return qmckl_failwith( context,
-                           QMCKL_INVALID_ARG_2,
-                           "qmckl_get_point_coord_xyz",
-                           "coord_x is a null pointer");
-  }
-
-  if (coord_y == NULL) {
-    return qmckl_failwith( context,
-                           QMCKL_INVALID_ARG_3,
-                           "qmckl_get_point_coord_xyz",
-                           "coord_y is a null pointer");
-  }
-
-  if (coord_z == NULL) {
-    return qmckl_failwith( context,
-                           QMCKL_INVALID_ARG_4,
-                           "qmckl_get_point_coord_xyz",
-                           "coord_z is a null pointer");
-  }
-
-  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
-  assert (ctx != NULL);
-  assert (ctx->point != NULL);
-
-  int64_t point_num = ctx->point->num;
-
-  assert (ctx->point->coord_x != NULL);
-  assert (ctx->point->coord_y != NULL);
-  assert (ctx->point->coord_z != NULL);
-
-  if (size_max < point_num) {
-    return qmckl_failwith( context,
-                           QMCKL_INVALID_ARG_5,
-                           "qmckl_get_point_coord_xyz",
-                           "size_max too small");
-  }
-
-  memcpy(coord_x, ctx->point->coord_x, point_num*sizeof(double));
-  memcpy(coord_y, ctx->point->coord_y, point_num*sizeof(double));
-  memcpy(coord_z, ctx->point->coord_z, point_num*sizeof(double));
-  
-  return QMCKL_SUCCESS;
-}
-  #+end_src
-
-  #+begin_src f90 :comments org :tangle (eval fh_func) :noweb yes
-interface
-  integer(c_int32_t) function qmckl_get_point_xyz(context, &
-       coord_x, coord_y, coord_z, size_max) bind(C)
-    use, intrinsic :: iso_c_binding
-    import
-    implicit none
-
-    integer (c_int64_t) , intent(in)  , value :: context
-    real    (c_double ) , intent(out)         :: coord_x(*)
-    real    (c_double ) , intent(out)         :: coord_y(*)
-    real    (c_double ) , intent(out)         :: coord_z(*)
-    integer (c_int64_t) , intent(in)          :: size_max
-  end function
-end interface
-   #+end_src
 
 ** Initialization functions
 
    When the data is set in the context, if the arrays are large
    enough, we overwrite the data contained in them.
-   
-   #+NAME: check_alloc
-   #+begin_src c :exports none
-  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return QMCKL_NULL_CONTEXT;
-  }
-  
-  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
-  assert (ctx != NULL);
-  assert (ctx->point != NULL);
-
-  if (ctx->point->num < num) {
-
-    if (ctx->point->coord_x != NULL) {
-      qmckl_free(context, ctx->point->coord_x);
-      ctx->point->coord_x = NULL;
-    }
-
-    if (ctx->point->coord_y != NULL) {
-      qmckl_free(context, ctx->point->coord_y);
-      ctx->point->coord_y = NULL;
-    }
-
-    if (ctx->point->coord_z != NULL) {
-      qmckl_free(context, ctx->point->coord_z);
-      ctx->point->coord_z = NULL;
-    }
-
-    qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-    mem_info.size = num*sizeof(double);
-
-    ctx->point->coord_x = (double*) qmckl_malloc(context, mem_info);
-    if (ctx->point->coord_x == NULL) {
-      return qmckl_failwith( context,
-                             QMCKL_ALLOCATION_FAILED,
-                             "qmckl_set_point",
-                             NULL);
-    }
-
-    ctx->point->coord_y = (double*) qmckl_malloc(context, mem_info);
-    if (ctx->point->coord_y == NULL) {
-      return qmckl_failwith( context,
-                             QMCKL_ALLOCATION_FAILED,
-                             "qmckl_set_point",
-                             NULL);
-    }
-
-    ctx->point->coord_z = (double*) qmckl_malloc(context, mem_info);
-    if (ctx->point->coord_z == NULL) {
-      return qmckl_failwith( context,
-                             QMCKL_ALLOCATION_FAILED,
-                             "qmckl_set_point",
-                             NULL);
-    }
-  };
-
-  ctx->point->num = num;
-   #+end_src
 
    To set the data relative to the points in the context, one of the
-   following functions need to be called. 
-   
+   following functions need to be called.
+
    #+begin_src c :comments org :tangle (eval h_func)
 qmckl_exit_code qmckl_set_point (qmckl_context context,
+                                 const char transp,
                                  const double* coord,
                                  const int64_t num);
    #+end_src
 
-   Copy a sequence of (x,y,z) into the context.
+   Copy a sequence of ~num~ points $(x,y,z)$ into the context.
 
    #+begin_src c :comments org :tangle (eval c) :noweb yes
 qmckl_exit_code
 qmckl_set_point (qmckl_context context,
+                 const char transp,
                  const double* coord,
                  const int64_t num)
 {
-  
-  <<check_alloc>>
 
-  for (int64_t i=0 ; i<num ; ++i) {
-    ctx->point->coord_x[i] = coord[3*i  ];
-    ctx->point->coord_y[i] = coord[3*i+1];
-    ctx->point->coord_z[i] = coord[3*i+2];
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
   }
+
+  if (transp != 'N' && transp != 'T') {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_set_point",
+                           "transp should be 'N' or 'T'");
+  }
+
+  if (coord == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_3,
+                           "qmckl_set_point",
+                           "coord is a NULL pointer");
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  qmckl_exit_code rc;
+  if (ctx->point.num < num) {
+
+    if (ctx->point.coord.data != NULL) {
+      rc = qmckl_matrix_free(context, ctx->point.coord);
+      assert (rc == QMCKL_SUCCESS);
+    }
+
+    ctx->point.coord = qmckl_matrix_alloc(context, num, 3);
+    if (ctx->point.coord.data == NULL) {
+      return qmckl_failwith( context,
+                             QMCKL_ALLOCATION_FAILED,
+                             "qmckl_set_point",
+                             NULL);
+    }
+
+  };
+
+  ctx->point.num = num;
+
+  if (transp == 'T') {
+    memcpy(ctx->point.coord.data, coord, 3*num*sizeof(double));
+  } else {
+    for (int64_t i=0 ; i<num ; ++i) {
+      qmckl_mat(ctx->point.coord, i, 0) = coord[3*i  ];
+      qmckl_mat(ctx->point.coord, i, 1) = coord[3*i+1];
+      qmckl_mat(ctx->point.coord, i, 2) = coord[3*i+2];
+    }
+  }
+
+  /* Increment the date of the context */
+  ctx->date += 1UL;
+  ctx->point.date = ctx->date;
 
   return QMCKL_SUCCESS;
 
@@ -439,76 +339,38 @@ qmckl_set_point (qmckl_context context,
    #+begin_src f90 :comments org :tangle (eval fh_func) :noweb yes
 interface
   integer(c_int32_t) function qmckl_set_point(context, &
-       coord_x, coord_y, coord_z, size_max) bind(C)
+       transp, coord, size_max) bind(C)
     use, intrinsic :: iso_c_binding
     import
     implicit none
 
     integer (c_int64_t) , intent(in)  , value :: context
-    real    (c_double ) , intent(in)          :: coord_x(*)
-    real    (c_double ) , intent(in)          :: coord_y(*)
-    real    (c_double ) , intent(in)          :: coord_z(*)
+    character(c_char)   , intent(in)  , value :: transp
+    real    (c_double ) , intent(in)          :: coord(*)
     integer (c_int64_t) , intent(in)  , value :: size_max
   end function
 end interface
    #+end_src
 
-   #+begin_src c :comments org :tangle (eval h_func)
-qmckl_exit_code qmckl_set_point_xyz (qmckl_context context,
-                                 const double* coord_x,
-                                 const double* coord_y,
-                                 const double* coord_z,
-                                 const int64_t num);
-   #+end_src
-
-   #+begin_src c :comments org :tangle (eval c) :noweb yes
-qmckl_exit_code
-qmckl_set_point_xyz (qmckl_context context,
-                     const double* coord_x,
-                     const double* coord_y,
-                     const double* coord_z,
-                     const int64_t num)
-{
-  
-  <<check_alloc>>
-
-  memcpy(ctx->point->coord_x, coord_x, num*sizeof(double));
-  memcpy(ctx->point->coord_y, coord_y, num*sizeof(double));
-  memcpy(ctx->point->coord_z, coord_z, num*sizeof(double));
-
-  return QMCKL_SUCCESS;
-}
-   #+end_src
-
-   #+begin_src f90 :comments org :tangle (eval fh_func) :noweb yes
-interface
-  integer(c_int32_t) function qmckl_set_point_xyz(context, &
-       coord_x, coord_y, coord_z, size_max) bind(C)
-    use, intrinsic :: iso_c_binding
-    import
-    implicit none
-
-    integer (c_int64_t) , intent(in)  , value :: context
-    real    (c_double ) , intent(in)          :: coord_x(*)
-    real    (c_double ) , intent(in)          :: coord_y(*)
-    real    (c_double ) , intent(in)          :: coord_z(*)
-    integer (c_int64_t) , intent(in)  , value :: size_max
-  end function
-end interface
-   #+end_src
 
 ** Test
 
    #+begin_src c :tangle (eval c_test)
 /* Reference input data */
 int64_t point_num = chbrclf_elec_num;
-double* coord     = &(chbrclf_elec_coord[0][0][0]);
+const double* coord     = &(chbrclf_elec_coord[0][0][0]);
 
 /* --- */
 
 qmckl_exit_code rc;
+double coord2[point_num*3];
+double coord3[point_num*3];
 
-rc = qmckl_set_point (context, coord, point_num);
+
+rc = qmckl_get_point (context, 'N', coord2, (point_num*3));
+assert(rc == QMCKL_NOT_PROVIDED);
+
+rc = qmckl_set_point (context, 'N', coord, point_num);
 assert(rc == QMCKL_SUCCESS);
 
 int64_t n;
@@ -516,25 +378,30 @@ rc = qmckl_get_point_num (context, &n);
 assert(rc == QMCKL_SUCCESS);
 assert(n == point_num);
 
-double coord2[point_num*3];
-double coord_x[point_num];
-double coord_y[point_num];
-double coord_z[point_num];
-
-rc = qmckl_get_point_xyz (context, coord_x, coord_y, coord_z, point_num);
-assert(rc == QMCKL_SUCCESS);
-
-rc = qmckl_get_point (context, coord2, (point_num*3));
+rc = qmckl_get_point (context, 'N', coord2, (point_num*3));
 assert(rc == QMCKL_SUCCESS);
 
 for (int64_t i=0 ; i<3*point_num ; ++i) {
   assert( coord[i] == coord2[i] );
 }
 
+rc = qmckl_get_point (context, 'T', coord2, (point_num*3));
+assert(rc == QMCKL_SUCCESS);
+
 for (int64_t i=0 ; i<point_num ; ++i) {
-  assert( coord[3*i+0] == coord_x[i] );
-  assert( coord[3*i+1] == coord_y[i] );
-  assert( coord[3*i+2] == coord_z[i] );
+  assert( coord[3*i+0] == coord2[i] );
+  assert( coord[3*i+1] == coord2[i+point_num] );
+  assert( coord[3*i+2] == coord2[i+point_num*2] );
+}
+
+rc = qmckl_set_point (context, 'T', coord2, point_num);
+assert(rc == QMCKL_SUCCESS);
+
+rc = qmckl_get_point (context, 'N', coord3, (point_num*3));
+assert(rc == QMCKL_SUCCESS);
+
+for (int64_t i=0 ; i<3*point_num ; ++i) {
+  assert( coord[i] == coord3[i] );
 }
 
     #+end_src
