@@ -77,10 +77,11 @@ int main() {
 
   The following data stored in the context:
 
-  | Variable | Type           | Description            |
-  |----------+----------------+------------------------|
-  | ~num~    | ~int64_t~      | Total number of points |
-  | ~coord~  | ~qmckl_matrix~ | ~num~ \times 3 matrix3 |
+  | Variable | Type           | Description                               |
+  |----------+----------------+-------------------------------------------|
+  | ~num~    | ~int64_t~      | Total number of points                    |
+  | ~date~   | ~uint64_t~     | Last modification date of the coordinates |
+  | ~coord~  | ~qmckl_matrix~ | ~num~ \times 3 matrix3                    |
 
   We consider that the matrix is stored 'transposed' and 'normal'
   corresponds to the 3 \times ~num~ matrix.
@@ -90,15 +91,16 @@ int main() {
    #+begin_src c :comments org :tangle (eval h_private_type)
 typedef struct qmckl_point_struct {
   int64_t      num;
+  uint64_t     date;
   qmckl_matrix coord;
 } qmckl_point_struct;
 
    #+end_src
 
-   #+begin_src c :comments org :tangle (eval h_private_func) 
+   #+begin_src c :comments org :tangle (eval h_private_func)
 qmckl_exit_code qmckl_init_point(qmckl_context context);
    #+end_src
-   
+
    #+begin_src c :comments org :tangle (eval c)
 qmckl_exit_code qmckl_init_point(qmckl_context context) {
 
@@ -109,16 +111,7 @@ qmckl_exit_code qmckl_init_point(qmckl_context context) {
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
   assert (ctx != NULL);
 
-  qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-  mem_info.size = sizeof(qmckl_point_struct);
-  ctx->point = (qmckl_point_struct*) qmckl_malloc(context, mem_info);
-  if (ctx->point == NULL) {
-    return qmckl_failwith( context,
-                           QMCKL_ALLOCATION_FAILED,
-                           "qmckl_init_point",
-                           NULL);
-  }
-  memset(ctx->point, 0, sizeof(qmckl_point_struct)); 
+  memset(&(ctx->point), 0, sizeof(qmckl_point_struct));
 
   return QMCKL_SUCCESS;
 }
@@ -139,7 +132,7 @@ qmckl_exit_code qmckl_get_point_num (const qmckl_context context, int64_t* const
       #+end_src
 
        Returns the number of points stored in the context.
-       
+
    #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
 qmckl_exit_code
 qmckl_get_point_num (const qmckl_context context, int64_t* const num) {
@@ -157,10 +150,9 @@ qmckl_get_point_num (const qmckl_context context, int64_t* const num) {
 
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
   assert (ctx != NULL);
-  assert (ctx->point != NULL);
 
-  assert (ctx->point->num > (int64_t) 0);
-  ,*num = ctx->point->num;
+  assert (ctx->point.num >= (int64_t) 0);
+  ,*num = ctx->point.num;
   return QMCKL_SUCCESS;
 }
       #+end_src
@@ -172,14 +164,14 @@ interface
     import
     implicit none
 
-    integer (c_int64_t) , intent(in)  , value :: context                                  
-    integer (c_int64_t) , intent(out)         :: num 
+    integer (c_int64_t) , intent(in)  , value :: context
+    integer (c_int64_t) , intent(out)         :: num
   end function
 end interface
    #+end_src
 
 *** Point coordinates
-    
+
   #+begin_src c :comments org :tangle (eval h_func) :exports none
 qmckl_exit_code qmckl_get_point(const qmckl_context context,
                                 const char transp,
@@ -212,12 +204,11 @@ qmckl_get_point(const qmckl_context context,
 
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
   assert (ctx != NULL);
-  assert (ctx->point != NULL);
 
-  int64_t point_num = ctx->point->num;
+  int64_t point_num = ctx->point.num;
   if (point_num == 0) return QMCKL_NOT_PROVIDED;
 
-  assert (ctx->point->coord.data != NULL);
+  assert (ctx->point.coord.data != NULL);
 
   if (size_max < 3*point_num) {
     return qmckl_failwith( context,
@@ -229,16 +220,16 @@ qmckl_get_point(const qmckl_context context,
   qmckl_exit_code rc;
   if (transp == 'N') {
     qmckl_matrix At = qmckl_matrix_alloc( context, 3, point_num);
-    rc = qmckl_transpose( context, ctx->point->coord, At );
+    rc = qmckl_transpose( context, ctx->point.coord, At );
     if (rc != QMCKL_SUCCESS) return rc;
     rc = qmckl_double_of_matrix( context, At, coord, size_max);
     if (rc != QMCKL_SUCCESS) return rc;
     rc = qmckl_matrix_free(context, At);
   } else {
-    rc = qmckl_double_of_matrix( context, ctx->point->coord, coord, size_max);
+    rc = qmckl_double_of_matrix( context, ctx->point.coord, coord, size_max);
   }
   if (rc != QMCKL_SUCCESS) return rc;
-  
+
   return rc;
 }
 
@@ -259,23 +250,23 @@ interface
 end interface
    #+end_src
 
-      
+
 ** Initialization functions
 
    When the data is set in the context, if the arrays are large
    enough, we overwrite the data contained in them.
-   
+
    To set the data relative to the points in the context, one of the
-   following functions need to be called. 
-   
+   following functions need to be called.
+
    #+begin_src c :comments org :tangle (eval h_func)
 qmckl_exit_code qmckl_set_point (qmckl_context context,
                                  const char transp,
                                  const double* coord,
-                                 const int64_t size_max);
+                                 const int64_t num);
    #+end_src
 
-   Copy a sequence of (x,y,z) into the context.
+   Copy a sequence of ~num~ points $(x,y,z)$ into the context.
 
    #+begin_src c :comments org :tangle (eval c) :noweb yes
 qmckl_exit_code
@@ -284,7 +275,7 @@ qmckl_set_point (qmckl_context context,
                  const double* coord,
                  const int64_t num)
 {
-  
+
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return QMCKL_NULL_CONTEXT;
   }
@@ -295,28 +286,27 @@ qmckl_set_point (qmckl_context context,
                            "qmckl_set_point",
                            "transp should be 'N' or 'T'");
   }
-  
+
   if (coord == NULL) {
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_3,
                            "qmckl_set_point",
                            "coord is a NULL pointer");
   }
-  
+
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
   assert (ctx != NULL);
-  assert (ctx->point != NULL);
 
   qmckl_exit_code rc;
-  if (ctx->point->num < num) {
+  if (ctx->point.num < num) {
 
-    if (ctx->point->coord.data != NULL) {
-      rc = qmckl_matrix_free(context, ctx->point->coord);
-      return rc;
+    if (ctx->point.coord.data != NULL) {
+      rc = qmckl_matrix_free(context, ctx->point.coord);
+      assert (rc == QMCKL_SUCCESS);
     }
 
-    ctx->point->coord = qmckl_matrix_alloc(context, num, 3);
-    if (ctx->point->coord.data == NULL) {
+    ctx->point.coord = qmckl_matrix_alloc(context, num, 3);
+    if (ctx->point.coord.data == NULL) {
       return qmckl_failwith( context,
                              QMCKL_ALLOCATION_FAILED,
                              "qmckl_set_point",
@@ -325,17 +315,21 @@ qmckl_set_point (qmckl_context context,
 
   };
 
-  ctx->point->num = num;
+  ctx->point.num = num;
 
   if (transp == 'T') {
-    memcpy(ctx->point->coord.data, coord, 3*num*sizeof(double));
+    memcpy(ctx->point.coord.data, coord, 3*num*sizeof(double));
   } else {
     for (int64_t i=0 ; i<num ; ++i) {
-      qmckl_mat(ctx->point->coord, i, 0) = coord[3*i  ];
-      qmckl_mat(ctx->point->coord, i, 1) = coord[3*i+1];
-      qmckl_mat(ctx->point->coord, i, 2) = coord[3*i+2];
+      qmckl_mat(ctx->point.coord, i, 0) = coord[3*i  ];
+      qmckl_mat(ctx->point.coord, i, 1) = coord[3*i+1];
+      qmckl_mat(ctx->point.coord, i, 2) = coord[3*i+2];
     }
   }
+
+  /* Increment the date of the context */
+  ctx->date += 1UL;
+  ctx->point.date = ctx->date;
 
   return QMCKL_SUCCESS;
 
