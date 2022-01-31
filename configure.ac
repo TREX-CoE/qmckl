@@ -35,11 +35,18 @@
 
 AC_PREREQ([2.69])
 
-AC_INIT([qmckl],[0.1.1],
-        [https://github.com/TREX-CoE/qmckl/issues], [],
-        [https://trex-coe.github.io/qmckl/index.html])
-AC_CONFIG_AUX_DIR(tools)
+AC_INIT([qmckl],[0.1.1],[https://github.com/TREX-CoE/qmckl/issues],[],[https://trex-coe.github.io/qmckl/index.html])
+AC_CONFIG_AUX_DIR([tools])
 AM_INIT_AUTOMAKE([subdir-objects color-tests parallel-tests silent-rules 1.11])
+
+# Activate developer mode when the source is the git repository.
+# Otherwise, it is the source distribution and the developer mode should not be activated.
+AS_IF([test -d ${srcdir}/.git],
+        [enable_maintainer_mode="yes"],
+        [enable_maintainer_mode="no"]
+)
+
+AM_PROG_AR
 AM_MAINTAINER_MODE()
 LT_INIT
 AC_CONFIG_SRCDIR([configure.ac])
@@ -58,7 +65,7 @@ AC_SUBST([VERSION_PATCH])
 
 #AM_SILENT_RULES(yes)
 #AC_SUBST(SHARED_VERSION_INFO)
-#AM_ENABLE_SHARED(no) dnl shared libs cause too many headaches to be default
+#AC_ENABLE_SHARED([no]) dnl shared libs cause too many headaches to be default
 
 AC_LANG(C)
 
@@ -68,11 +75,12 @@ AC_PROG_CC
 m4_version_prereq([2.70],[], [AC_PROG_CC_C99])
 AS_IF([test "$ac_cv_prog_cc_c99" = "no"], [AC_MSG_ERROR([The compiler does not support C99])])
 AC_PROG_CC_C_O
+AC_PROG_F77
 AC_PROG_FC
 AC_PROG_FC_C_O
 AC_FC_SRCEXT([f90])
 AC_FC_FREEFORM
-AC_PROG_LIBTOOL
+LT_INIT
 AC_PROG_INSTALL
 AC_PROG_LN_S
 PKG_PROG_PKG_CONFIG([])
@@ -90,7 +98,7 @@ AC_CHECK_HEADERS([assert.h errno.h math.h pthread.h stdbool.h stdint.h stdio.h s
 AC_CHECK_LIB([pthread], [pthread_create])
 
 # OpenMP
-#AC_ARG_WITH(openmp, [AC_HELP_STRING([--with-openmp],[enable OpenMP])], with_omp=$withval, with_omp=no)
+#AC_ARG_WITH(openmp, [AS_HELP_STRING([--with-openmp],[enable OpenMP])], with_omp=$withval, with_omp=no)
 #if test "x$with_omp" = xyes; then
 #   AC_DEFINE([HAVE_OPENMP], [1], [Define to use OpenMP threading.])
 #   AX_OPENMP([],
@@ -98,9 +106,55 @@ AC_CHECK_LIB([pthread], [pthread_create])
 #   CFLAGS="${CFLAGS} ${OPENMP_CFLAGS}"
 #fi
 
+# CHAMELEON
+AC_ARG_WITH(chameleon,
+  AS_HELP_STRING([--without-chameleon],
+                 [Do not use Chameleon. Default: auto-detect]), [
+case "$with_chameleon" in
+  no)
+    : ;;
+  yes)
+    PKG_CHECK_MODULES([LIBCHAMELEON],[chameleon >= 1.0.0],
+      [PKG_CFLAGS="$PKG_CFLAGS $LIBCHAMELEON_CFLAGS"
+      PKG_LIBS="$PKG_LIBS $LIBCHAMELEON_LIBS"]
+                      ,[
+    
+      ## something went wrong.
+      ## try to find the package without pkg-config
+    
+      ## check that the library is actually new enough.
+      ## by testing for a 1.0.0+ function which we use
+      AC_CHECK_LIB(chameleon,CHAMELEON_finalize,[LIBCHAMELEON_LIBS="-lchameleon"])
+    ])
+    AH_TEMPLATE(HAVE_CHAMELEON,[Chameleon support is available])
+  ;;
+  *)
+    if test ! -d "$withval" ; then
+      AC_MSG_ERROR([--with-chameleon path does not point to a directory])
+    fi
+    LIBCHAMELEON_LIBS="-L$with_chameleon/lib -lchameleon -lchameleon_starpu -lhqr -lcoreblas"
+    LIBCHAMELEON_CFLAGS="-I$with_chameleon/include $CFLAGS"
+    LIBCHAMELEON_CPPFLAGS="-I$with_chameleon/include $CPPFLAGS"
+  esac
+])
+
+if test "x$LIBCHAMELEON_LIBS" != "x" ; then
+  LIBS="$LIBS $LIBCHAMELEON_LIBS"
+  CFLAGS="$CFLAGS $LIBCHAMELEON_CFLAGS"
+  CPPFLAGS="$CPPFLAGS $LIBCHAMELEON_CPPFLAGS"
+  AC_CHECK_HEADERS([chameleon.h], [], [AC_MSG_ERROR("chamelon.h not found")])
+  AC_DEFINE_UNQUOTED([HAVE_CHAMELEON],1,[CHAMELEON support is available])
+fi
+
+#AS_IF([test "x$with_chameleon" != "xno"], [
+#])
+
+AC_MSG_NOTICE([CHAMELEON library support: ${with_CHAMELEON:=auto} ${LIBCHAMELEON_PATH} ${LIBCHAMELEON_LIBS}])
+
+
 # TREXIO
 
-AC_ARG_WITH(trexio, [AC_HELP_STRING([--without-trexio],[disable support for TREXIO])],
+AC_ARG_WITH(trexio, [AS_HELP_STRING([--without-trexio],[disable support for TREXIO])],
             with_trexio=$withval, with_trexio=yes)
 
 AS_IF([test "x$with_trexio" != xno], [
@@ -117,14 +171,30 @@ PKG_CFLAGS="$PKG_CFLAGS $TREXIO_CFLAGS"
 PKG_LIBS="$PKG_LIBS $TREXIO_LIBS"
 
 ## BLAS
-#AX_BLAS([], [AC_MSG_ERROR([BLAS was not found.])])
+AX_BLAS([], [AC_MSG_ERROR([BLAS was not found.])])
 
 ## LAPACK
-#AX_LAPACK([], [AC_MSG_ERROR([LAPACK was not found.])])
+AX_LAPACK([], [AC_MSG_ERROR([LAPACK was not found.])])
+
+
+# Specific options required with some compilers
+case $FC in
+
+ ifort*)
+      FCFLAGS="$FCFLAGS -nofor-main"
+      ;;
+
+ gfortran*)
+      # Order is important here
+      FCFLAGS="-cpp $FCFLAGS"
+      ;;
+esac
+
+
 
 # Options.
 
-AC_ARG_ENABLE(debug, [AC_HELP_STRING([--enable-debug],[compile for debugging])], ok=$enableval, ok=no)
+AC_ARG_ENABLE(debug, [AS_HELP_STRING([--enable-debug],[compile for debugging])], ok=$enableval, ok=no)
 if test "$ok" = "yes"; then
         if test "$GCC" = "yes"; then
 	        CFLAGS="$CFLAGS \
@@ -146,20 +216,20 @@ if test "$ok" = "yes"; then
         ARGS="${ARGS} debug"
 fi
 
-AC_ARG_ENABLE(malloc-trace, [AC_HELP_STRING([--enable-malloc-trace],[use debug malloc/free])], ok=$enableval, ok=no)
+AC_ARG_ENABLE(malloc-trace, [AS_HELP_STRING([--enable-malloc-trace],[use debug malloc/free])], ok=$enableval, ok=no)
 if test "$ok" = "yes"; then
 	AC_DEFINE(MALLOC_TRACE,"malloc_trace.dat",[Define to use debugging malloc/free])
         ARGS="${ARGS} malloc-trace"
 fi
 
-AC_ARG_ENABLE(prof, [AC_HELP_STRING([--enable-prof],[compile for profiling])], ok=$enableval, ok=no)
+AC_ARG_ENABLE(prof, [AS_HELP_STRING([--enable-prof],[compile for profiling])], ok=$enableval, ok=no)
 if test "$ok" = "yes"; then
 	CFLAGS="${CFLAGS} -pg"
 	AC_DEFINE(ENABLE_PROF,1,[Define when using the profiler tool])
         ARGS="${ARGS} prof"
 fi
 
-AC_ARG_WITH(efence, [AC_HELP_STRING([--with-efence],[use ElectricFence library])], ok=$withval, ok=no)
+AC_ARG_WITH(efence, [AS_HELP_STRING([--with-efence],[use ElectricFence library])], ok=$withval, ok=no)
 if test "$ok" = "yes"; then
 	AC_CHECK_LIB(efence, malloc)
         ARGS="${ARGS} efence"
@@ -189,14 +259,18 @@ AC_TYPE_UINT64_T
 AC_CHECK_FUNCS([memset strerror])
 
 # Development mode
+if test "x$enable_maintainer_mode" == "xyes" ; then
+  QMCKL_DEVEL=" -- Developer mode"
+else
+  QMCKL_DEVEL=""
+fi
+
 AM_CONDITIONAL([QMCKL_DEVEL],[test "x$QMCKL_DEVEL" != x])
 
 if test "x${QMCKL_DEVEL}" != "x"; then
 
-  QMCKL_DEVEL=" -- Developer mode"
   AC_PROG_AWK
   AM_PATH_PYTHON
-  ${PYTHON} ${srcdir}/tools/build_makefile.py
 
   AC_CHECK_PROGS([EMACS],[emacs26 emacs],[no])
   if test x${EMACS} == xno ; then
@@ -224,13 +298,6 @@ AC_ARG_ENABLE([vfc_ci],
 esac],[vfc_ci=false])
 AM_CONDITIONAL([VFC_CI], [test x$vfc_ci = xtrue])
 
-# Enable Fortran preprocessor
-if test "$FC" = "gfortran"; then
-  AC_MSG_NOTICE(gfortran detected)
-  # Arguments order is important here
-  FCFLAGS="-cpp $FCFLAGS"
-fi
-
 if test "$FC" = "verificarlo-f"; then
   AC_MSG_NOTICE(verificarlo-f detected)
   # Arguments order is important here
@@ -241,7 +308,7 @@ fi
 #mkl-dynamic-lp64-seq
 
 PKG_LIBS="$PKG_LIBS $LIBS"
-LIBS="$LAPACK_LIBS $BLAS_LIBS $PKG_LIBS"
+LIBS="$BLAS_LIBS $LAPACK_LIBS $BLAS_LIBS $PKG_LIBS"
 CFLAGS="$CFLAGS $PKG_CFLAGS"
 AC_SUBST([PKG_LIBS])
 AC_SUBST([PKG_CFLAGS])
@@ -269,6 +336,7 @@ FC..............: ${FC}
 FCLAGS..........: ${FCFLAGS}
 LDFLAGS:........: ${LDFLAGS}
 LIBS............: ${LIBS}
+USE CHAMELEON...: ${with_chameleon}
 
 Package features:
   ${ARGS}

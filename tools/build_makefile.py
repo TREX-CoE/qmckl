@@ -4,8 +4,17 @@
 
 from __future__ import print_function
 from glob import glob
+import os
+import subprocess
 
 def main():
+    wd = os.getcwd()
+    try:
+        srcdir = os.environ["srcdir"]
+        os.chdir(srcdir)
+    except KeyError:
+        pass
+
     C_FILES               =  []
     C_O_FILES             =  []
     F_FILES               =  []
@@ -33,8 +42,8 @@ def main():
 
     for org in glob("org/*.org"):
         i         =  org.split('/')[-1].rsplit(".",1)[0]
-        tangled   =  "org/."+i+".tangled"
-        exported  =  "org/."+i+".exported"
+        tangled   =  "src/"+i+".tangled"
+        exported  =  "src/"+i+".exported"
         c_test_x  =  "tests/test_"+i
         c_test_o  =  "tests/test_"+i+".$(OBJEXT)"
         f_test_o  =  "tests/test_"+i+"_f.$(OBJEXT)"
@@ -181,7 +190,7 @@ def main():
     output = ["",
               "## Source files",
               "",
-              "ORG_FILES="+" ".join(ORG_FILES),
+              "ORG_FILES="+" ".join([ "$(srcdir)/"+ x for x in ORG_FILES]),
               "TANGLED_FILES="+" ".join(TANGLED_FILES),
               "EXPORTED_FILES="+" ".join(EXPORTED_FILES),
               "C_FILES="+" ".join(C_FILES),
@@ -195,7 +204,7 @@ def main():
               "H_PRIVATE_TYPE_FILES="+" ".join(H_PRIVATE_TYPE_FILES),
               "C_TEST_FILES="+" ".join(C_TEST_FILES),
               "F_TEST_FILES="+" ".join(F_TEST_FILES),
-              "TESTS="+" ".join(TESTS.keys()).replace("$(srcdir)/",""),
+              "TESTS="+" ".join(TESTS.keys()),
               "HTML_FILES="+" ".join(HTML.values()),
               "TEXT_FILES="+" ".join(TEXT.values()),
               "" ]
@@ -205,8 +214,8 @@ def main():
               "",
               "if QMCKL_DEVEL" ]
     for f in DEPS_ORG.keys():
-        output += [ DEPS_ORG[f] + ": "+f,
-                    "\t$(tangle_verbose)top_builddir=$(top_builddir) srcdir=$(srcdir) $(srcdir)/tools/tangle.sh "+f,
+        output += [ DEPS_ORG[f] + ": $(srcdir)/"+f,
+                    "\t$(tangle_verbose)top_builddir=$(abs_top_builddir) srcdir=$(abs_srcdir) $(srcdir)/tools/missing bash $(srcdir)/tools/tangle.sh $(srcdir)/"+f,
                     "" ]
     output += [ "endif",
                 "" ]
@@ -227,21 +236,22 @@ def main():
     output+= ["",
               "## Test files",
               "",
+              "$(header_tests): $(TANGLED_FILES)",
               "$(test_qmckl_fo): $(test_qmckl_f)"]
     output += ["",
                 "check_PROGRAMS = $(TESTS)" ]
     for f in sorted(TESTS.keys()):
         prefix = "tests_" + f.rsplit("/",1)[-1]
         output += [ prefix + "_SOURCES = " + \
-                    " ".join(TESTS[f]).replace("$(srcdir)",""),
+                    " ".join(TESTS[f]) + " $(header_tests)",
                     prefix + "_LDADD   = src/libqmckl.la",
-                    prefix + "_LDFLAGS = -no-install",
                     "" ]
 
     tmp = "EXTRA_DIST += "
-    for dir in glob("share/qmckl/test_data/*"):
-      for f in glob("%s/*"%(dir)):
-        tmp += " \\\n   "+f
+    r = subprocess.check_output("git ls-tree --name-only -r HEAD".split())
+    for line in r.splitlines():
+       if b"share/qmckl/test_data/" in line:
+         tmp += " \\\n   " + line.decode('utf8')
     tmp += "\n"
     output += tmp.split("\n")
 
@@ -252,16 +262,16 @@ def main():
 
     for f in sorted(ORG_FILES):
         output += [ HTML[f] + ": " + DEPS_DOC[f],
-                    TEXT[f] + ":  " + DEPS_DOC[f],
+                    TEXT[f] + ": " + DEPS_DOC[f],
                     "" ]
 
     for f in sorted(DEPS_DOC.keys()):
-        output += [ DEPS_DOC[f] + ": " + f + " $(htmlize_el)",
-                    "\t$(export_verbose)top_builddir=$(top_builddir) srcdir=$(srcdir) $(srcdir)/tools/build_doc.sh "+f,
+        output += [ DEPS_DOC[f] + ": $(srcdir)/" + f + " $(htmlize_el)",
+                    "\t$(export_verbose)top_builddir=$(abs_top_builddir) srcdir=$(abs_srcdir) $(srcdir)/tools/missing bash $(srcdir)/tools/build_doc.sh $(srcdir)/"+f,
                     "" ]
     output += ["endif"]
 
-    f = open("generated.mk","w")
+    f = open(srcdir+"/generated.mk","w")
     f.write("\n".join(output))
 
 

@@ -2,7 +2,7 @@
 #+SETUPFILE: ../tools/theme.setup
 #+INCLUDE: ../tools/lib.org
 
-The molecular orbitals (MOs) are defined in the basis of AOs along with a AO to MO 
+The molecular orbitals (MOs) are defined in the basis of AOs along with a AO to MO
 coefficient matrix \[C\]. Using these coefficients (e.g. from Hartree Fock SCF method)
 the MOs are defined as follows:
 
@@ -83,12 +83,13 @@ int main() {
 
   The following arrays are stored in the context:
 
+
   |---------------+--------------------+----------------------|
   | ~mo_num~      |                    | Number of MOs        |
   | ~coefficient~ | ~[mo_num][ao_num]~ | Orbital coefficients |
 
   Computed data:
-  
+
   |---------------+-------------------------+----------------------------------------------------------------------------------------|
   |---------------+-------------------------+----------------------------------------------------------------------------------------|
   | ~mo_vgl~      | ~[5][elec_num][mo_num]~ | Value, gradients, Laplacian of the MOs at electron positions                           |
@@ -99,7 +100,7 @@ int main() {
 
    #+begin_src c :comments org :tangle (eval h_private_type)
 typedef struct qmckl_mo_basis_struct {
-  int64_t   mo_num;  
+  int64_t   mo_num;
   double  * coefficient;
 
   double  * mo_vgl;
@@ -116,6 +117,26 @@ typedef struct qmckl_mo_basis_struct {
    struct is then initialized and ~provided == true~.
    Some values are initialized by default, and are not concerned by
    this mechanism.
+
+   #+begin_src c :comments org :tangle (eval h_private_func)
+qmckl_exit_code qmckl_init_mo_basis(qmckl_context context);
+   #+end_src
+
+   #+begin_src c :comments org :tangle (eval c)
+qmckl_exit_code qmckl_init_mo_basis(qmckl_context context) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return false;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  ctx->mo_basis.uninitialized = (1 << 2) - 1;
+
+  return QMCKL_SUCCESS;
+}
+   #+end_src
 
 ** Access functions
 
@@ -205,7 +226,7 @@ qmckl_get_mo_basis_coefficient (const qmckl_context context,
 
   assert (ctx->mo_basis.coefficient != NULL);
   memcpy(coefficient, ctx->mo_basis.coefficient,
-         ctx->ao_basis.ao_num * ctx->mo_basis.mo_num * sizeof(int64_t));
+         ctx->ao_basis.ao_num * ctx->mo_basis.mo_num * sizeof(double));
 
   return QMCKL_SUCCESS;
 }
@@ -258,10 +279,9 @@ qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
 ctx->mo_basis.uninitialized &= ~mask;
 ctx->mo_basis.provided = (ctx->mo_basis.uninitialized == 0);
 if (ctx->mo_basis.provided) {
-  qmckl_exit_code rc_ = qmckl_finalize_basis(context);
+  qmckl_exit_code rc_ = qmckl_finalize_mo_basis(context);
   if (rc_ != QMCKL_SUCCESS) return rc_;
- }
-
+}
 return QMCKL_SUCCESS;
    #+end_src
 
@@ -318,6 +338,28 @@ qmckl_exit_code  qmckl_set_mo_basis_coefficient(qmckl_context context, const dou
  When the basis set is completely entered, other data structures are
  computed to accelerate the calculations.
 
+   #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_finalize_mo_basis(qmckl_context context);
+   #+end_src
+
+   #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
+qmckl_exit_code qmckl_finalize_mo_basis(qmckl_context context) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_finalize_mo_basis",
+                           NULL);
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  qmckl_exit_code rc = QMCKL_SUCCESS;
+  return rc;
+}
+   #+end_src
+
 * Computation
 
 ** Computation of MOs
@@ -330,7 +372,7 @@ qmckl_exit_code qmckl_get_mo_basis_vgl(qmckl_context context, double* const mo_v
 
     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
 qmckl_exit_code qmckl_get_mo_basis_vgl(qmckl_context context, double* const mo_vgl) {
-  
+
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return QMCKL_NULL_CONTEXT;
   }
@@ -377,6 +419,7 @@ qmckl_exit_code qmckl_provide_mo_vgl(qmckl_context context);
 qmckl_exit_code qmckl_provide_mo_vgl(qmckl_context context)
 {
 
+  qmckl_exit_code rc;
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return QMCKL_NULL_CONTEXT;
   }
@@ -391,13 +434,21 @@ qmckl_exit_code qmckl_provide_mo_vgl(qmckl_context context)
                            NULL);
   }
 
+  rc = qmckl_provide_ao_vgl(context);
+  if (rc != QMCKL_SUCCESS) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_ao_basis",
+                           NULL);
+  }
+
   if(!(ctx->electron.provided)) {
     return qmckl_failwith( context,
                            QMCKL_NOT_PROVIDED,
                            "qmckl_electron",
                            NULL);
   }
-  
+
   if (!ctx->mo_basis.provided) {
     return qmckl_failwith( context,
                            QMCKL_NOT_PROVIDED,
@@ -424,7 +475,6 @@ qmckl_exit_code qmckl_provide_mo_vgl(qmckl_context context)
       ctx->mo_basis.mo_vgl = mo_vgl;
     }
 
-    qmckl_exit_code rc; 
     rc = qmckl_compute_mo_basis_vgl(context,
                                     ctx->ao_basis.ao_num,
                                     ctx->mo_basis.mo_num,
@@ -442,7 +492,7 @@ qmckl_exit_code qmckl_provide_mo_vgl(qmckl_context context)
   return QMCKL_SUCCESS;
 }
     #+end_src
-    
+
 *** Compute
    :PROPERTIES:
    :Name:     qmckl_compute_mo_basis_vgl
@@ -450,7 +500,7 @@ qmckl_exit_code qmckl_provide_mo_vgl(qmckl_context context)
    :FRetType: qmckl_exit_code
    :END:
 
-    #+NAME: qmckl_mo_basis_gaussian_vgl_args
+    #+NAME: qmckl_mo_basis_vgl_args
    | ~qmckl_context~ | ~context~                         | in  | Global state                              |
    | ~int64_t~       | ~ao_num~                          | in  | Number of AOs                             |
    | ~int64_t~       | ~mo_num~                          | in  | Number of MOs                             |
@@ -458,7 +508,8 @@ qmckl_exit_code qmckl_provide_mo_vgl(qmckl_context context)
    | ~double~        | ~coef_normalized[mo_num][ao_num]~ | in  | AO to MO transformation matrix            |
    | ~double~        | ~ao_vgl[5][elec_num][ao_num]~     | in  | Value, gradients and Laplacian of the AOs |
    | ~double~        | ~mo_vgl[5][elec_num][mo_num]~     | out | Value, gradients and Laplacian of the MOs |
-    
+
+
     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
 integer function qmckl_compute_mo_basis_vgl_f(context, &
      ao_num, mo_num, elec_num, &
@@ -472,86 +523,71 @@ integer function qmckl_compute_mo_basis_vgl_f(context, &
   double precision      , intent(in)  :: ao_vgl(ao_num,elec_num,5)
   double precision      , intent(in)  :: coef_normalized(ao_num,mo_num)
   double precision      , intent(out) :: mo_vgl(mo_num,elec_num,5)
-  logical*8                     :: TransA, TransB
+  character                     :: TransA, TransB
+  double precision,dimension(:,:),allocatable    :: mo_vgl_big
+  double precision,dimension(:,:),allocatable    :: ao_vgl_big
+  !double precision,dimension(:,:),allocatable    :: coef_trans
+  !double precision,dimension(:),allocatable    :: coef_all
   double precision              :: alpha, beta
   integer                       :: info_qmckl_dgemm_value
-  integer                       :: info_qmckl_dgemm_Gx   
-  integer                       :: info_qmckl_dgemm_Gy   
-  integer                       :: info_qmckl_dgemm_Gz   
-  integer                       :: info_qmckl_dgemm_lap  
-  integer*8                     :: M, N, K, LDA, LDB, LDC, i,j
+  integer*8                     :: M, N, K, LDA, LDB, LDC, i,j, idx
 
   integer*8 :: inucl, iprim, iwalk, ielec, ishell
   double precision :: x, y, z, two_a, ar2, r2, v, cutoff
-  TransA = .False.
-  TransB = .False. 
+
+  allocate(mo_vgl_big(mo_num,elec_num*5))
+  allocate(ao_vgl_big(ao_num,elec_num*5))
+  !allocate(coef_all(mo_num*ao_num))
+  !allocate(coef_trans(mo_num,ao_num))
+
+  TransA = 'T'
+  TransB = 'N'
   alpha = 1.0d0
   beta  = 0.0d0
 
   info = QMCKL_SUCCESS
   info_qmckl_dgemm_value = QMCKL_SUCCESS
-  info_qmckl_dgemm_Gx    = QMCKL_SUCCESS
-  info_qmckl_dgemm_Gy    = QMCKL_SUCCESS
-  info_qmckl_dgemm_Gz    = QMCKL_SUCCESS
-  info_qmckl_dgemm_lap   = QMCKL_SUCCESS
-  
+
   ! Don't compute exponentials when the result will be almost zero.
   ! TODO : Use numerical precision here
   cutoff = -dlog(1.d-15)
-  M = 1_8
-  N = mo_num * 1_8
+  M = mo_num
+  N = elec_num*5
   K = ao_num * 1_8
-  LDA = M
-  LDB = K
-  LDC = M
+  LDA = size(coef_normalized,1)
+  idx = 0
+  !do j = 1,ao_num
+  !do i = 1,mo_num
+  !  idx = idx + 1
+  !  coef_all(idx) = coef_normalized(i,j)
+  !end do
+  !end do
+  !idx = 0
+  !do j = 1,mo_num
+  !do i = 1,ao_num
+  !  idx = idx + 1
+  !  coef_trans(j,i) = coef_all(idx)
+  !end do
+  !end do
 
-  do ielec = 1, elec_num
-          ! Value
-          info_qmckl_dgemm_value = qmckl_dgemm(context,TransA, TransB, M, N, K, alpha,     &
-                                         ao_vgl(:, ielec, 1), LDA, &
-                                         coef_normalized(1:ao_num,1:mo_num),size(coef_normalized,1) * 1_8,    &
-                                         beta,                                       &
-                                         mo_vgl(:,ielec,1),LDC)
-          ! Grad_x
-          info_qmckl_dgemm_Gx = qmckl_dgemm(context,TransA, TransB, M, N, K, alpha,     &
-                                         ao_vgl(:, ielec, 2), LDA, &
-                                         coef_normalized(1:ao_num,1:mo_num),size(coef_normalized,1) * 1_8,    &
-                                         beta,                                       &
-                                         mo_vgl(:,ielec,2),LDC)
-          ! Grad_y
-          info_qmckl_dgemm_Gy = qmckl_dgemm(context,TransA, TransB, M, N, K, alpha,     &
-                                         ao_vgl(:, ielec,  3), LDA, &
-                                         coef_normalized(1:ao_num,1:mo_num),size(coef_normalized,1) * 1_8,    &
-                                         beta,                                       &
-                                         mo_vgl(:,ielec,3),LDC)
-          ! Grad_z
-          info_qmckl_dgemm_Gz = qmckl_dgemm(context,TransA, TransB, M, N, K, alpha,     &
-                                         ao_vgl(:, ielec,  4), LDA, &
-                                         coef_normalized(1:ao_num,1:mo_num),size(coef_normalized,1) * 1_8,    &
-                                         beta,                                       &
-                                         mo_vgl(:,ielec,4),LDC)
-          ! Lapl_z
-          info_qmckl_dgemm_lap = qmckl_dgemm(context, TransA, TransB, M, N, K, alpha,     &
-                                         ao_vgl(:, ielec,  5), LDA, &
-                                         coef_normalized(1:ao_num,1:mo_num),size(coef_normalized,1) * 1_8,    &
-                                         beta,                                       &
-                                         mo_vgl(:,ielec,5),LDC)
-  end do
+  ao_vgl_big = reshape(ao_vgl(:, :, :),(/ao_num, elec_num*5_8/))
+  LDB = size(ao_vgl_big,1)
+  LDC = size(mo_vgl_big,1)
 
-  if(info_qmckl_dgemm_value .eq. QMCKL_SUCCESS .and.  &
-     info_qmckl_dgemm_Gx    .eq. QMCKL_SUCCESS .and.  &
-     info_qmckl_dgemm_Gy    .eq. QMCKL_SUCCESS .and.  &
-     info_qmckl_dgemm_Gz    .eq. QMCKL_SUCCESS .and.  &
-     info_qmckl_dgemm_lap   .eq. QMCKL_SUCCESS        ) then
-     info = QMCKL_SUCCESS
-   else
-     info = QMCKL_FAILURE
-   end if
-  
+  info = qmckl_dgemm(context,TransA, TransB, M, N, K, alpha,     &
+                                 coef_normalized,size(coef_normalized,1)*1_8,    &
+                                 ao_vgl_big, size(ao_vgl_big,1)*1_8, &
+                                 beta,                                       &
+                                 mo_vgl_big,LDC)
+  mo_vgl = reshape(mo_vgl_big,(/mo_num,elec_num,5_8/))
+
+  deallocate(mo_vgl_big)
+  deallocate(ao_vgl_big)
+
 end function qmckl_compute_mo_basis_vgl_f
     #+end_src
 
-   #+CALL: generate_c_header(table=qmckl_mo_basis_gaussian_vgl_args,rettyp=get_value("CRetType"),fname="qmckl_compute_mo_basis_vgl"))
+   #+CALL: generate_c_header(table=qmckl_mo_basis_vgl_args,rettyp=get_value("CRetType"),fname="qmckl_compute_mo_basis_vgl"))
 
    #+RESULTS:
    #+begin_src c :tangle (eval h_func) :comments org
@@ -562,11 +598,11 @@ end function qmckl_compute_mo_basis_vgl_f
 	 const int64_t elec_num,
 	 const double* coef_normalized,
 	 const double* ao_vgl,
-	 double* const mo_vgl ); 
+	 double* const mo_vgl );
    #+end_src
 
 
-    #+CALL: generate_c_interface(table=qmckl_mo_basis_gaussian_vgl_args,rettyp=get_value("CRetType"),fname="qmckl_compute_mo_basis_vgl"))
+    #+CALL: generate_c_interface(table=qmckl_mo_basis_vgl_args,rettyp=get_value("CRetType"),fname="qmckl_compute_mo_basis_vgl"))
 
     #+RESULTS:
     #+begin_src f90 :tangle (eval f) :comments org :exports none
@@ -598,7 +634,7 @@ end function qmckl_compute_mo_basis_vgl_f
 import numpy as np
 
 def f(a,x,y):
-    return np.sum( [c * np.exp( -b*(np.linalg.norm(x-y))**2) for b,c in a] ) 
+    return np.sum( [c * np.exp( -b*(np.linalg.norm(x-y))**2) for b,c in a] )
 
 def df(a,x,y,n):
     h0 = 1.e-6
@@ -670,7 +706,7 @@ const int64_t   nucl_num      = chbrclf_nucl_num;
 const double*   nucl_charge   = chbrclf_charge;
 const double*   nucl_coord    = &(chbrclf_nucl_coord[0][0]);
 
-rc = qmckl_set_electron_num (context, elec_up_num, elec_dn_num);  
+rc = qmckl_set_electron_num (context, elec_up_num, elec_dn_num);
 assert (rc == QMCKL_SUCCESS);
 
 rc = qmckl_set_electron_walk_num (context, walk_num);
@@ -678,16 +714,16 @@ assert (rc == QMCKL_SUCCESS);
 
 assert(qmckl_electron_provided(context));
 
-rc = qmckl_set_electron_coord (context, 'N', elec_coord);                                     
+rc = qmckl_set_electron_coord (context, 'N', elec_coord, walk_num*elec_num*3);
 assert(rc == QMCKL_SUCCESS);
 
 rc = qmckl_set_nucleus_num (context, nucl_num);
 assert(rc == QMCKL_SUCCESS);
 
-rc = qmckl_set_nucleus_coord (context, 'T', &(nucl_coord[0]));
+rc = qmckl_set_nucleus_coord (context, 'T', &(nucl_coord[0]), nucl_num*3);
 assert(rc == QMCKL_SUCCESS);
 
-rc = qmckl_set_nucleus_charge(context, nucl_charge);
+rc = qmckl_set_nucleus_charge(context, nucl_charge, nucl_num);
 assert(rc == QMCKL_SUCCESS);
 
 assert(qmckl_nucleus_provided(context));
@@ -719,45 +755,45 @@ rc = qmckl_set_ao_basis_prim_num (context, chbrclf_prim_num);
 assert(rc == QMCKL_SUCCESS);
 assert(!qmckl_ao_basis_provided(context));
 
-rc = qmckl_set_ao_basis_nucleus_index (context, nucleus_index);
+rc = qmckl_set_ao_basis_nucleus_index (context, nucleus_index, nucl_num);
 assert(rc == QMCKL_SUCCESS);
 assert(!qmckl_ao_basis_provided(context));
 
-rc = qmckl_set_ao_basis_nucleus_shell_num (context, nucleus_shell_num);
+rc = qmckl_set_ao_basis_nucleus_shell_num (context, nucleus_shell_num, nucl_num);
 assert(rc == QMCKL_SUCCESS);
 assert(!qmckl_ao_basis_provided(context));
 
-rc = qmckl_set_ao_basis_shell_ang_mom (context, shell_ang_mom);
+rc = qmckl_set_ao_basis_shell_ang_mom (context, shell_ang_mom, chbrclf_shell_num);
 assert(rc == QMCKL_SUCCESS);
 assert(!qmckl_ao_basis_provided(context));
 
-rc = qmckl_set_ao_basis_shell_factor  (context, shell_factor);
+rc = qmckl_set_ao_basis_shell_factor  (context, shell_factor, chbrclf_shell_num);
 assert(rc == QMCKL_SUCCESS);
 assert(!qmckl_ao_basis_provided(context));
 
-rc = qmckl_set_ao_basis_shell_prim_num (context, shell_prim_num);
+rc = qmckl_set_ao_basis_shell_prim_num (context, shell_prim_num, chbrclf_shell_num);
 assert(rc == QMCKL_SUCCESS);
 assert(!qmckl_ao_basis_provided(context));
 
-rc = qmckl_set_ao_basis_shell_prim_index (context, shell_prim_index);
+rc = qmckl_set_ao_basis_shell_prim_index (context, shell_prim_index, chbrclf_shell_num);
 assert(rc == QMCKL_SUCCESS);
 assert(!qmckl_ao_basis_provided(context));
 
-rc = qmckl_set_ao_basis_exponent      (context, exponent);
+rc = qmckl_set_ao_basis_exponent      (context, exponent, chbrclf_prim_num);
 assert(rc == QMCKL_SUCCESS);
 assert(!qmckl_ao_basis_provided(context));
 
-rc = qmckl_set_ao_basis_coefficient   (context, coefficient);
+rc = qmckl_set_ao_basis_coefficient   (context, coefficient, chbrclf_prim_num);
 assert(rc == QMCKL_SUCCESS);
 assert(!qmckl_ao_basis_provided(context));
 
-rc = qmckl_set_ao_basis_prim_factor (context, prim_factor);
+rc = qmckl_set_ao_basis_prim_factor (context, prim_factor, chbrclf_prim_num);
 assert(rc == QMCKL_SUCCESS);
 
 rc = qmckl_set_ao_basis_ao_num(context, chbrclf_ao_num);
 assert(rc == QMCKL_SUCCESS);
 
-rc = qmckl_set_ao_basis_ao_factor (context, ao_factor);
+rc = qmckl_set_ao_basis_ao_factor (context, ao_factor, chbrclf_ao_num);
 assert(rc == QMCKL_SUCCESS);
 
 assert(qmckl_ao_basis_provided(context));
@@ -765,7 +801,8 @@ assert(qmckl_ao_basis_provided(context));
 
 double ao_vgl[5][walk_num][elec_num][chbrclf_ao_num];
 
-rc = qmckl_get_ao_vgl(context, &(ao_vgl[0][0][0][0]));
+rc = qmckl_get_ao_basis_ao_vgl(context, &(ao_vgl[0][0][0][0]),
+     (int64_t) 5*walk_num*elec_num*chbrclf_ao_num);
 assert (rc == QMCKL_SUCCESS);
 
 /* Set up MO data */
@@ -785,10 +822,10 @@ rc = qmckl_get_mo_basis_vgl(context, &(mo_vgl[0][0][0]));
 assert (rc == QMCKL_SUCCESS);
 
 // Test overlap of MO
-//double point_x[100];
-//double point_y[100];
-//double point_z[100];
-//int32_t npoints=100;
+//double point_x[10];
+//double point_y[10];
+//double point_z[10];
+//int32_t npoints=10;
 //// obtain points
 //double dr = 20./(npoints-1);
 //double dr3 = dr*dr*dr;
@@ -802,15 +839,16 @@ assert (rc == QMCKL_SUCCESS);
 //double ovlmo1 = 0.0;
 //// Calculate overlap
 //for (int i=0;i<npoints;++i) {
-//  printf(".");
 //  fflush(stdout);
 //  for (int j=0;j<npoints;++j) {
+//  printf(" .. ");
 //    for (int k=0;k<npoints;++k) {
+//  printf(" . ");
 //      // Set point
 //      elec_coord[0] = point_x[i];
 //      elec_coord[1] = point_y[j];
 //      elec_coord[2] = point_z[k];
-//      rc = qmckl_set_electron_coord (context, 'N', elec_coord);                                     
+//      rc = qmckl_set_electron_coord (context, 'N', elec_coord);
 //      assert(rc == QMCKL_SUCCESS);
 //
 //      // Calculate value of MO (1st electron)
@@ -838,8 +876,8 @@ printf(" mo_vgl mo_vgl[1][26][223] %25.15e\n", mo_vgl[1][2][3]);
 printf(" mo_vgl mo_vgl[0][26][224] %25.15e\n", mo_vgl[0][2][3]);
 printf(" mo_vgl mo_vgl[1][26][224] %25.15e\n", mo_vgl[1][2][3]);
 printf("\n");
-}  
- 
+}
+
      #+end_src
 
 * End of files                                                     :noexport:

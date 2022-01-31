@@ -2,7 +2,7 @@
 #
 # Installs the htmlize Emacs plugin
 
-./tools/missing git clone "https://github.com/hniksic/emacs-htmlize"
+${abs_srcdir}/tools/missing git clone "https://github.com/TREX-CoE/emacs-htmlize"
 mv emacs-htmlize/htmlize.el $1
 rm -rf emacs-htmlize
 

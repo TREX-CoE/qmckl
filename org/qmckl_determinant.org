@@ -1,0 +1,2100 @@
+#+TITLE: Slater Determinant
+#+SETUPFILE: ../tools/theme.setup
+#+INCLUDE: ../tools/lib.org
+
+The slater deteminant is required for the calculation of the
+wavefunction, gradient, and derivatives. These quantities will be used
+to calculate the local Energy (\[E_L\]).
+
+ψ(x) = det|ϕ₁(x₁)...ϕᵢ(yᵢ)...ϕₙ(xₙ)|
+
+The above slater-matrix is also required and is denoted by Dᵢⱼ(x) such that:
+
+ψ(x) = det|Dᵢⱼ(x)|
+
+We also require the inverse of the slater-matrix which is denoted by D⁻¹ᵢⱼ(x).
+Using this notation, the acceptance probability which is proportional to
+ψ(y)/ψ(x) can be calculated as follows:
+
+ψ(yᵢ)/ψ(xᵢ) = ∑ⱼDᵢⱼ(y)D⁻¹ⱼᵢ(x)
+
+Concerning the gradient and laplacian, in fact what is actually
+calculated is the ratio of the gradient/laplacian and the determinant
+of the slater matrix:
+
+∇ψ(x)/ψ(x)
+
+and
+
+∇²ψ(x)/ψ(x)
+
+This avoids the unnecessary multiplication and division of by the
+determinant ψ(x).
+
+
+* Headers                                                          :noexport:
+  #+begin_src elisp :noexport :results none
+(org-babel-lob-ingest "../tools/lib.org")
+  #+end_src
+
+  #+begin_src c :tangle (eval h_private_type)
+#ifndef QMCKL_DETERMINANT_HPT
+#define QMCKL_DETERMINANT_HPT
+
+#include <stdbool.h>
+  #+end_src
+
+  #+begin_src c :tangle (eval c_test) :noweb yes
+#include "qmckl.h"
+#include "assert.h"
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#include <stdio.h>
+#include <math.h>
+#include "chbrclf.h"
+#include "qmckl_ao_private_func.h"
+#include "qmckl_mo_private_func.h"
+#include "qmckl_determinant_private_func.h"
+
+int main() {
+    qmckl_context context;
+    context = qmckl_context_create();
+
+    qmckl_exit_code rc;
+  #+end_src
+
+  #+begin_src c :tangle (eval c)
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#ifdef HAVE_STDINT_H
+#include <stdint.h>
+#elif HAVE_INTTYPES_H
+#include <inttypes.h>
+#endif
+
+#include <stdlib.h>
+#include <string.h>
+#include <stdbool.h>
+#include <assert.h>
+
+#include "qmckl.h"
+#include "qmckl_context_private_type.h"
+#include "qmckl_memory_private_type.h"
+#include "qmckl_memory_private_func.h"
+#include "qmckl_ao_private_type.h"
+#include "qmckl_ao_private_func.h"
+#include "qmckl_mo_private_type.h"
+#include "qmckl_mo_private_func.h"
+#include "qmckl_determinant_private_type.h"
+#include "qmckl_determinant_private_func.h"
+  #+end_src
+
+* Context
+
+  The following arrays are stored in the context:
+
+  |------------------+------------------------------------------------+------------------------------------|
+  | ~type~           | ~char~                                         | α (~'A'~) or β (~'B'~) determinant |
+  | ~walk_num~       | ~int64_t~                                      | Number of walkers                  |
+  | ~det_num_alpha~  | ~int64_t~                                      | Number of determinants per walker  |
+  | ~det_num_beta~   | ~int64_t~                                      | Number of determinants per walker  |
+  | ~mo_index_alpha~ | ~mo_index[det_num_alpha][walk_num][alpha_num]~ | Index of MOs for each walker       |
+  | ~mo_index_beta~  | ~mo_index[det_num_beta][walk_num][beta_num]~   | Index of MOs for each walker       |
+
+  Computed data:
+
+  |-----------------------------+------------------------------------------------------+-------------------------------------------------------------------------------------------|
+  | ~up_num~                    | ~int64_t~                                            | Number of number of α electrons                                                           |
+  | ~donwn_num~                 | ~int64_t~                                            | Number of number of β electrons                                                           |
+  | ~det_value_alpha~           | ~[det_num_alpha][walk_num]~                          | The α slater matrix for each determinant of each walker.                                  |
+  | ~det_value_alpha_date~      | ~int64_t~                                            | Date of The α slater matrix for each determinant of each walker.                          |
+  | ~det_value_beta~            | ~[det_num_beta][walk_num]~                           | The β slater matrix for each determinant of each walker.                                  |
+  | ~det_value_beta_date~       | ~int64_t~                                            | Date of The β slater matrix for each determinant of each walker.                          |
+  | ~det_adj_matrix_alpha~      | ~[det_num_alpha][walk_num][alpha_num][alpha_num]~    | Adjoint of the α slater matrix for each determinant of each walker.                       |
+  | ~det_adj_matrix_alpha_date~ | ~int64_t~                                            | Date of the Adjoint of the α slater matrix for each determinant of each walker.           |
+  | ~det_adj_matrix_beta~       | ~[det_num_beta][walk_num][beta_num][beta_num]~       | Adjoint of the β slater matrix for each determinant of each walker.                       |
+  | ~det_adj_matrix_beta_date~  | ~int64_t~                                            | Date of the Adjoint of the β slater matrix for each determinant of each walker.           |
+  |-----------------------------+------------------------------------------------------+-------------------------------------------------------------------------------------------|
+  | ~det_vgl_alpha~             | ~[5][det_num_alpha][walk_num][alpha_num][alpha_num]~ | Value, gradients, Laplacian of Dᵅᵢⱼ(x) at electron positions                              |
+  | ~det_vgl_alpha_date~        | ~int64_t~                                            | Late modification date of Value, gradients, Laplacian of the MOs at electron positions    |
+  | ~det_vgl_beta~              | ~[5][det_num_beta][walk_num][beta_num][beta_num]~    | Value, gradients, Laplacian of Dᵝᵢⱼ(x) at electron positions                              |
+  | ~det_vgl_beta_date~         | ~int64_t~                                            | Late modification date of Value, gradients, Laplacian of the MOs at electron positions    |
+  | ~det_inv_matrix_alpha~      | ~[det_num_alpha][walk_num][alpha_num][alpha_num]~    | Inverse of the α electron slater matrix for each determinant of each walker.              |
+  | ~det_inv_matrix_alpha_date~ | ~int64_t~                                            | Date for the Inverse of the α electron slater matrix for each determinant of each walker. |
+  | ~det_inv_matrix_beta~       | ~[det_num_beta][walk_num][beta_num][beta_num]~       | Inverse of the β electron slater matrix for each determinant of each walker.              |
+  | ~det_inv_matrix_beta_date~  | ~int64_t~                                            | Date for the Inverse of the β electron slater matrix for each determinant of each walker. |
+  |-----------------------------+------------------------------------------------------+-------------------------------------------------------------------------------------------|
+
+** Data structure
+
+   #+begin_src c :comments org :tangle (eval h_private_type)
+typedef struct qmckl_determinant_struct {
+  char      type;
+  int64_t  walk_num;
+  int64_t  det_num_alpha;
+  int64_t  det_num_beta ;
+  int64_t  up_num;
+  int64_t  down_num;
+  int64_t* mo_index_alpha;
+  int64_t* mo_index_beta;
+
+  double  * det_value_alpha;
+  double  * det_value_beta;
+  double  * det_vgl_alpha;
+  double  * det_adj_matrix_alpha;
+  double  * det_inv_matrix_alpha;
+  double  * det_vgl_beta;
+  double  * det_adj_matrix_beta;
+  double  * det_inv_matrix_beta;
+  int64_t   det_value_alpha_date;
+  int64_t   det_vgl_alpha_date;
+  int64_t   det_adj_matrix_alpha_date;
+  int64_t   det_inv_matrix_alpha_date;
+  int64_t   det_value_beta_date;
+  int64_t   det_vgl_beta_date;
+  int64_t   det_adj_matrix_beta_date;
+  int64_t   det_inv_matrix_beta_date;
+
+  int32_t   uninitialized;
+  bool      provided;
+} qmckl_determinant_struct;
+   #+end_src
+
+   The ~uninitialized~ integer contains one bit set to one for each
+   initialization function which has not been called. It becomes equal
+   to zero after all initialization functions have been called. The
+   struct is then initialized and ~provided == true~.
+   Some values are initialized by default, and are not concerned by
+   this mechanism.
+
+   #+begin_src c :comments org :tangle (eval h_private_func)
+qmckl_exit_code qmckl_init_determinant(qmckl_context context);
+   #+end_src
+
+   #+begin_src c :comments org :tangle (eval c)
+qmckl_exit_code qmckl_init_determinant(qmckl_context context) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return false;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  ctx->det.uninitialized = (1 << 6) - 1;
+
+  return QMCKL_SUCCESS;
+}
+   #+end_src
+
+** Access functions
+
+   #+begin_src c :comments org :tangle (eval h_private_func) :exports none
+char      qmckl_get_determinant_type             (const qmckl_context context);
+int64_t   qmckl_get_determinant_walk_num         (const qmckl_context context);
+int64_t   qmckl_get_determinant_det_num_alpha    (const qmckl_context context);
+int64_t   qmckl_get_determinant_det_num_beta     (const qmckl_context context);
+int64_t*   qmckl_get_determinant_mo_index_alpha  (const qmckl_context context);
+int64_t*   qmckl_get_determinant_mo_index_beta   (const qmckl_context context);
+   #+end_src
+
+   When all the data for the slater determinants have been provided, the following
+   function returns ~true~.
+
+   #+begin_src c :comments org :tangle (eval h_func)
+bool      qmckl_determinant_provided           (const qmckl_context context);
+   #+end_src
+
+      #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
+bool qmckl_determinant_provided(const qmckl_context context) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return false;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  return ctx->det.provided;
+}
+      #+end_src
+
+   #+NAME:post
+   #+begin_src c :exports none
+if ( (ctx->det.uninitialized & mask) != 0) {
+  return NULL;
+}
+   #+end_src
+
+
+   #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
+char qmckl_get_determinant_type (const qmckl_context context) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return (char) 0;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  int32_t mask = 1;
+
+  if ( (ctx->det.uninitialized & mask) != 0) {
+    return (char) 0;
+  }
+
+  assert (ctx->det.type != (char) 0);
+  return ctx->det.type;
+}
+
+int64_t qmckl_get_determinant_walk_num (const qmckl_context context) {
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return (int64_t) 0;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  int32_t mask = 1 << 1;
+
+  if ( (ctx->det.uninitialized & mask) != 0) {
+    return (int64_t) 0;
+  }
+
+  assert (ctx->det.walk_num > (int64_t) 0);
+  return ctx->det.walk_num;
+}
+
+int64_t qmckl_get_determinant_det_num_alpha (const qmckl_context context) {
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return (int64_t) 0;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  int32_t mask = 1 << 2;
+
+  if ( (ctx->det.uninitialized & mask) != 0) {
+    return (int64_t) 0;
+  }
+
+  assert (ctx->det.det_num_alpha > (int64_t) 0);
+  return ctx->det.det_num_alpha;
+}
+
+int64_t qmckl_get_determinant_det_num_beta (const qmckl_context context) {
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return (int64_t) 0;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  int32_t mask = 1 << 3;
+
+  if ( (ctx->det.uninitialized & mask) != 0) {
+    return (int64_t) 0;
+  }
+
+  assert (ctx->det.det_num_beta > (int64_t) 0);
+  return ctx->det.det_num_beta;
+}
+
+int64_t* qmckl_get_determinant_mo_index_alpha (const qmckl_context context) {
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return NULL;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  int32_t mask = 1 << 4;
+
+  if ( (ctx->det.uninitialized & mask) != 0) {
+    return (int64_t) 0;
+  }
+
+  assert (ctx->det.mo_index_alpha != NULL);
+  return ctx->det.mo_index_alpha;
+}
+
+int64_t* qmckl_get_determinant_mo_index_beta (const qmckl_context context) {
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return NULL;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  int32_t mask = 1 << 5;
+
+  if ( (ctx->det.uninitialized & mask) != 0) {
+    return NULL;
+  }
+
+  assert (ctx->det.mo_index_beta != NULL);
+  return ctx->det.mo_index_beta;
+}
+
+   #+end_src
+
+** Initialization functions
+
+   To set the basis set, all the following functions need to be
+   called.
+
+   #+begin_src c :comments org :tangle (eval h_func)
+qmckl_exit_code  qmckl_set_determinant_type             (const qmckl_context context, const char t);
+qmckl_exit_code  qmckl_set_determinant_walk_num         (const qmckl_context context, const int64_t walk_num);
+qmckl_exit_code  qmckl_set_determinant_det_num_alpha    (const qmckl_context context, const int64_t det_num_alpha);
+qmckl_exit_code  qmckl_set_determinant_det_num_beta     (const qmckl_context context, const int64_t det_num_beta);
+qmckl_exit_code  qmckl_set_determinant_mo_index_alpha   (const qmckl_context context, const int64_t* mo_index_alpha);
+qmckl_exit_code  qmckl_set_determinant_mo_index_beta    (const qmckl_context context, const int64_t* mo_index_beta);
+   #+end_src
+
+   #+NAME:pre2
+   #+begin_src c  :exports none
+if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+  return QMCKL_NULL_CONTEXT;
+ }
+
+qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+   #+end_src
+
+   #+NAME:post2
+   #+begin_src c  :exports none
+ctx->det.uninitialized &= ~mask;
+ctx->det.provided = (ctx->det.uninitialized == 0);
+if (ctx->det.provided) {
+  qmckl_exit_code rc_ = qmckl_finalize_determinant(context);
+  if (rc_ != QMCKL_SUCCESS) return rc_;
+ }
+
+return QMCKL_SUCCESS;
+   #+end_src
+
+   #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
+qmckl_exit_code qmckl_set_determinant_type(qmckl_context context, const char t) {
+  <<pre2>>
+
+  if (t != 'G' && t != 'S') {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_set_determinant_type",
+                           NULL);
+  }
+
+  int32_t mask = 1;
+  ctx->det.type = t;
+
+  <<post2>>
+}
+
+qmckl_exit_code qmckl_set_determinant_walk_num(qmckl_context context, const int64_t walk_num) {
+  <<pre2>>
+
+  if (walk_num <= 0) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_set_determinant_walk_num",
+                           "walk_num <= 0");
+  }
+
+  int32_t mask = 1 << 1;
+  ctx->det.walk_num = walk_num;
+
+  <<post2>>
+}
+
+qmckl_exit_code qmckl_set_determinant_det_num_alpha(qmckl_context context, const int64_t det_num_alpha) {
+  <<pre2>>
+
+  if (det_num_alpha <= 0) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_set_determinant_det_num_alpha",
+                           "det_num_alpha <= 0");
+  }
+
+  int32_t mask = 1 << 2;
+  ctx->det.det_num_alpha = det_num_alpha;
+
+  <<post2>>
+}
+
+qmckl_exit_code qmckl_set_determinant_det_num_beta(qmckl_context context, const int64_t det_num_beta) {
+  <<pre2>>
+
+  if (det_num_beta <= 0) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_set_determinant_det_num_beta",
+                           "det_num_beta <= 0");
+  }
+
+  int32_t mask = 1 << 3;
+  ctx->det.det_num_beta = det_num_beta;
+
+  <<post2>>
+}
+
+qmckl_exit_code  qmckl_set_determinant_mo_index_alpha(qmckl_context context, const int64_t* mo_index_alpha) {
+  <<pre2>>
+
+  int32_t mask = 1 << 4;
+
+  if (ctx->det.mo_index_alpha != NULL) {
+    qmckl_exit_code rc = qmckl_free(context, ctx->det.mo_index_alpha);
+    if (rc != QMCKL_SUCCESS) {
+      return qmckl_failwith( context, rc,
+                             "qmckl_set_determinant_mo_index_alpha",
+                             NULL);
+    }
+  }
+
+  qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+  mem_info.size = ctx->det.walk_num * ctx->det.det_num_alpha *
+                  ctx->electron.up_num * sizeof(int64_t);
+  int64_t* new_array = (int64_t*) qmckl_malloc(context, mem_info);
+  if (new_array == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_ALLOCATION_FAILED,
+                           "qmckl_set_determinant_mo_index_alpha",
+                           NULL);
+  }
+
+  memcpy(new_array, mo_index_alpha, mem_info.size);
+
+  ctx->det.mo_index_alpha = new_array;
+
+  <<post2>>
+}
+
+qmckl_exit_code  qmckl_set_determinant_mo_index_beta(qmckl_context context, const int64_t* mo_index_beta) {
+  <<pre2>>
+
+  int32_t mask = 1 << 5;
+
+  if (ctx->det.mo_index_beta != NULL) {
+    qmckl_exit_code rc = qmckl_free(context, ctx->det.mo_index_beta);
+    if (rc != QMCKL_SUCCESS) {
+      return qmckl_failwith( context, rc,
+                             "qmckl_set_determinant_mo_index_beta",
+                             NULL);
+    }
+  }
+
+  qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+  mem_info.size = ctx->det.walk_num * ctx->det.det_num_beta *
+                  ctx->electron.down_num * sizeof(int64_t);
+  int64_t* new_array = (int64_t*) qmckl_malloc(context, mem_info);
+  if (new_array == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_ALLOCATION_FAILED,
+                           "qmckl_set_determinant_mo_index_beta",
+                           NULL);
+  }
+
+  memcpy(new_array, mo_index_beta, mem_info.size);
+
+  ctx->det.mo_index_beta = new_array;
+
+  <<post2>>
+}
+
+   #+end_src
+
+ When the basis set is completely entered, other data structures are
+ computed to accelerate the calculations.
+
+   #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_finalize_determinant(qmckl_context context);
+   #+end_src
+
+   #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
+qmckl_exit_code qmckl_finalize_determinant(qmckl_context context) {
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_finalize_determinant",
+                           NULL);
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  qmckl_exit_code rc;
+  rc = qmckl_provide_det_vgl_alpha(context);
+  if (rc != QMCKL_SUCCESS) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_finalize_determinant",
+                            NULL);
+  }
+  rc = qmckl_provide_det_vgl_beta(context);
+  if (rc != QMCKL_SUCCESS) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_finalize_determinant",
+                            NULL);
+  }
+  rc = qmckl_provide_det_inv_matrix_alpha(context);
+  if (rc != QMCKL_SUCCESS) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_finalize_determinant",
+                            NULL);
+  }
+  rc = qmckl_provide_det_inv_matrix_beta(context);
+  if (rc != QMCKL_SUCCESS) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_finalize_determinant",
+                            NULL);
+  }
+  return rc;
+}
+   #+end_src
+
+** Fortran Interfaces
+** Test
+* Computation
+** Determinant matrix
+   :PROPERTIES:
+   :Name:     qmckl_compute_det_vgl
+   :CRetType: qmckl_exit_code
+   :FRetType: qmckl_exit_code
+   :END:
+
+*** Get
+
+    #+begin_src c :comments org :tangle (eval h_func) :noweb yes
+qmckl_exit_code qmckl_get_det_vgl_alpha(qmckl_context context, double* const det_vgl_alpha);
+qmckl_exit_code qmckl_get_det_vgl_beta(qmckl_context context, double* const det_vgl_beta);
+    #+end_src
+
+    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code qmckl_get_det_vgl_alpha(qmckl_context context, double * const det_vgl_alpha) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_exit_code rc;
+
+  rc = qmckl_provide_ao_vgl(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_mo_vgl(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_det_vgl_alpha(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  size_t sze = 5 * ctx->det.det_num_alpha * ctx->det.walk_num *
+               ctx->electron.up_num * ctx->electron.up_num * sizeof(double);
+  memcpy(det_vgl_alpha, ctx->det.det_vgl_alpha, sze);
+
+  return QMCKL_SUCCESS;
+}
+
+qmckl_exit_code qmckl_get_det_vgl_beta(qmckl_context context, double * const det_vgl_beta) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_exit_code rc;
+
+  rc = qmckl_provide_ao_vgl(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_mo_vgl(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_det_vgl_beta(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  size_t sze = 5 * ctx->det.det_num_beta * ctx->det.walk_num *
+               ctx->electron.down_num * ctx->electron.down_num * sizeof(double);
+  memcpy(det_vgl_beta, ctx->det.det_vgl_beta, sze);
+
+  return QMCKL_SUCCESS;
+}
+    #+end_src
+
+*** Provide
+
+    #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_provide_det_vgl_alpha(qmckl_context context);
+qmckl_exit_code qmckl_provide_det_vgl_beta(qmckl_context context);
+    #+end_src
+
+    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code qmckl_provide_det_vgl_alpha(qmckl_context context) {
+
+  qmckl_exit_code rc;
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  if(!(ctx->nucleus.provided)) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_electron",
+                           NULL);
+  }
+
+  if(!(ctx->electron.provided)) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_electron",
+                           NULL);
+  }
+
+  if (!ctx->ao_basis.provided) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_ao_basis",
+                           NULL);
+  }
+
+  if (!ctx->mo_basis.provided) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_mo_basis",
+                           NULL);
+  }
+  rc = qmckl_provide_mo_vgl(context);
+  if (rc != QMCKL_SUCCESS) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_mo_basis",
+                           NULL);
+  }
+
+
+  if (!ctx->det.provided) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_determinant",
+                           NULL);
+  }
+
+  /* Compute if necessary */
+  if (ctx->electron.coord_new_date > ctx->det.det_vgl_alpha_date) {
+
+    /* Allocate array */
+    if (ctx->det.det_vgl_alpha == NULL) {
+
+      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+      mem_info.size = 5 * ctx->det.walk_num * ctx->det.det_num_alpha *
+                      ctx->electron.up_num * ctx->electron.up_num * sizeof(double);
+      double* det_vgl_alpha = (double*) qmckl_malloc(context, mem_info);
+
+      if (det_vgl_alpha == NULL) {
+        return qmckl_failwith( context,
+                               QMCKL_ALLOCATION_FAILED,
+                               "qmckl_det_vgl_alpha",
+                               NULL);
+      }
+      ctx->det.det_vgl_alpha = det_vgl_alpha;
+    }
+
+    if (ctx->det.type == 'G') {
+      rc = qmckl_compute_det_vgl_alpha(context,
+                                 ctx->det.det_num_alpha,
+                                 ctx->det.walk_num,
+                                 ctx->electron.up_num,
+                                 ctx->electron.down_num,
+                                 ctx->electron.num,
+                                 ctx->det.mo_index_alpha,
+                                 ctx->mo_basis.mo_num,
+                                 ctx->mo_basis.mo_vgl,
+                                 ctx->det.det_vgl_alpha);
+    } else {
+      return qmckl_failwith( context,
+                             QMCKL_FAILURE,
+                             "compute_det_vgl_alpha",
+                             "Not yet implemented");
+    }
+    if (rc != QMCKL_SUCCESS) {
+      return rc;
+    }
+
+    ctx->det.det_vgl_alpha_date = ctx->date;
+  }
+
+  return QMCKL_SUCCESS;
+}
+
+qmckl_exit_code qmckl_provide_det_vgl_beta(qmckl_context context) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  if(!(ctx->nucleus.provided)) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_electron",
+                           NULL);
+  }
+
+  if(!(ctx->electron.provided)) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_electron",
+                           NULL);
+  }
+
+  if (!ctx->ao_basis.provided) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_ao_basis",
+                           NULL);
+  }
+
+  if (!ctx->mo_basis.provided) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_mo_basis",
+                           NULL);
+  }
+
+  if (!ctx->det.provided) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_mo_basis",
+                           NULL);
+  }
+
+  /* Compute if necessary */
+  if (ctx->electron.coord_new_date > ctx->det.det_vgl_beta_date) {
+
+    /* Allocate array */
+    if (ctx->det.det_vgl_beta == NULL) {
+
+      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+      mem_info.size = 5 * ctx->det.walk_num * ctx->det.det_num_beta *
+                      ctx->electron.down_num * ctx->electron.down_num * sizeof(double);
+      double* det_vgl_beta = (double*) qmckl_malloc(context, mem_info);
+
+      if (det_vgl_beta == NULL) {
+        return qmckl_failwith( context,
+                               QMCKL_ALLOCATION_FAILED,
+                               "qmckl_det_vgl_beta",
+                               NULL);
+      }
+      ctx->det.det_vgl_beta = det_vgl_beta;
+    }
+
+    qmckl_exit_code rc;
+    if (ctx->det.type == 'G') {
+      rc = qmckl_compute_det_vgl_beta(context,
+                                 ctx->det.det_num_beta,
+                                 ctx->det.walk_num,
+                                 ctx->electron.up_num,
+                                 ctx->electron.down_num,
+                                 ctx->electron.num,
+                                 ctx->det.mo_index_beta,
+                                 ctx->mo_basis.mo_num,
+                                 ctx->mo_basis.mo_vgl,
+                                 ctx->det.det_vgl_beta);
+    } else {
+      return qmckl_failwith( context,
+                             QMCKL_FAILURE,
+                             "compute_det_vgl_beta",
+                             "Not yet implemented");
+    }
+    if (rc != QMCKL_SUCCESS) {
+      return rc;
+    }
+
+    ctx->det.det_vgl_beta_date = ctx->date;
+  }
+
+  return QMCKL_SUCCESS;
+}
+    #+end_src
+*** Compute alpha
+   :PROPERTIES:
+   :Name:     qmckl_compute_det_vgl_alpha
+   :CRetType: qmckl_exit_code
+   :FRetType: qmckl_exit_code
+   :END:
+
+    #+NAME: qmckl_compute_det_vgl_alpha_args
+    | Variable         | Type                                                       | In/Out | Description                               |
+    |------------------+------------------------------------------------------------+--------+-------------------------------------------|
+    | ~context~        | ~qmckl_context~                                            | in     | Global state                              |
+    | ~det_num_alpha~  | ~int64_t~                                                  | in     | Number of determinants                    |
+    | ~walk_num~       | ~int64_t~                                                  | in     | Number of walkers                         |
+    | ~alpha_num~      | ~int64_t~                                                  | in     | Number of electrons                       |
+    | ~beta_num~       | ~int64_t~                                                  | in     | Number of electrons                       |
+    | ~elec_num~       | ~int64_t~                                                  | in     | Number of electrons                       |
+    | ~mo_index_alpha~ | ~int64_t[det_num_alpha][walk_num][alpha_num]~              | in     | MO indices for electrons                  |
+    | ~mo_num~         | ~int64_t~                                                  | in     | Number of MOs                             |
+    | ~mo_vgl~         | ~double[5][elec_num][mo_num]~                              | in     | Value, gradients and Laplacian of the MOs |
+    | ~det_vgl_alpha~  | ~double[det_num_alpha][walk_num][5][alpha_num][alpha_num]~ | out    | Value, gradients and Laplacian of the Det |
+
+    #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+integer function qmckl_compute_det_vgl_alpha_f(context, &
+     det_num_alpha, walk_num, alpha_num, beta_num, elec_num, &
+     mo_index_alpha, mo_num, mo_vgl, det_vgl_alpha) &
+     result(info)
+  use qmckl
+  implicit none
+  integer(qmckl_context)  , intent(in)  :: context
+  integer*8, intent(in)             :: det_num_alpha
+  integer*8, intent(in)             :: walk_num
+  integer*8, intent(in)             :: alpha_num
+  integer*8, intent(in)             :: beta_num
+  integer*8, intent(in)             :: elec_num
+  integer*8, intent(in)             :: mo_num
+  integer*8, intent(in)             :: mo_index_alpha(alpha_num, walk_num, det_num_alpha)
+  double precision, intent(in)      :: mo_vgl(mo_num, elec_num, 5)
+  double precision, intent(inout)   :: det_vgl_alpha(alpha_num, alpha_num, 5, walk_num, det_num_alpha)
+  integer*8 :: idet, iwalk, ielec, mo_id, imo
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (walk_num <= 0) then
+     info = QMCKL_INVALID_ARG_2
+     return
+  endif
+
+  if (alpha_num <= 0) then
+     info = QMCKL_INVALID_ARG_3
+     return
+  endif
+
+  do idet  = 1, det_num_alpha
+  do iwalk = 1, walk_num
+    do ielec = 1, alpha_num
+      do imo = 1, alpha_num
+        mo_id = mo_index_alpha(imo,iwalk,idet)
+        ! Value
+        det_vgl_alpha(imo, ielec, 1, iwalk, idet) = mo_vgl(mo_id, ielec, 1)
+
+        ! Grad_x
+        det_vgl_alpha(imo, ielec, 2, iwalk, idet) = mo_vgl(mo_id, ielec, 2)
+
+        ! Grad_y
+        det_vgl_alpha(imo, ielec, 3, iwalk, idet) = mo_vgl(mo_id, ielec, 3)
+
+        ! Grad_z
+        det_vgl_alpha(imo, ielec, 4, iwalk, idet) = mo_vgl(mo_id, ielec, 4)
+
+        ! Lap
+        det_vgl_alpha(imo, ielec, 5, iwalk, idet) = mo_vgl(mo_id, ielec, 5)
+      end do
+    end do
+  end do
+  end do
+
+end function qmckl_compute_det_vgl_alpha_f
+    #+end_src
+
+    #+CALL: generate_c_header(table=qmckl_compute_det_vgl_alpha_args,rettyp=get_value("CRetType"),fname="qmckl_compute_det_vgl_alpha"))
+
+   #+RESULTS:
+   #+begin_src c :tangle (eval h_func) :comments org
+   qmckl_exit_code qmckl_compute_det_vgl_alpha (
+         const qmckl_context context,
+         const int64_t det_num_alpha,
+         const int64_t walk_num,
+         const int64_t alpha_num,
+         const int64_t beta_num,
+         const int64_t elec_num,
+         const int64_t* mo_index_alpha,
+         const int64_t mo_num,
+         const double* mo_vgl,
+         double* const det_vgl_alpha );
+   #+end_src
+
+   #+CALL: generate_c_interface(table=qmckl_compute_det_vgl_alpha_args,rettyp=get_value("CRetType"),fname="qmckl_compute_det_vgl_alpha"))
+
+    #+RESULTS:
+    #+begin_src f90 :tangle (eval f) :comments org :exports none
+    integer(c_int32_t) function qmckl_compute_det_vgl_alpha &
+        (context, &
+         det_num_alpha, &
+         walk_num, &
+         alpha_num, &
+         beta_num, &
+         elec_num, &
+         mo_index_alpha, &
+         mo_num, &
+         mo_vgl, &
+         det_vgl_alpha) &
+        bind(C) result(info)
+
+      use, intrinsic :: iso_c_binding
+      implicit none
+
+      integer (c_int64_t) , intent(in)  , value :: context
+      integer (c_int64_t) , intent(in)  , value :: det_num_alpha
+      integer (c_int64_t) , intent(in)  , value :: walk_num
+      integer (c_int64_t) , intent(in)  , value :: alpha_num
+      integer (c_int64_t) , intent(in)  , value :: beta_num
+      integer (c_int64_t) , intent(in)  , value :: elec_num
+      integer (c_int64_t) , intent(in)          :: mo_index_alpha(alpha_num,walk_num,det_num_alpha)
+      integer (c_int64_t) , intent(in)  , value :: mo_num
+      real    (c_double ) , intent(in)          :: mo_vgl(mo_num,elec_num,5)
+      real    (c_double ) , intent(out)         :: det_vgl_alpha(alpha_num,alpha_num,5,walk_num,det_num_alpha)
+
+      integer(c_int32_t), external :: qmckl_compute_det_vgl_alpha_f
+      info = qmckl_compute_det_vgl_alpha_f &
+             (context, &
+         det_num_alpha, &
+         walk_num, &
+         alpha_num, &
+         beta_num, &
+         elec_num, &
+         mo_index_alpha, &
+         mo_num, &
+         mo_vgl, &
+         det_vgl_alpha)
+
+    end function qmckl_compute_det_vgl_alpha
+    #+end_src
+
+*** Compute beta
+   :PROPERTIES:
+   :Name:     qmckl_compute_det_vgl_beta
+   :CRetType: qmckl_exit_code
+   :FRetType: qmckl_exit_code
+   :END:
+
+    #+NAME: qmckl_compute_det_vgl_beta_args
+    | Variable        | Type                                                    | In/Out | Description                               |
+    |-----------------+---------------------------------------------------------+--------+-------------------------------------------|
+    | ~context~       | ~qmckl_context~                                         | in     | Global state                              |
+    | ~det_num_beta~  | ~int64_t~                                               | in     | Number of determinants                    |
+    | ~walk_num~      | ~int64_t~                                               | in     | Number of walkers                         |
+    | ~alpha_num~     | ~int64_t~                                               | in     | Number of electrons                       |
+    | ~beta_num~      | ~int64_t~                                               | in     | Number of electrons                       |
+    | ~elec_num~      | ~int64_t~                                               | in     | Number of electrons                       |
+    | ~mo_index_beta~ | ~int64_t[det_num_beta][walk_num][beta_num]~             | in     | Number of electrons                       |
+    | ~mo_num~        | ~int64_t~                                               | in     | Number of MOs                             |
+    | ~mo_vgl~        | ~double[5][elec_num][mo_num]~                           | in     | Value, gradients and Laplacian of the MOs |
+    | ~det_vgl_beta~  | ~double[det_num_beta][walk_num][5][beta_num][beta_num]~ | out    | Value, gradients and Laplacian of the Det |
+
+    #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+integer function qmckl_compute_det_vgl_beta_f(context, &
+     det_num_beta, walk_num, alpha_num, beta_num, elec_num, &
+     mo_index_beta, mo_num, mo_vgl, det_vgl_beta) &
+     result(info)
+  use qmckl
+  implicit none
+  integer(qmckl_context)  , intent(in)  :: context
+  integer*8, intent(in)             :: det_num_beta
+  integer*8, intent(in)             :: walk_num
+  integer*8, intent(in)             :: alpha_num
+  integer*8, intent(in)             :: beta_num
+  integer*8, intent(in)             :: elec_num
+  integer*8, intent(in)             :: mo_num
+  integer*8, intent(in)             :: mo_index_beta(beta_num,walk_num,det_num_beta)
+  double precision, intent(in)      :: mo_vgl(mo_num, elec_num, 5)
+  double precision, intent(inout)   :: det_vgl_beta(beta_num, beta_num, 5, walk_num, det_num_beta)
+  integer*8 :: idet, iwalk, ielec, mo_id, imo
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (walk_num <= 0) then
+     info = QMCKL_INVALID_ARG_2
+     return
+  endif
+
+  if (beta_num <= 0) then
+     info = QMCKL_INVALID_ARG_3
+     return
+  endif
+
+  do idet = 1, det_num_beta
+  do iwalk = 1, walk_num
+    do ielec = 1, beta_num
+      do imo = 1, beta_num
+        mo_id = mo_index_beta(imo, iwalk, idet)
+        ! Value
+        det_vgl_beta(imo, ielec, 1, iwalk, idet) = mo_vgl(mo_id, alpha_num + ielec, 1)
+
+        ! Grad_x
+        det_vgl_beta(imo, ielec, 2, iwalk, idet) = mo_vgl(mo_id, alpha_num + ielec, 2)
+
+        ! Grad_y
+        det_vgl_beta(imo, ielec, 3, iwalk, idet) = mo_vgl(mo_id, alpha_num + ielec, 3)
+
+        ! Grad_z
+        det_vgl_beta(imo, ielec, 4, iwalk, idet) = mo_vgl(mo_id, alpha_num + ielec, 4)
+
+        ! Lap
+        det_vgl_beta(imo, ielec, 5, iwalk, idet) = mo_vgl(mo_id, alpha_num + ielec, 5)
+      end do
+    end do
+  end do
+  end do
+
+end function qmckl_compute_det_vgl_beta_f
+    #+end_src
+
+    #+CALL: generate_c_header(table=qmckl_compute_det_vgl_beta_args,rettyp=get_value("CRetType"),fname="qmckl_compute_det_vgl_beta"))
+
+   #+RESULTS:
+   #+begin_src c :tangle (eval h_func) :comments org
+   qmckl_exit_code qmckl_compute_det_vgl_beta (
+         const qmckl_context context,
+         const int64_t det_num_beta,
+         const int64_t walk_num,
+         const int64_t alpha_num,
+         const int64_t beta_num,
+         const int64_t elec_num,
+         const int64_t* mo_index_beta,
+         const int64_t mo_num,
+         const double* mo_vgl,
+         double* const det_vgl_beta );
+   #+end_src
+
+   #+CALL: generate_c_interface(table=qmckl_compute_det_vgl_beta_args,rettyp=get_value("CRetType"),fname="qmckl_compute_det_vgl_beta"))
+
+    #+RESULTS:
+    #+begin_src f90 :tangle (eval f) :comments org :exports none
+    integer(c_int32_t) function qmckl_compute_det_vgl_beta &
+        (context, &
+         det_num_beta, &
+         walk_num, &
+         alpha_num, &
+         beta_num, &
+         elec_num, &
+         mo_index_beta, &
+         mo_num, &
+         mo_vgl, &
+         det_vgl_beta) &
+        bind(C) result(info)
+
+      use, intrinsic :: iso_c_binding
+      implicit none
+
+      integer (c_int64_t) , intent(in)  , value :: context
+      integer (c_int64_t) , intent(in)  , value :: det_num_beta
+      integer (c_int64_t) , intent(in)  , value :: walk_num
+      integer (c_int64_t) , intent(in)  , value :: alpha_num
+      integer (c_int64_t) , intent(in)  , value :: beta_num
+      integer (c_int64_t) , intent(in)  , value :: elec_num
+      integer (c_int64_t) , intent(in)          :: mo_index_beta(beta_num,walk_num,det_num_beta)
+      integer (c_int64_t) , intent(in)  , value :: mo_num
+      real    (c_double ) , intent(in)          :: mo_vgl(mo_num,elec_num,5)
+      real    (c_double ) , intent(out)         :: det_vgl_beta(beta_num,beta_num,5,walk_num,det_num_beta)
+
+      integer(c_int32_t), external :: qmckl_compute_det_vgl_beta_f
+      info = qmckl_compute_det_vgl_beta_f &
+             (context, &
+         det_num_beta, &
+         walk_num, &
+         alpha_num, &
+         beta_num, &
+         elec_num, &
+         mo_index_beta, &
+         mo_num, &
+         mo_vgl, &
+         det_vgl_beta)
+
+    end function qmckl_compute_det_vgl_beta
+    #+end_src
+
+*** Test
+
+     #+begin_src c :tangle (eval c_test) :exports none
+
+#define walk_num chbrclf_walk_num
+#define elec_num chbrclf_elec_num
+#define shell_num chbrclf_shell_num
+#define ao_num chbrclf_ao_num
+
+int64_t elec_up_num   = chbrclf_elec_up_num;
+int64_t elec_dn_num   = chbrclf_elec_dn_num;
+double* elec_coord    = &(chbrclf_elec_coord[0][0][0]);
+const int64_t   nucl_num      = chbrclf_nucl_num;
+const double*   nucl_charge   = chbrclf_charge;
+const double*   nucl_coord    = &(chbrclf_nucl_coord[0][0]);
+
+rc = qmckl_set_electron_num (context, elec_up_num, elec_dn_num);
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_set_electron_walk_num (context, walk_num);
+assert (rc == QMCKL_SUCCESS);
+
+assert(qmckl_electron_provided(context));
+
+rc = qmckl_set_electron_coord (context, 'N', elec_coord, walk_num*elec_num*3);
+assert(rc == QMCKL_SUCCESS);
+
+rc = qmckl_set_nucleus_num (context, nucl_num);
+assert(rc == QMCKL_SUCCESS);
+
+rc = qmckl_set_nucleus_coord (context, 'T', &(nucl_coord[0]), nucl_num*3);
+assert(rc == QMCKL_SUCCESS);
+
+rc = qmckl_set_nucleus_charge(context, nucl_charge, nucl_num);
+assert(rc == QMCKL_SUCCESS);
+
+assert(qmckl_nucleus_provided(context));
+
+const int64_t *  nucleus_index     =  &(chbrclf_basis_nucleus_index[0]);
+const int64_t *  nucleus_shell_num =  &(chbrclf_basis_nucleus_shell_num[0]);
+const int32_t *  shell_ang_mom     =  &(chbrclf_basis_shell_ang_mom[0]);
+const int64_t *  shell_prim_num    =  &(chbrclf_basis_shell_prim_num[0]);
+const int64_t *  shell_prim_index  =  &(chbrclf_basis_shell_prim_index[0]);
+const double  *  shell_factor      =  &(chbrclf_basis_shell_factor[0]);
+const double  *  exponent          =  &(chbrclf_basis_exponent[0]);
+const double  *  coefficient       =  &(chbrclf_basis_coefficient[0]);
+const double  *  prim_factor       =  &(chbrclf_basis_prim_factor[0]);
+const double  *  ao_factor         =  &(chbrclf_basis_ao_factor[0]);
+
+const char typ = 'G';
+
+assert(!qmckl_ao_basis_provided(context));
+
+rc = qmckl_set_ao_basis_type (context, typ);
+assert(rc == QMCKL_SUCCESS);
+assert(!qmckl_ao_basis_provided(context));
+
+rc = qmckl_set_ao_basis_shell_num (context, chbrclf_shell_num);
+assert(rc == QMCKL_SUCCESS);
+assert(!qmckl_ao_basis_provided(context));
+
+rc = qmckl_set_ao_basis_prim_num (context, chbrclf_prim_num);
+assert(rc == QMCKL_SUCCESS);
+assert(!qmckl_ao_basis_provided(context));
+
+rc = qmckl_set_ao_basis_nucleus_index (context, nucleus_index, nucl_num);
+assert(rc == QMCKL_SUCCESS);
+assert(!qmckl_ao_basis_provided(context));
+
+rc = qmckl_set_ao_basis_nucleus_shell_num (context, nucleus_shell_num, nucl_num);
+assert(rc == QMCKL_SUCCESS);
+assert(!qmckl_ao_basis_provided(context));
+
+rc = qmckl_set_ao_basis_shell_ang_mom (context, shell_ang_mom, shell_num);
+assert(rc == QMCKL_SUCCESS);
+assert(!qmckl_ao_basis_provided(context));
+
+rc = qmckl_set_ao_basis_shell_factor  (context, shell_factor, shell_num);
+assert(rc == QMCKL_SUCCESS);
+assert(!qmckl_ao_basis_provided(context));
+
+rc = qmckl_set_ao_basis_shell_prim_num (context, shell_prim_num, shell_num);
+assert(rc == QMCKL_SUCCESS);
+assert(!qmckl_ao_basis_provided(context));
+
+rc = qmckl_set_ao_basis_shell_prim_index (context, shell_prim_index, shell_num);
+assert(rc == QMCKL_SUCCESS);
+assert(!qmckl_ao_basis_provided(context));
+
+rc = qmckl_set_ao_basis_exponent (context, exponent, chbrclf_prim_num);
+assert(rc == QMCKL_SUCCESS);
+assert(!qmckl_ao_basis_provided(context));
+
+rc = qmckl_set_ao_basis_coefficient (context, coefficient, chbrclf_prim_num);
+assert(rc == QMCKL_SUCCESS);
+assert(!qmckl_ao_basis_provided(context));
+
+rc = qmckl_set_ao_basis_prim_factor (context, prim_factor, chbrclf_prim_num);
+assert(rc == QMCKL_SUCCESS);
+
+rc = qmckl_set_ao_basis_ao_num(context, chbrclf_ao_num);
+assert(rc == QMCKL_SUCCESS);
+
+rc = qmckl_set_ao_basis_ao_factor (context, ao_factor, chbrclf_ao_num);
+assert(rc == QMCKL_SUCCESS);
+
+assert(qmckl_ao_basis_provided(context));
+
+
+double ao_vgl[5][walk_num][elec_num][chbrclf_ao_num];
+
+rc = qmckl_get_ao_basis_ao_vgl(context, &(ao_vgl[0][0][0][0]), (int64_t) 5*walk_num*elec_num*chbrclf_ao_num);
+assert (rc == QMCKL_SUCCESS);
+
+/* Set up MO data */
+const int64_t mo_num = chbrclf_mo_num;
+rc = qmckl_set_mo_basis_mo_num(context, mo_num);
+assert (rc == QMCKL_SUCCESS);
+
+const double  * mo_coefficient          =  &(chbrclf_mo_coef[0]);
+
+rc = qmckl_set_mo_basis_coefficient(context, mo_coefficient);
+assert (rc == QMCKL_SUCCESS);
+
+assert(qmckl_mo_basis_provided(context));
+
+double mo_vgl[5][elec_num][chbrclf_mo_num];
+rc = qmckl_get_mo_basis_vgl(context, &(mo_vgl[0][0][0]));
+assert (rc == QMCKL_SUCCESS);
+
+/* Set up determinant data */
+
+const int64_t det_num_alpha = 1;
+const int64_t det_num_beta  = 1;
+int64_t mo_index_alpha[det_num_alpha][walk_num][elec_up_num];
+int64_t mo_index_beta[det_num_alpha][walk_num][elec_dn_num];
+
+int i, j, k;
+for(k = 0; k < det_num_alpha; ++k)
+  for(i = 0; i < walk_num; ++i)
+    for(j = 0; j < elec_up_num; ++j)
+      mo_index_alpha[k][i][j] = j + 1;
+for(k = 0; k < det_num_beta; ++k)
+  for(i = 0; i < walk_num; ++i)
+    for(j = 0; j < elec_up_num; ++j)
+      mo_index_beta[k][i][j] = j + 1;
+
+rc = qmckl_set_determinant_type (context, typ);
+assert(rc == QMCKL_SUCCESS);
+
+rc = qmckl_set_determinant_walk_num (context, walk_num);
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_set_determinant_det_num_alpha (context, det_num_alpha);
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_set_determinant_det_num_beta (context, det_num_beta);
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_set_determinant_mo_index_alpha (context, &(mo_index_alpha[0][0][0]));
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_set_determinant_mo_index_beta (context, &(mo_index_beta[0][0][0]));
+assert (rc == QMCKL_SUCCESS);
+
+// Get slater-determinant
+
+double det_vgl_alpha[det_num_alpha][walk_num][5][elec_up_num][elec_up_num];
+double det_vgl_beta[det_num_beta][walk_num][5][elec_dn_num][elec_dn_num];
+
+rc = qmckl_get_det_vgl_alpha(context, &(det_vgl_alpha[0][0][0][0][0]));
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_get_det_vgl_beta(context, &(det_vgl_beta[0][0][0][0][0]));
+assert (rc == QMCKL_SUCCESS);
+
+     #+end_src
+
+** Inverse of Determinant matrix
+   :PROPERTIES:
+   :Name:     qmckl_compute_det_inv_matrix
+   :CRetType: qmckl_exit_code
+   :FRetType: qmckl_exit_code
+   :END:
+
+*** Get
+
+    #+begin_src c :comments org :tangle (eval h_func) :noweb yes
+qmckl_exit_code qmckl_get_det_inv_matrix_alpha(qmckl_context context, double* const det_inv_matrix_alpha);
+qmckl_exit_code qmckl_get_det_inv_matrix_beta(qmckl_context context, double* const det_inv_matrix_beta);
+qmckl_exit_code qmckl_get_det_adj_matrix_alpha(qmckl_context context, double* const det_adj_matrix_alpha);
+qmckl_exit_code qmckl_get_det_adj_matrix_beta(qmckl_context context, double* const det_adj_matrix_beta);
+qmckl_exit_code qmckl_get_det_alpha(qmckl_context context, double* const det_adj_matrix_alpha);
+qmckl_exit_code qmckl_get_det_beta(qmckl_context context, double* const det_adj_matrix_beta);
+    #+end_src
+
+    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code qmckl_get_det_inv_matrix_alpha(qmckl_context context, double * const det_inv_matrix_alpha) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_exit_code rc;
+
+  rc = qmckl_provide_ao_vgl(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_mo_vgl(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_det_vgl_alpha(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_det_inv_matrix_alpha(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  size_t sze = ctx->det.det_num_alpha * ctx->det.walk_num * ctx->electron.up_num * ctx->electron.up_num;
+  memcpy(det_inv_matrix_alpha, ctx->det.det_inv_matrix_alpha, sze * sizeof(double));
+
+  return QMCKL_SUCCESS;
+}
+
+qmckl_exit_code qmckl_get_det_inv_matrix_beta(qmckl_context context, double * const det_inv_matrix_beta) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_exit_code rc;
+
+  rc = qmckl_provide_ao_vgl(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_mo_vgl(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_det_vgl_beta(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_det_inv_matrix_beta(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  size_t sze = ctx->det.det_num_alpha * ctx->det.walk_num * ctx->electron.down_num * ctx->electron.down_num;
+  memcpy(det_inv_matrix_beta, ctx->det.det_inv_matrix_beta, sze * sizeof(double));
+
+  return QMCKL_SUCCESS;
+}
+
+qmckl_exit_code qmckl_get_det_adj_matrix_alpha(qmckl_context context, double * const det_adj_matrix_alpha) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_exit_code rc;
+
+  rc = qmckl_provide_ao_vgl(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_mo_vgl(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_det_vgl_alpha(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_det_inv_matrix_alpha(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  size_t sze = ctx->det.det_num_alpha * ctx->det.walk_num * ctx->electron.up_num * ctx->electron.up_num;
+  memcpy(det_adj_matrix_alpha, ctx->det.det_adj_matrix_alpha, sze * sizeof(double));
+
+  return QMCKL_SUCCESS;
+}
+
+qmckl_exit_code qmckl_get_det_adj_matrix_beta(qmckl_context context, double * const det_adj_matrix_beta) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_exit_code rc;
+
+  rc = qmckl_provide_ao_vgl(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_mo_vgl(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_det_vgl_beta(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_det_inv_matrix_beta(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  size_t sze = ctx->det.det_num_alpha * ctx->det.walk_num * ctx->electron.down_num * ctx->electron.down_num;
+  memcpy(det_adj_matrix_beta, ctx->det.det_adj_matrix_beta, sze * sizeof(double));
+
+  return QMCKL_SUCCESS;
+}
+
+qmckl_exit_code qmckl_get_det_alpha(qmckl_context context, double * const det_value_alpha) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_exit_code rc;
+
+  rc = qmckl_provide_ao_vgl(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_mo_vgl(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_det_vgl_alpha(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_det_inv_matrix_alpha(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  size_t sze = ctx->det.det_num_alpha * ctx->det.walk_num;
+  memcpy(det_value_alpha, ctx->det.det_value_alpha, sze * sizeof(double));
+
+  return QMCKL_SUCCESS;
+}
+
+qmckl_exit_code qmckl_get_det_beta(qmckl_context context, double * const det_value_beta) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_exit_code rc;
+
+  rc = qmckl_provide_ao_vgl(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_mo_vgl(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_det_vgl_beta(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_det_inv_matrix_beta(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  size_t sze = ctx->det.det_num_alpha * ctx->det.walk_num;
+  memcpy(det_value_beta, ctx->det.det_value_beta, sze * sizeof(double));
+
+  return QMCKL_SUCCESS;
+}
+    #+end_src
+
+
+*** Provide
+
+    #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_provide_det_inv_matrix_alpha(qmckl_context context);
+qmckl_exit_code qmckl_provide_det_inv_matrix_beta(qmckl_context context);
+    #+end_src
+
+    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code qmckl_provide_det_inv_matrix_alpha(qmckl_context context) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  if(!(ctx->nucleus.provided)) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_electron",
+                           NULL);
+  }
+
+  if(!(ctx->electron.provided)) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_electron",
+                           NULL);
+  }
+
+  if (!ctx->ao_basis.provided) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_ao_basis",
+                           NULL);
+  }
+
+  if (!ctx->mo_basis.provided) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_mo_basis",
+                           NULL);
+  }
+
+  if (!ctx->det.provided) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_mo_basis",
+                           NULL);
+  }
+
+  /* Compute if necessary */
+  if (ctx->electron.coord_new_date > ctx->det.det_inv_matrix_alpha_date) {
+
+    /* Allocate array */
+    if (ctx->det.det_inv_matrix_alpha == NULL) {
+
+      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+      mem_info.size = ctx->det.walk_num * ctx->det.det_num_alpha *
+                      ctx->electron.up_num * ctx->electron.up_num * sizeof(double);
+      double* det_inv_matrix_alpha = (double*) qmckl_malloc(context, mem_info);
+
+      if (det_inv_matrix_alpha == NULL) {
+        return qmckl_failwith( context,
+                               QMCKL_ALLOCATION_FAILED,
+                               "qmckl_det_inv_matrix_alpha",
+                               NULL);
+      }
+      ctx->det.det_inv_matrix_alpha = det_inv_matrix_alpha;
+    }
+
+    if (ctx->det.det_adj_matrix_alpha == NULL) {
+
+      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+      mem_info.size = ctx->det.walk_num * ctx->det.det_num_alpha *
+                      ctx->electron.up_num * ctx->electron.up_num * sizeof(double);
+      double* det_adj_matrix_alpha = (double*) qmckl_malloc(context, mem_info);
+
+      if (det_adj_matrix_alpha == NULL) {
+        return qmckl_failwith( context,
+                               QMCKL_ALLOCATION_FAILED,
+                               "qmckl_det_adj_matrix_alpha",
+                               NULL);
+      }
+      ctx->det.det_adj_matrix_alpha = det_adj_matrix_alpha;
+    }
+
+    if (ctx->det.det_value_alpha == NULL) {
+
+      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+      mem_info.size = ctx->det.walk_num * ctx->det.det_num_alpha * sizeof(double);
+      double* det_value_alpha = (double*) qmckl_malloc(context, mem_info);
+
+      if (det_value_alpha == NULL) {
+        return qmckl_failwith( context,
+                               QMCKL_ALLOCATION_FAILED,
+                               "qmckl_det_value_alpha",
+                               NULL);
+      }
+      ctx->det.det_value_alpha = det_value_alpha;
+    }
+
+    qmckl_exit_code rc;
+    if (ctx->det.type == 'G') {
+      rc = qmckl_compute_det_inv_matrix_alpha(context,
+                                        ctx->det.det_num_alpha,
+                                        ctx->det.walk_num,
+                                        ctx->electron.up_num,
+                                        ctx->det.det_vgl_alpha,
+                                        ctx->det.det_value_alpha,
+                                        ctx->det.det_adj_matrix_alpha,
+                                        ctx->det.det_inv_matrix_alpha);
+    } else {
+      return qmckl_failwith( context,
+                             QMCKL_FAILURE,
+                             "compute_det_inv_matrix_alpha",
+                             "Not yet implemented");
+    }
+    if (rc != QMCKL_SUCCESS) {
+      return rc;
+    }
+
+    ctx->det.det_value_alpha_date = ctx->date;
+    ctx->det.det_adj_matrix_alpha_date = ctx->date;
+    ctx->det.det_inv_matrix_alpha_date = ctx->date;
+  }
+
+  return QMCKL_SUCCESS;
+}
+
+qmckl_exit_code qmckl_provide_det_inv_matrix_beta(qmckl_context context) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  if(!(ctx->nucleus.provided)) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_electron",
+                           NULL);
+  }
+
+  if(!(ctx->electron.provided)) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_electron",
+                           NULL);
+  }
+
+  if (!ctx->ao_basis.provided) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_ao_basis",
+                           NULL);
+  }
+
+  if (!ctx->mo_basis.provided) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_mo_basis",
+                           NULL);
+  }
+
+  if (!ctx->det.provided) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_mo_basis",
+                           NULL);
+  }
+
+  /* Compute if necessary */
+  if (ctx->electron.coord_new_date > ctx->det.det_inv_matrix_beta_date) {
+
+    /* Allocate array */
+    if (ctx->det.det_inv_matrix_beta == NULL) {
+
+      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+      mem_info.size = ctx->det.walk_num * ctx->det.det_num_beta *
+                      ctx->electron.down_num * ctx->electron.down_num * sizeof(double);
+      double* det_inv_matrix_beta = (double*) qmckl_malloc(context, mem_info);
+
+      if (det_inv_matrix_beta == NULL) {
+        return qmckl_failwith( context,
+                               QMCKL_ALLOCATION_FAILED,
+                               "qmckl_det_inv_matrix_beta",
+                               NULL);
+      }
+      ctx->det.det_inv_matrix_beta = det_inv_matrix_beta;
+    }
+
+    if (ctx->det.det_adj_matrix_beta == NULL) {
+
+      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+      mem_info.size = ctx->det.walk_num * ctx->det.det_num_beta *
+                      ctx->electron.down_num * ctx->electron.down_num * sizeof(double);
+      double* det_adj_matrix_beta = (double*) qmckl_malloc(context, mem_info);
+
+      if (det_adj_matrix_beta == NULL) {
+        return qmckl_failwith( context,
+                               QMCKL_ALLOCATION_FAILED,
+                               "qmckl_det_adj_matrix_beta",
+                               NULL);
+      }
+      ctx->det.det_adj_matrix_beta = det_adj_matrix_beta;
+    }
+
+    if (ctx->det.det_value_beta == NULL) {
+
+      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+      mem_info.size = ctx->det.walk_num * ctx->det.det_num_beta * sizeof(double);
+      double* det_value_beta = (double*) qmckl_malloc(context, mem_info);
+
+      if (det_value_beta == NULL) {
+        return qmckl_failwith( context,
+                               QMCKL_ALLOCATION_FAILED,
+                               "qmckl_det_value_beta",
+                               NULL);
+      }
+      ctx->det.det_value_beta = det_value_beta;
+    }
+
+    qmckl_exit_code rc;
+    if (ctx->det.type == 'G') {
+      rc = qmckl_compute_det_inv_matrix_beta(context,
+                                        ctx->det.det_num_beta,
+                                        ctx->det.walk_num,
+                                        ctx->electron.down_num,
+                                        ctx->det.det_vgl_beta,
+                                        ctx->det.det_value_beta,
+                                        ctx->det.det_adj_matrix_beta,
+                                        ctx->det.det_inv_matrix_beta);
+    } else {
+      return qmckl_failwith( context,
+                             QMCKL_FAILURE,
+                             "compute_det_inv_matrix_beta",
+                             "Not yet implemented");
+    }
+    if (rc != QMCKL_SUCCESS) {
+      return rc;
+    }
+
+    ctx->det.det_value_beta_date = ctx->date;
+    ctx->det.det_adj_matrix_beta_date = ctx->date;
+    ctx->det.det_inv_matrix_beta_date = ctx->date;
+  }
+
+  return QMCKL_SUCCESS;
+}
+    #+end_src
+
+*** Compute alpha
+   :PROPERTIES:
+   :Name:     qmckl_compute_det_inv_matrix_alpha
+   :CRetType: qmckl_exit_code
+   :FRetType: qmckl_exit_code
+   :END:
+
+   #+NAME: qmckl_det_inv_matrix_alpha_args
+    | Variable               | Type                                                       | In/Out | Description                                                  |
+    |------------------------+------------------------------------------------------------+--------+--------------------------------------------------------------|
+    | ~context~              | ~qmckl_context~                                            | in     | Global state                                                 |
+    | ~det_num_alpha~        | ~int64_t~                                                  | in     | Number of determinants                                       |
+    | ~walk_num~             | ~int64_t~                                                  | in     | Number of walkers                                            |
+    | ~alpha_num~            | ~int64_t~                                                  | in     | Number of electrons                                          |
+    | ~det_vgl_alpha~        | ~double[det_num_alpha][walk_num][5][alpha_num][alpha_num]~ | in     | determinant matrix Value, gradients and Laplacian of the MOs |
+    | ~det_value_alpha~      | ~double[det_num_alpha][walk_num]~                          | out    | value of determinant matrix                                  |
+    | ~det_adj_matrix_alpha~ | ~double[det_num_alpha][walk_num][alpha_num][alpha_num]~    | out    | adjoint of determinant matrix                                |
+    | ~det_inv_matrix_alpha~ | ~double[det_num_alpha][walk_num][alpha_num][alpha_num]~    | out    | inverse of determinant matrix                                |
+
+    #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+integer function qmckl_compute_det_inv_matrix_alpha_f(context, &
+     det_num_alpha, walk_num, alpha_num, det_vgl_alpha, det_value_alpha, det_adj_matrix_alpha, det_inv_matrix_alpha) &
+     result(info)
+  use qmckl
+  implicit none
+  integer(qmckl_context)  , intent(in)  :: context
+  integer*8, intent(in)             :: det_num_alpha
+  integer*8, intent(in)             :: walk_num
+  integer*8, intent(in)             :: alpha_num
+  double precision, intent(in)      :: det_vgl_alpha(alpha_num, alpha_num, 5, walk_num, det_num_alpha)
+  double precision, intent(inout)   :: det_value_alpha(walk_num, det_num_alpha)
+  double precision, intent(inout)   :: det_adj_matrix_alpha(alpha_num, alpha_num, walk_num, det_num_alpha)
+  double precision, intent(inout)   :: det_inv_matrix_alpha(alpha_num, alpha_num, walk_num, det_num_alpha)
+  double precision,dimension(:,:),allocatable  :: matA
+  double precision                  :: det_l
+  integer*8 :: idet, iwalk, ielec, mo_id, imo, LDA, res, i, j
+
+  allocate(matA(alpha_num, alpha_num))
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (det_num_alpha <= 0) then
+     info = QMCKL_INVALID_ARG_2
+     return
+  endif
+
+  if (walk_num <= 0) then
+     info = QMCKL_INVALID_ARG_3
+     return
+  endif
+
+  if (alpha_num <= 0) then
+     info = QMCKL_INVALID_ARG_4
+     return
+  endif
+
+  LDA = alpha_num
+  do idet = 1, det_num_alpha
+     do iwalk = 1, walk_num
+        ! Value
+        matA(1:alpha_num,1:alpha_num) = &
+             det_vgl_alpha(1:alpha_num, 1:alpha_num, 1, iwalk, idet)
+
+        res = qmckl_adjugate(context,                 &
+             alpha_num, matA, LDA,                    &
+             det_adj_matrix_alpha(1:alpha_num, 1:alpha_num, iwalk, idet), &
+             int(size(det_adj_matrix_alpha,1),8),     &
+             det_l)
+
+        det_inv_matrix_alpha(1:alpha_num, 1:alpha_num, iwalk, idet) = &
+             (1.d0/det_l) * &
+             det_adj_matrix_alpha(1:alpha_num, 1:alpha_num, iwalk, idet)
+
+        det_value_alpha(iwalk, idet) = det_l
+     end do
+  end do
+
+  deallocate(matA)
+end function qmckl_compute_det_inv_matrix_alpha_f
+    #+end_src
+
+   #+CALL: generate_c_header(table=qmckl_det_inv_matrix_alpha_args,rettyp=get_value("CRetType"),fname="qmckl_compute_det_inv_matrix_alpha"))
+
+   #+RESULTS:
+   #+begin_src c :tangle (eval h_func) :comments org
+   qmckl_exit_code qmckl_compute_det_inv_matrix_alpha (
+         const qmckl_context context,
+         const int64_t det_num_alpha,
+         const int64_t walk_num,
+         const int64_t alpha_num,
+         const double* det_vgl_alpha,
+         double* const det_value_alpha,
+         double* const det_adj_matrix_alpha,
+         double* const det_inv_matrix_alpha );
+   #+end_src
+
+    #+CALL: generate_c_interface(table=qmckl_det_inv_matrix_alpha_args,rettyp=get_value("CRetType"),fname="qmckl_compute_det_inv_matrix_alpha"))
+
+    #+RESULTS:
+    #+begin_src f90 :tangle (eval f) :comments org :exports none
+    integer(c_int32_t) function qmckl_compute_det_inv_matrix_alpha &
+        (context, &
+         det_num_alpha, &
+         walk_num, &
+         alpha_num, &
+         det_vgl_alpha, &
+         det_value_alpha, &
+         det_adj_matrix_alpha, &
+         det_inv_matrix_alpha) &
+        bind(C) result(info)
+
+      use, intrinsic :: iso_c_binding
+      implicit none
+
+      integer (c_int64_t) , intent(in)  , value :: context
+      integer (c_int64_t) , intent(in)  , value :: det_num_alpha
+      integer (c_int64_t) , intent(in)  , value :: walk_num
+      integer (c_int64_t) , intent(in)  , value :: alpha_num
+      real    (c_double ) , intent(in)          :: det_vgl_alpha(alpha_num,alpha_num,5,walk_num,det_num_alpha)
+      real    (c_double ) , intent(out)         :: det_value_alpha(walk_num,det_num_alpha)
+      real    (c_double ) , intent(out)         :: det_adj_matrix_alpha(alpha_num,alpha_num,walk_num,det_num_alpha)
+      real    (c_double ) , intent(out)         :: det_inv_matrix_alpha(alpha_num,alpha_num,walk_num,det_num_alpha)
+
+      integer(c_int32_t), external :: qmckl_compute_det_inv_matrix_alpha_f
+      info = qmckl_compute_det_inv_matrix_alpha_f &
+             (context, &
+         det_num_alpha, &
+         walk_num, &
+         alpha_num, &
+         det_vgl_alpha, &
+         det_value_alpha, &
+         det_adj_matrix_alpha, &
+         det_inv_matrix_alpha)
+
+    end function qmckl_compute_det_inv_matrix_alpha
+    #+end_src
+
+*** Compute beta
+   :PROPERTIES:
+   :Name:     qmckl_compute_det_inv_matrix_beta
+   :CRetType: qmckl_exit_code
+   :FRetType: qmckl_exit_code
+   :END:
+
+    #+NAME: qmckl_det_inv_matrix_beta_args
+    | Variable              | Type                                                    | In/Out | Description                                                  |
+    |-----------------------+---------------------------------------------------------+--------+--------------------------------------------------------------|
+    | ~context~             | ~qmckl_context~                                         | in     | Global state                                                 |
+    | ~det_num_beta~        | ~int64_t~                                               | in     | Number of determinants                                       |
+    | ~walk_num~            | ~int64_t~                                               | in     | Number of walkers                                            |
+    | ~beta_num~            | ~int64_t~                                               | in     | Number of electrons                                          |
+    | ~det_vgl_beta~        | ~double[det_num_beta][walk_num][5][beta_num][beta_num]~ | in     | determinant matrix Value, gradients and Laplacian of the MOs |
+    | ~det_value_beta~      | ~double[det_num_beta][walk_num]~                        | out    | value of determinant matrix                                  |
+    | ~det_adj_matrix_beta~ | ~double[det_num_beta][walk_num][beta_num][beta_num]~    | out    | adjoint of determinant matrix                                |
+    | ~det_inv_matrix_beta~ | ~double[det_num_beta][walk_num][beta_num][beta_num]~    | out    | inverse of determinant matrix                                |
+
+    #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+integer function qmckl_compute_det_inv_matrix_beta_f(context, &
+     det_num_beta, walk_num, beta_num, det_vgl_beta, det_value_beta, det_adj_matrix_beta, det_inv_matrix_beta) &
+     result(info)
+  use qmckl
+  implicit none
+  integer(qmckl_context)  , intent(in)  :: context
+  integer*8, intent(in)             :: det_num_beta
+  integer*8, intent(in)             :: walk_num
+  integer*8, intent(in)             :: beta_num
+  double precision, intent(in)      :: det_vgl_beta(beta_num, beta_num, 5, walk_num, det_num_beta)
+  double precision, intent(inout)   :: det_value_beta(walk_num, det_num_beta)
+  double precision, intent(inout)   :: det_adj_matrix_beta(beta_num, beta_num, walk_num, det_num_beta)
+  double precision, intent(inout)   :: det_inv_matrix_beta(beta_num, beta_num, walk_num, det_num_beta)
+  double precision,dimension(:,:),allocatable  :: matA
+  double precision                  :: det_l
+  integer*8 :: idet, iwalk, ielec, mo_id, imo, LDA, res
+
+  allocate(matA(beta_num, beta_num))
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (det_num_beta <= 0) then
+     info = QMCKL_INVALID_ARG_2
+     return
+  endif
+
+  if (walk_num <= 0) then
+     info = QMCKL_INVALID_ARG_3
+     return
+  endif
+
+  if (beta_num <= 0) then
+     info = QMCKL_INVALID_ARG_4
+     return
+  endif
+
+  LDA = beta_num
+  do idet = 1, det_num_beta
+     do iwalk = 1, walk_num
+        ! Value
+        matA(1:beta_num,1:beta_num) = &
+             det_vgl_beta(1:beta_num, 1:beta_num, 1, iwalk, idet)
+
+        res = qmckl_adjugate(context,                 &
+             beta_num, matA, LDA,                    &
+             det_adj_matrix_beta(1, 1, iwalk, idet), &
+             int(size(det_adj_matrix_beta,1),8),     &
+             det_l)
+
+        det_inv_matrix_beta(1:beta_num, 1:beta_num, iwalk, idet) = &
+             (1.d0/det_l) * &
+             det_adj_matrix_beta(1:beta_num, 1:beta_num, iwalk, idet)
+
+        det_value_beta(iwalk, idet) = det_l
+     end do
+  end do
+
+
+  deallocate(matA)
+end function qmckl_compute_det_inv_matrix_beta_f
+    #+end_src
+
+    #+CALL: generate_c_header(table=qmckl_det_inv_matrix_beta_args,rettyp=get_value("CRetType"),fname="qmckl_compute_det_inv_matrix_beta"))
+
+   #+RESULTS:
+   #+begin_src c :tangle (eval h_func) :comments org
+   qmckl_exit_code qmckl_compute_det_inv_matrix_beta (
+         const qmckl_context context,
+         const int64_t det_num_beta,
+         const int64_t walk_num,
+         const int64_t beta_num,
+         const double* det_vgl_beta,
+         double* const det_value_beta,
+         double* const det_adj_matrix_beta,
+         double* const det_inv_matrix_beta );
+   #+end_src
+
+    #+CALL: generate_c_interface(table=qmckl_det_inv_matrix_beta_args,rettyp=get_value("CRetType"),fname="qmckl_compute_det_inv_matrix_beta"))
+
+    #+RESULTS:
+    #+begin_src f90 :tangle (eval f) :comments org :exports none
+    integer(c_int32_t) function qmckl_compute_det_inv_matrix_beta &
+        (context, &
+         det_num_beta, &
+         walk_num, &
+         beta_num, &
+         det_vgl_beta, &
+         det_value_beta, &
+         det_adj_matrix_beta, &
+         det_inv_matrix_beta) &
+        bind(C) result(info)
+
+      use, intrinsic :: iso_c_binding
+      implicit none
+
+      integer (c_int64_t) , intent(in)  , value :: context
+      integer (c_int64_t) , intent(in)  , value :: det_num_beta
+      integer (c_int64_t) , intent(in)  , value :: walk_num
+      integer (c_int64_t) , intent(in)  , value :: beta_num
+      real    (c_double ) , intent(in)          :: det_vgl_beta(beta_num,beta_num,5,walk_num,det_num_beta)
+      real    (c_double ) , intent(out)         :: det_value_beta(walk_num,det_num_beta)
+      real    (c_double ) , intent(out)         :: det_adj_matrix_beta(beta_num,beta_num,walk_num,det_num_beta)
+      real    (c_double ) , intent(out)         :: det_inv_matrix_beta(beta_num,beta_num,walk_num,det_num_beta)
+
+      integer(c_int32_t), external :: qmckl_compute_det_inv_matrix_beta_f
+      info = qmckl_compute_det_inv_matrix_beta_f &
+             (context, &
+         det_num_beta, &
+         walk_num, &
+         beta_num, &
+         det_vgl_beta, &
+         det_value_beta, &
+         det_adj_matrix_beta, &
+         det_inv_matrix_beta)
+
+    end function qmckl_compute_det_inv_matrix_beta
+    #+end_src
+
+*** Test                                                           :noexport:
+     #+begin_src c :tangle (eval c_test) :exports none
+// Get adjoint of the slater-determinant
+
+double det_inv_matrix_alpha[det_num_alpha][walk_num][elec_up_num][elec_up_num];
+double det_inv_matrix_beta[det_num_beta][walk_num][elec_dn_num][elec_dn_num];
+
+rc = qmckl_get_det_inv_matrix_alpha(context, &(det_inv_matrix_alpha[0][0][0][0]));
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_get_det_inv_matrix_beta(context, &(det_inv_matrix_beta[0][0][0][0]));
+assert (rc == QMCKL_SUCCESS);
+
+     #+end_src
+
+* End of files                                                     :noexport:
+
+  #+begin_src c :tangle (eval h_private_type)
+#endif
+  #+end_src
+
+*** Test
+  #+begin_src c :tangle (eval c_test)
+    rc = qmckl_context_destroy(context);
+    assert (rc == QMCKL_SUCCESS);
+
+    return 0;
+}
+  #+end_src
+
+*** Compute file names
+    #+begin_src emacs-lisp
+; The following is required to compute the file names
+
+(setq pwd (file-name-directory buffer-file-name))
+(setq name (file-name-nondirectory (substring buffer-file-name 0 -4)))
+(setq f  (concat pwd name "_f.f90"))
+(setq fh (concat pwd name "_fh.f90"))
+(setq c  (concat pwd name ".c"))
+(setq h  (concat name ".h"))
+(setq h_private  (concat name "_private.h"))
+(setq c_test  (concat pwd "test_" name ".c"))
+(setq f_test  (concat pwd "test_" name "_f.f90"))
+
+; Minted
+(require 'ox-latex)
+(setq org-latex-listings 'minted)
+(add-to-list 'org-latex-packages-alist '("" "listings"))
+(add-to-list 'org-latex-packages-alist '("" "color"))
+
+    #+end_src
+
+
+# -*- mode: org -*-
+# vim: syntax=c

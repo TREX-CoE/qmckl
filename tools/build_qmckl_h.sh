@@ -99,7 +99,7 @@ EOF
 
 for i in ${HEADERS}
 do
-    header=${srcdir}/src/$i
+    header=${top_builddir}/src/$i
     if [ -f $header ] ; then
         echo "/* $header */" >> ${qmckl_h}
         cat $header >> ${qmckl_h}
