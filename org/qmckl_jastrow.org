@@ -2240,11 +2240,11 @@ f_{en} = \sum_{i,j<i} \left\{ \frac{ A_0 C_{ij}}{1 - A_1 C_{ij}} + \sum^{nord}_{
 
 *** Get
     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
-qmckl_exit_code qmckl_get_jastrow_factor_en(qmckl_context context, double* const factor_en);
+qmckl_exit_code qmckl_get_jastrow_factor_en(qmckl_context context, double* const factor_en, int64_t* size_max);
     #+end_src
 
     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
-qmckl_exit_code qmckl_get_jastrow_factor_en(qmckl_context context, double* const factor_en)
+qmckl_exit_code qmckl_get_jastrow_factor_en(qmckl_context context, double* const factor_en, int64_t* size_max)
 {
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return QMCKL_NULL_CONTEXT;
@@ -2258,7 +2258,9 @@ qmckl_exit_code qmckl_get_jastrow_factor_en(qmckl_context context, double* const
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
   assert (ctx != NULL);
 
-  memcpy(factor_en, ctx->jastrow.factor_en, ctx->electron.walk_num*sizeof(double));
+  int64_t sze=ctx->electron.walk_num;
+  memcpy(factor_en, ctx->jastrow.factor_en, sze*sizeof(double));
+  (*size_max)=sze;
 
   return QMCKL_SUCCESS;
 }
@@ -2359,7 +2361,7 @@ integer function qmckl_compute_factor_en_f(context, walk_num, elec_num, nucl_num
   integer*8             , intent(in)  :: walk_num, elec_num, aord_num, nucl_num, type_nucl_num
   integer*8             , intent(in)  :: type_nucl_vector(nucl_num)
   double precision      , intent(in)  :: aord_vector(aord_num + 1, type_nucl_num)
-  double precision      , intent(in)  :: en_distance_rescaled(walk_num, nucl_num, elec_num)
+  double precision      , intent(in)  :: en_distance_rescaled(elec_num, nucl_num, walk_num)
   double precision      , intent(out) :: factor_en(walk_num)
 
   integer*8 :: i, a, p, ipar, nw
@@ -2397,18 +2399,18 @@ integer function qmckl_compute_factor_en_f(context, walk_num, elec_num, nucl_num
   do nw =1, walk_num
   do a = 1, nucl_num
      do i = 1, elec_num
-        x = en_distance_rescaled(nw, a, i)
+        x = en_distance_rescaled(i, a, nw)
         power_ser = 0.0d0
 
         do p = 2, aord_num
-          x = x * en_distance_rescaled(nw, a, i)
+          x = x * en_distance_rescaled(i, a, nw)
           power_ser = power_ser + aord_vector(p + 1, type_nucl_vector(a)) * x
         end do
 
         factor_en(nw) = factor_en(nw) + aord_vector(1, type_nucl_vector(a)) *  &
-                                en_distance_rescaled(nw, a, i) /               &
+                                en_distance_rescaled(i, a, nw) /               &
                                 (1.0d0 + aord_vector(2, type_nucl_vector(a)) * &
-                                en_distance_rescaled(nw, a, i))                &
+                                en_distance_rescaled(i, a, nw))                &
                                 + power_ser
 
      end do
@@ -2464,7 +2466,7 @@ end function qmckl_compute_factor_en_f
       integer (c_int64_t) , intent(in)          :: type_nucl_vector(nucl_num)
       integer (c_int64_t) , intent(in)  , value :: aord_num
       real    (c_double ) , intent(in)          :: aord_vector(aord_num + 1, type_nucl_num)
-      real    (c_double ) , intent(in)          :: en_distance_rescaled(walk_num, nucl_num, elec_num)
+      real    (c_double ) , intent(in)          :: en_distance_rescaled(elec_num, nucl_num, walk_num)
       real    (c_double ) , intent(out)         :: factor_en(walk_num)
 
       integer(c_int32_t), external :: qmckl_compute_factor_en_f
@@ -2515,7 +2517,8 @@ print("factor_en        :",factor_en)
 assert(qmckl_jastrow_provided(context));
 
 double factor_en[walk_num];
-rc = qmckl_get_jastrow_factor_en(context, factor_en);
+size_max=0;
+rc = qmckl_get_jastrow_factor_en(context, factor_en,&size_max);
 
 // calculate factor_en
 assert(fabs(factor_en[0]+5.865822569188727) < 1.e-12);
@@ -2657,8 +2660,8 @@ integer function qmckl_compute_factor_en_deriv_e_f(context, walk_num, elec_num, 
   integer*8             , intent(in)  :: walk_num, elec_num, aord_num, nucl_num, type_nucl_num
   integer*8             , intent(in)  :: type_nucl_vector(nucl_num)
   double precision      , intent(in)  :: aord_vector(aord_num + 1, type_nucl_num)
-  double precision      , intent(in)  :: en_distance_rescaled(walk_num, elec_num, nucl_num)
-  double precision      , intent(in)  :: en_distance_rescaled_deriv_e(walk_num, 4, elec_num, nucl_num)
+  double precision      , intent(in)  :: en_distance_rescaled(elec_num, nucl_num, walk_num)
+  double precision      , intent(in)  :: en_distance_rescaled_deriv_e(4, elec_num, nucl_num, walk_num)
   double precision      , intent(out) :: factor_en_deriv_e(elec_num,4,walk_num)
 
   integer*8 :: i, a, p, ipar, nw, ii
