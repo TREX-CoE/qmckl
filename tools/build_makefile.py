@@ -48,7 +48,7 @@ def main():
         c_test_o  =  "tests/test_"+i+".$(OBJEXT)"
         f_test_o  =  "tests/test_"+i+"_f.$(OBJEXT)"
         c_test    =  "tests/test_"+i+".c"
-        f_test    =  "tests/test_"+i+"_f.f90"
+        f_test    =  "tests/test_"+i+"_f.F90"
         html      =  "share/doc/qmckl/html/"+i+".html"
         text      =  "share/doc/qmckl/text/"+i+".txt"
 
@@ -60,10 +60,10 @@ def main():
         h_type=i+"_type.h"
         h_private_func=i+"_private_func.h"
         h_private_type=i+"_private_type.h"
-        f90=i+"_f.f90"
+        F90=i+"_f.F90"
         fo=i+"_f.$(OBJEXT)"
-        fh_func=i+"_fh_func.f90"
-        fh_type=i+"_fh_type.f90"
+        fh_func=i+"_fh_func.F90"
+        fh_type=i+"_fh_type.F90"
 
         ORG_FILES      += [org]
         TANGLED_FILES  += [tangled]
@@ -132,17 +132,17 @@ def main():
                 DEPS[h_private_func]  = [tangled]
 
         if "(eval f)" in grep:
-            F_FILES += [f90]
+            F_FILES += [F90]
 
-            if f90 in DEPS:
-                DEPS[f90] += [tangled, "$(src_qmckl_fo)"]
+            if F90 in DEPS:
+                DEPS[F90] += [tangled, "$(src_qmckl_fo)"]
             else:
-                DEPS[f90]  = [tangled, "$(src_qmckl_fo)"]
+                DEPS[F90]  = [tangled, "$(src_qmckl_fo)"]
 
             if fo in DEPS:
-                DEPS[fo] += [f90, "$(src_qmckl_fo)"]
+                DEPS[fo] += [F90, "$(src_qmckl_fo)"]
             else:
-                DEPS[fo]  = [f90, "$(src_qmckl_fo)"]
+                DEPS[fo]  = [F90, "$(src_qmckl_fo)"]
 
         if "(eval fh_func)" in grep:
             FH_FUNC_FILES += [fh_func]

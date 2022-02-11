@@ -71,13 +71,16 @@ AC_LANG(C)
 
 # Checks for programs.
 AC_PROG_CC
+AC_PROG_F77
+
 # Make sure the c compiler supports C99
 m4_version_prereq([2.70],[], [AC_PROG_CC_C99])
 AS_IF([test "$ac_cv_prog_cc_c99" = "no"], [AC_MSG_ERROR([The compiler does not support C99])])
 AC_PROG_CC_C_O
 AC_PROG_FC
 AC_PROG_FC_C_O
-AC_FC_SRCEXT([f90])
+AC_FC_PP_DEFINE
+AC_FC_SRCEXT([F90])
 AC_FC_FREEFORM
 LT_INIT
 AC_PROG_INSTALL
@@ -192,6 +195,10 @@ esac
 
 
 # Options.
+AC_ARG_ENABLE(hpc, [AS_HELP_STRING([--enable-hpc],[Use HPC-optimized functions])], HAVE_HPC=$enableval, HAVE_HPC=no)
+AS_IF([test "$HAVE_HPC" = "yes"], [
+   AC_DEFINE([HAVE_HPC], [1], [If defined, activate HPC routines])
+])
 
 AC_ARG_ENABLE(debug, [AS_HELP_STRING([--enable-debug],[compile for debugging])], ok=$enableval, ok=no)
 if test "$ok" = "yes"; then
@@ -336,6 +343,7 @@ FCLAGS..........: ${FCFLAGS}
 LDFLAGS:........: ${LDFLAGS}
 LIBS............: ${LIBS}
 USE CHAMELEON...: ${with_chameleon}
+HPC version.....: ${HAVE_HPC}
 
 Package features:
   ${ARGS}
