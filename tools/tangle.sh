@@ -22,7 +22,7 @@ function tangle()
 {
     local org_file=$1
     local c_file=${org_file%.org}.c
-    local f_file=${org_file%.org}.f90
+    local f_file=${org_file%.org}.F90
 
     if [[ ${org_file} -ot ${c_file} ]] ; then
         return
