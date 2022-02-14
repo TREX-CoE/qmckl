@@ -1,9 +1,9 @@
 #!/bin/sh
-# Script to build the final src/qmckl_f.f90 file
+# Script to build the final src/qmckl_f.F90 file
 
 set -e
 
-# All the produced header files are concatenated in the =src/qmckl_f.f90=
+# All the produced header files are concatenated in the =src/qmckl_f.F90=
 # file, located in the share/qmckl/fortran directory.
 
 
@@ -30,8 +30,8 @@ fi
 # Generate Fortran interface file
 # -------------------------------
 
-HEADERS_TYPE="src/qmckl_*_fh_type.f90"
-HEADERS="src/qmckl_*_fh_func.f90"
+HEADERS_TYPE="src/qmckl_*_fh_type.F90"
+HEADERS="src/qmckl_*_fh_func.F90"
 
 cat << EOF > ${src_qmckl_f}
 !
