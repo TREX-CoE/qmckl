@@ -46,6 +46,22 @@ AS_IF([test -d ${srcdir}/.git],
         [enable_maintainer_mode="no"]
 )
 
+AC_ARG_WITH(ifort, [AS_HELP_STRING([--with-ifort],[Use Intel Fortran compiler])], with_ifort=$withval, with_ifort=no)
+AS_IF([test "$with_ifort" == "yes"], [
+  FC=ifort
+  FCFLAGS="-xHost -ip -O2 -ftz -finline -g -mkl=sequential" ])
+
+AC_ARG_WITH(icc, [AS_HELP_STRING([--with-icc],[Use Intel C compiler])], with_icc=$withval, with_icc=no)
+AS_IF([test "$with_icc" == "yes"], [
+  FC=icc
+  CFLAGS="-xHost -ip -O2 -ftz -finline -g -mkl=sequential" ])
+
+AS_IF([test "$with_icc"."$with_ifort" == "yes.yes"], [
+  ax_blas_ok="yes"
+  ax_lapack_ok="yes"
+  BLAS_LIBS=""
+  LAPACK_LIBS=""])
+
 AM_PROG_AR
 AM_MAINTAINER_MODE()
 LT_INIT
@@ -71,14 +87,16 @@ AC_LANG(C)
 
 # Checks for programs.
 AC_PROG_CC
+AC_PROG_F77
+
 # Make sure the c compiler supports C99
 m4_version_prereq([2.70],[], [AC_PROG_CC_C99])
 AS_IF([test "$ac_cv_prog_cc_c99" = "no"], [AC_MSG_ERROR([The compiler does not support C99])])
 AC_PROG_CC_C_O
-AC_PROG_F77
 AC_PROG_FC
 AC_PROG_FC_C_O
-AC_FC_SRCEXT([f90])
+AC_FC_PP_DEFINE
+AC_FC_SRCEXT([F90])
 AC_FC_FREEFORM
 LT_INIT
 AC_PROG_INSTALL
@@ -175,6 +193,7 @@ AX_BLAS([], [AC_MSG_ERROR([BLAS was not found.])])
 
 ## LAPACK
 AX_LAPACK([], [AC_MSG_ERROR([LAPACK was not found.])])
+AS_IF([test "$BLAS_LIBS" == "$LAPACK_LIBS"], [BLAS_LIBS=""])
 
 
 # Specific options required with some compilers
@@ -193,6 +212,10 @@ esac
 
 
 # Options.
+AC_ARG_ENABLE(hpc, [AS_HELP_STRING([--enable-hpc],[Use HPC-optimized functions])], HAVE_HPC=$enableval, HAVE_HPC=no)
+AS_IF([test "$HAVE_HPC" = "yes"], [
+   AC_DEFINE([HAVE_HPC], [1], [If defined, activate HPC routines])
+])
 
 AC_ARG_ENABLE(debug, [AS_HELP_STRING([--enable-debug],[compile for debugging])], ok=$enableval, ok=no)
 if test "$ok" = "yes"; then
@@ -308,7 +331,7 @@ fi
 #mkl-dynamic-lp64-seq
 
 PKG_LIBS="$PKG_LIBS $LIBS"
-LIBS="$BLAS_LIBS $LAPACK_LIBS $BLAS_LIBS $PKG_LIBS"
+LIBS="$BLAS_LIBS $LAPACK_LIBS $PKG_LIBS"
 CFLAGS="$CFLAGS $PKG_CFLAGS"
 AC_SUBST([PKG_LIBS])
 AC_SUBST([PKG_CFLAGS])
@@ -337,6 +360,7 @@ FCLAGS..........: ${FCFLAGS}
 LDFLAGS:........: ${LDFLAGS}
 LIBS............: ${LIBS}
 USE CHAMELEON...: ${with_chameleon}
+HPC version.....: ${HAVE_HPC}
 
 Package features:
   ${ARGS}
