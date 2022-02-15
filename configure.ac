@@ -53,7 +53,7 @@ AS_IF([test "$with_ifort" == "yes"], [
 
 AC_ARG_WITH(icc, [AS_HELP_STRING([--with-icc],[Use Intel C compiler])], with_icc=$withval, with_icc=no)
 AS_IF([test "$with_icc" == "yes"], [
-  FC=icc
+  CC=icc
   CFLAGS="-xHost -ip -O2 -ftz -finline -g -mkl=sequential" ])
 
 AS_IF([test "$with_icc"."$with_ifort" == "yes.yes"], [
@@ -116,13 +116,14 @@ AC_CHECK_HEADERS([assert.h errno.h math.h pthread.h stdbool.h stdint.h stdio.h s
 AC_CHECK_LIB([pthread], [pthread_create])
 
 # OpenMP
-#AC_ARG_WITH(openmp, [AS_HELP_STRING([--with-openmp],[enable OpenMP])], with_omp=$withval, with_omp=no)
-#if test "x$with_omp" = xyes; then
-#   AC_DEFINE([HAVE_OPENMP], [1], [Define to use OpenMP threading.])
-#   AX_OPENMP([],
-#    [AC_MSG_ERROR([Could not find OpenMP flags; configure with --without-openmp])])
-#   CFLAGS="${CFLAGS} ${OPENMP_CFLAGS}"
-#fi
+AC_ARG_WITH(openmp, [AS_HELP_STRING([--with-openmp],[activate OpenMP])], with_omp=$withval, with_omp=no)
+if test "x$with_omp" = xyes; then
+   AC_DEFINE([HAVE_OPENMP], [1], [Define to use OpenMP threading.])
+   AX_OPENMP([],
+    [AC_MSG_ERROR([Could not find OpenMP flags; configure with --without-openmp])])
+   CFLAGS="${CFLAGS} ${OPENMP_CFLAGS}"
+   FCFLAGS="${CFLAGS} ${OPENMP_FCFLAGS}"
+fi
 
 # CHAMELEON
 AC_ARG_WITH(chameleon,

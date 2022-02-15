@@ -2466,11 +2466,11 @@ for (int64_t i=0 ; i < ao_num ; ++i) {
    |----------------------+-----------------------------------+----------------------------------------------------------------------------------------------|
    | Variable             | Type                              | Description                                                                                  |
    |----------------------+-----------------------------------+----------------------------------------------------------------------------------------------|
-   | ~primitive_vgl~      | ~double[point_num][5][prim_num]~ | Value, gradients, Laplacian of the primitives at current  positions                          |
+   | ~primitive_vgl~      | ~double[point_num][5][prim_num]~  | Value, gradients, Laplacian of the primitives at current  positions                          |
    | ~primitive_vgl_date~ | ~uint64_t~                        | Last modification date of Value, gradients, Laplacian of the primitives at current positions |
    | ~shell_vgl~          | ~double[point_num][5][shell_num]~ | Value, gradients, Laplacian of the primitives at current  positions                          |
    | ~shell_vgl_date~     | ~uint64_t~                        | Last modification date of Value, gradients, Laplacian of the AOs at current positions        |
-   | ~ao_vgl~             | ~double[point_num][5][ao_num]~ | Value, gradients, Laplacian of the primitives at current  positions                          |
+   | ~ao_vgl~             | ~double[point_num][5][ao_num]~    | Value, gradients, Laplacian of the primitives at current  positions                          |
    | ~ao_vgl_date~        | ~uint64_t~                        | Last modification date of Value, gradients, Laplacian of the AOs at current positions        |
 
 
@@ -4763,7 +4763,7 @@ integer function qmckl_compute_ao_vgl_hpc_f(context,      &
   integer           :: lstart(0:20) 
   double precision  :: x, y, z, r2, s1, s2, s3, s4, s5, s6
   double precision  :: cutoff, v, two_a
-  integer*8         :: iprim_start , iprim_end, iprim
+  integer*8         :: iprim_start , iprim_end, iprim, size_max
   integer, external :: qmckl_ao_polynomial_transp_vgl_f
 
   double precision, allocatable  :: poly_vgl(:,:)
@@ -4772,8 +4772,7 @@ integer function qmckl_compute_ao_vgl_hpc_f(context,      &
   integer                        :: nidx, idx, n
   double precision, allocatable  :: ar2(:), expo_(:), c_(:)
 
-  allocate(poly_vgl(ao_num,5), powers(3,ao_num), ao_index(ao_num))
-  allocate(c_(prim_num), expo_(prim_num), ar2(prim_num))
+  allocate(ao_index(ao_num+1))
 
   ! Pre-computed data
   do l=0,20
@@ -4781,6 +4780,7 @@ integer function qmckl_compute_ao_vgl_hpc_f(context,      &
   end do
 
   k=1
+  size_max = 0
   do inucl=1,nucl_num
      ishell_start = nucleus_index(inucl) + 1
      ishell_end   = nucleus_index(inucl) + nucleus_shell_num(inucl)
@@ -4789,13 +4789,30 @@ integer function qmckl_compute_ao_vgl_hpc_f(context,      &
         ao_index(ishell) = k
         k = k + lstart(l+1) - lstart(l)
      end do
+     size_max = max(size_max, lstart(l+1))
   end do
+  ao_index(ishell_end+1) = ao_num+1
+  
 
   info = QMCKL_SUCCESS
 
   ! Don't compute polynomials when the radial part is zero.
   cutoff = -dlog(1.d-12)
 
+  !$OMP PARALLEL DEFAULT(NONE) &
+  !$OMP SHARED  (point_num, coord, nucl_coord, nucl_num, cutoff, &
+  !$OMP  nucleus_range, context, nucleus_max_ang_mom, ao_num,  &
+  !$OMP  nucleus_index, nucleus_shell_num, shell_prim_index, &
+  !$OMP  shell_prim_num, expo, coef_normalized, size_max, prim_num, &
+  !$OMP  shell_ang_mom, ao_index, lstart, ao_vgl, ao_factor) &
+  !$OMP PRIVATE (ipoint, inucl, x, y, z, e_coord, r2, info, &
+  !$OMP  n_coord, n_poly, powers, poly_vgl, ishell_start, k, &
+  !$OMP  ishell_end, ishell, iprim_end, iprim_start, nidx, l, &
+  !$OMP  iprim, v, expo_, c_, s1, s2, s3, s4, s5, s6, n, il, ar2)
+
+  allocate(c_(prim_num), expo_(prim_num), ar2(prim_num), &
+           powers(3,size_max), poly_vgl(size_max,5))
+  !$OMP DO
   do ipoint = 1, point_num
      e_coord(1) = coord(ipoint,1)
      e_coord(2) = coord(ipoint,2)
@@ -4819,7 +4836,7 @@ integer function qmckl_compute_ao_vgl_hpc_f(context,      &
         ! Compute polynomials 
         info = qmckl_ao_polynomial_transp_vgl_f(context, e_coord, n_coord, &
              nucleus_max_ang_mom(inucl), n_poly, powers, 3_8, &
-             poly_vgl, int(ao_num,8))
+             poly_vgl, size_max)
 
         ! Loop over shells
         ishell_start = nucleus_index(inucl) + 1
@@ -4887,7 +4904,10 @@ integer function qmckl_compute_ao_vgl_hpc_f(context,      &
      end do
   end do
   
-  deallocate(poly_vgl, powers)
+  deallocate(poly_vgl, powers, c_, expo_, ar2)
+  !$OMP END PARALLEL
+
+  deallocate(ao_index)
 end function qmckl_compute_ao_vgl_hpc_f
     #+end_src
 
