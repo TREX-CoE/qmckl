@@ -46,6 +46,22 @@ AS_IF([test -d ${srcdir}/.git],
         [enable_maintainer_mode="no"]
 )
 
+AC_ARG_WITH(ifort, [AS_HELP_STRING([--with-ifort],[Use Intel Fortran compiler])], with_ifort=$withval, with_ifort=no)
+AS_IF([test "$with_ifort" == "yes"], [
+  FC=ifort
+  FCFLAGS="-xHost -ip -O2 -ftz -finline -g -mkl=sequential" ])
+
+AC_ARG_WITH(icc, [AS_HELP_STRING([--with-icc],[Use Intel C compiler])], with_icc=$withval, with_icc=no)
+AS_IF([test "$with_icc" == "yes"], [
+  FC=icc
+  CFLAGS="-xHost -ip -O2 -ftz -finline -g -mkl=sequential" ])
+
+AS_IF([test "$with_icc"."$with_ifort" == "yes.yes"], [
+  ax_blas_ok="yes"
+  ax_lapack_ok="yes"
+  BLAS_LIBS=""
+  LAPACK_LIBS=""])
+
 AM_PROG_AR
 AM_MAINTAINER_MODE()
 LT_INIT
@@ -177,6 +193,7 @@ AX_BLAS([], [AC_MSG_ERROR([BLAS was not found.])])
 
 ## LAPACK
 AX_LAPACK([], [AC_MSG_ERROR([LAPACK was not found.])])
+AS_IF([test "$BLAS_LIBS" == "$LAPACK_LIBS"], [BLAS_LIBS=""])
 
 
 # Specific options required with some compilers
@@ -314,7 +331,7 @@ fi
 #mkl-dynamic-lp64-seq
 
 PKG_LIBS="$PKG_LIBS $LIBS"
-LIBS="$BLAS_LIBS $LAPACK_LIBS $BLAS_LIBS $PKG_LIBS"
+LIBS="$BLAS_LIBS $LAPACK_LIBS $PKG_LIBS"
 CFLAGS="$CFLAGS $PKG_CFLAGS"
 AC_SUBST([PKG_LIBS])
 AC_SUBST([PKG_CFLAGS])
