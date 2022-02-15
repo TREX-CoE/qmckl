@@ -96,6 +96,8 @@ int main() {
 #include <string.h>
 #include <stdbool.h>
 #include <assert.h>
+#include <stdio.h>
+#include <math.h>
 
 #include "qmckl.h"
 #include "qmckl_context_private_type.h"
@@ -4725,195 +4727,183 @@ end function qmckl_compute_ao_vgl_doc_f
    | ~coef_normalized~     | ~double[prim_num]~             | in     | Value, gradients and Laplacian of the shells |
    | ~ao_vgl~              | ~double[point_num][5][ao_num]~ | out    | Value, gradients and Laplacian of the AOs    |
 
-    #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_ao_vgl_hpc_f(context,      &
-     ao_num, shell_num, prim_num, point_num, nucl_num,    &
-     coord, nucl_coord, nucleus_index, nucleus_shell_num, &
-     nucleus_range, nucleus_max_ang_mom, shell_ang_mom,   &
-     shell_prim_index, shell_prim_num, ao_factor, expo,   &
-     coef_normalized, ao_vgl) &
-     result(info)
-  use qmckl
-  implicit none
-  integer(qmckl_context), intent(in)  :: context
-  integer*8             , intent(in)  :: ao_num
-  integer*8             , intent(in)  :: shell_num
-  integer*8             , intent(in)  :: prim_num
-  integer*8             , intent(in)  :: point_num
-  integer*8             , intent(in)  :: nucl_num
-  double precision      , intent(in)  :: coord(point_num,3)
-  double precision      , intent(in)  :: nucl_coord(nucl_num,3)
-  integer*8             , intent(in)  :: nucleus_index(nucl_num)
-  integer*8             , intent(in)  :: nucleus_shell_num(nucl_num)
-  double precision      , intent(in)  :: nucleus_range(nucl_num)
-  integer               , intent(in)  :: nucleus_max_ang_mom(nucl_num)
-  integer               , intent(in)  :: shell_ang_mom(shell_num)
-  integer*8             , intent(in)  :: shell_prim_index(shell_num)
-  integer*8             , intent(in)  :: shell_prim_num(shell_num)
-  double precision      , intent(in)  :: ao_factor(ao_num)
-  double precision      , intent(in)  :: expo(prim_num)
-  double precision      , intent(in)  :: coef_normalized(prim_num)
-  double precision      , intent(out) :: ao_vgl(ao_num,5,point_num)
+    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code
+qmckl_compute_ao_vgl_hpc (
+          const qmckl_context context,
+          const int64_t ao_num,
+          const int64_t shell_num,
+          const int64_t prim_num,
+          const int64_t point_num,
+          const int64_t nucl_num,
+          const double* coord,
+          const double* nucl_coord,
+          const int64_t* nucleus_index,
+          const int64_t* nucleus_shell_num,
+          const double* nucleus_range,
+          const int32_t* nucleus_max_ang_mom,
+          const int32_t* shell_ang_mom,
+          const int64_t* shell_prim_index,
+          const int64_t* shell_prim_num,
+          const double* ao_factor,
+          const double* expo,
+          const double* coef_normalized,
+          double* const ao_vgl )
+{
+  int32_t lstart[24];
+  for (int32_t l=0 ; l<24 ; ++l) {
+    lstart[l] = l*(l+1)*(l+2)/6;
+  }
 
-  double precision  :: e_coord(3), n_coord(3)
-  integer*8         :: n_poly
-  integer           :: l, il, k
-  integer*8         :: ipoint, inucl, ishell
-  integer*8         :: ishell_start, ishell_end
-  integer           :: lstart(0:20) 
-  double precision  :: x, y, z, r2, s1, s2, s3, s4, s5, s6
-  double precision  :: cutoff, v, two_a
-  integer*8         :: iprim_start , iprim_end, iprim, size_max
-  integer, external :: qmckl_ao_polynomial_transp_vgl_f
+  int64_t ao_index[shell_num+1];
+  int64_t size_max = 0;
+  { 
+     int64_t k=0;
+     for (int inucl=0 ; inucl < nucl_num ; ++inucl) {
+        const int64_t ishell_start = nucleus_index[inucl];
+        const int64_t ishell_end   = nucleus_index[inucl] + nucleus_shell_num[inucl];
+        for (int64_t ishell = ishell_start ; ishell < ishell_end ; ++ishell) {
+           const int l = shell_ang_mom[ishell];
+           ao_index[ishell] = k;
+           k += lstart[l+1] - lstart[l];
+           size_max = size_max < lstart[l+1] ? lstart[l+1] : size_max;
+        }
+     }
+     ao_index[shell_num] = ao_num+1;
+  }
 
-  double precision, allocatable  :: poly_vgl(:,:)
-  integer         , allocatable  :: powers(:,:), ao_index(:)
+  /* Don't compute polynomials when the radial part is zero. */
+  double cutoff = -log(1.e-12);
 
-  integer                        :: nidx, idx, n
-  double precision, allocatable  :: ar2(:), expo_(:), c_(:)
+#ifdef HAVE_OPENMP
+  #pragma omp parallel 
+#endif
+  {
+    double c_[prim_num];
+    double expo_[prim_num];
+    double ar2[prim_num];
+    int32_t powers[prim_num];
+    double  poly_vgl[5][size_max];
 
-  allocate(ao_index(ao_num+1))
+#ifdef HAVE_OPENMP
+    #pragma omp for
+#endif
+    for (int64_t ipoint=0 ; ipoint < point_num ; ++ipoint) {
+       const double e_coord[3] = { coord[ipoint], 
+                                   coord[ipoint + point_num],
+                                   coord[ipoint + 2*point_num] };
 
-  ! Pre-computed data
-  do l=0,20
-     lstart(l) = l*(l+1)*(l+2)/6 +1
-  end do
+       for (int64_t inucl=0 ; inucl < nucl_num ; ++inucl) {
+          const double n_coord[3] = { nucl_coord[inucl], 
+                                      nucl_coord[inucl + nucl_num],
+                                      nucl_coord[inucl + 2*nucl_num] };
 
-  k=1
-  size_max = 0
-  do inucl=1,nucl_num
-     ishell_start = nucleus_index(inucl) + 1
-     ishell_end   = nucleus_index(inucl) + nucleus_shell_num(inucl)
-     do ishell = ishell_start, ishell_end
-        l = shell_ang_mom(ishell)
-        ao_index(ishell) = k
-        k = k + lstart(l+1) - lstart(l)
-     end do
-     size_max = max(size_max, lstart(l+1))
-  end do
-  ao_index(ishell_end+1) = ao_num+1
-  
+          /* Test if the point is in the range of the nucleus */
+          const double x = e_coord[0] - n_coord[0];
+          const double y = e_coord[1] - n_coord[1];
+          const double z = e_coord[2] - n_coord[2];
 
-  info = QMCKL_SUCCESS
+          const double r2 = x*x + y*y + z*z;
 
-  ! Don't compute polynomials when the radial part is zero.
-  cutoff = -dlog(1.d-12)
+          if (r2 > cutoff * nucleus_range[inucl]) {
+             continue;
+          }
 
-  !$OMP PARALLEL DEFAULT(NONE) &
-  !$OMP SHARED  (point_num, coord, nucl_coord, nucl_num, cutoff, &
-  !$OMP  nucleus_range, context, nucleus_max_ang_mom, ao_num,  &
-  !$OMP  nucleus_index, nucleus_shell_num, shell_prim_index, &
-  !$OMP  shell_prim_num, expo, coef_normalized, size_max, prim_num, &
-  !$OMP  shell_ang_mom, ao_index, lstart, ao_vgl, ao_factor) &
-  !$OMP PRIVATE (ipoint, inucl, x, y, z, e_coord, r2, info, &
-  !$OMP  n_coord, n_poly, powers, poly_vgl, ishell_start, k, &
-  !$OMP  ishell_end, ishell, iprim_end, iprim_start, nidx, l, &
-  !$OMP  iprim, v, expo_, c_, s1, s2, s3, s4, s5, s6, n, il, ar2)
+          int64_t n_poly;
+          const qmckl_exit_code rc = 
+             qmckl_ao_polynomial_transp_vgl(context, e_coord, n_coord, 
+               nucleus_max_ang_mom[inucl], &n_poly, powers, (int64_t) 3, 
+               &(poly_vgl[0][0]), size_max);
 
-  allocate(c_(prim_num), expo_(prim_num), ar2(prim_num), &
-           powers(3,size_max), poly_vgl(size_max,5))
-  !$OMP DO
-  do ipoint = 1, point_num
-     e_coord(1) = coord(ipoint,1)
-     e_coord(2) = coord(ipoint,2)
-     e_coord(3) = coord(ipoint,3)
-     do inucl=1,nucl_num
-        n_coord(1) = nucl_coord(inucl,1) 
-        n_coord(2) = nucl_coord(inucl,2) 
-        n_coord(3) = nucl_coord(inucl,3) 
+          assert (rc == QMCKL_SUCCESS);
+ 
+          const int64_t ishell_start = nucleus_index[inucl];
+          const int64_t ishell_end   = nucleus_index[inucl] + nucleus_shell_num[inucl];
+          for (int64_t ishell = ishell_start ; ishell < ishell_end ; ++ishell) {
 
-        ! Test if the point is in the range of the nucleus
-        x = e_coord(1) - n_coord(1)
-        y = e_coord(2) - n_coord(2)
-        z = e_coord(3) - n_coord(3)
+             /* /!\  Gaussian fuctions */
+             int64_t nidx = 0;
+             const int64_t iprim_start = shell_prim_index[ishell];
+             const int64_t iprim_end   = shell_prim_index[ishell] + shell_prim_num[ishell];
+             for (int64_t iprim = iprim_start ; iprim < iprim_end ; ++iprim) {
+                const double v = expo[iprim]*r2;
+                if (v <= cutoff) {
+                   ar2[nidx] = v;
+                   c_[nidx] = coef_normalized[iprim];
+                   expo_[nidx] = expo[iprim];
+                   ++nidx;
+                }
+             }
 
-        r2 = x*x + y*y + z*z
+             double s1_ = 0.;
+             double s5_ = 0.;
+             double s6_ = 0.;
+             for (int idx=0 ; idx<nidx ; ++idx) {
+                const double v = c_[idx] * exp(-ar2[idx]);
+                s1_ += v;
+                s6_ -= v*expo_[idx];
+                s5_ += ar2[idx];
+             }
+             s6_ += s6_;
+             s5_ = 2.0*s5_ + 3.0*s6_;
+             const double s1 = s1_;
+             const double s2 = s6_*x;
+             const double s3 = s6_*y;
+             const double s4 = s6_*z;
+             const double s5 = s5_;
+             const double s6 = s6_;
 
-        if (r2 > cutoff*nucleus_range(inucl)) then
-           cycle
-        end if
+             const int32_t l = shell_ang_mom[ishell];
+             const int32_t n = lstart[l+1]-lstart[l];
+             const int64_t k = ao_index[ishell]; 
 
-        ! Compute polynomials 
-        info = qmckl_ao_polynomial_transp_vgl_f(context, e_coord, n_coord, &
-             nucleus_max_ang_mom(inucl), n_poly, powers, 3_8, &
-             poly_vgl, size_max)
+             double* const ao_vgl_1 = &(ao_vgl[ipoint*5*ao_num+k]);
+             double* const ao_vgl_2 = &(ao_vgl_1[  ao_num]);
+             double* const ao_vgl_3 = &(ao_vgl_1[2*ao_num]);
+             double* const ao_vgl_4 = &(ao_vgl_1[3*ao_num]);
+             double* const ao_vgl_5 = &(ao_vgl_1[4*ao_num]);
 
-        ! Loop over shells
-        ishell_start = nucleus_index(inucl) + 1
-        ishell_end   = nucleus_index(inucl) + nucleus_shell_num(inucl)
+             if (nidx > 0) {
+                 const int64_t idx = lstart[l];
+                 const double* poly_vgl_1 = &(poly_vgl[0][idx]);
+                 const double* poly_vgl_2 = &(poly_vgl[1][idx]);
+                 const double* poly_vgl_3 = &(poly_vgl[2][idx]);
+                 const double* poly_vgl_4 = &(poly_vgl[3][idx]);
+                 const double* poly_vgl_5 = &(poly_vgl[4][idx]);
+                 const double* f = &(ao_factor[k]);
 
-        do ishell = ishell_start, ishell_end
-           iprim_start = shell_prim_index(ishell) + 1
-           iprim_end   = shell_prim_index(ishell) + shell_prim_num(ishell)
+                 for (int64_t il=0 ; il<n ; ++il) {
+                     ao_vgl_1[il] =  poly_vgl_1[il] * s1 * f[il];
+                     ao_vgl_2[il] = (poly_vgl_2[il] * s1 + poly_vgl_1[il] * s2) * f[il];
+                     ao_vgl_3[il] = (poly_vgl_3[il] * s1 + poly_vgl_1[il] * s3) * f[il];
+                     ao_vgl_4[il] = (poly_vgl_4[il] * s1 + poly_vgl_1[il] * s4) * f[il];
+                     ao_vgl_5[il] = (poly_vgl_5[il] * s1 + 
+                             poly_vgl_1[il] * s5 + 2.0*( 
+                             poly_vgl_2[il] * s2 + 
+                             poly_vgl_3[il] * s3 +
+                             poly_vgl_4[il] * s4 )) * f[il];
+                 }
+             } else {
+                 for (int64_t il=0 ; il<n ; ++il) {
+                     ao_vgl_1[il] = 0.0;
+                     ao_vgl_2[il] = 0.0;
+                     ao_vgl_3[il] = 0.0;
+                     ao_vgl_4[il] = 0.0;
+                     ao_vgl_5[il] = 0.0;
+                 }
+             }
+          }
 
-           ! /!\  Gaussian fuctions
-           nidx = 0
-           do iprim = iprim_start, iprim_end
-              v = expo(iprim)*r2
-              if (v > cutoff) then
-                 cycle
-              end if
-              nidx = nidx+1
-              ar2(nidx) = v
-              c_(nidx) = coef_normalized(iprim) 
-              expo_(nidx) = expo(iprim) 
-           enddo
-
-           s1 = 0.d0
-           s5 = 0.d0
-           s6 = 0.d0
-           do idx = 1, nidx
-              v = c_(idx) * dexp(-ar2(idx))
-              s1 = s1 + v
-              s6 = s6 - expo_(idx) * v
-              s5 = s5 + ar2(idx)
-           end do
-           s6 = s6 +s6
-           s5 = 2.d0*s5 + s6*3.d0
-           s2 = s6 * x
-           s3 = s6 * y
-           s4 = s6 * z
-
-           l = shell_ang_mom(ishell)
-           k = ao_index(ishell) 
-           n = lstart(l+1)-lstart(l)
-           if (nidx > 0) then
-              idx = lstart(l)
-              do il = 0,n-1
-                 ao_vgl(k+il,1,ipoint) =  poly_vgl(idx+il,1) * s1 * ao_factor(k+il)
-                 ao_vgl(k+il,2,ipoint) = (poly_vgl(idx+il,2) * s1 + poly_vgl(idx+il,1) * s2) * ao_factor(k+il)
-                 ao_vgl(k+il,3,ipoint) = (poly_vgl(idx+il,3) * s1 + poly_vgl(idx+il,1) * s3) * ao_factor(k+il)
-                 ao_vgl(k+il,4,ipoint) = (poly_vgl(idx+il,4) * s1 + poly_vgl(idx+il,1) * s4) * ao_factor(k+il)
-                 ao_vgl(k+il,5,ipoint) = (poly_vgl(idx+il,5) * s1 + &
-                      poly_vgl(idx+il,1) * s5 + 2.d0*( &
-                      poly_vgl(idx+il,2) * s2 + &
-                      poly_vgl(idx+il,3) * s3 + &
-                      poly_vgl(idx+il,4) * s4 )) * ao_factor(k+il) 
-              end do
-           else
-              do il = 0, n-1
-                 ao_vgl(k+il,1,ipoint) = 0.d0
-                 ao_vgl(k+il,2,ipoint) = 0.d0
-                 ao_vgl(k+il,3,ipoint) = 0.d0
-                 ao_vgl(k+il,4,ipoint) = 0.d0
-                 ao_vgl(k+il,5,ipoint) = 0.d0
-              end do
-           endif
-           
-        end do
-     end do
-  end do
-  
-  deallocate(poly_vgl, powers, c_, expo_, ar2)
-  !$OMP END PARALLEL
-
-  deallocate(ao_index)
-end function qmckl_compute_ao_vgl_hpc_f
+       }
+    }
+  }
+  return QMCKL_SUCCESS;
+}
     #+end_src
 
 ** Interfaces
 #  #+CALL: generate_c_header(table=qmckl_ao_vgl_args_doc,rettyp=get_value("CRetType"),fname="qmckl_compute_ao_vgl"))
-#  (Commented because the header needs to go into h_private_func
+#  (Commented because the header needs to go into h_private_func)
 
     #+RESULTS:
     #+begin_src c :tangle (eval h_private_func) :comments org
@@ -5018,80 +5008,7 @@ end function qmckl_compute_ao_vgl_hpc_f
 
     end function qmckl_compute_ao_vgl_doc
     #+end_src
-
-    #+CALL: generate_c_interface(table=qmckl_ao_vgl_args_hpc,rettyp=get_value("CRetType"),fname="qmckl_compute_ao_vgl_hpc"))
-
-    #+RESULTS:
-    #+begin_src f90 :tangle (eval f) :comments org :exports none
-    integer(c_int32_t) function qmckl_compute_ao_vgl_hpc &
-        (context, &
-         ao_num, &
-         shell_num, &
-         prim_num, &
-         point_num, &
-         nucl_num, &
-         coord, &
-         nucl_coord, &
-         nucleus_index, &
-         nucleus_shell_num, &
-         nucleus_range, &
-         nucleus_max_ang_mom, &
-         shell_ang_mom, &
-         shell_prim_index, &
-         shell_prim_num, &
-         ao_factor, &
-         ao_expo, &
-         coef_normalized, &
-         ao_vgl) &
-        bind(C) result(info)
-
-      use, intrinsic :: iso_c_binding
-      implicit none
-
-      integer (c_int64_t) , intent(in)  , value :: context
-      integer (c_int64_t) , intent(in)  , value :: ao_num
-      integer (c_int64_t) , intent(in)  , value :: shell_num
-      integer (c_int64_t) , intent(in)  , value :: prim_num
-      integer (c_int64_t) , intent(in)  , value :: point_num
-      integer (c_int64_t) , intent(in)  , value :: nucl_num
-      real    (c_double ) , intent(in)          :: coord(point_num,3)
-      real    (c_double ) , intent(in)          :: nucl_coord(nucl_num,3)
-      integer (c_int64_t) , intent(in)          :: nucleus_index(nucl_num)
-      integer (c_int64_t) , intent(in)          :: nucleus_shell_num(nucl_num)
-      real    (c_double ) , intent(in)          :: nucleus_range(nucl_num)
-      integer (c_int32_t) , intent(in)          :: nucleus_max_ang_mom(nucl_num)
-      integer (c_int32_t) , intent(in)          :: shell_ang_mom(shell_num)
-      integer (c_int64_t) , intent(in)          :: shell_prim_index(shell_num)
-      integer (c_int64_t) , intent(in)          :: shell_prim_num(shell_num)
-      real    (c_double ) , intent(in)          :: ao_factor(ao_num)
-      real    (c_double ) , intent(in)          :: ao_expo(prim_num)
-      real    (c_double ) , intent(in)          :: coef_normalized(prim_num)
-      real    (c_double ) , intent(out)         :: ao_vgl(ao_num,5,point_num)
-
-      integer(c_int32_t), external :: qmckl_compute_ao_vgl_hpc_f
-      info = qmckl_compute_ao_vgl_hpc_f &
-             (context, &
-         ao_num, &
-         shell_num, &
-         prim_num, &
-         point_num, &
-         nucl_num, &
-         coord, &
-         nucl_coord, &
-         nucleus_index, &
-         nucleus_shell_num, &
-         nucleus_range, &
-         nucleus_max_ang_mom, &
-         shell_ang_mom, &
-         shell_prim_index, &
-         shell_prim_num, &
-         ao_factor, &
-         ao_expo, &
-         coef_normalized, &
-         ao_vgl)
-
-    end function qmckl_compute_ao_vgl_hpc
-    #+end_src
+    
 
 *** Provide                                                        :noexport:
 

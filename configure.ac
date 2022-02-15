@@ -204,10 +204,10 @@ case $FC in
       FCFLAGS="$FCFLAGS -nofor-main"
       ;;
 
- gfortran*)
-      # Order is important here
-      FCFLAGS="-cpp $FCFLAGS"
-      ;;
+#gfortran*)
+#     # Order is important here
+#     FCFLAGS="-cpp $FCFLAGS"
+#     ;;
 esac
 
 
