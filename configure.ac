@@ -222,8 +222,9 @@ AC_ARG_ENABLE(debug, [AS_HELP_STRING([--enable-debug],[compile for debugging])],
 if test "$ok" = "yes"; then
         if test "$GCC" = "yes"; then
 	        CFLAGS="$CFLAGS \
--Wall -W -Wbad-function-cast -Wcast-qual \
--Wpointer-arith -Wcast-align -Wpedantic -Wextra -fmax-errors=3"
+-Wall -W -Wbad-function-cast -Wcast-qual -Warray-bounds -Wdisabled-optimization \
+-Wpointer-arith -Wcast-align -Wpedantic -Wextra -fmax-errors=5 -Walloc-zero -Werror \
+"
         fi
         if test "$GFC" = "yes"; then
 	        FCFLAGS="$FCFLAGS \
