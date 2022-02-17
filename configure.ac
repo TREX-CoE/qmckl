@@ -223,7 +223,7 @@ if test "$ok" = "yes"; then
         if test "$GCC" = "yes"; then
 	        CFLAGS="$CFLAGS \
 -Wall -W -Wbad-function-cast -Wcast-qual -Warray-bounds -Wdisabled-optimization \
--Wpointer-arith -Wcast-align -Wpedantic -Wextra -fmax-errors=5 -Walloc-zero -Werror \
+-Wpointer-arith -Wcast-align -Wpedantic -Wextra -fmax-errors=3 -Walloc-zero -Werror \
 "
         fi
         if test "$GFC" = "yes"; then
