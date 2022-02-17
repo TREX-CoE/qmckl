@@ -49,8 +49,8 @@ def main():
         f_test_o  =  "tests/test_"+i+"_f.$(OBJEXT)"
         c_test    =  "tests/test_"+i+".c"
         f_test    =  "tests/test_"+i+"_f.F90"
-        html      =  "share/doc/qmckl/html/"+i+".html"
-        text      =  "share/doc/qmckl/text/"+i+".txt"
+        html      =  "$(htmldir_loc)/"+i+".html"
+        text      =  "$(textdir_loc)/"+i+".txt"
 
         i="src/"+i
 
@@ -267,7 +267,7 @@ def main():
 
     for f in sorted(DEPS_DOC.keys()):
         output += [ DEPS_DOC[f] + ": $(srcdir)/" + f + " $(htmlize_el)",
-                    "\t$(export_verbose)top_builddir=$(abs_top_builddir) srcdir=$(abs_srcdir) $(srcdir)/tools/missing bash $(srcdir)/tools/build_doc.sh $(srcdir)/"+f,
+                    "\tsrcdir=$(abs_srcdir) $(srcdir)/tools/missing bash $(srcdir)/tools/build_doc.sh $(srcdir)/"+f,
                     "" ]
     output += ["endif"]
 

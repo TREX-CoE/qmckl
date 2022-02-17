@@ -82,17 +82,20 @@ htmldir_loc = share/doc/qmckl/html
 textdir_loc = share/doc/qmckl/text
 htmlize_el = $(htmldir_loc)/htmlize.el
 dist_html_DATA = $(HTML_FILES) \
-        share/doc/qmckl/html/qmckl.css \
-        share/doc/qmckl/html/index.html
+        $(htmldir_loc)/qmckl.css \
+        $(htmldir_loc)/index.html
 
 dist_text_DATA = $(TEXT_FILES)
 
 
-html-local: $(dist_html_DATA)
-text: $(dist_text_DATA)
+html-local: $(htmlize_el) $(dist_html_DATA)
+text: $(htmlize_el) $(dist_text_DATA)
 doc: html text
 
 
+$(htmldir_loc)/qmckl.css: $(htmlize_el)
+	$(MKDIR_P) $(htmldir_loc) $(textdir_loc)
+	cp -f $(top_srcdir)/$(htmldir_loc)/qmckl.css $(builddir)/$(htmldir_loc)/qmckl.css
 
 if QMCKL_DEVEL
 
@@ -102,9 +105,9 @@ endif
 
 EXTRA_DIST += $(ORG_FILES) $(TANGLED_FILES) $(EXPORTED_FILES) $(test_qmckl_f)
 
-BUILT_SOURCES = $(C_FILES) $(F_FILES) $(FH_FUNC_FILES) $(FH_TYPE_FILES) $(H_FUNC_FILES) $(H_TYPE_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES) $(src_qmckl_f) $(test_qmckl_f) $(qmckl_h) $(header_tests)
+BUILT_SOURCES = $(C_FILES) $(F_FILES) $(FH_FUNC_FILES) $(FH_TYPE_FILES) $(H_FUNC_FILES) $(H_TYPE_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES) $(src_qmckl_f) $(test_qmckl_f) $(qmckl_h) $(header_tests) $(htmlize_el)
 
-CLEANFILES += $(BUILT_SOURCES) $(C_TEST_FILES) $(F_TEST_FILES) $(TANGLED_FILES) $(C_TEST_FILES) $(F_TEST_FILES) $(src_qmckl_f) $(test_qmckl_f) $(qmckl_h) $(HTML_FILES) $(TEXT_FILES) $(EXPORTED_FILES) $(header_tests) 
+CLEANFILES += $(BUILT_SOURCES) $(C_TEST_FILES) $(F_TEST_FILES) $(TANGLED_FILES) $(C_TEST_FILES) $(F_TEST_FILES) $(src_qmckl_f) $(test_qmckl_f) $(qmckl_h) $(HTML_FILES) $(TEXT_FILES) $(EXPORTED_FILES) $(header_tests) $(htmlize_el)
 
 EXTRA_DIST +=                 \
     tools/build_doc.sh        \
@@ -152,8 +155,7 @@ $(src_qmckl_f): $(FH_FUNC_FILES) $(FH_TYPE_FILES)
 	$(cat_h_verbose)top_builddir=$(abs_top_builddir) srcdir=$(abs_srcdir) src_qmckl_f=$(src_qmckl_f) $(srcdir)/tools/build_qmckl_f.sh
 
 $(htmlize_el):
-	$(MKDIR_P) $(htmldir_loc)
-	$(MKDIR_P) $(textdir_loc)
+	$(MKDIR_P) $(htmldir_loc) $(textdir_loc)
 	abs_srcdir=$(abs_srcdir) $(srcdir)/tools/install_htmlize.sh $(htmlize_el)
 
 tests/chbrclf.h: $(qmckl_h)
