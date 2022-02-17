@@ -2825,7 +2825,7 @@ qmckl_get_ao_basis_ao_vgl (qmckl_context context,
 * Radial part
 
 ** General functions for Gaussian basis functions
-
+   
    ~qmckl_ao_gaussian_vgl~ computes the values, gradients and
    Laplacians at a given point of ~n~ Gaussian functions centered at
    the same point:
@@ -3038,7 +3038,146 @@ int test_qmckl_ao_gaussian_vgl(qmckl_context context);
 assert(0 == test_qmckl_ao_gaussian_vgl(context));
     #+end_src
 
-** TODO General functions for Slater basis functions               :noexport:
+** General functions for Slater basis functions
+   ~qmckl_ao_slater_vgl~ computes the values, gradients and
+   Laplacians at a given point of ~n~ Slater functions centered at
+   the same point:
+
+   \[ v_i = \exp(-a_i |X-R|^1) \]
+   \[ \nabla_x v_i = -a_i v_i (X_x-R_x)/|X-R| \]
+   \[ \nabla_y v_i = -a_i v_i (X_y-R_y)/|X-R| \]
+   \[ \nabla_z v_i = -a_i v_i (X_z-R_z)/|X-R| \]
+   \[ \Delta v_i = -a_i (2/|X-R| - a_i ) v_i \]
+
+   |--------------+------------------+------------------------------------------------------|
+   | Variable     | Type             | Description                                          |
+   |--------------+------------------+------------------------------------------------------|
+   | ~context~    | ~qmckl_context~  | Global state                                         |
+   | ~X(3)~       | ~double[3]~      | Array containing the coordinates of the points       |
+   | ~R(3)~       | ~double[3]~      | Array containing the x,y,z coordinates of the center |
+   | ~n~          | ~int64_t~        | Number of computed Slater                            |
+   | ~A(n)~       | ~double[n]~      | Exponents of the Slater                              |
+   | ~VGL(ldv,5)~ | ~double[5][ldv]~ | Value, gradients and Laplacian of the Slater         |
+   | ~ldv~        | ~int64_t~        | Leading dimension of array ~VGL~                     |
+   |--------------+------------------+------------------------------------------------------|
+
+   Requirements:
+
+        - ~context~ \ne 0
+        - ~n~ > 0
+        - ~ldv~ >= 5
+        - ~A(i)~ > 0 for all ~i~
+        - ~X~ is allocated with at least $3 \times 8$ bytes
+        - ~R~ is allocated with at least $3 \times 8$ bytes
+        - ~A~ is allocated with at least $n \times 8$ bytes
+        - ~VGL~ is allocated with at least $n \times 5 \times 8$ bytes
+
+   #+begin_src c :tangle (eval h_func)
+qmckl_exit_code
+qmckl_ao_slater_vgl(const qmckl_context context,
+                      const double *X,
+                      const double *R,
+                      const int64_t *n,
+                      const int64_t *A,
+                      const double *VGL,
+                      const int64_t ldv);
+   #+end_src
+
+   #+begin_src f90 :tangle (eval f)
+integer function qmckl_ao_slater_vgl_f(context, X, R, n, A, VGL, ldv) result(info)
+  use qmckl
+  implicit none
+  integer*8 , intent(in)  :: context
+  real*8    , intent(in)  :: X(3), R(3)
+  integer*8 , intent(in)  :: n
+  real*8    , intent(in)  :: A(n)
+  real*8    , intent(out) :: VGL(ldv,5)
+  integer*8 , intent(in)  :: ldv
+
+  integer*8         :: i,j
+  real*8            :: Y(3), r2, t, u, v
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (n <= 0) then
+     info = QMCKL_INVALID_ARG_4
+     return
+  endif
+
+  if (ldv < n) then
+     info = QMCKL_INVALID_ARG_7
+     return
+  endif
+
+
+  do i=1,3
+     Y(i) = X(i) - R(i)
+  end do
+  r2 = Y(1)*Y(1) + Y(2)*Y(2) + Y(3)*Y(3)
+
+  do i=1,n
+     VGL(i,1) = dexp(-A(i) * r2)
+  end do
+
+  do i=1,n
+     VGL(i,5) = A(i) * VGL(i,1)
+  end do
+
+  t = -2.d0 * ( X(1) - R(1) )
+  u = -2.d0 * ( X(2) - R(2) )
+  v = -2.d0 * ( X(3) - R(3) )
+
+  do i=1,n
+     VGL(i,2) = t * VGL(i,5)
+     VGL(i,3) = u * VGL(i,5)
+     VGL(i,4) = v * VGL(i,5)
+  end do
+
+  t = 4.d0 * r2
+  do i=1,n
+     VGL(i,5) = (t * A(i) - 6.d0) *  VGL(i,5)
+  end do
+
+end function qmckl_ao_slater_vgl_f
+   #+end_src
+
+   #+begin_src f90 :tangle (eval f) :exports none
+integer(c_int32_t) function qmckl_ao_slater_vgl(context, X, R, n, A, VGL, ldv) &
+     bind(C) result(info)
+  use, intrinsic :: iso_c_binding
+  implicit none
+  integer (c_int64_t) , intent(in) , value :: context
+  real    (c_double)  , intent(in)         :: X(3), R(3)
+  integer (c_int64_t) , intent(in) , value :: n
+  real    (c_double)  , intent(in)         :: A(n)
+  real    (c_double)  , intent(out)        :: VGL(ldv,5)
+  integer (c_int64_t) , intent(in) , value :: ldv
+
+  integer, external :: qmckl_ao_slater_vgl_f
+  info = qmckl_ao_slater_vgl_f(context, X, R, n, A, VGL, ldv)
+end function qmckl_ao_slater_vgl
+   #+end_src
+
+   #+begin_src f90 :tangle (eval fh_func) :exports none
+  interface
+     integer(c_int32_t) function qmckl_ao_slater_vgl(context, &
+          X, R, n, A, VGL, ldv) bind(C)
+       use, intrinsic :: iso_c_binding
+       integer (c_int64_t) , intent(in) , value :: context
+       integer (c_int64_t) , intent(in) , value :: ldv
+       integer (c_int64_t) , intent(in) , value :: n
+       real    (c_double)  , intent(in)         :: X(3), R(3), A(n)
+       real    (c_double)  , intent(out)        :: VGL(ldv,5)
+     end function qmckl_ao_slater_vgl
+  end interface
+   #+end_src
+
+*** Test                                                           :noexport:
 ** TODO General functions for Radial functions on a grid           :noexport:
 ** TODO Helper functions to accelerate calculations                :noexport:
 
