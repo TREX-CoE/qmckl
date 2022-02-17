@@ -4566,10 +4566,12 @@ qmckl_ao_polynomial_transp_vgl_hpc (const qmckl_context context,
 
       if (ldv == 4) {
 
-        const double tmp[20] = {1.0, X[0]-R[0], X[1]-R[1], X[2]-R[2], 0.0,
-                                1.0, 0.0, 0.0, 0.0, 0.0,
-                                1.0, 0.0, 0.0, 0.0, 0.0,
-                                1.0, 0.0, 0.0, 0.0, 0.0};
+        const double tmp[20] = {1.0, X[0]-R[0], X[1]-R[1], X[2]-R[2],
+                                0.0, 1.0, 0.0, 0.0,
+                                0.0, 0.0, 1.0, 0.0,
+                                0.0, 0.0, 0.0, 1.0,
+                                0.0, 0.0, 0.0, 0.0};
+
         for (int i=0 ; i<20 ; ++i)
           VGL[i] = tmp[i];
 
@@ -5248,6 +5250,16 @@ qmckl_compute_ao_vgl_hpc (
     double expo_[prim_num];
     double ar2[prim_num];
     int32_t powers[prim_num];
+    double  poly_vgl_l1[4][4] = {{1.0, 0.0, 0.0, 0.0},
+                                {0.0, 1.0, 0.0, 0.0},
+                                {0.0, 0.0, 1.0, 0.0},
+                                {0.0, 0.0, 0.0, 1.0},
+                                {0.0, 0.0, 0.0, 0.0}};
+    double  poly_vgl_l2[5][10] = {{1., 0., 0., 0., 0., 0., 0., 0., 0., 0.}, 
+                                  {0., 1., 0., 0., 0., 0., 0., 0., 0., 0.}, 
+                                  {0., 0., 1., 0., 0., 0., 0., 0., 0., 0.},
+                                  {0., 0., 0., 1., 0., 0., 0., 0., 0., 0.}, 
+                                  {0., 0., 0., 0., 2., 0., 0., 2., 0., 2.}};
     double  poly_vgl[5][size_max];
 
 #ifdef HAVE_OPENMP
@@ -5275,12 +5287,47 @@ qmckl_compute_ao_vgl_hpc (
           }
 
           int64_t n_poly;
-          const qmckl_exit_code rc = 
-             qmckl_ao_polynomial_transp_vgl_hpc(context, e_coord, n_coord, 
-               nucleus_max_ang_mom[inucl], &n_poly, powers, (int64_t) 3, 
-               &(poly_vgl[0][0]), size_max);
+          switch (nucleus_max_ang_mom[inucl]) {
+          case 0:
+            break;
 
-          assert (rc == QMCKL_SUCCESS);
+          case 1: 
+            poly_vgl_l1[0][1] = x;
+            poly_vgl_l1[0][2] = y;
+            poly_vgl_l1[0][3] = z;
+            break;
+
+          case 2: 
+            poly_vgl_l2[0][1] = x;
+            poly_vgl_l2[0][2] = y;
+            poly_vgl_l2[0][3] = z;
+            poly_vgl_l2[0][4] = x*x;
+            poly_vgl_l2[0][5] = x*y;
+            poly_vgl_l2[0][6] = x*z;
+            poly_vgl_l2[0][7] = y*y;
+            poly_vgl_l2[0][8] = y*z;
+            poly_vgl_l2[0][9] = z*z;
+            poly_vgl_l2[1][4] = x+x;
+            poly_vgl_l2[1][5] = y;
+            poly_vgl_l2[1][6] = z;
+            poly_vgl_l2[2][5] = x;
+            poly_vgl_l2[2][7] = y+y;
+            poly_vgl_l2[2][8] = z;
+            poly_vgl_l2[3][6] = x;
+            poly_vgl_l2[3][8] = y;
+            poly_vgl_l2[3][9] = z+z;
+            break;
+
+          default:
+              const qmckl_exit_code rc = 
+                qmckl_ao_polynomial_transp_vgl_hpc(context, e_coord, n_coord, 
+                                                   nucleus_max_ang_mom[inucl],
+                                                   &n_poly, powers, (int64_t) 3, 
+                                                   &(poly_vgl[0][0]), size_max);
+              
+              assert (rc == QMCKL_SUCCESS);
+              break;
+          }
  
           const int64_t ishell_start = nucleus_index[inucl];
           const int64_t ishell_end   = nucleus_index[inucl] + nucleus_shell_num[inucl];
@@ -5305,10 +5352,10 @@ qmckl_compute_ao_vgl_hpc (
              double s6_ = 0.;
              for (int idx=0 ; idx<nidx ; ++idx) {
                 const double v = c_[idx] * exp(-ar2[idx]);
-                const double x = v*expo_[idx];
+                const double t = v*expo_[idx];
                 s1_ += v;
-                s6_ -= x;
-                s5_ += x*(4.0*ar2[idx]-6.0);
+                s6_ -= t;
+                s5_ += t*(4.0*ar2[idx]-6.0);
              }
              s6_ += s6_;
              const double s1 = s1_;
@@ -5327,26 +5374,77 @@ qmckl_compute_ao_vgl_hpc (
              double* const ao_vgl_4 = &(ao_vgl_1[3*ao_num]);
              double* const ao_vgl_5 = &(ao_vgl_1[4*ao_num]);
 
+             double* poly_vgl_1;
+             double* poly_vgl_2;
+             double* poly_vgl_3;
+             double* poly_vgl_4;
+             double* poly_vgl_5;
              if (nidx > 0) {
-                 const int64_t idx = lstart[l];
-                 const double* poly_vgl_1 = &(poly_vgl[0][idx]);
-                 const double* poly_vgl_2 = &(poly_vgl[1][idx]);
-                 const double* poly_vgl_3 = &(poly_vgl[2][idx]);
-                 const double* poly_vgl_4 = &(poly_vgl[3][idx]);
-                 const double* poly_vgl_5 = &(poly_vgl[4][idx]);
                  const double* f = &(ao_factor[k]);
+                 const int64_t idx = lstart[l];
 
-                 for (int64_t il=0 ; il<n ; ++il) {
+                 switch (nucleus_max_ang_mom[inucl]) {
+                 case 0:
+                   for (int64_t il=0 ; il<n ; ++il) {
+                     ao_vgl_1[il] = s1 * f[il];
+                     ao_vgl_2[il] = s2 * f[il];
+                     ao_vgl_3[il] = s3 * f[il];
+                     ao_vgl_4[il] = s4 * f[il];
+                     ao_vgl_5[il] = s5;
+                   }
+                   break;
+                 case 1:
+                   poly_vgl_1 = &(poly_vgl_l1[0][idx]);
+                   poly_vgl_2 = &(poly_vgl_l1[1][idx]);
+                   poly_vgl_3 = &(poly_vgl_l1[2][idx]);
+                   poly_vgl_4 = &(poly_vgl_l1[3][idx]);
+                   for (int64_t il=0 ; il<n ; ++il) {
                      ao_vgl_1[il] =  poly_vgl_1[il] * s1 * f[il];
                      ao_vgl_2[il] = (poly_vgl_2[il] * s1 + poly_vgl_1[il] * s2) * f[il];
                      ao_vgl_3[il] = (poly_vgl_3[il] * s1 + poly_vgl_1[il] * s3) * f[il];
                      ao_vgl_4[il] = (poly_vgl_4[il] * s1 + poly_vgl_1[il] * s4) * f[il];
-                     ao_vgl_5[il] = (poly_vgl_5[il] * s1 + 
-                             poly_vgl_1[il] * s5 + 2.0*( 
-                             poly_vgl_2[il] * s2 + 
-                             poly_vgl_3[il] * s3 +
-                             poly_vgl_4[il] * s4 )) * f[il];
+                     ao_vgl_5[il] = (poly_vgl_1[il] * s5 +
+                                     2.0*(poly_vgl_2[il] * s2 + 
+                                          poly_vgl_3[il] * s3 +
+                                          poly_vgl_4[il] * s4 )) * f[il];
+                   }
+                   break;
+                 case 2:
+                   poly_vgl_1 = &(poly_vgl_l2[0][idx]);
+                   poly_vgl_2 = &(poly_vgl_l2[1][idx]);
+                   poly_vgl_3 = &(poly_vgl_l2[2][idx]);
+                   poly_vgl_4 = &(poly_vgl_l2[3][idx]);
+                   poly_vgl_5 = &(poly_vgl_l2[4][idx]);
+                   for (int64_t il=0 ; il<n ; ++il) {
+                     ao_vgl_1[il] =  poly_vgl_1[il] * s1 * f[il];
+                     ao_vgl_2[il] = (poly_vgl_2[il] * s1 + poly_vgl_1[il] * s2) * f[il];
+                     ao_vgl_3[il] = (poly_vgl_3[il] * s1 + poly_vgl_1[il] * s3) * f[il];
+                     ao_vgl_4[il] = (poly_vgl_4[il] * s1 + poly_vgl_1[il] * s4) * f[il];
+                     ao_vgl_5[il] = (poly_vgl_5[il] * s1 + poly_vgl_1[il] * s5 +
+                                     2.0*(poly_vgl_2[il] * s2 + 
+                                          poly_vgl_3[il] * s3 +
+                                          poly_vgl_4[il] * s4 )) * f[il];
+                   }
+                   break;
+                 default:
+                   poly_vgl_1 = &(poly_vgl[0][idx]);
+                   poly_vgl_2 = &(poly_vgl[1][idx]);
+                   poly_vgl_3 = &(poly_vgl[2][idx]);
+                   poly_vgl_4 = &(poly_vgl[3][idx]);
+                   poly_vgl_5 = &(poly_vgl[4][idx]);
+                   for (int64_t il=0 ; il<n ; ++il) {
+                     ao_vgl_1[il] =  poly_vgl_1[il] * s1 * f[il];
+                     ao_vgl_2[il] = (poly_vgl_2[il] * s1 + poly_vgl_1[il] * s2) * f[il];
+                     ao_vgl_3[il] = (poly_vgl_3[il] * s1 + poly_vgl_1[il] * s3) * f[il];
+                     ao_vgl_4[il] = (poly_vgl_4[il] * s1 + poly_vgl_1[il] * s4) * f[il];
+                     ao_vgl_5[il] = (poly_vgl_5[il] * s1 + poly_vgl_1[il] * s5 +
+                                     2.0*(poly_vgl_2[il] * s2 + 
+                                          poly_vgl_3[il] * s3 +
+                                          poly_vgl_4[il] * s4 )) * f[il];
+                   }
+                   break;
                  }
+
              } else {
                  for (int64_t il=0 ; il<n ; ++il) {
                      ao_vgl_1[il] = 0.0;
