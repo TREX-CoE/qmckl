@@ -9,12 +9,7 @@ if [[ -z ${srcdir} ]] ; then
    exit 1
 fi
 
-if [[ -z ${top_builddir} ]] ; then
-   echo "Error: srcdir environment variable is not defined"
-   exit 1
-fi
-
-readonly DOCS=${top_builddir}/share/doc/qmckl/
+readonly DOCS=share/doc/qmckl/
 readonly ORG=${srcdir}/org/
 readonly HTMLIZE=${DOCS}/html/htmlize.el
 readonly CONFIG_DOC=${srcdir}/tools/config_doc.el
@@ -47,7 +42,7 @@ function extract_doc()
 for i in $@
 do
     exported=${i%.org}.exported
-    exported=${top_builddir}/src/$(basename $exported)
+    exported=${srcdir}/src/$(basename $exported)
     NOW=$(date +"%m%d%H%M.%S")
     extract_doc ${i} &> $exported 
     rc=$?
