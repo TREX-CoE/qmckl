@@ -222,13 +222,13 @@ AC_ARG_ENABLE(debug, [AS_HELP_STRING([--enable-debug],[compile for debugging])],
 if test "$ok" = "yes"; then
         if test "$GCC" = "yes"; then
 	        CFLAGS="$CFLAGS \
--Wall -W -Wbad-function-cast -Wcast-qual -Warray-bounds -Wdisabled-optimization \
+-g -Wall -W -Wbad-function-cast -Wcast-qual -Warray-bounds -Wdisabled-optimization \
 -Wpointer-arith -Wcast-align -Wpedantic -Wextra -Walloc-zero -Werror \
 "
         fi
         if test "$GFC" = "yes"; then
 	        FCFLAGS="$FCFLAGS \
--fcheck=all -Waliasing -Wampersand -Wconversion \
+-g -fcheck=all -Waliasing -Wampersand -Wconversion \
 -Wsurprising -ffpe-trap=zero,overflow,underflow \
 -Wintrinsics-std -Wno-tabs -Wintrinsic-shadow -Wline-truncation \
 -Wreal-q-constant -Wuninitialized  -fbacktrace -finit-real=nan"
