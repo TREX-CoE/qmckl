@@ -93,10 +93,6 @@ text: $(htmlize_el) $(dist_text_DATA)
 doc: html text
 
 
-$(htmldir_loc)/qmckl.css: $(htmlize_el)
-	$(MKDIR_P) $(htmldir_loc) $(textdir_loc)
-	cp -f $(top_srcdir)/$(htmldir_loc)/qmckl.css $(builddir)/$(htmldir_loc)/qmckl.css
-
 if QMCKL_DEVEL
 
 if VFC_CI
