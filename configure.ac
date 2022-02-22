@@ -46,6 +46,22 @@ AS_IF([test -d ${srcdir}/.git],
         [enable_maintainer_mode="no"]
 )
 
+AC_ARG_WITH(ifort, [AS_HELP_STRING([--with-ifort],[Use Intel Fortran compiler])], with_ifort=$withval, with_ifort=no)
+AS_IF([test "$with_ifort" == "yes"], [
+  FC=ifort
+  FCFLAGS="-xHost -ip -O2 -ftz -finline -g -mkl=sequential" ])
+
+AC_ARG_WITH(icc, [AS_HELP_STRING([--with-icc],[Use Intel C compiler])], with_icc=$withval, with_icc=no)
+AS_IF([test "$with_icc" == "yes"], [
+  CC=icc
+  CFLAGS="-xHost -ip -O2 -ftz -finline -g -mkl=sequential" ])
+
+AS_IF([test "$with_icc"."$with_ifort" == "yes.yes"], [
+  ax_blas_ok="yes"
+  ax_lapack_ok="yes"
+  BLAS_LIBS=""
+  LAPACK_LIBS=""])
+
 AM_PROG_AR
 AM_MAINTAINER_MODE()
 LT_INIT
@@ -100,13 +116,14 @@ AC_CHECK_HEADERS([assert.h errno.h math.h pthread.h stdbool.h stdint.h stdio.h s
 AC_CHECK_LIB([pthread], [pthread_create])
 
 # OpenMP
-#AC_ARG_WITH(openmp, [AS_HELP_STRING([--with-openmp],[enable OpenMP])], with_omp=$withval, with_omp=no)
-#if test "x$with_omp" = xyes; then
-#   AC_DEFINE([HAVE_OPENMP], [1], [Define to use OpenMP threading.])
-#   AX_OPENMP([],
-#    [AC_MSG_ERROR([Could not find OpenMP flags; configure with --without-openmp])])
-#   CFLAGS="${CFLAGS} ${OPENMP_CFLAGS}"
-#fi
+AC_ARG_WITH(openmp, [AS_HELP_STRING([--with-openmp],[activate OpenMP])], with_omp=$withval, with_omp=no)
+if test "x$with_omp" = xyes; then
+   AC_DEFINE([HAVE_OPENMP], [1], [Define to use OpenMP threading.])
+   AX_OPENMP([],
+    [AC_MSG_ERROR([Could not find OpenMP flags; configure with --without-openmp])])
+   CFLAGS="${CFLAGS} ${OPENMP_CFLAGS}"
+   FCFLAGS="${CFLAGS} ${OPENMP_FCFLAGS}"
+fi
 
 # CHAMELEON
 AC_ARG_WITH(chameleon,
@@ -177,6 +194,7 @@ AX_BLAS([], [AC_MSG_ERROR([BLAS was not found.])])
 
 ## LAPACK
 AX_LAPACK([], [AC_MSG_ERROR([LAPACK was not found.])])
+AS_IF([test "$BLAS_LIBS" == "$LAPACK_LIBS"], [BLAS_LIBS=""])
 
 
 # Specific options required with some compilers
@@ -186,10 +204,10 @@ case $FC in
       FCFLAGS="$FCFLAGS -nofor-main"
       ;;
 
- gfortran*)
-      # Order is important here
-      FCFLAGS="-cpp $FCFLAGS"
-      ;;
+#gfortran*)
+#     # Order is important here
+#     FCFLAGS="-cpp $FCFLAGS"
+#     ;;
 esac
 
 
@@ -204,12 +222,13 @@ AC_ARG_ENABLE(debug, [AS_HELP_STRING([--enable-debug],[compile for debugging])],
 if test "$ok" = "yes"; then
         if test "$GCC" = "yes"; then
 	        CFLAGS="$CFLAGS \
--Wall -W -Wbad-function-cast -Wcast-qual \
--Wpointer-arith -Wcast-align -Wpedantic -Wextra -fmax-errors=3"
+-g -Wall -W -Wbad-function-cast -Wcast-qual -Warray-bounds -Wdisabled-optimization \
+-Wpointer-arith -Wcast-align -Wpedantic -Wextra -Walloc-zero -Werror \
+"
         fi
         if test "$GFC" = "yes"; then
 	        FCFLAGS="$FCFLAGS \
--fcheck=all -Waliasing -Wampersand -Wconversion \
+-g -fcheck=all -Waliasing -Wampersand -Wconversion \
 -Wsurprising -ffpe-trap=zero,overflow,underflow \
 -Wintrinsics-std -Wno-tabs -Wintrinsic-shadow -Wline-truncation \
 -Wreal-q-constant -Wuninitialized  -fbacktrace -finit-real=nan"
@@ -314,7 +333,7 @@ fi
 #mkl-dynamic-lp64-seq
 
 PKG_LIBS="$PKG_LIBS $LIBS"
-LIBS="$BLAS_LIBS $LAPACK_LIBS $BLAS_LIBS $PKG_LIBS"
+LIBS="$BLAS_LIBS $LAPACK_LIBS $PKG_LIBS"
 CFLAGS="$CFLAGS $PKG_CFLAGS"
 AC_SUBST([PKG_LIBS])
 AC_SUBST([PKG_CFLAGS])

@@ -36,12 +36,39 @@ make check
 
 ## For users
 
-Obtain a source distribution and run
+Obtain a source distribution.
+
+To build the documentation version:
 
 ```
-./configure 
-make
-make check
+./configure
+```
+
+To build an optimized version with Intel compilers:
+```
+./configure \
+   --with-icc \
+   --with-ifort \
+   --enable-hpc \
+   --with-openmp
+```
+
+To build an optimized version with GCC:
+```
+./configure \
+  CC=gcc \
+  CFLAGS="-g -O2 -march=native  -flto -fno-trapping-math -fno-math-errno -ftree-vectorize" \
+  FC=gfortran \
+  FCFLAGS="-g -O2 -march=native  -flto -ftree-vectorize" \
+  --enable-hpc \
+  --with-openmp
+```
+
+
+Then, compile with:
+```
+make -j
+make -j check
 sudo make install
 sudo make installcheck
 ```
@@ -54,7 +81,12 @@ by the preprocessor otherwise). To enable vfc_ci support, the library should be
 configured with the following command :
 
 ```
-./configure --prefix=$PWD/_install \ --enable-vfc_ci --host=x86_64 \ CC="verificarlo-f" FC="verificarlo-f"
+./configure \
+  CC="verificarlo-f" \
+  FC="verificarlo-f" \
+  --prefix=$PWD/_install \
+  --enable-vfc_ci \
+  --host=x86_64 \
 ```
 
 where CC and FC are set to verificarlo-f, and support is explicitely enabled
