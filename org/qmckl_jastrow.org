@@ -3855,6 +3855,70 @@ integer function qmckl_compute_een_rescaled_n_f(context, walk_num, elec_num, nuc
 end function qmckl_compute_een_rescaled_n_f
     #+end_src
 
+    #+begin_src c :comments org :tangle (eval c) :noweb yes
+qmckl_exit_code qmckl_compute_een_rescaled_n (
+	  const qmckl_context context,
+	  const int64_t walk_num,
+	  const int64_t elec_num,
+	  const int64_t nucl_num,
+	  const int64_t cord_num,
+	  const double rescale_factor_kappa_en,
+	  const double* en_distance,
+	  double* const een_rescaled_n ) {
+
+
+  if (context == QMCKL_NULL_CONTEXT) {
+    return QMCKL_INVALID_CONTEXT;
+  } 
+
+  if (walk_num <= 0) {
+    return QMCKL_INVALID_ARG_2;
+  }
+
+  if (elec_num <= 0) {
+    return QMCKL_INVALID_ARG_3;
+  }
+
+  if (nucl_num <= 0) {
+    return QMCKL_INVALID_ARG_4;
+  }
+
+  if (cord_num <= 0) {
+    return QMCKL_INVALID_ARG_5;
+  }
+
+  // Prepare table of exponentiated distances raised to appropriate power
+  for (int i = 0; i < (walk_num*(cord_num+1)*nucl_num*elec_num); ++i) {
+    een_rescaled_n[i] = 17.0;
+  }
+
+  for (int nw = 0; nw < walk_num; ++nw) {
+    for (int a = 0; a < nucl_num; ++a) {
+      for (int i = 0; i < elec_num; ++i) {
+        // prepare the actual een table
+        //een_rescaled_n(:, :, 0, nw) = 1.0d0
+        een_rescaled_n[i + a * elec_num + 0 + nw * elec_num*nucl_num*(cord_num+1)] = 1.0;
+        //een_rescaled_n(i, a, 1, nw) = dexp(-rescale_factor_kappa_en * en_distance(i, a, nw))
+        een_rescaled_n[i + a*elec_num + elec_num*nucl_num + nw*elec_num*nucl_num*(cord_num+1)] = exp(-rescale_factor_kappa_en * \
+                                                                              en_distance[i + a*elec_num + nw*elec_num*nucl_num]);
+      }
+    }
+
+    for (int l = 2; l < (cord_num+1); ++l){
+      for (int a = 0; a < nucl_num; ++a) {
+        for (int i = 0; i < elec_num; ++i) {
+          een_rescaled_n[i + a*elec_num + l*elec_num*nucl_num + nw*elec_num*nucl_num*(cord_num+1)] = een_rescaled_n[i + a*elec_num + (l-1)*elec_num*nucl_num + nw*elec_num*nucl_num*(cord_num+1)] *\
+                                                                                                     een_rescaled_n[i + a*elec_num +       elec_num*nucl_num + nw*elec_num*nucl_num*(cord_num+1)];
+        }
+      }
+    }
+
+  }
+
+  return QMCKL_SUCCESS;
+}
+    #+end_src
+
     #+CALL: generate_c_header(table=qmckl_factor_een_rescaled_n_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
 
     #+RESULTS:
@@ -3868,47 +3932,6 @@ end function qmckl_compute_een_rescaled_n_f
 	  const double rescale_factor_kappa_en,
 	  const double* en_distance,
 	  double* const een_rescaled_n );
-    #+end_src
-
-    #+CALL: generate_c_interface(table=qmckl_factor_een_rescaled_n_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
-
-    #+RESULTS:
-    #+begin_src f90 :tangle (eval f) :comments org :exports none
-    integer(c_int32_t) function qmckl_compute_een_rescaled_n &
-	(context, &
-		 walk_num, &
-		 elec_num, &
-		 nucl_num, &
-		 cord_num, &
-		 rescale_factor_kappa_en, &
-		 en_distance, &
-		 een_rescaled_n) &
-	bind(C) result(info)
-
-      use, intrinsic :: iso_c_binding
-      implicit none
-
-      integer (c_int64_t) , intent(in)  , value :: context
-      integer (c_int64_t) , intent(in)  , value :: walk_num
-      integer (c_int64_t) , intent(in)  , value :: elec_num
-      integer (c_int64_t) , intent(in)  , value :: nucl_num
-      integer (c_int64_t) , intent(in)  , value :: cord_num
-      real    (c_double ) , intent(in)  , value :: rescale_factor_kappa_en
-      real    (c_double ) , intent(in)          :: en_distance(nucl_num,elec_num,walk_num)
-      real    (c_double ) , intent(out)         :: een_rescaled_n(nucl_num,elec_num,0:cord_num,walk_num)
-
-      integer(c_int32_t), external :: qmckl_compute_een_rescaled_n_f
-      info = qmckl_compute_een_rescaled_n_f &
-	     (context, &
-		 walk_num, &
-		 elec_num, &
-		 nucl_num, &
-		 cord_num, &
-		 rescale_factor_kappa_en, &
-		 en_distance, &
-		 een_rescaled_n)
-
-    end function qmckl_compute_een_rescaled_n
     #+end_src
 
 *** Test
@@ -3969,7 +3992,6 @@ assert(fabs(een_rescaled_n[0][1][0][4]-0.023391817607642338) < 1.e-12);
 assert(fabs(een_rescaled_n[0][2][1][3]-0.880957224822116)    < 1.e-12);
 assert(fabs(een_rescaled_n[0][2][1][4]-0.027185942659395074) < 1.e-12);
 assert(fabs(een_rescaled_n[0][2][1][5]-0.01343938025140174)  < 1.e-12);
-
      #+end_src
 
 ** Electron-nucleus rescaled distances for each order and derivatives
