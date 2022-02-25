@@ -268,7 +268,7 @@ end interface
 
 *** Data structure                                                 :noexport:
 
-    #+begin_src c :comments org :tangle (eval h_private_type)
+    #+begin_src c :comments org :tangle (eval h_private_type) :noweb yes
 typedef struct qmckl_ao_basis_struct {
   int64_t   shell_num;
   int64_t   prim_num;
@@ -299,6 +299,9 @@ typedef struct qmckl_ao_basis_struct {
   bool      provided;
   bool      ao_cartesian;
   char      type;
+#ifdef HAVE_HPC
+  <<HPC_struct>>
+#endif
 } qmckl_ao_basis_struct;
     #+end_src
 
@@ -770,14 +773,14 @@ qmckl_set_ao_basis_shell_prim_num (qmckl_context context,
 }
      #+end_src
 
-
+     
      #+begin_src c :comments org :tangle (eval h_func)
 qmckl_exit_code
 qmckl_set_ao_basis_shell_prim_index (qmckl_context context,
                                      const int64_t* shell_prim_index,
                                      const int64_t size_max);
      #+end_src
-
+     
      #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
 qmckl_exit_code
 qmckl_set_ao_basis_shell_prim_index (qmckl_context context,
@@ -831,15 +834,15 @@ qmckl_set_ao_basis_shell_prim_index (qmckl_context context,
   <<post2>>
 }
      #+end_src
-
-
+     
+     
      #+begin_src c :comments org :tangle (eval h_func)
 qmckl_exit_code
 qmckl_set_ao_basis_shell_factor (qmckl_context context,
                                  const double* shell_factor,
                                  const int64_t size_max);
      #+end_src
-
+     
      #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
 qmckl_exit_code
 qmckl_set_ao_basis_shell_factor (qmckl_context context,
@@ -893,15 +896,15 @@ qmckl_set_ao_basis_shell_factor (qmckl_context context,
   <<post2>>
 }
      #+end_src
-
-
+     
+     
      #+begin_src c :comments org :tangle (eval h_func)
 qmckl_exit_code
 qmckl_set_ao_basis_exponent (qmckl_context context,
                              const double* exponent,
                              const int64_t size_max);
      #+end_src
-
+     
      #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
 qmckl_exit_code
 qmckl_set_ao_basis_exponent (qmckl_context context,
@@ -2485,7 +2488,6 @@ free(ao_factor_test);
    | ~ao_vgl~             | ~double[point_num][5][ao_num]~    | Value, gradients, Laplacian of the primitives at current  positions                          |
    | ~ao_vgl_date~        | ~uint64_t~                        | Last modification date of Value, gradients, Laplacian of the AOs at current positions        |
 
-
 *** After initialization
 
     When the basis set is completely entered, extra data structures may be
@@ -2625,10 +2627,108 @@ qmckl_exit_code qmckl_finalize_basis(qmckl_context context) {
       }
     }
   }
-  /* TODO : sort the basis set here */
-  return QMCKL_SUCCESS;
+
+  rc = QMCKL_SUCCESS;
+#ifdef HAVE_HPC
+  rc = qmckl_finalize_basis_hpc(context);
+#endif
+
+  return rc;
 }
       #+end_src
+
+*** HPC-specific data structures
+
+    For faster access, we provide 3D tensors for the shell information
+    as:
+    - $C_{psa}$ = =coef_per_nucleus (iprim, ishell, inucl)=
+    - $\gamma_{pa}$ =expo_per_nucleus (iprim, inucl)=
+
+    such that the computation of the radial parts can be vectorized.
+    Exponents are sorted in increasing order to exit loops quickly,
+    and only unique exponents are kept.
+
+    The computation of the radial part is made as
+    \[
+      R_{sa} = \sum_p C_{psa} \gamma_{pa}
+    \]
+    which is a matrix-vector product.
+    
+    #+NAME:HPC_struct 
+    #+begin_src c :comments org :tangle (eval h_private_type) :exports none
+ /* HPC specific data structures */
+ qmckl_tensor coef_per_nucleus;
+ qmckl_matrix expo_per_nucleus;
+    #+end_src
+
+    #+begin_src c :comments org :tangle (eval h_private_func) :exports none
+qmckl_exit_code qmckl_finalize_basis_hpc (qmckl_context context);
+    #+end_src
+    
+    #+begin_src c :comments org :tangle (eval c) :exports none
+qmckl_exit_code qmckl_finalize_basis_hpc (qmckl_context context)
+{
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+
+  int64_t shell_max = 0;
+  int64_t prim_max  = 0;
+  int64_t nucl_num = ctx->nucleus.num;
+  for (int inucl=0 ; inucl < nucl_num ; ++inucl) {
+    shell_max = ctx->ao_basis.nucleus_shell_num[inucl] > shell_max ?
+                ctx->ao_basis.nucleus_shell_num[inucl] : shell_max;
+
+    int64_t prim_num = 0;
+    const int64_t ishell_start = ctx->ao_basis.nucleus_index[inucl];
+    const int64_t ishell_end   = ctx->ao_basis.nucleus_index[inucl] + ctx->ao_basis.nucleus_shell_num[inucl];
+    for (int64_t ishell = ishell_start ; ishell < ishell_end ; ++ishell) {
+      prim_num += ctx->ao_basis.shell_prim_num[ishell];
+    }
+    prim_max = prim_num > prim_max ?
+               prim_num : prim_max;
+  }
+
+  int64_t size[3] = { prim_max, shell_max, nucl_num };
+  ctx->ao_basis.coef_per_nucleus = qmckl_tensor_alloc( context, 3, size );
+  ctx->ao_basis.coef_per_nucleus = qmckl_tensor_set(ctx->ao_basis.coef_per_nucleus, 0.);
+
+  ctx->ao_basis.expo_per_nucleus = qmckl_matrix_alloc( context, prim_max, nucl_num );
+  ctx->ao_basis.expo_per_nucleus = qmckl_matrix_set(ctx->ao_basis.expo_per_nucleus, 0.);
+
+  double expo[prim_max];
+  double coef[shell_max][prim_max];
+  for (int inucl=0 ; inucl < nucl_num ; ++inucl) {
+    memset(expo, 0, sizeof(expo));
+    memset(coef, 0, sizeof(expo));
+
+    int64_t idx = 0;
+    const int64_t ishell_start = ctx->ao_basis.nucleus_index[inucl];
+    const int64_t ishell_end   = ctx->ao_basis.nucleus_index[inucl] + ctx->ao_basis.nucleus_shell_num[inucl];
+    for (int64_t ishell = ishell_start ; ishell < ishell_end ; ++ishell) {
+      
+      const int64_t iprim_start = ctx->ao_basis.shell_prim_index[ishell];
+      const int64_t iprim_end   = ctx->ao_basis.shell_prim_index[ishell] + ctx->ao_basis.shell_prim_num[ishell];
+      for (int64_t iprim = iprim_start ; iprim < iprim_end ; ++iprim) {
+        expo[idx] = ctx->ao_basis.coefficient_normalized[iprim];
+        coef[ishell - ishell_start][idx] = ctx->ao_basis.coefficient_normalized[iprim];
+        idx += 1;
+      }
+    }
+
+    for (int64_t i=0 ; i<prim_max ; ++i) {
+      qmckl_mat( ctx->ao_basis.expo_per_nucleus, i, inucl ) = expo[i];
+    }
+
+    for (int64_t j=0 ; j<shell_max ; ++j) {
+      for (int64_t i=0 ; i<prim_max ; ++i) {
+        qmckl_ten3( ctx->ao_basis.coef_per_nucleus, i, j, inucl ) = coef[j][i];
+      }
+    }
+
+  }
+  return QMCKL_SUCCESS;
+}
+  
+    #+end_src
 
 *** Access functions
 
@@ -5477,6 +5577,7 @@ qmckl_compute_ao_vgl_hpc_gaussian (
                    poly_vgl_2 = &(poly_vgl[1][idx]);
                    poly_vgl_3 = &(poly_vgl[2][idx]);
                    poly_vgl_4 = &(poly_vgl[3][idx]);
+                   poly_vgl_5 = &(poly_vgl[4][idx]);
                  }
                  switch (n) {
                  case(1):
@@ -5497,8 +5598,8 @@ qmckl_compute_ao_vgl_hpc_gaussian (
                        ao_vgl_4[il] = (poly_vgl_4[il] * s1 + poly_vgl_1[il] * s4) * f[il];
                        ao_vgl_5[il] = (poly_vgl_1[il] * s5 +
                                        2.0*(poly_vgl_2[il] * s2 +
-                                             poly_vgl_3[il] * s3 +
-                                             poly_vgl_4[il] * s4 )) * f[il];
+                                            poly_vgl_3[il] * s3 +
+                                            poly_vgl_4[il] * s4 )) * f[il];
                      }
                      break;
                  case(5):
@@ -5512,8 +5613,8 @@ qmckl_compute_ao_vgl_hpc_gaussian (
                        ao_vgl_4[il] = (poly_vgl_4[il] * s1 + poly_vgl_1[il] * s4) * f[il];
                        ao_vgl_5[il] = (poly_vgl_1[il] * s5 +
                                        2.0*(poly_vgl_2[il] * s2 +
-                                             poly_vgl_3[il] * s3 +
-                                             poly_vgl_4[il] * s4 )) * f[il];
+                                            poly_vgl_3[il] * s3 +
+                                            poly_vgl_4[il] * s4 )) * f[il];
                      }
                      break;
                  default:
@@ -5525,7 +5626,7 @@ qmckl_compute_ao_vgl_hpc_gaussian (
                        ao_vgl_2[il] = (poly_vgl_2[il] * s1 + poly_vgl_1[il] * s2) * f[il];
                        ao_vgl_3[il] = (poly_vgl_3[il] * s1 + poly_vgl_1[il] * s3) * f[il];
                        ao_vgl_4[il] = (poly_vgl_4[il] * s1 + poly_vgl_1[il] * s4) * f[il];
-                       ao_vgl_5[il] = (poly_vgl_1[il] * s5 +
+                       ao_vgl_5[il] = (poly_vgl_5[il] * s1 + poly_vgl_1[il] * s5 +
                                        2.0*(poly_vgl_2[il] * s2 +
                                              poly_vgl_3[il] * s3 +
                                              poly_vgl_4[il] * s4 )) * f[il];
