@@ -1,4 +1,3 @@
-B
 #+TITLE: Atomic Orbitals
 #+SETUPFILE: ../tools/theme.setup
 #+INCLUDE: ../tools/lib.org
@@ -57,6 +56,7 @@ gradients and Laplacian of the atomic basis functions.
 #define QMCKL_AO_HPT
 
 #include <stdbool.h>
+#include <stdio.h>
   #+end_src
 
   #+begin_src f90 :tangle (eval f) :noweb yes
@@ -2638,7 +2638,8 @@ qmckl_exit_code qmckl_finalize_basis(qmckl_context context) {
 }
       #+end_src
 
-*** HPC-specific data structures
+*** TODO HPC-specific data structures
+
 
     For faster access, we provide extra arrays for the shell information as:
     - $C_{psa}$ = =coef_per_nucleus (iprim, ishell, inucl)=
@@ -2659,6 +2660,7 @@ qmckl_exit_code qmckl_finalize_basis(qmckl_context context) {
     #+NAME:HPC_struct 
     #+begin_src c :comments org :exports none
  /* HPC specific data structures */
+ int32_t*     prim_num_per_nucleus;
  qmckl_tensor coef_per_nucleus;
  qmckl_matrix expo_per_nucleus;
     #+end_src
@@ -2668,16 +2670,37 @@ qmckl_exit_code qmckl_finalize_basis_hpc (qmckl_context context);
     #+end_src
     
     #+begin_src c :comments org :tangle (eval c) :exports none
+/* Data structure for sorting */
+struct combined {
+  double expo;
+  int64_t index;
+};
+
+/* Comparison function */
+int compare_basis( const void * l, const void * r )
+{
+  const struct combined * _l= (const struct combined *)l;
+  const struct combined * _r= (const struct combined *)r;
+  if( _l->expo > _r->expo ) return 1; 
+  if( _l->expo < _r->expo ) return -1;
+  return 0;
+}
+
 qmckl_exit_code qmckl_finalize_basis_hpc (qmckl_context context)
 {
   qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
 
+  mem_info.size = ctx->nucleus.num * sizeof(int32_t);
+  ctx->ao_basis.prim_num_per_nucleus = (int32_t*) qmckl_malloc(context, mem_info);
+
+  /* Find max number of primitives per nucleus */
   int64_t shell_max = 0;
   int64_t prim_max  = 0;
   int64_t nucl_num = ctx->nucleus.num;
   for (int inucl=0 ; inucl < nucl_num ; ++inucl) {
     shell_max = ctx->ao_basis.nucleus_shell_num[inucl] > shell_max ?
-                ctx->ao_basis.nucleus_shell_num[inucl] : shell_max;
+      ctx->ao_basis.nucleus_shell_num[inucl] : shell_max;
 
     int64_t prim_num = 0;
     const int64_t ishell_start = ctx->ao_basis.nucleus_index[inucl];
@@ -2686,8 +2709,10 @@ qmckl_exit_code qmckl_finalize_basis_hpc (qmckl_context context)
       prim_num += ctx->ao_basis.shell_prim_num[ishell];
     }
     prim_max = prim_num > prim_max ?
-               prim_num : prim_max;
+      prim_num : prim_max;
+    ctx->ao_basis.prim_num_per_nucleus[inucl] = prim_num;
   }
+
 
   int64_t size[3] = { prim_max, shell_max, nucl_num };
   ctx->ao_basis.coef_per_nucleus = qmckl_tensor_alloc( context, 3, size );
@@ -2696,9 +2721,10 @@ qmckl_exit_code qmckl_finalize_basis_hpc (qmckl_context context)
   ctx->ao_basis.expo_per_nucleus = qmckl_matrix_alloc( context, prim_max, nucl_num );
   ctx->ao_basis.expo_per_nucleus = qmckl_matrix_set(ctx->ao_basis.expo_per_nucleus, 0.);
 
-  double expo[prim_max];
+  struct combined expo[prim_max];
   double coef[shell_max][prim_max];
-  for (int inucl=0 ; inucl < nucl_num ; ++inucl) {
+  double newcoef[prim_max];
+  for (int64_t inucl=0 ; inucl < nucl_num ; ++inucl) {
     memset(expo, 0, sizeof(expo));
     memset(coef, 0, sizeof(expo));
 
@@ -2710,23 +2736,86 @@ qmckl_exit_code qmckl_finalize_basis_hpc (qmckl_context context)
       const int64_t iprim_start = ctx->ao_basis.shell_prim_index[ishell];
       const int64_t iprim_end   = ctx->ao_basis.shell_prim_index[ishell] + ctx->ao_basis.shell_prim_num[ishell];
       for (int64_t iprim = iprim_start ; iprim < iprim_end ; ++iprim) {
-        expo[idx] = ctx->ao_basis.coefficient_normalized[iprim];
-        coef[ishell - ishell_start][idx] = ctx->ao_basis.coefficient_normalized[iprim];
+        expo[idx].expo = ctx->ao_basis.exponent[iprim];
+        expo[idx].index = idx;
         idx += 1;
       }
     }
 
-    for (int64_t i=0 ; i<prim_max ; ++i) {
-      qmckl_mat( ctx->ao_basis.expo_per_nucleus, i, inucl ) = expo[i];
+    /* Sort exponents */
+    qsort( expo, (size_t) idx, sizeof(struct combined), compare_basis );
+
+    idx = 0;
+    int64_t idx2 = 0;
+    for (int64_t ishell = ishell_start ; ishell < ishell_end ; ++ishell) {
+      
+      memset(newcoef, 0, sizeof(newcoef));
+      const int64_t iprim_start = ctx->ao_basis.shell_prim_index[ishell];
+      const int64_t iprim_end   = ctx->ao_basis.shell_prim_index[ishell] + ctx->ao_basis.shell_prim_num[ishell];
+      for (int64_t iprim = iprim_start ; iprim < iprim_end ; ++iprim) {
+//        newcoef[idx] = ctx->ao_basis.coefficient_normalized[iprim];
+        newcoef[idx] = ctx->ao_basis.coefficient[iprim];
+        idx += 1;
+      }
+      for (int64_t i=0 ; i<ctx->ao_basis.prim_num_per_nucleus[inucl] ; ++i) {
+        idx2 = expo[i].index;
+        coef[ishell - ishell_start][i] = newcoef[idx2];
+      }
     }
 
-    for (int64_t j=0 ; j<shell_max ; ++j) {
-      for (int64_t i=0 ; i<prim_max ; ++i) {
+ /* Apply ordering to coefficients */
+
+ /* Remove duplicates */
+    int64_t newidx[prim_max];
+    int64_t idxmax = 0;
+    idx = 0;
+    newidx[0] = 0;
+    for (int64_t i=1 ; i<ctx->ao_basis.prim_num_per_nucleus[inucl] ; ++i) {
+      if (expo[i].expo != expo[i-1].expo) {
+        idx += 1;
+      }
+      newidx[i] = idx;
+    }
+    idxmax = idx;
+
+    for (int64_t j=0 ; j<ishell_end-ishell_start ; ++j) {
+      memset(newcoef, 0, sizeof(newcoef));
+      for (int64_t i=0 ; i<ctx->ao_basis.prim_num_per_nucleus[inucl] ; ++i) {
+        newcoef[newidx[i]] += coef[j][i];
+      }
+      for (int64_t i=0 ; i<ctx->ao_basis.prim_num_per_nucleus[inucl] ; ++i) {
+        coef[j][i] = newcoef[i];
+      }
+    }
+
+    for (int64_t i=0 ; i<ctx->ao_basis.prim_num_per_nucleus[inucl] ; ++i) {
+        expo[newidx[i]].expo = expo[i].expo;
+    }
+    ctx->ao_basis.prim_num_per_nucleus[inucl] = idxmax+1;
+
+    for (int64_t i=0 ; i<ctx->ao_basis.prim_num_per_nucleus[inucl] ; ++i) {
+      qmckl_mat( ctx->ao_basis.expo_per_nucleus, i, inucl ) = expo[i].expo;
+    }
+
+    for (int64_t j=0 ; j<ishell_end-ishell_start ; ++j) {
+      for (int64_t i=0 ; i<ctx->ao_basis.prim_num_per_nucleus[inucl] ; ++i) {
         qmckl_ten3( ctx->ao_basis.coef_per_nucleus, i, j, inucl ) = coef[j][i];
       }
     }
 
+/* 
+    for (int64_t i=0 ; i<ctx->ao_basis.prim_num_per_nucleus[inucl] ; ++i) {
+      printf("%4ld %4ld %15.5e | ", inucl, i, qmckl_mat( ctx->ao_basis.expo_per_nucleus, i, inucl ));
+      for (int64_t j=0 ; j<ishell_end-ishell_start ; ++j) {
+        printf("%8.5f ", qmckl_ten3( ctx->ao_basis.coef_per_nucleus, i, j, inucl ));
+      }
+      printf("\n");
+    }
+    printf("\n");
+*/
   }
+
+    
   return QMCKL_SUCCESS;
 }
   
@@ -5504,6 +5593,21 @@ qmckl_compute_ao_vgl_hpc_gaussian (
               assert (rc == QMCKL_SUCCESS);
               break;
           }
+
+          /* Compute all exponents */
+          /*
+          for (int32_t i=0 ; i<ctx->ao_basis.prim_num_per_nucleus ; ++i) {
+            const double v = expo[iprim]*r2;
+            if (v > cutoff) {
+              nidx = i;
+              break;
+            }
+            ar2[i] = -v;
+          }
+
+          for (int32_t i=0 ; i<ctx->ao_basis.prim_num_per_nucleus ; ++i) {
+          }
+          */
 
           const int64_t ishell_start = nucleus_index[inucl];
           const int64_t ishell_end   = nucleus_index[inucl] + nucleus_shell_num[inucl];
