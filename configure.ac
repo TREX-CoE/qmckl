@@ -49,12 +49,12 @@ AS_IF([test -d ${srcdir}/.git],
 AC_ARG_WITH(ifort, [AS_HELP_STRING([--with-ifort],[Use Intel Fortran compiler])], with_ifort=$withval, with_ifort=no)
 AS_IF([test "$with_ifort" == "yes"], [
   FC=ifort
-  FCFLAGS="-xHost -ip -O2 -ftz -finline -g -mkl=sequential" ])
+  FCFLAGS="-xHost -ip -Ofast -ftz -finline -g -mkl=sequential" ])
 
 AC_ARG_WITH(icc, [AS_HELP_STRING([--with-icc],[Use Intel C compiler])], with_icc=$withval, with_icc=no)
 AS_IF([test "$with_icc" == "yes"], [
   CC=icc
-  CFLAGS="-xHost -ip -O2 -ftz -finline -g -mkl=sequential" ])
+  CFLAGS="-xHost -ip -Ofast -ftz -finline -g -mkl=sequential" ])
 
 AS_IF([test "$with_icc"."$with_ifort" == "yes.yes"], [
   ax_blas_ok="yes"
