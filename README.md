@@ -73,6 +73,24 @@ sudo make install
 sudo make installcheck
 ```
 
+
+## Linking to your program
+
+The `make install` command takes care of installing the QMCkl shared library on the user machine.
+Once installed, add `-lqmckl` to the list of compiler options.
+
+In some cases (e.g. when using custom `prefix` during configuration), the QMCkl library might end up installed in a directory, which is absent in the default `$LIBRARY_PATH`.
+In order to link the program against QMCkl, the search paths can be modified as follows:
+
+`export LIBRARY_PATH=$LIBRARY_PATH:<path_to_qmckl>/lib`
+
+(same holds for `$LD_LIBRARY_PATH`). The `<path_to_qmckl>` has to be replaced with the prefix used during the installation.
+
+If your project relies on the CMake build system, feel free to use the
+[FindQMCKL.cmake](https://github.com/TREX-CoE/qmckl/blob/master/cmake/FindQMCKL.cmake)
+module to find and link the QMCkl library automatically.
+
+
 ## Verificarlo CI
 
 Since Verificarlo should not be a dependency of QMCkl, all Verificarlo
