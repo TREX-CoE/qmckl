@@ -235,10 +235,13 @@ if test "$FC" = "verificarlo-f"; then
 fi
 
 # Enable GPU offloading
+
 # OpenMP offloading
 AC_ARG_ENABLE(openmp-offload, [AS_HELP_STRING([--openmp-offload],[Use OpenMP-offloaded functions])], HAVE_OPENMP_OFFLOAD=$enableval, HAVE_OPENMP_OFFLOAD=no)
 AS_IF([test "$HAVE_OPENMP_OFFLOAD" = "yes"], [
    AC_DEFINE([HAVE_OPENMP_OFFLOAD], [1], [If defined, activate OpenMP-offloaded routines])
+   CFLAGS="$OFFLOAD_FLAGS $OFFLOAD_CFLAGS $CFLAGS"
+   FCFLAGS="$OFFLOAD_FLAGS $OFFLOAD_FCFLAGS -DHAVE_OPENMP_OFFLOAD $FCFLAGS"
 ])
 
 AC_ARG_ENABLE(debug, [AS_HELP_STRING([--enable-debug],[compile for debugging])], ok=$enableval, ok=no)
