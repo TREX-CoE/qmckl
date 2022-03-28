@@ -621,7 +621,6 @@ qmckl_exit_code qmckl_provide_mo_vgl(qmckl_context context)
 
     
     
-
     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
 integer function qmckl_compute_mo_basis_mo_vgl_doc_f(context, &
      ao_num, mo_num, point_num, &
@@ -761,7 +760,72 @@ qmckl_compute_mo_basis_mo_vgl_hpc (const qmckl_context context,
                                    const double* restrict ao_vgl,
                                    double* restrict const mo_vgl )
 {
-  return qmckl_compute_mo_basis_mo_vgl_doc (context, ao_num, mo_num, point_num, coef_normalized_t, ao_vgl, mo_vgl);
+#ifdef HAVE_OPENMP
+  #pragma omp parallel for
+#endif
+  for (int64_t ipoint=0 ; ipoint < point_num ; ++ipoint) {
+    double* restrict const vgl1 = &(mo_vgl[ipoint*5*mo_num]);
+    const double* restrict avgl1 = &(ao_vgl[ipoint*5*ao_num]);
+    double* restrict const vgl2 =  vgl1 + mo_num;
+    double* restrict const vgl3 =  vgl1 + (mo_num << 1);
+    double* restrict const vgl4 =  vgl1 + (mo_num << 1) + mo_num;
+    double* restrict const vgl5 =  vgl1 + (mo_num << 2);
+    const double* restrict avgl2 = avgl1 + ao_num;
+    const double* restrict avgl3 = avgl1 + (ao_num << 1);
+    const double* restrict avgl4 = avgl1 + (ao_num << 1) + ao_num;
+    const double* restrict avgl5 = avgl1 + (ao_num << 2);
+
+    for (int64_t i=0 ; i<mo_num ; ++i) {
+      vgl1[i] = 0.;
+      vgl2[i] = 0.;
+      vgl3[i] = 0.;
+      vgl4[i] = 0.;
+      vgl5[i] = 0.;
+    }
+
+    int64_t nidx=0;
+    int64_t idx[ao_num];
+    double  av1[ao_num];
+    double  av2[ao_num];
+    double  av3[ao_num];
+    double  av4[ao_num];
+    double  av5[ao_num];
+    for (int64_t k=0 ; k<ao_num ; ++k) {
+      const double* restrict ck1 = coef_normalized_t + k*mo_num;
+      if (avgl1[k] != 0.) {
+        idx[nidx] = k;
+        av1[nidx] = avgl1[k];
+        av2[nidx] = avgl2[k];
+        av3[nidx] = avgl3[k];
+        av4[nidx] = avgl4[k];
+        av5[nidx] = avgl5[k];
+        ++nidx;
+      }
+    }
+
+    for (int64_t n=0 ; n < nidx ; ++n) {
+      int64_t k = idx[n];
+      const double* restrict ck1 = coef_normalized_t +   k*mo_num;
+      if (avgl1[n] != 0.) {
+        const double a1 = av1[n];
+        const double a2 = av2[n];
+        const double a3 = av3[n];
+        const double a4 = av4[n];
+        const double a5 = av5[n];
+#ifdef HAVE_OPENMP
+  #pragma omp simd
+#endif
+        for (int64_t i=0 ; i<mo_num ; ++i) {
+          vgl1[i] += ck1[i] * a1;
+          vgl2[i] += ck1[i] * a2;
+          vgl3[i] += ck1[i] * a3;
+          vgl4[i] += ck1[i] * a4;
+          vgl5[i] += ck1[i] * a5;
+        }
+      }
+    }
+  }
+  return QMCKL_SUCCESS;
 }
 #endif
     #+end_src
