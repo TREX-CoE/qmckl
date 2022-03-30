@@ -330,7 +330,7 @@ kappa_inv = 1.0/kappa
 #+begin_src c :comments org :tangle (eval h_type)
 typedef enum qmckl_jastrow_offload_type{
   OFFLOAD_NONE,
-  OFFLOAD_OPENMP
+  OFFLOAD_OPENACC
 } qmckl_jastrow_offload_type;
 #+end_src
 
@@ -4851,7 +4851,7 @@ qmckl_exit_code qmckl_provide_dtmp_c(qmckl_context context)
 
       qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
       mem_info.size = (ctx->jastrow.cord_num) * (ctx->jastrow.cord_num + 1)
-                      * 4 * ctx->electron.num * ctx->nucleus.num * ctx->electron.walk_num * sizeof(double);
+                      ,* 4 * ctx->electron.num * ctx->nucleus.num * ctx->electron.walk_num * sizeof(double);
       double* dtmp_c = (double*) qmckl_malloc(context, mem_info);
 
       if (dtmp_c == NULL) {
@@ -4863,8 +4863,13 @@ qmckl_exit_code qmckl_provide_dtmp_c(qmckl_context context)
       ctx->jastrow.dtmp_c = dtmp_c;
     }
 
-    qmckl_exit_code rc =
-      qmckl_compute_dtmp_c(context,
+    /* Choose the correct compute function (depending on offload type) */
+    bool default_compute = true;
+
+    #ifdef HAVE_OPENACC_OFFLOAD
+    if(ctx->jastrow.offload_type == OFFLOAD_OPENACC) {
+     qmckl_exit_code rc =
+     qmckl_compute_dtmp_c_acc_offload(context,
                           ctx->jastrow.cord_num,
                           ctx->electron.num,
                           ctx->nucleus.num,
@@ -4872,8 +4877,26 @@ qmckl_exit_code qmckl_provide_dtmp_c(qmckl_context context)
                           ctx->jastrow.een_rescaled_e_deriv_e,
                           ctx->jastrow.een_rescaled_n,
                           ctx->jastrow.dtmp_c);
-    if (rc != QMCKL_SUCCESS) {
-      return rc;
+      default_compute = false;
+      if (rc != QMCKL_SUCCESS) {
+        return rc;
+      }
+    }
+    #endif
+
+    if(default_compute) {
+     qmckl_exit_code rc =
+     qmckl_compute_dtmp_c(context,
+                          ctx->jastrow.cord_num,
+                          ctx->electron.num,
+                          ctx->nucleus.num,
+                          ctx->electron.walk_num,
+                          ctx->jastrow.een_rescaled_e_deriv_e,
+                          ctx->jastrow.een_rescaled_n,
+                          ctx->jastrow.dtmp_c);
+      if (rc != QMCKL_SUCCESS) {
+        return rc;
+      }
     }
 
     ctx->jastrow.dtmp_c_date = ctx->date;
@@ -5437,6 +5460,156 @@ end function qmckl_compute_dtmp_c_f
 	     (context, cord_num, elec_num, nucl_num, walk_num, een_rescaled_e_deriv_e, een_rescaled_n, dtmp_c)
 
     end function qmckl_compute_dtmp_c
+    #+end_src
+
+*** Compute dtmp_c (OpenACC offload)
+   :PROPERTIES:
+   :Name:     qmckl_compute_dtmp_c_acc_offload
+   :CRetType: qmckl_exit_code
+   :FRetType: qmckl_exit_code
+   :END:
+
+    #+NAME: qmckl_factor_dtmp_c_acc_offload_args
+    | Variable                 | Type                                                             | In/Out | Description                                   |
+    |--------------------------+------------------------------------------------------------------+--------+-----------------------------------------------|
+    | ~context~                | ~qmckl_context~                                                  | in     | Global state                                  |
+    | ~cord_num~               | ~int64_t~                                                        | in     | Order of polynomials                          |
+    | ~elec_num~               | ~int64_t~                                                        | in     | Number of electrons                           |
+    | ~nucl_num~               | ~int64_t~                                                        | in     | Number of nucleii                             |
+    | ~walk_num~               | ~int64_t~                                                        | in     | Number of walkers                             |
+    | ~een_rescaled_e_deriv_e~ | ~double[walk_num][0:cord_num][elec_num][4][elec_num]~            | in     | Electron-electron rescaled factor derivatives |
+    | ~een_rescaled_n~         | ~double[walk_num][0:cord_num][nucl_num][elec_num]~               | in     | Electron-nucleus rescaled factor              |
+    | ~dtmp_c~                 | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][elec_num]~ | out    | vector of non-zero coefficients               |
+
+    #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+integer function qmckl_compute_dtmp_c_acc_offload_f(context, cord_num, elec_num, nucl_num, &
+     walk_num, een_rescaled_e_deriv_e, een_rescaled_n, dtmp_c) &
+     result(info)
+  use qmckl
+  implicit none
+  integer(qmckl_context), intent(in)  :: context
+  integer*8             , intent(in)  :: cord_num
+  integer*8             , intent(in)  :: elec_num
+  integer*8             , intent(in)  :: nucl_num
+  integer*8             , intent(in)  :: walk_num
+  double precision      , intent(in)  :: een_rescaled_e_deriv_e(elec_num, 4, elec_num, 0:cord_num, walk_num)
+  double precision      , intent(in)  :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
+  double precision      , intent(out) :: dtmp_c(elec_num, 4, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
+  double precision                    :: x, tmp
+  integer*8                           :: i, j, jj, k2, a, l, kk, p, lmax, nw, ii
+  character                           :: TransA, TransB
+  double precision                    :: alpha, beta
+  integer*8                           :: M, N, K, LDA, LDB, LDC
+
+  TransA = 'N'
+  TransB = 'N'
+  alpha = 1.0d0
+  beta  = 0.0d0
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (cord_num <= 0) then
+     info = QMCKL_INVALID_ARG_2
+     return
+  endif
+
+  if (elec_num <= 0) then
+     info = QMCKL_INVALID_ARG_3
+     return
+  endif
+
+  if (nucl_num <= 0) then
+     info = QMCKL_INVALID_ARG_4
+     return
+  endif
+
+  M = 4*elec_num
+  N = nucl_num*(cord_num + 1)
+  K = elec_num
+  LDA = 4*size(een_rescaled_e_deriv_e,1)
+  LDB = size(een_rescaled_n,1)
+  LDC = 4*size(dtmp_c,1)
+
+  do nw=1, walk_num
+  do i=0, cord_num-1
+
+	! Single DGEMM
+  do j=0,cord_num
+	do jj=1,nucl_num
+    do k2=1,4
+	  do kk=1,elec_num
+
+      tmp = 0.0
+      do l=1,K
+		  tmp = tmp + &
+	      een_rescaled_e_deriv_e(kk, k2, l, i, nw) * een_rescaled_n(l, jj, j, nw)
+      enddo
+	    ! affect tmp
+	    dtmp_c(kk, k2, jj, j, i, nw ) = tmp
+
+    enddo
+	  enddo
+  enddo
+  enddo
+
+
+  !info = qmckl_dgemm(context,TransA, TransB, M, N, K, alpha,     &
+  !                   een_rescaled_e_deriv_e(1,1,1,i,nw),LDA*1_8, &
+  !                   een_rescaled_n(1,1,0,nw),LDB*1_8,           &
+  !                   beta,                                       &
+  !                   dtmp_c(1,1,1,0,i,nw),LDC)
+  end do
+  end do
+
+end function qmckl_compute_dtmp_c_acc_offload_f
+    #+end_src
+
+    #+CALL: generate_c_header(table=qmckl_factor_dtmp_c_acc_offload_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+
+    #+RESULTS:
+    #+begin_src c :tangle (eval h_func) :comments org
+    qmckl_exit_code qmckl_compute_dtmp_c_acc_offload (
+	  const qmckl_context context,
+	  const int64_t cord_num,
+	  const int64_t elec_num,
+	  const int64_t nucl_num,
+	  const int64_t walk_num,
+	  const double* een_rescaled_e_deriv_e,
+	  const double* een_rescaled_n,
+	  double* const dtmp_c );
+    #+end_src
+
+
+    #+CALL: generate_c_interface(table=qmckl_factor_dtmp_c_acc_offload_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+
+    #+RESULTS:
+    #+begin_src f90 :tangle (eval f) :comments org :exports none
+    integer(c_int32_t) function qmckl_compute_dtmp_c_acc_offload &
+	(context, cord_num, elec_num, nucl_num, walk_num, een_rescaled_e_deriv_e, een_rescaled_n, dtmp_c) &
+	bind(C) result(info)
+
+      use, intrinsic :: iso_c_binding
+      implicit none
+
+      integer (c_int64_t) , intent(in)  , value :: context
+      integer (c_int64_t) , intent(in)  , value :: cord_num
+      integer (c_int64_t) , intent(in)  , value :: elec_num
+      integer (c_int64_t) , intent(in)  , value :: nucl_num
+      integer (c_int64_t) , intent(in)  , value :: walk_num
+      real    (c_double ) , intent(in)          :: een_rescaled_e_deriv_e(elec_num,4,elec_num,0:cord_num,walk_num)
+      real    (c_double ) , intent(in)          :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
+      real    (c_double ) , intent(out)         :: dtmp_c(elec_num,nucl_num,0:cord_num,0:cord_num-1,walk_num)
+
+      integer(c_int32_t), external :: qmckl_compute_dtmp_c_f
+      info = qmckl_compute_dtmp_c_f &
+	     (context, cord_num, elec_num, nucl_num, walk_num, een_rescaled_e_deriv_e, een_rescaled_n, dtmp_c)
+
+    end function qmckl_compute_dtmp_c_acc_offload
     #+end_src
 
 *** Test
@@ -6140,10 +6313,10 @@ qmckl_exit_code qmckl_provide_factor_een_deriv_e(qmckl_context context)
     /* Choose the correct compute function (depending on offload type) */
     bool default_compute = true;
 
-#ifdef HAVE_OPENMP_OFFLOAD
-    if(ctx->jastrow.offload_type == OFFLOAD_OPENMP) {
+    #ifdef HAVE_OPENACC_OFFLOAD
+    if(ctx->jastrow.offload_type == OFFLOAD_OPENACC) {
     qmckl_exit_code rc =
-      qmckl_compute_factor_een_deriv_e_omp_offload(context,
+      qmckl_compute_factor_een_deriv_e_acc_offload(context,
                               ctx->electron.walk_num,
                               ctx->electron.num,
                               ctx->nucleus.num,
@@ -6157,8 +6330,11 @@ qmckl_exit_code qmckl_provide_factor_een_deriv_e(qmckl_context context)
                               ctx->jastrow.een_rescaled_n_deriv_e,
                               ctx->jastrow.factor_een_deriv_e);
       default_compute = false;
+      if (rc != QMCKL_SUCCESS) {
+        return rc;
+      }
     }
-#endif
+    #endif
 
     if(default_compute) {
     qmckl_exit_code rc =
@@ -6175,10 +6351,9 @@ qmckl_exit_code qmckl_provide_factor_een_deriv_e(qmckl_context context)
                               ctx->jastrow.een_rescaled_n,
                               ctx->jastrow.een_rescaled_n_deriv_e,
                               ctx->jastrow.factor_een_deriv_e);
-    }
-
-    if (rc != QMCKL_SUCCESS) {
-      return rc;
+      if (rc != QMCKL_SUCCESS) {
+        return rc;
+      }
     }
 
     ctx->jastrow.factor_een_deriv_e_date = ctx->date;
@@ -6577,14 +6752,14 @@ end function qmckl_compute_factor_een_deriv_e_f
     end function qmckl_compute_factor_een_deriv_e
     #+end_src
 
-*** Compute (OpenMP offload)...
+*** Compute (OpenACC offload)
  :PROPERTIES:
    :Name:     qmckl_compute_factor_een_deriv_e
    :CRetType: qmckl_exit_code
    :FRetType: qmckl_exit_code
    :END:
 
-    #+NAME: qmckl_factor_een_deriv_e_omp_offload_args
+    #+NAME: qmckl_factor_een_deriv_e_acc_offload_args
     | Variable                 | Type                                                                | In/Out | Description                                    |
     |--------------------------+---------------------------------------------------------------------+--------+------------------------------------------------|
     | ~context~                | ~qmckl_context~                                                     | in     | Global state                                   |
@@ -6603,9 +6778,8 @@ end function qmckl_compute_factor_een_deriv_e_f
 
 
     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-#ifdef HAVE_OPENMP_OFFLOAD
-! TODO Add some offload statements
-integer function qmckl_compute_factor_een_deriv_e_omp_offload_f(context, walk_num, elec_num, nucl_num, cord_num, dim_cord_vect, &
+#ifdef HAVE_OPENACC_OFFLOAD
+integer function qmckl_compute_factor_een_deriv_e_acc_offload_f(context, walk_num, elec_num, nucl_num, cord_num, dim_cord_vect, &
                                            cord_vect_full, lkpm_combined_index,                                       &
                                            tmp_c, dtmp_c, een_rescaled_n, een_rescaled_n_deriv_e, factor_een_deriv_e) &
      result(info)
@@ -6653,8 +6827,8 @@ integer function qmckl_compute_factor_een_deriv_e_omp_offload_f(context, walk_nu
 
   factor_een_deriv_e = 0.0d0
 
+  !$acc parallel
   do nw =1, walk_num
-  !$omp target
   do n = 1, dim_cord_vect
     l = lkpm_combined_index(n, 1)
     k = lkpm_combined_index(n, 2)
@@ -6665,6 +6839,7 @@ integer function qmckl_compute_factor_een_deriv_e_omp_offload_f(context, walk_nu
       cn = cord_vect_full(a, n)
       if(cn == 0.d0) cycle
 
+      !$acc loop collapse(2)
       do ii = 1, 4
         do j = 1, elec_num
           factor_een_deriv_e(j,ii,nw) = factor_een_deriv_e(j,ii,nw) +                           (&
@@ -6677,6 +6852,8 @@ integer function qmckl_compute_factor_een_deriv_e_omp_offload_f(context, walk_nu
       end do
 
       cn = cn + cn
+
+      !$acc loop
       do j = 1, elec_num
         factor_een_deriv_e(j,4,nw) = factor_een_deriv_e(j,4,nw) +                              (&
                                       (dtmp_c(j,1,a,m  ,k,nw)) * een_rescaled_n_deriv_e(j,1,a,m+l,nw)  + &
@@ -6689,19 +6866,18 @@ integer function qmckl_compute_factor_een_deriv_e_omp_offload_f(context, walk_nu
       end do
     end do
   end do
-  !$omp end target
   end do
-
-end function qmckl_compute_factor_een_deriv_e_omp_offload_f
+  !$acc end parallel
+end function qmckl_compute_factor_een_deriv_e_acc_offload_f
 #endif
     #+end_src
 
-    #+CALL: generate_c_header(table=qmckl_factor_een_deriv_e_omp_offload_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+    #+CALL: generate_c_header(table=qmckl_factor_een_deriv_e_acc_offload_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
 
     #+RESULTS:
     #+begin_src c :tangle (eval h_func) :comments org
-#ifdef HAVE_OPENMP_OFFLOAD
-	  qmckl_exit_code qmckl_compute_factor_een_deriv_e_omp_offload (
+#ifdef HAVE_OPENACC_OFFLOAD
+	  qmckl_exit_code qmckl_compute_factor_een_deriv_e_acc_offload (
 	  const qmckl_context context,
 	  const int64_t walk_num,
 	  const int64_t elec_num,
@@ -6718,12 +6894,12 @@ end function qmckl_compute_factor_een_deriv_e_omp_offload_f
 #endif
     #+end_src
 
-#+CALL: generate_c_interface(table=qmckl_factor_een_deriv_e_omp_offload_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+#+CALL: generate_c_interface(table=qmckl_factor_een_deriv_e_acc_offload_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
 
     #+RESULTS:
     #+begin_src f90 :tangle (eval f) :comments org :exports none
-#ifdef HAVE_OPENMP_OFFLOAD
-    integer(c_int32_t) function qmckl_compute_factor_een_deriv_e_omp_offload &
+#ifdef HAVE_OPENACC_OFFLOAD
+    integer(c_int32_t) function qmckl_compute_factor_een_deriv_e_acc_offload &
 	(context, &
 		 walk_num, &
 		 elec_num, &
@@ -6756,8 +6932,8 @@ end function qmckl_compute_factor_een_deriv_e_omp_offload_f
       real    (c_double ) , intent(in)          :: een_rescaled_n_deriv_e(elec_num,4,nucl_num,0:cord_num,walk_num)
       real    (c_double ) , intent(out)         :: factor_een_deriv_e(elec_num,4,walk_num)
 
-      integer(c_int32_t), external :: qmckl_compute_factor_een_deriv_e_omp_offload_f
-      info = qmckl_compute_factor_een_deriv_e_omp_offload_f &
+      integer(c_int32_t), external :: qmckl_compute_factor_een_deriv_e_acc_offload_f
+      info = qmckl_compute_factor_een_deriv_e_acc_offload_f &
 	     (context, &
 		 walk_num, &
 		 elec_num, &
@@ -6772,7 +6948,7 @@ end function qmckl_compute_factor_een_deriv_e_omp_offload_f
 		 een_rescaled_n_deriv_e, &
 		 factor_een_deriv_e)
 
-    end function qmckl_compute_factor_een_deriv_e_omp_offload
+    end function qmckl_compute_factor_een_deriv_e_acc_offload
 #endif
     #+end_src
 

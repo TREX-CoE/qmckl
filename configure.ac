@@ -236,12 +236,12 @@ fi
 
 # Enable GPU offloading
 
-# OpenMP offloading
-AC_ARG_ENABLE(openmp-offload, [AS_HELP_STRING([--openmp-offload],[Use OpenMP-offloaded functions])], HAVE_OPENMP_OFFLOAD=$enableval, HAVE_OPENMP_OFFLOAD=no)
-AS_IF([test "$HAVE_OPENMP_OFFLOAD" = "yes"], [
-   AC_DEFINE([HAVE_OPENMP_OFFLOAD], [1], [If defined, activate OpenMP-offloaded routines])
+# OpenACC offloading
+AC_ARG_ENABLE(openacc-offload, [AS_HELP_STRING([--openacc-offload],[Use OpenACC-offloaded functions])], HAVE_OPENACC_OFFLOAD=$enableval, HAVE_OPENACC_OFFLOAD=no)
+AS_IF([test "$HAVE_OPENACC_OFFLOAD" = "yes"], [
+   AC_DEFINE([HAVE_OPENACC_OFFLOAD], [1], [If defined, activate OpenACC-offloaded routines])
    CFLAGS="$OFFLOAD_FLAGS $OFFLOAD_CFLAGS $CFLAGS"
-   FCFLAGS="$OFFLOAD_FLAGS $OFFLOAD_FCFLAGS -DHAVE_OPENMP_OFFLOAD $FCFLAGS"
+   FCFLAGS="$OFFLOAD_FLAGS $OFFLOAD_FCFLAGS -DHAVE_OPENACC_OFFLOAD $FCFLAGS"
 ])
 
 AC_ARG_ENABLE(debug, [AS_HELP_STRING([--enable-debug],[compile for debugging])], ok=$enableval, ok=no)
@@ -374,7 +374,7 @@ LDFLAGS:........: ${LDFLAGS}
 LIBS............: ${LIBS}
 USE CHAMELEON...: ${with_chameleon}
 HPC version.....: ${HAVE_HPC}
-OpenMP offload .: ${HAVE_OPENMP_OFFLOAD}
+OpenACC offload : ${HAVE_OPENACC_OFFLOAD}
 
 Package features:
   ${ARGS}
