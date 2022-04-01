@@ -330,7 +330,8 @@ kappa_inv = 1.0/kappa
 #+begin_src c :comments org :tangle (eval h_type)
 typedef enum qmckl_jastrow_offload_type{
   OFFLOAD_NONE,
-  OFFLOAD_OPENACC
+  OFFLOAD_OPENACC,
+  OFFLOAD_CUBLAS
 } qmckl_jastrow_offload_type;
 #+end_src
 
@@ -4829,6 +4830,23 @@ qmckl_exit_code qmckl_provide_tmp_c(qmckl_context context)
     }
     #endif
 
+    #ifdef HAVE_CUBLAS_OFFLOAD
+    if(ctx->jastrow.offload_type == OFFLOAD_CUBLAS) {
+      qmckl_exit_code rc =
+      qmckl_compute_tmp_c_cublas_offload(context,
+                            ctx->jastrow.cord_num,
+                            ctx->electron.num,
+                            ctx->nucleus.num,
+                            ctx->electron.walk_num,
+                            ctx->jastrow.een_rescaled_e,
+                            ctx->jastrow.een_rescaled_n,
+                            ctx->jastrow.tmp_c);
+      if (rc != QMCKL_SUCCESS) {
+        return rc;
+      }
+    }
+    #endif
+
     if(default_compute) {
       qmckl_exit_code rc =
       qmckl_compute_tmp_c(context,
@@ -4892,6 +4910,24 @@ qmckl_exit_code qmckl_provide_dtmp_c(qmckl_context context)
     if(ctx->jastrow.offload_type == OFFLOAD_OPENACC) {
      qmckl_exit_code rc =
      qmckl_compute_dtmp_c_acc_offload(context,
+                          ctx->jastrow.cord_num,
+                          ctx->electron.num,
+                          ctx->nucleus.num,
+                          ctx->electron.walk_num,
+                          ctx->jastrow.een_rescaled_e_deriv_e,
+                          ctx->jastrow.een_rescaled_n,
+                          ctx->jastrow.dtmp_c);
+      default_compute = false;
+      if (rc != QMCKL_SUCCESS) {
+        return rc;
+      }
+    }
+    #endif
+
+    #ifdef HAVE_CUBLAS_OFFLOAD
+    if(ctx->jastrow.offload_type == OFFLOAD_CUBLAS) {
+     qmckl_exit_code rc =
+     qmckl_compute_dtmp_c_cublas_offload(context,
                           ctx->jastrow.cord_num,
                           ctx->electron.num,
                           ctx->nucleus.num,
@@ -5483,6 +5519,137 @@ end function qmckl_compute_tmp_c_acc_offload_f
     end function qmckl_compute_tmp_c_acc_offload
     #+end_src
 
+*** Compute tmp_c (cuBLAS offload)
+   :PROPERTIES:
+   :Name:     qmckl_compute_tmp_c_cublas_offload
+   :CRetType: qmckl_exit_code
+   :FRetType: qmckl_exit_code
+   :END:
+
+    #+NAME: qmckl_factor_tmp_c_cublas_offload_args
+    | Variable         | Type                                                             | In/Out | Description                       |
+    |------------------+------------------------------------------------------------------+--------+-----------------------------------|
+    | ~context~        | ~qmckl_context~                                                  | in     | Global state                      |
+    | ~cord_num~       | ~int64_t~                                                        | in     | Order of polynomials              |
+    | ~elec_num~       | ~int64_t~                                                        | in     | Number of electrons               |
+    | ~nucl_num~       | ~int64_t~                                                        | in     | Number of nucleii                 |
+    | ~walk_num~       | ~int64_t~                                                        | in     | Number of walkers                 |
+    | ~een_rescaled_e~ | ~double[walk_num][0:cord_num][elec_num][elec_num]~               | in     | Electron-electron rescaled factor |
+    | ~een_rescaled_n~ | ~double[walk_num][0:cord_num][nucl_num][elec_num]~               | in     | Electron-nucleus rescaled factor  |
+    | ~tmp_c~          | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][elec_num]~ | out    | vector of non-zero coefficients   |
+
+    #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+integer function qmckl_compute_tmp_c_cublas_offload_f(context, cord_num, elec_num, nucl_num, &
+     walk_num, een_rescaled_e, een_rescaled_n, tmp_c) &
+     result(info)
+  use qmckl
+  implicit none
+  integer(qmckl_context), intent(in)  :: context
+  integer*8             , intent(in)  :: cord_num
+  integer*8             , intent(in)  :: elec_num
+  integer*8             , intent(in)  :: nucl_num
+  integer*8             , intent(in)  :: walk_num
+  double precision      , intent(in)  :: een_rescaled_e(elec_num, elec_num, 0:cord_num, walk_num)
+  double precision      , intent(in)  :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
+  double precision      , intent(out) :: tmp_c(elec_num, nucl_num,0:cord_num, 0:cord_num-1, walk_num)
+  double precision                    :: x
+  integer*8                           :: i, j, a, l, kk, p, lmax, nw
+  character                           :: TransA, TransB
+  double precision                    :: alpha, beta
+  integer*8                           :: M, N, K, LDA, LDB, LDC
+
+  TransA = 'N'
+  TransB = 'N'
+  alpha = 1.0d0
+  beta  = 0.0d0
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (cord_num <= 0) then
+     info = QMCKL_INVALID_ARG_2
+     return
+  endif
+
+  if (elec_num <= 0) then
+     info = QMCKL_INVALID_ARG_3
+     return
+  endif
+
+  if (nucl_num <= 0) then
+     info = QMCKL_INVALID_ARG_4
+     return
+  endif
+
+  M = elec_num
+  N = nucl_num*(cord_num + 1)
+  K = elec_num
+  LDA = size(een_rescaled_e,1)
+  LDB = size(een_rescaled_n,1)
+  LDC = size(tmp_c,1)
+
+  ! Alloc and copy memory on device
+
+  do nw=1, walk_num
+  do i=0, cord_num-1
+  info = qmckl_dgemm(context,TransA, TransB, M, N, K, alpha,     &
+                     een_rescaled_e(1,1,i,nw),LDA*1_8,                     &
+                     een_rescaled_n(1,1,0,nw),LDB*1_8,                     &
+                     beta,                                       &
+                     tmp_c(1,1,0,i,nw),LDC)
+  end do
+  end do
+
+end function qmckl_compute_tmp_c_cublas_offload_f
+    #+end_src
+
+    #+CALL: generate_c_header(table=qmckl_factor_tmp_c_cublas_offload_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+
+    #+RESULTS:
+    #+begin_src c :tangle (eval h_func) :comments org
+    qmckl_exit_code qmckl_compute_tmp_c_cublas_offload (
+	  const qmckl_context context,
+	  const int64_t cord_num,
+	  const int64_t elec_num,
+	  const int64_t nucl_num,
+	  const int64_t walk_num,
+	  const double* een_rescaled_e,
+	  const double* een_rescaled_n,
+	  double* const tmp_c );
+    #+end_src
+
+
+    #+CALL: generate_c_interface(table=qmckl_factor_tmp_c_cublas_offload_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+
+    #+RESULTS:
+    #+begin_src f90 :tangle (eval f) :comments org :exports none
+    integer(c_int32_t) function qmckl_compute_tmp_c_cublas_offload &
+	(context, cord_num, elec_num, nucl_num, walk_num, een_rescaled_e, een_rescaled_n, tmp_c) &
+	bind(C) result(info)
+
+      use, intrinsic :: iso_c_binding
+      implicit none
+
+      integer (c_int64_t) , intent(in)  , value :: context
+      integer (c_int64_t) , intent(in)  , value :: cord_num
+      integer (c_int64_t) , intent(in)  , value :: elec_num
+      integer (c_int64_t) , intent(in)  , value :: nucl_num
+      integer (c_int64_t) , intent(in)  , value :: walk_num
+      real    (c_double ) , intent(in)          :: een_rescaled_e(elec_num,elec_num,0:cord_num,walk_num)
+      real    (c_double ) , intent(in)          :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
+      real    (c_double ) , intent(out)         :: tmp_c(elec_num,nucl_num,0:cord_num,0:cord_num-1,walk_num)
+
+      integer(c_int32_t), external :: qmckl_compute_tmp_c_cublas_offload_f
+      info = qmckl_compute_tmp_c_cublas_offload_f &
+	     (context, cord_num, elec_num, nucl_num, walk_num, een_rescaled_e, een_rescaled_n, tmp_c)
+
+    end function qmckl_compute_tmp_c_cublas_offload
+    #+end_src
+
 *** Compute dtmp_c
    :PROPERTIES:
    :Name:     qmckl_compute_dtmp_c
@@ -5739,6 +5906,134 @@ end function qmckl_compute_dtmp_c_acc_offload_f
 	     (context, cord_num, elec_num, nucl_num, walk_num, een_rescaled_e_deriv_e, een_rescaled_n, dtmp_c)
 
     end function qmckl_compute_dtmp_c_acc_offload
+    #+end_src
+*** Compute dtmp_c (cuBLAS offload)
+   :PROPERTIES:
+   :Name:     qmckl_compute_dtmp_c
+   :CRetType: qmckl_exit_code
+   :FRetType: qmckl_exit_code
+   :END:
+
+    #+NAME: qmckl_factor_dtmp_c_cublas_offload_args
+    | Variable                 | Type                                                             | In/Out | Description                                   |
+    |--------------------------+------------------------------------------------------------------+--------+-----------------------------------------------|
+    | ~context~                | ~qmckl_context~                                                  | in     | Global state                                  |
+    | ~cord_num~               | ~int64_t~                                                        | in     | Order of polynomials                          |
+    | ~elec_num~               | ~int64_t~                                                        | in     | Number of electrons                           |
+    | ~nucl_num~               | ~int64_t~                                                        | in     | Number of nucleii                             |
+    | ~walk_num~               | ~int64_t~                                                        | in     | Number of walkers                             |
+    | ~een_rescaled_e_deriv_e~ | ~double[walk_num][0:cord_num][elec_num][4][elec_num]~            | in     | Electron-electron rescaled factor derivatives |
+    | ~een_rescaled_n~         | ~double[walk_num][0:cord_num][nucl_num][elec_num]~               | in     | Electron-nucleus rescaled factor              |
+    | ~dtmp_c~                 | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][elec_num]~ | out    | vector of non-zero coefficients               |
+
+    #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+integer function qmckl_compute_dtmp_c_cublas_offload_f(context, cord_num, elec_num, nucl_num, &
+     walk_num, een_rescaled_e_deriv_e, een_rescaled_n, dtmp_c) &
+     result(info)
+  use qmckl
+  implicit none
+  integer(qmckl_context), intent(in)  :: context
+  integer*8             , intent(in)  :: cord_num
+  integer*8             , intent(in)  :: elec_num
+  integer*8             , intent(in)  :: nucl_num
+  integer*8             , intent(in)  :: walk_num
+  double precision      , intent(in)  :: een_rescaled_e_deriv_e(elec_num, 4, elec_num, 0:cord_num, walk_num)
+  double precision      , intent(in)  :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
+  double precision      , intent(out) :: dtmp_c(elec_num, 4, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
+  double precision                    :: x
+  integer*8                           :: i, j, a, l, kk, p, lmax, nw, ii
+  character                           :: TransA, TransB
+  double precision                    :: alpha, beta
+  integer*8                           :: M, N, K, LDA, LDB, LDC
+
+  TransA = 'N'
+  TransB = 'N'
+  alpha = 1.0d0
+  beta  = 0.0d0
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (cord_num <= 0) then
+     info = QMCKL_INVALID_ARG_2
+     return
+  endif
+
+  if (elec_num <= 0) then
+     info = QMCKL_INVALID_ARG_3
+     return
+  endif
+
+  if (nucl_num <= 0) then
+     info = QMCKL_INVALID_ARG_4
+     return
+  endif
+
+  M = 4*elec_num
+  N = nucl_num*(cord_num + 1)
+  K = elec_num
+  LDA = 4*size(een_rescaled_e_deriv_e,1)
+  LDB = size(een_rescaled_n,1)
+  LDC = 4*size(dtmp_c,1)
+
+  do nw=1, walk_num
+  do i=0, cord_num-1
+  info = qmckl_dgemm(context,TransA, TransB, M, N, K, alpha,     &
+                     een_rescaled_e_deriv_e(1,1,1,i,nw),LDA*1_8,                     &
+                     een_rescaled_n(1,1,0,nw),LDB*1_8,                     &
+                     beta,                                       &
+                     dtmp_c(1,1,1,0,i,nw),LDC)
+  end do
+  end do
+
+end function qmckl_compute_dtmp_c_cublas_offload_f
+    #+end_src
+
+    #+CALL: generate_c_header(table=qmckl_factor_dtmp_c_cublas_offload_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+
+    #+RESULTS:
+    #+begin_src c :tangle (eval h_func) :comments org
+    qmckl_exit_code qmckl_compute_dtmp_c_cublas_offload (
+	  const qmckl_context context,
+	  const int64_t cord_num,
+	  const int64_t elec_num,
+	  const int64_t nucl_num,
+	  const int64_t walk_num,
+	  const double* een_rescaled_e_deriv_e,
+	  const double* een_rescaled_n,
+	  double* const dtmp_c );
+    #+end_src
+
+
+    #+CALL: generate_c_interface(table=qmckl_factor_dtmp_c_cublas_offload_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+
+    #+RESULTS:
+    #+begin_src f90 :tangle (eval f) :comments org :exports none
+    integer(c_int32_t) function qmckl_compute_dtmp_c_cublas_offload &
+	(context, cord_num, elec_num, nucl_num, walk_num, een_rescaled_e_deriv_e, een_rescaled_n, dtmp_c) &
+	bind(C) result(info)
+
+      use, intrinsic :: iso_c_binding
+      implicit none
+
+      integer (c_int64_t) , intent(in)  , value :: context
+      integer (c_int64_t) , intent(in)  , value :: cord_num
+      integer (c_int64_t) , intent(in)  , value :: elec_num
+      integer (c_int64_t) , intent(in)  , value :: nucl_num
+      integer (c_int64_t) , intent(in)  , value :: walk_num
+      real    (c_double ) , intent(in)          :: een_rescaled_e_deriv_e(elec_num,4,elec_num,0:cord_num,walk_num)
+      real    (c_double ) , intent(in)          :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
+      real    (c_double ) , intent(out)         :: dtmp_c(elec_num,nucl_num,0:cord_num,0:cord_num-1,walk_num)
+
+      integer(c_int32_t), external :: qmckl_compute_dtmp_c_cublas_offload_f
+      info = qmckl_compute_dtmp_c_cublas_offload_f &
+	     (context, cord_num, elec_num, nucl_num, walk_num, een_rescaled_e_deriv_e, een_rescaled_n, dtmp_c)
+
+    end function qmckl_compute_dtmp_c_cublas_offload
     #+end_src
 
 *** Test
