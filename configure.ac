@@ -234,7 +234,7 @@ if test "$FC" = "verificarlo-f"; then
   FCFLAGS="-Mpreprocess $FCFLAGS"
 fi
 
-# Enable GPU offloading
+## Enable GPU offloading
 
 # OpenACC offloading
 AC_ARG_ENABLE(openacc-offload, [AS_HELP_STRING([--openacc-offload],[Use OpenACC-offloaded functions])], HAVE_OPENACC_OFFLOAD=$enableval, HAVE_OPENACC_OFFLOAD=no)
@@ -243,6 +243,21 @@ AS_IF([test "$HAVE_OPENACC_OFFLOAD" = "yes"], [
    CFLAGS="$OFFLOAD_FLAGS $OFFLOAD_CFLAGS $CFLAGS"
    FCFLAGS="$OFFLOAD_FLAGS $OFFLOAD_FCFLAGS -DHAVE_OPENACC_OFFLOAD $FCFLAGS"
 ])
+
+# cuBLAS offloading
+AC_ARG_ENABLE(cublas-offload, [AS_HELP_STRING([--cublas-offload],[Use cuBLAS-offloaded functions])], HAVE_CUBLAS_OFFLOAD=$enableval, HAVE_CUBLAS_OFFLOAD=no)
+AS_IF([test "$HAVE_CUBLAS_OFFLOAD" = "yes"], [
+   AC_DEFINE([HAVE_CUBLAS_OFFLOAD], [1], [If defined, activate cuBLAS-offloaded routines])
+   FCFLAGS="-DHAVE_CUBLAS_OFFLOAD"
+])
+
+# General offload
+AS_IF([test "$HAVE_OPENACC_OFFLOAD" = "yes" || test "$HAVE_CUBLAS_OFFLOAD" = "yes"], [
+   CFLAGS="$OFFLOAD_FLAGS $OFFLOAD_CFLAGS $CFLAGS"
+   FCFLAGS="$OFFLOAD_FLAGS $OFFLOAD_FCFLAGS $FCFLAGS"
+])
+
+##
 
 AC_ARG_ENABLE(debug, [AS_HELP_STRING([--enable-debug],[compile for debugging])], ok=$enableval, ok=no)
 if test "$ok" = "yes"; then
@@ -374,7 +389,8 @@ LDFLAGS:........: ${LDFLAGS}
 LIBS............: ${LIBS}
 USE CHAMELEON...: ${with_chameleon}
 HPC version.....: ${HAVE_HPC}
-OpenACC offload : ${HAVE_OPENACC_OFFLOAD}
+OpenACC offload.: ${HAVE_OPENACC_OFFLOAD}
+cuBLAS offload..: ${HAVE_CUBLAS_OFFLOAD}
 
 Package features:
   ${ARGS}
