@@ -200,16 +200,22 @@ AS_IF([test "$BLAS_LIBS" == "$LAPACK_LIBS"], [BLAS_LIBS=""])
 # Specific options required with some compilers
 case $FC in
 
- ifort*)
+ *ifort*)
       FCFLAGS="$FCFLAGS -nofor-main"
       ;;
 
-#gfortran*)
-#     # Order is important here
-#     FCFLAGS="-cpp $FCFLAGS"
-#     ;;
+ *nvfortran*)
+      FCFLAGS="$FCFLAGS -fPIC -Mnomain"
+      ;;
+
 esac
 
+case $CC in
+
+  *nvc*)
+        CFLAGS="$CFLAGS -fPIC"
+        ;;
+esac
 
 
 # Options.
@@ -358,7 +364,7 @@ CC..............: ${CC}
 CPPFLAGS........: ${CPPFLAGS}
 CFLAGS..........: ${CFLAGS}
 FC..............: ${FC}
-FCLAGS..........: ${FCFLAGS}
+FCFLAGS.........: ${FCFLAGS}
 LDFLAGS:........: ${LDFLAGS}
 LIBS............: ${LIBS}
 USE CHAMELEON...: ${with_chameleon}
