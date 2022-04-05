@@ -201,7 +201,7 @@ AS_IF([test "$BLAS_LIBS" == "$LAPACK_LIBS"], [BLAS_LIBS=""])
 case $FC in
 
  *ifort*)
-      FCFLAGS="$FCFLAGS -nofor-main -mp -target=gpu"
+      FCFLAGS="$FCFLAGS -nofor-main"
       ;;
 
  *nvfortran*)
@@ -213,7 +213,7 @@ esac
 case $CC in
 
   *nvc*)
-        CFLAGS="$CFLAGS -fPIC"
+        CFLAGS="$CFLAGS -fPIC -mp -target=gpu"
         ;;
 esac
 
