@@ -151,6 +151,7 @@ int main() {
     | ~factor_en_deriv_e_date~  | ~uint64_t~                            | out    | Keep track of the date for the en derivative                      |
     | ~factor_een_deriv_e~      | ~double[4][nelec][walk_num]~          | out    | Derivative of the Jastrow factor: electron-electron-nucleus  part |
     | ~factor_een_deriv_e_date~ | ~uint64_t~                            | out    | Keep track of the date for the een derivative                     |
+    | ~offload_type~            | ~qmckl_jastrow_offload_type~          | in     | Enum type to change offload type at runtime                       |
 
   computed data:
 
@@ -335,7 +336,7 @@ typedef enum qmckl_jastrow_offload_type{
 } qmckl_jastrow_offload_type;
 #+end_src
 
-#+begin_src c :comments org :tangle (eval h_private_type)
+   #+begin_src c :comments org :tangle (eval h_private_type)
 typedef struct qmckl_jastrow_struct{
   int32_t  uninitialized;
   int64_t  aord_num;
@@ -1829,6 +1830,72 @@ integer function qmckl_compute_factor_ee_f(context, walk_num, elec_num, up_num, 
 end function qmckl_compute_factor_ee_f
     #+end_src
 
+#+begin_src c   :comments org :tangle (eval c) :noweb yes
+    qmckl_exit_code qmckl_compute_factor_ee (
+	  const qmckl_context context,
+	  const int64_t walk_num,
+	  const int64_t elec_num,
+	  const int64_t up_num,
+	  const int64_t bord_num,
+	  const double* bord_vector,
+	  const double* ee_distance_rescaled,
+	  const double* asymp_jasb,
+	  double* const factor_ee ) {
+
+  int ipar; // can we use a smaller integer?
+  double pow_ser, x, x1, spin_fact, power_ser;
+
+  if (context == QMCKL_NULL_CONTEXT) { 
+     return QMCKL_INVALID_CONTEXT;
+  } 
+
+  if (walk_num <= 0) {
+     return QMCKL_INVALID_ARG_2;
+  }
+  
+  if (elec_num <= 0) {
+     return QMCKL_INVALID_ARG_3;
+  } 
+
+  if (bord_num <= 0) {
+     return QMCKL_INVALID_ARG_4;
+  } 
+
+  for (int nw = 0; nw < walk_num; ++nw) {
+    factor_ee[nw] = 0.0; // put init array here.
+    for (int i = 0; i < elec_num; ++i ) {
+      for (int j = 0; j < i; ++j) {
+        //x = ee_distance_rescaled[j * (walk_num * elec_num) + i * (walk_num) + nw];
+        x = ee_distance_rescaled[j + i * elec_num + nw*(elec_num * elec_num)];
+        x1 = x;
+        power_ser = 0.0;
+        spin_fact = 1.0;
+        ipar = 0; // index of asymp_jasb 
+
+        for (int p = 1; p < bord_num; ++p) { 
+          x = x * x1;
+          power_ser = power_ser + bord_vector[p + 1] * x;
+        }
+
+        if(i < up_num || j >= up_num) {
+          spin_fact = 0.5;
+          ipar = 1;
+        }
+        
+        factor_ee[nw] = factor_ee[nw] + spin_fact * bord_vector[0]  * \
+                                x1 /  \
+                                (1.0 + bord_vector[1] *               \
+                                x1)   \
+                               -asymp_jasb[ipar] + power_ser;
+
+      }
+    }
+  }
+
+  return QMCKL_SUCCESS;
+}
+#+end_src
+
     #+CALL: generate_c_header(table=qmckl_factor_ee_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
 
     #+RESULTS:
@@ -1846,49 +1913,7 @@ end function qmckl_compute_factor_ee_f
     #+end_src
 
 
-    #+CALL: generate_c_interface(table=qmckl_factor_ee_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
 
-    #+RESULTS:
-    #+begin_src f90 :tangle (eval f) :comments org :exports none
-    integer(c_int32_t) function qmckl_compute_factor_ee &
-	(context, &
-		 walk_num, &
-		 elec_num, &
-		 up_num, &
-		 bord_num, &
-		 bord_vector, &
-		 ee_distance_rescaled, &
-		 asymp_jasb, &
-		 factor_ee) &
-	bind(C) result(info)
-
-      use, intrinsic :: iso_c_binding
-      implicit none
-
-      integer (c_int64_t) , intent(in)  , value :: context
-      integer (c_int64_t) , intent(in)  , value :: walk_num
-      integer (c_int64_t) , intent(in)  , value :: elec_num
-      integer (c_int64_t) , intent(in)  , value :: up_num
-      integer (c_int64_t) , intent(in)  , value :: bord_num
-      real    (c_double ) , intent(in)          :: bord_vector(bord_num + 1)
-      real    (c_double ) , intent(in)          :: ee_distance_rescaled(elec_num,elec_num,walk_num)
-      real    (c_double ) , intent(in)          :: asymp_jasb(2)
-      real    (c_double ) , intent(out)         :: factor_ee(walk_num)
-
-      integer(c_int32_t), external :: qmckl_compute_factor_ee_f
-      info = qmckl_compute_factor_ee_f &
-	     (context, &
-		 walk_num, &
-		 elec_num, &
-		 up_num, &
-		 bord_num, &
-		 bord_vector, &
-		 ee_distance_rescaled, &
-		 asymp_jasb, &
-		 factor_ee)
-
-    end function qmckl_compute_factor_ee
-    #+end_src
 
 *** Test
     #+begin_src python :results output :exports none :noweb yes
@@ -2569,6 +2594,74 @@ integer function qmckl_compute_factor_en_f(context, walk_num, elec_num, nucl_num
 
 end function qmckl_compute_factor_en_f
     #+end_src
+    
+
+    #+begin_src c :comments org :tangle (eval c) :noweb yes
+qmckl_exit_code qmckl_compute_factor_en (
+	  const qmckl_context context,
+	  const int64_t walk_num,
+	  const int64_t elec_num,
+	  const int64_t nucl_num,
+	  const int64_t type_nucl_num,
+	  const int64_t* type_nucl_vector,
+	  const int64_t aord_num,
+	  const double* aord_vector,
+	  const double* en_distance_rescaled,
+	  double* const factor_en ) {
+
+
+  int     ipar;
+  double  x, x1, spin_fact, power_ser;
+
+
+  if (context == QMCKL_NULL_CONTEXT) {
+     return QMCKL_INVALID_CONTEXT;
+  }
+
+  if (walk_num <= 0) {
+     return QMCKL_INVALID_ARG_2;
+  }
+
+  if (elec_num <= 0) {
+     return QMCKL_INVALID_ARG_3;
+  }
+
+  if (nucl_num <= 0) {
+     return QMCKL_INVALID_ARG_4;
+  }
+
+  if (aord_num <= 0) {
+     return QMCKL_INVALID_ARG_7;
+  }
+
+
+  for (int nw = 0; nw < walk_num; ++nw ) {
+    // init array
+    factor_en[nw] = 0.0;
+    for (int a = 0; a < nucl_num; ++a ) {
+      for (int i = 0; i < elec_num; ++i ) {
+        // x = ee_distance_rescaled[j * (walk_num * elec_num) + i * (walk_num) + nw];
+        x = en_distance_rescaled[i + a * elec_num + nw * (elec_num * nucl_num)];
+        x1 = x;
+        power_ser = 0.0;
+
+        for (int p = 2; p < aord_num+1; ++p) { 
+          x = x * x1;
+          power_ser = power_ser + aord_vector[(p+1)-1 + (type_nucl_vector[a]-1) * aord_num] * x;
+        }
+
+        factor_en[nw] = factor_en[nw] + aord_vector[0 + (type_nucl_vector[a]-1)*aord_num] * x1 / \
+                        (1.0 + aord_vector[1 + (type_nucl_vector[a]-1) * aord_num] * x1) + \
+                        power_ser;
+
+      }
+    }
+  }
+
+  return QMCKL_SUCCESS;
+}
+    #+end_src
+
 
     #+CALL: generate_c_header(table=qmckl_factor_en_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
 
@@ -2587,53 +2680,6 @@ end function qmckl_compute_factor_en_f
 	  double* const factor_en );
     #+end_src
 
-
-    #+CALL: generate_c_interface(table=qmckl_factor_en_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
-
-    #+RESULTS:
-    #+begin_src f90 :tangle (eval f) :comments org :exports none
-    integer(c_int32_t) function qmckl_compute_factor_en &
-	(context, &
-		 walk_num, &
-		 elec_num, &
-		 nucl_num, &
-		 type_nucl_num, &
-		 type_nucl_vector, &
-		 aord_num, &
-		 aord_vector, &
-		 en_distance_rescaled, &
-		 factor_en) &
-	bind(C) result(info)
-
-      use, intrinsic :: iso_c_binding
-      implicit none
-
-      integer (c_int64_t) , intent(in)  , value :: context
-      integer (c_int64_t) , intent(in)  , value :: walk_num
-      integer (c_int64_t) , intent(in)  , value :: elec_num
-      integer (c_int64_t) , intent(in)  , value :: nucl_num
-      integer (c_int64_t) , intent(in)  , value :: type_nucl_num
-      integer (c_int64_t) , intent(in)          :: type_nucl_vector(nucl_num)
-      integer (c_int64_t) , intent(in)  , value :: aord_num
-      real    (c_double ) , intent(in)          :: aord_vector(aord_num + 1, type_nucl_num)
-      real    (c_double ) , intent(in)          :: en_distance_rescaled(elec_num, nucl_num, walk_num)
-      real    (c_double ) , intent(out)         :: factor_en(walk_num)
-
-      integer(c_int32_t), external :: qmckl_compute_factor_en_f
-      info = qmckl_compute_factor_en_f &
-	     (context, &
-		 walk_num, &
-		 elec_num, &
-		 nucl_num, &
-		 type_nucl_num, &
-		 type_nucl_vector, &
-		 aord_num, &
-		 aord_vector, &
-		 en_distance_rescaled, &
-		 factor_en)
-
-    end function qmckl_compute_factor_en
-    #+end_src
 
 *** Test
     #+begin_src python :results output :exports none :noweb yes
@@ -4002,6 +4048,70 @@ integer function qmckl_compute_een_rescaled_n_f(context, walk_num, elec_num, nuc
 end function qmckl_compute_een_rescaled_n_f
     #+end_src
 
+    #+begin_src c :comments org :tangle (eval c) :noweb yes
+qmckl_exit_code qmckl_compute_een_rescaled_n (
+	  const qmckl_context context,
+	  const int64_t walk_num,
+	  const int64_t elec_num,
+	  const int64_t nucl_num,
+	  const int64_t cord_num,
+	  const double rescale_factor_kappa_en,
+	  const double* en_distance,
+	  double* const een_rescaled_n ) {
+
+
+  if (context == QMCKL_NULL_CONTEXT) {
+    return QMCKL_INVALID_CONTEXT;
+  } 
+
+  if (walk_num <= 0) {
+    return QMCKL_INVALID_ARG_2;
+  }
+
+  if (elec_num <= 0) {
+    return QMCKL_INVALID_ARG_3;
+  }
+
+  if (nucl_num <= 0) {
+    return QMCKL_INVALID_ARG_4;
+  }
+
+  if (cord_num <= 0) {
+    return QMCKL_INVALID_ARG_5;
+  }
+
+  // Prepare table of exponentiated distances raised to appropriate power
+  for (int i = 0; i < (walk_num*(cord_num+1)*nucl_num*elec_num); ++i) {
+    een_rescaled_n[i] = 17.0;
+  }
+
+  for (int nw = 0; nw < walk_num; ++nw) {
+    for (int a = 0; a < nucl_num; ++a) {
+      for (int i = 0; i < elec_num; ++i) {
+        // prepare the actual een table
+        //een_rescaled_n(:, :, 0, nw) = 1.0d0
+        een_rescaled_n[i + a * elec_num + 0 + nw * elec_num*nucl_num*(cord_num+1)] = 1.0;
+        //een_rescaled_n(i, a, 1, nw) = dexp(-rescale_factor_kappa_en * en_distance(i, a, nw))
+        een_rescaled_n[i + a*elec_num + elec_num*nucl_num + nw*elec_num*nucl_num*(cord_num+1)] = exp(-rescale_factor_kappa_en * \
+                                                                              en_distance[i + a*elec_num + nw*elec_num*nucl_num]);
+      }
+    }
+
+    for (int l = 2; l < (cord_num+1); ++l){
+      for (int a = 0; a < nucl_num; ++a) {
+        for (int i = 0; i < elec_num; ++i) {
+          een_rescaled_n[i + a*elec_num + l*elec_num*nucl_num + nw*elec_num*nucl_num*(cord_num+1)] = een_rescaled_n[i + a*elec_num + (l-1)*elec_num*nucl_num + nw*elec_num*nucl_num*(cord_num+1)] *\
+                                                                                                     een_rescaled_n[i + a*elec_num +       elec_num*nucl_num + nw*elec_num*nucl_num*(cord_num+1)];
+        }
+      }
+    }
+
+  }
+
+  return QMCKL_SUCCESS;
+}
+    #+end_src
+
     #+CALL: generate_c_header(table=qmckl_factor_een_rescaled_n_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
 
     #+RESULTS:
@@ -4015,47 +4125,6 @@ end function qmckl_compute_een_rescaled_n_f
 	  const double rescale_factor_kappa_en,
 	  const double* en_distance,
 	  double* const een_rescaled_n );
-    #+end_src
-
-    #+CALL: generate_c_interface(table=qmckl_factor_een_rescaled_n_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
-
-    #+RESULTS:
-    #+begin_src f90 :tangle (eval f) :comments org :exports none
-    integer(c_int32_t) function qmckl_compute_een_rescaled_n &
-	(context, &
-		 walk_num, &
-		 elec_num, &
-		 nucl_num, &
-		 cord_num, &
-		 rescale_factor_kappa_en, &
-		 en_distance, &
-		 een_rescaled_n) &
-	bind(C) result(info)
-
-      use, intrinsic :: iso_c_binding
-      implicit none
-
-      integer (c_int64_t) , intent(in)  , value :: context
-      integer (c_int64_t) , intent(in)  , value :: walk_num
-      integer (c_int64_t) , intent(in)  , value :: elec_num
-      integer (c_int64_t) , intent(in)  , value :: nucl_num
-      integer (c_int64_t) , intent(in)  , value :: cord_num
-      real    (c_double ) , intent(in)  , value :: rescale_factor_kappa_en
-      real    (c_double ) , intent(in)          :: en_distance(nucl_num,elec_num,walk_num)
-      real    (c_double ) , intent(out)         :: een_rescaled_n(nucl_num,elec_num,0:cord_num,walk_num)
-
-      integer(c_int32_t), external :: qmckl_compute_een_rescaled_n_f
-      info = qmckl_compute_een_rescaled_n_f &
-	     (context, &
-		 walk_num, &
-		 elec_num, &
-		 nucl_num, &
-		 cord_num, &
-		 rescale_factor_kappa_en, &
-		 en_distance, &
-		 een_rescaled_n)
-
-    end function qmckl_compute_een_rescaled_n
     #+end_src
 
 *** Test
@@ -4116,7 +4185,6 @@ assert(fabs(een_rescaled_n[0][1][0][4]-0.023391817607642338) < 1.e-12);
 assert(fabs(een_rescaled_n[0][2][1][3]-0.880957224822116)    < 1.e-12);
 assert(fabs(een_rescaled_n[0][2][1][4]-0.027185942659395074) < 1.e-12);
 assert(fabs(een_rescaled_n[0][2][1][5]-0.01343938025140174)  < 1.e-12);
-
      #+end_src
 
 ** Electron-nucleus rescaled distances for each order and derivatives
@@ -4779,7 +4847,6 @@ qmckl_exit_code qmckl_provide_lkpm_combined_index(qmckl_context context)
 
 qmckl_exit_code qmckl_provide_tmp_c(qmckl_context context)
 {
-
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return QMCKL_NULL_CONTEXT;
   }
@@ -4824,6 +4891,7 @@ qmckl_exit_code qmckl_provide_tmp_c(qmckl_context context)
                             ctx->jastrow.een_rescaled_e,
                             ctx->jastrow.een_rescaled_n,
                             ctx->jastrow.tmp_c);
+	    default_compute = false;
       if (rc != QMCKL_SUCCESS) {
         return rc;
       }
@@ -4841,6 +4909,7 @@ qmckl_exit_code qmckl_provide_tmp_c(qmckl_context context)
                             ctx->jastrow.een_rescaled_e,
                             ctx->jastrow.een_rescaled_n,
                             ctx->jastrow.tmp_c);
+	    default_compute = false;
       if (rc != QMCKL_SUCCESS) {
         return rc;
       }
@@ -4871,7 +4940,6 @@ qmckl_exit_code qmckl_provide_tmp_c(qmckl_context context)
 
 qmckl_exit_code qmckl_provide_dtmp_c(qmckl_context context)
 {
-
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return QMCKL_NULL_CONTEXT;
   }
@@ -5020,6 +5088,43 @@ integer function qmckl_compute_dim_cord_vect_f(context, cord_num, dim_cord_vect)
 end function qmckl_compute_dim_cord_vect_f
     #+end_src
 
+    #+begin_src c :comments org :tangle (eval c) :noweb yes
+qmckl_exit_code qmckl_compute_dim_cord_vect (
+	  const qmckl_context context,
+	  const int64_t cord_num,
+	  int64_t* const dim_cord_vect){
+  
+  int         lmax;
+
+  
+  if (context == QMCKL_NULL_CONTEXT) {
+    return QMCKL_INVALID_CONTEXT;
+  }
+
+  if (cord_num <= 0) {
+    return QMCKL_INVALID_ARG_2;
+  }
+
+  *dim_cord_vect = 0;
+ 
+  for (int p=2; p <= cord_num; ++p){
+    for (int k=p-1; k >= 0; --k) {
+      if (k != 0) {
+        lmax = p - k;
+      } else {
+        lmax = p - k - 2;
+      }
+      for (int l = lmax; l >= 0; --l) {
+        if ( ((p - k - l) & 1)==1) continue;
+        *dim_cord_vect=*dim_cord_vect+1;
+      }
+    }
+  }
+  
+  return QMCKL_SUCCESS;
+}
+    #+end_src
+
     #+CALL: generate_c_header(table=qmckl_factor_dim_cord_vect_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
 
     #+RESULTS:
@@ -5030,28 +5135,6 @@ end function qmckl_compute_dim_cord_vect_f
 	  int64_t* const dim_cord_vect );
     #+end_src
 
-
-    #+CALL: generate_c_interface(table=qmckl_factor_dim_cord_vect_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
-
-    #+RESULTS:
-    #+begin_src f90 :tangle (eval f) :comments org :exports none
-    integer(c_int32_t) function qmckl_compute_dim_cord_vect &
-	(context, cord_num, dim_cord_vect) &
-	bind(C) result(info)
-
-      use, intrinsic :: iso_c_binding
-      implicit none
-
-      integer (c_int64_t) , intent(in)  , value :: context
-      integer (c_int64_t) , intent(in)  , value :: cord_num
-      integer (c_int64_t) , intent(out)         :: dim_cord_vect
-
-      integer(c_int32_t), external :: qmckl_compute_dim_cord_vect_f
-      info = qmckl_compute_dim_cord_vect_f &
-	     (context, cord_num, dim_cord_vect)
-
-    end function qmckl_compute_dim_cord_vect
-    #+end_src
 
 *** Compute cord_vect_full
    :PROPERTIES:
@@ -5171,7 +5254,7 @@ end function qmckl_compute_cord_vect_full_f
     | ~context~             | ~qmckl_context~             | in     | Global state                  |
     | ~cord_num~            | ~int64_t~                   | in     | Order of polynomials          |
     | ~dim_cord_vect~       | ~int64_t~                   | in     | dimension of cord full table  |
-    | ~lpkm_combined_index~ | ~int64_t[4][dim_cord_vect]~ | out    | Full list of combined indices |
+    | ~lkpm_combined_index~ | ~int64_t[4][dim_cord_vect]~ | out    | Full list of combined indices |
 
     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
 integer function qmckl_compute_lkpm_combined_index_f(context, cord_num, dim_cord_vect,  &
@@ -5227,6 +5310,53 @@ integer function qmckl_compute_lkpm_combined_index_f(context, cord_num, dim_cord
 end function qmckl_compute_lkpm_combined_index_f
     #+end_src
 
+    #+begin_src c :comments org :tangle (eval c) :noweb yes
+qmckl_exit_code qmckl_compute_lkpm_combined_index (
+	  const qmckl_context context,
+	  const int64_t cord_num,
+	  const int64_t dim_cord_vect,
+	  int64_t* const lkpm_combined_index ) {
+
+  int kk, lmax, m;
+
+  if (context == QMCKL_NULL_CONTEXT) { 
+     return QMCKL_INVALID_CONTEXT;
+  }
+
+  if (cord_num <= 0) { 
+     return QMCKL_INVALID_ARG_2;
+  }
+
+  if (dim_cord_vect <= 0) { 
+     return QMCKL_INVALID_ARG_3;
+  }
+
+/*
+*/
+  kk = 0;
+  for (int p = 2; p <= cord_num; ++p) {
+    for (int k=(p-1); k >= 0; --k) {
+      if (k != 0) {
+        lmax = p - k;
+      } else {
+        lmax = p - k - 2;
+      }
+      for (int l=lmax; l >= 0; --l) {
+        if (((p - k - l) & 1) == 1) continue;
+        m = (p - k - l)/2;
+        lkpm_combined_index[kk                  ] = l;
+        lkpm_combined_index[kk +   dim_cord_vect] = k;
+        lkpm_combined_index[kk + 2*dim_cord_vect] = p;
+        lkpm_combined_index[kk + 3*dim_cord_vect] = m;
+        kk = kk + 1;
+      }
+    }
+  }
+
+  return QMCKL_SUCCESS;
+}
+    #+end_src
+
     #+CALL: generate_c_header(table=qmckl_factor_lkpm_combined_index_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
 
     #+RESULTS:
@@ -5235,32 +5365,10 @@ end function qmckl_compute_lkpm_combined_index_f
 	  const qmckl_context context,
 	  const int64_t cord_num,
 	  const int64_t dim_cord_vect,
-	  int64_t* const lpkm_combined_index );
+	  int64_t* const lkpm_combined_index );
     #+end_src
 
 
-    #+CALL: generate_c_interface(table=qmckl_factor_lkpm_combined_index_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
-
-    #+RESULTS:
-    #+begin_src f90 :tangle (eval f) :comments org :exports none
-    integer(c_int32_t) function qmckl_compute_lkpm_combined_index &
-	(context, cord_num, dim_cord_vect, lpkm_combined_index) &
-	bind(C) result(info)
-
-      use, intrinsic :: iso_c_binding
-      implicit none
-
-      integer (c_int64_t) , intent(in)  , value :: context
-      integer (c_int64_t) , intent(in)  , value :: cord_num
-      integer (c_int64_t) , intent(in)  , value :: dim_cord_vect
-      integer (c_int64_t) , intent(out)         :: lpkm_combined_index(dim_cord_vect,4)
-
-      integer(c_int32_t), external :: qmckl_compute_lkpm_combined_index_f
-      info = qmckl_compute_lkpm_combined_index_f &
-	     (context, cord_num, dim_cord_vect, lpkm_combined_index)
-
-    end function qmckl_compute_lkpm_combined_index
-    #+end_src
 
 *** Compute tmp_c
    :PROPERTIES:
@@ -5348,6 +5456,73 @@ integer function qmckl_compute_tmp_c_f(context, cord_num, elec_num, nucl_num, &
 end function qmckl_compute_tmp_c_f
     #+end_src
 
+    #+begin_src c :comments org :tangle (eval c) :noweb yes
+qmckl_exit_code qmckl_compute_tmp_c (
+	  const qmckl_context context,
+	  const int64_t cord_num,
+	  const int64_t elec_num,
+	  const int64_t nucl_num,
+	  const int64_t walk_num,
+	  const double* een_rescaled_e,
+	  const double* een_rescaled_n,
+	  double* const tmp_c ) {
+
+  qmckl_exit_code info;
+  int          i, j, a, l, kk, p, lmax, nw;
+  char         TransA, TransB;
+  double       alpha, beta;
+  int          M, N, K, LDA, LDB, LDC;
+
+  TransA = 'N';
+  TransB = 'N';
+  alpha  = 1.0;
+  beta   = 0.0;
+
+  if (context == QMCKL_NULL_CONTEXT) {
+    return QMCKL_INVALID_CONTEXT;
+  }
+
+  if (cord_num <= 0) {
+    return QMCKL_INVALID_ARG_2;
+  }
+
+  if (elec_num <= 0) {
+    return QMCKL_INVALID_ARG_3;
+  }
+
+  if (nucl_num <= 0) {
+    return QMCKL_INVALID_ARG_4;
+  }
+
+  M = elec_num;
+  N = nucl_num*(cord_num + 1);
+  K = elec_num;
+
+  LDA = sizeof(een_rescaled_e)/sizeof(double);
+  LDB = sizeof(een_rescaled_n)/sizeof(double);
+  LDC = sizeof(tmp_c)/sizeof(double);
+
+  for (int nw=0; nw < walk_num; ++nw) {
+    for (int i=0; i<cord_num; ++i){
+    info = qmckl_dgemm(context,TransA, TransB, M, N, K, alpha,     \
+                 //    &een_rescaled_e[0+0*elec_num+i*elec_num*elec_num+nw*elec_num*elec_num*(cord_num+1)],
+                       &een_rescaled_e[             i*elec_num*elec_num+nw*elec_num*elec_num*(cord_num+1)], \
+                       LDA,                                        \
+                 //    &een_rescaled_n[0+0*elec_num+0*elec_num*nucl_num+nw*elec_num*nucl_num*(cord_num+1)],
+                       &een_rescaled_n[                                 nw*elec_num*nucl_num*(cord_num+1)], \
+                       LDB,                                        \
+                       beta,                                       \
+                 //    &tmp_c[0+0*elec_num+0*elec_num*nucl_num+i*elec_num*nucl_num*(cord_num+1)+nw*elec_num*nucl_num*(cord_num+1)*cord_num],
+                       &tmp_c[                                 i*elec_num*nucl_num*(cord_num+1)+nw*elec_num*nucl_num*(cord_num+1)*cord_num],        \
+                       LDC);
+
+    }
+  }
+
+  return info;
+}
+    #+end_src
+
     #+CALL: generate_c_header(table=qmckl_factor_tmp_c_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
 
     #+RESULTS:
@@ -5363,36 +5538,10 @@ end function qmckl_compute_tmp_c_f
 	  double* const tmp_c );
     #+end_src
 
-
-    #+CALL: generate_c_interface(table=qmckl_factor_tmp_c_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
-
-    #+RESULTS:
-    #+begin_src f90 :tangle (eval f) :comments org :exports none
-    integer(c_int32_t) function qmckl_compute_tmp_c &
-	(context, cord_num, elec_num, nucl_num, walk_num, een_rescaled_e, een_rescaled_n, tmp_c) &
-	bind(C) result(info)
-
-      use, intrinsic :: iso_c_binding
-      implicit none
-
-      integer (c_int64_t) , intent(in)  , value :: context
-      integer (c_int64_t) , intent(in)  , value :: cord_num
-      integer (c_int64_t) , intent(in)  , value :: elec_num
-      integer (c_int64_t) , intent(in)  , value :: nucl_num
-      integer (c_int64_t) , intent(in)  , value :: walk_num
-      real    (c_double ) , intent(in)          :: een_rescaled_e(elec_num,elec_num,0:cord_num,walk_num)
-      real    (c_double ) , intent(in)          :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
-      real    (c_double ) , intent(out)         :: tmp_c(elec_num,nucl_num,0:cord_num,0:cord_num-1,walk_num)
-
-      integer(c_int32_t), external :: qmckl_compute_tmp_c_f
-      info = qmckl_compute_tmp_c_f &
-	     (context, cord_num, elec_num, nucl_num, walk_num, een_rescaled_e, een_rescaled_n, tmp_c)
-
-    end function qmckl_compute_tmp_c
-    #+end_src
+ TODO: FIX dtmp_c dimension in the table.
 *** Compute tmp_c (OpenACC offload)
    :PROPERTIES:
-   :Name:     qmckl_compute_tmp_c
+   :Name:     qmckl_compute_tmp_c_acc_offload
    :CRetType: qmckl_exit_code
    :FRetType: qmckl_exit_code
    :END:
@@ -5409,77 +5558,85 @@ end function qmckl_compute_tmp_c_f
     | ~een_rescaled_n~ | ~double[walk_num][0:cord_num][nucl_num][elec_num]~               | in     | Electron-nucleus rescaled factor  |
     | ~tmp_c~          | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][elec_num]~ | out    | vector of non-zero coefficients   |
 
-    #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_tmp_c_acc_offload_f(context, cord_num, elec_num, nucl_num, &
-     walk_num, een_rescaled_e, een_rescaled_n, tmp_c) &
-     result(info)
-  use qmckl
-  implicit none
-  integer(qmckl_context), intent(in)  :: context
-  integer*8             , intent(in)  :: cord_num
-  integer*8             , intent(in)  :: elec_num
-  integer*8             , intent(in)  :: nucl_num
-  integer*8             , intent(in)  :: walk_num
-  double precision      , intent(in)  :: een_rescaled_e(elec_num, elec_num, 0:cord_num, walk_num)
-  double precision      , intent(in)  :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
-  double precision      , intent(out) :: tmp_c(elec_num, nucl_num,0:cord_num, 0:cord_num-1, walk_num)
-  double precision                    :: tmp
-  integer*8                           :: i, j, jj, k, l, p, lmax, nw
+
+    #+begin_src c :comments org :tangle (eval c) :noweb yes
+#ifdef HAVE_OPENACC_OFFLOAD
+qmckl_exit_code qmckl_compute_tmp_c_acc_offload (
+	  const qmckl_context context,
+	  const int64_t cord_num,
+	  const int64_t elec_num,
+	  const int64_t nucl_num,
+	  const int64_t walk_num,
+	  const double* een_rescaled_e,
+	  const double* een_rescaled_n,
+	  double* const tmp_c ) {
 
 
-  info = QMCKL_SUCCESS
-  if (context == QMCKL_NULL_CONTEXT) then
-     info = QMCKL_INVALID_CONTEXT
-     return
-  endif
+  if (context == QMCKL_NULL_CONTEXT) {
+    return QMCKL_INVALID_CONTEXT;
+  }
 
-  if (cord_num <= 0) then
-     info = QMCKL_INVALID_ARG_2
-     return
-  endif
+  if (cord_num <= 0) {
+    return QMCKL_INVALID_ARG_2;
+  }
 
-  if (elec_num <= 0) then
-     info = QMCKL_INVALID_ARG_3
-     return
-  endif
+  if (elec_num <= 0) {
+    return QMCKL_INVALID_ARG_3;
+  }
 
-  if (nucl_num <= 0) then
-     info = QMCKL_INVALID_ARG_4
-     return
-  endif
+  if (nucl_num <= 0) {
+    return QMCKL_INVALID_ARG_4;
+  }
 
-  !$acc parallel
-	!$acc loop independent gang worker vector collapse(5)
-  do nw=1, walk_num
-  do i=0, cord_num-1
+  // Compute array access strides:
+  // For tmp_c...
+  int stride_k_c  = elec_num;
+  int stride_j_c  = stride_k_c * nucl_num;
+  int stride_i_c  = stride_j_c * (cord_num+1);
+  int stride_nw_c = stride_i_c * cord_num;
+  // For een_rescaled_e...
+  int stride_m_e  = elec_num;
+  int stride_i_e  = stride_m_e * elec_num;
+  int stride_nw_e = stride_i_e * (cord_num+1);
+  // For een_rescaled_n...
+  int stride_k_n  = elec_num;
+  int stride_j_n  = stride_k_n * nucl_num;
+  int stride_nw_n = stride_j_n * (cord_num+1);
 
-	do j=0,cord_num
-	do jj=1,nucl_num
-    do k=1,elec_num
+  //#pragma acc parallel
+  //#pragma acc loop independent gang worker vector collapse(5)
+  for (int nw=0; nw < walk_num; ++nw) {
+    for (int i=0; i<cord_num; ++i){
 
-      tmp = 0.0
-      do l=1,elec_num
-		  tmp = tmp + &
-	      een_rescaled_e(k, l, i, nw) * een_rescaled_n(l, jj, j, nw)
-      end do
-	    tmp_c(k, jj, j, i, nw) = tmp
+      // Replacement for single DGEMM
+      for (int j=0; j<cord_num+1; j++) {
+        for (int k=0; k<nucl_num; k++) {
+          for (int l=0; l<elec_num; l++) {
 
-    end do
-	end do
-  end do
+            // Single reduction
+            for (int m=0; m<elec_num; m++) {
+              tmp_c[l + k*stride_k_c + j*stride_j_c + i*stride_i_c + nw*stride_nw_c] =
+              tmp_c[l + k*stride_k_c + j*stride_j_c + i*stride_i_c, nw*stride_nw_c];
+              een_rescaled_e[l + m*stride_m_e + i*stride_i_e + nw*stride_nw_e] *
+              een_rescaled_n[m + k*stride_k_n + j*stride_j_n + nw*stride_nw_n];
+            }
 
-  end do
-  end do
-  !$acc end parallel
+          }
+        }
+      }
+    }
+  }
 
-
-end function qmckl_compute_tmp_c_acc_offload_f
+  return QMCKL_SUCCESS;
+}
+#endif
     #+end_src
 
     #+CALL: generate_c_header(table=qmckl_factor_tmp_c_acc_offload_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
 
     #+RESULTS:
     #+begin_src c :tangle (eval h_func) :comments org
+#ifdef HAVE_OPENACC_OFFLOAD
     qmckl_exit_code qmckl_compute_tmp_c_acc_offload (
 	  const qmckl_context context,
 	  const int64_t cord_num,
@@ -5489,39 +5646,14 @@ end function qmckl_compute_tmp_c_acc_offload_f
 	  const double* een_rescaled_e,
 	  const double* een_rescaled_n,
 	  double* const tmp_c );
+#endif
     #+end_src
 
-
-    #+CALL: generate_c_interface(table=qmckl_factor_tmp_c_acc_offload_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
-
-    #+RESULTS:
-    #+begin_src f90 :tangle (eval f) :comments org :exports none
-    integer(c_int32_t) function qmckl_compute_tmp_c_acc_offload &
-	(context, cord_num, elec_num, nucl_num, walk_num, een_rescaled_e, een_rescaled_n, tmp_c) &
-	bind(C) result(info)
-
-      use, intrinsic :: iso_c_binding
-      implicit none
-
-      integer (c_int64_t) , intent(in)  , value :: context
-      integer (c_int64_t) , intent(in)  , value :: cord_num
-      integer (c_int64_t) , intent(in)  , value :: elec_num
-      integer (c_int64_t) , intent(in)  , value :: nucl_num
-      integer (c_int64_t) , intent(in)  , value :: walk_num
-      real    (c_double ) , intent(in)          :: een_rescaled_e(elec_num,elec_num,0:cord_num,walk_num)
-      real    (c_double ) , intent(in)          :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
-      real    (c_double ) , intent(out)         :: tmp_c(elec_num,nucl_num,0:cord_num,0:cord_num-1,walk_num)
-
-      integer(c_int32_t), external :: qmckl_compute_tmp_c_acc_offload_f
-      info = qmckl_compute_tmp_c_acc_offload_f &
-	     (context, cord_num, elec_num, nucl_num, walk_num, een_rescaled_e, een_rescaled_n, tmp_c)
-
-    end function qmckl_compute_tmp_c_acc_offload
-    #+end_src
+ TODO: FIX dtmp_c dimension in the table.
 
 *** Compute tmp_c (cuBLAS offload)
    :PROPERTIES:
-   :Name:     qmckl_compute_tmp_c_cublas_offload
+   :Name:     qmckl_compute_tmp_c_acc_offload
    :CRetType: qmckl_exit_code
    :FRetType: qmckl_exit_code
    :END:
@@ -5538,79 +5670,82 @@ end function qmckl_compute_tmp_c_acc_offload_f
     | ~een_rescaled_n~ | ~double[walk_num][0:cord_num][nucl_num][elec_num]~               | in     | Electron-nucleus rescaled factor  |
     | ~tmp_c~          | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][elec_num]~ | out    | vector of non-zero coefficients   |
 
-    #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_tmp_c_cublas_offload_f(context, cord_num, elec_num, nucl_num, &
-     walk_num, een_rescaled_e, een_rescaled_n, tmp_c) &
-     result(info)
-  use qmckl
-  implicit none
-  integer(qmckl_context), intent(in)  :: context
-  integer*8             , intent(in)  :: cord_num
-  integer*8             , intent(in)  :: elec_num
-  integer*8             , intent(in)  :: nucl_num
-  integer*8             , intent(in)  :: walk_num
-  double precision      , intent(in)  :: een_rescaled_e(elec_num, elec_num, 0:cord_num, walk_num)
-  double precision      , intent(in)  :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
-  double precision      , intent(out) :: tmp_c(elec_num, nucl_num,0:cord_num, 0:cord_num-1, walk_num)
-  double precision                    :: x
-  integer*8                           :: i, j, a, l, kk, p, lmax, nw
-  character                           :: TransA, TransB
-  double precision                    :: alpha, beta
-  integer*8                           :: M, N, K, LDA, LDB, LDC
 
-  TransA = 'N'
-  TransB = 'N'
-  alpha = 1.0d0
-  beta  = 0.0d0
+    #+begin_src c :comments org :tangle (eval c) :noweb yes
+#ifdef HAVE_CUBLAS_OFFLOAD
+qmckl_exit_code qmckl_compute_tmp_c_cublas_offload (
+	  const qmckl_context context,
+	  const int64_t cord_num,
+	  const int64_t elec_num,
+	  const int64_t nucl_num,
+	  const int64_t walk_num,
+	  const double* een_rescaled_e,
+	  const double* een_rescaled_n,
+	  double* const tmp_c ) {
 
-  info = QMCKL_SUCCESS
+  qmckl_exit_code info;
+  int          i, j, a, l, kk, p, lmax, nw;
+  char         TransA, TransB;
+  double       alpha, beta;
+  int          M, N, K, LDA, LDB, LDC;
 
-  if (context == QMCKL_NULL_CONTEXT) then
-     info = QMCKL_INVALID_CONTEXT
-     return
-  endif
+  TransA = 'N';
+  TransB = 'N';
+  alpha  = 1.0;
+  beta   = 0.0;
 
-  if (cord_num <= 0) then
-     info = QMCKL_INVALID_ARG_2
-     return
-  endif
+  if (context == QMCKL_NULL_CONTEXT) {
+    return QMCKL_INVALID_CONTEXT;
+  }
 
-  if (elec_num <= 0) then
-     info = QMCKL_INVALID_ARG_3
-     return
-  endif
+  if (cord_num <= 0) {
+    return QMCKL_INVALID_ARG_2;
+  }
 
-  if (nucl_num <= 0) then
-     info = QMCKL_INVALID_ARG_4
-     return
-  endif
+  if (elec_num <= 0) {
+    return QMCKL_INVALID_ARG_3;
+  }
 
-  M = elec_num
-  N = nucl_num*(cord_num + 1)
-  K = elec_num
-  LDA = size(een_rescaled_e,1)
-  LDB = size(een_rescaled_n,1)
-  LDC = size(tmp_c,1)
+  if (nucl_num <= 0) {
+    return QMCKL_INVALID_ARG_4;
+  }
 
-  ! TODO Replace with calls to cuBLAS
+  M = elec_num;
+  N = nucl_num*(cord_num + 1);
+  K = elec_num;
 
-  do nw=1, walk_num
-  do i=0, cord_num-1
-  info = qmckl_dgemm(context,TransA, TransB, M, N, K, alpha,     &
-                     een_rescaled_e(1,1,i,nw),LDA*1_8,                     &
-                     een_rescaled_n(1,1,0,nw),LDB*1_8,                     &
-                     beta,                                       &
-                     tmp_c(1,1,0,i,nw),LDC)
-  end do
-  end do
+  LDA = sizeof(een_rescaled_e)/sizeof(double);
+  LDB = sizeof(een_rescaled_n)/sizeof(double);
+  LDC = sizeof(tmp_c)/sizeof(double);
 
-end function qmckl_compute_tmp_c_cublas_offload_f
+  // TODO Replace with cuBLAS calls
+  for (int nw=0; nw < walk_num; ++nw) {
+    for (int i=0; i<cord_num; ++i){
+    info = qmckl_dgemm(context,TransA, TransB, M, N, K, alpha,     \
+                 //    &een_rescaled_e[0+0*elec_num+i*elec_num*elec_num+nw*elec_num*elec_num*(cord_num+1)],
+                       &een_rescaled_e[             i*elec_num*elec_num+nw*elec_num*elec_num*(cord_num+1)], \
+                       LDA,                                        \
+                 //    &een_rescaled_n[0+0*elec_num+0*elec_num*nucl_num+nw*elec_num*nucl_num*(cord_num+1)],
+                       &een_rescaled_n[                                 nw*elec_num*nucl_num*(cord_num+1)], \
+                       LDB,                                        \
+                       beta,                                       \
+                 //    &tmp_c[0+0*elec_num+0*elec_num*nucl_num+i*elec_num*nucl_num*(cord_num+1)+nw*elec_num*nucl_num*(cord_num+1)*cord_num],
+                       &tmp_c[                                 i*elec_num*nucl_num*(cord_num+1)+nw*elec_num*nucl_num*(cord_num+1)*cord_num],        \
+                       LDC);
+
+    }
+  }
+
+  return info;
+}
+#endif
     #+end_src
 
     #+CALL: generate_c_header(table=qmckl_factor_tmp_c_cublas_offload_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
 
     #+RESULTS:
     #+begin_src c :tangle (eval h_func) :comments org
+#ifdef HAVE_CUBLAS_OFFLOAD
     qmckl_exit_code qmckl_compute_tmp_c_cublas_offload (
 	  const qmckl_context context,
 	  const int64_t cord_num,
@@ -5620,36 +5755,10 @@ end function qmckl_compute_tmp_c_cublas_offload_f
 	  const double* een_rescaled_e,
 	  const double* een_rescaled_n,
 	  double* const tmp_c );
+#endif
     #+end_src
 
-
-    #+CALL: generate_c_interface(table=qmckl_factor_tmp_c_cublas_offload_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
-
-    #+RESULTS:
-    #+begin_src f90 :tangle (eval f) :comments org :exports none
-    integer(c_int32_t) function qmckl_compute_tmp_c_cublas_offload &
-	(context, cord_num, elec_num, nucl_num, walk_num, een_rescaled_e, een_rescaled_n, tmp_c) &
-	bind(C) result(info)
-
-      use, intrinsic :: iso_c_binding
-      implicit none
-
-      integer (c_int64_t) , intent(in)  , value :: context
-      integer (c_int64_t) , intent(in)  , value :: cord_num
-      integer (c_int64_t) , intent(in)  , value :: elec_num
-      integer (c_int64_t) , intent(in)  , value :: nucl_num
-      integer (c_int64_t) , intent(in)  , value :: walk_num
-      real    (c_double ) , intent(in)          :: een_rescaled_e(elec_num,elec_num,0:cord_num,walk_num)
-      real    (c_double ) , intent(in)          :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
-      real    (c_double ) , intent(out)         :: tmp_c(elec_num,nucl_num,0:cord_num,0:cord_num-1,walk_num)
-
-      integer(c_int32_t), external :: qmckl_compute_tmp_c_cublas_offload_f
-      info = qmckl_compute_tmp_c_cublas_offload_f &
-	     (context, cord_num, elec_num, nucl_num, walk_num, een_rescaled_e, een_rescaled_n, tmp_c)
-
-    end function qmckl_compute_tmp_c_cublas_offload
-    #+end_src
-
+ TODO: FIX dtmp_c dimension in the table.
 *** Compute dtmp_c
    :PROPERTIES:
    :Name:     qmckl_compute_dtmp_c
@@ -5736,6 +5845,72 @@ integer function qmckl_compute_dtmp_c_f(context, cord_num, elec_num, nucl_num, &
 end function qmckl_compute_dtmp_c_f
     #+end_src
 
+    #+begin_src c :comments org :tangle (eval c) :noweb yes
+qmckl_exit_code qmckl_compute_dtmp_c (
+	  const qmckl_context context,
+	  const int64_t cord_num,
+	  const int64_t elec_num,
+	  const int64_t nucl_num,
+	  const int64_t walk_num,
+	  const double* een_rescaled_e_deriv_e,
+	  const double* een_rescaled_n,
+	  double* const dtmp_c ) {
+
+  qmckl_exit_code  info;
+  char             TransA, TransB;
+  double           alpha, beta;
+  int              M, N, K, LDA, LDB, LDC;
+
+  TransA = 'N';
+  TransB = 'N';
+  alpha = 1.0;
+  beta  = 0.0;
+
+  if (context == QMCKL_NULL_CONTEXT) {
+     return QMCKL_INVALID_CONTEXT;
+  }
+
+  if (cord_num <= 0) {
+     return QMCKL_INVALID_ARG_2;
+  }
+
+  if (elec_num <= 0) {
+     return QMCKL_INVALID_ARG_3;
+  }
+
+  if (nucl_num <= 0) {
+     return QMCKL_INVALID_ARG_4;
+  }
+
+  M = 4*elec_num;
+  N = nucl_num*(cord_num + 1);
+  K = elec_num;
+
+  LDA = 4*sizeof(een_rescaled_e_deriv_e)/sizeof(double);
+  LDB = sizeof(een_rescaled_n)/sizeof(double);
+  LDC = 4*sizeof(dtmp_c)/sizeof(double);
+
+  // TODO Rewrite manually and offload on GPU
+  for (int nw=0; nw < walk_num; ++nw) {
+    for (int i=0; nw < cord_num; ++i) {
+      info = qmckl_dgemm(context,TransA, TransB, M, N, K, alpha,        \
+              //&een_rescaled_e_deriv_e[0+0*elec_num+0*elec_num*4+i*elec_num*4*elec_num+nw*elec_num*4*elec_num*(cord_num+1)],
+                &een_rescaled_e_deriv_e[i*elec_num*4*elec_num+nw*elec_num*4*elec_num*(cord_num+1)],                \
+                LDA,                                               \
+              //&een_rescaled_n[0+0*elec_num+0*elec_num*nucl_num+nw*elec_num*nucl_num*(cord_num+1)],
+                &een_rescaled_n[nw*elec_num*nucl_num*(cord_num+1)],   \
+                LDB,                                               \
+                beta,                                              \
+              //&dtmp_c[0+0*elec_num+0*elec_num*4+0*elec_num*4*nucl_num+i*elec_num*4*nucl_num*(cord_num+1)+nw*elec_num*4*nucl_num*(cord_num+1)*cord_num],
+                &dtmp_c[i*elec_num*4*nucl_num*(cord_num+1)+nw*elec_num*4*nucl_num*(cord_num+1)*cord_num], \
+                LDC);
+    }
+  }
+
+  return info;
+}
+    #+end_src
+
     #+CALL: generate_c_header(table=qmckl_factor_dtmp_c_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
 
     #+RESULTS:
@@ -5749,34 +5924,6 @@ end function qmckl_compute_dtmp_c_f
 	  const double* een_rescaled_e_deriv_e,
 	  const double* een_rescaled_n,
 	  double* const dtmp_c );
-    #+end_src
-
-
-    #+CALL: generate_c_interface(table=qmckl_factor_dtmp_c_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
-
-    #+RESULTS:
-    #+begin_src f90 :tangle (eval f) :comments org :exports none
-    integer(c_int32_t) function qmckl_compute_dtmp_c &
-	(context, cord_num, elec_num, nucl_num, walk_num, een_rescaled_e_deriv_e, een_rescaled_n, dtmp_c) &
-	bind(C) result(info)
-
-      use, intrinsic :: iso_c_binding
-      implicit none
-
-      integer (c_int64_t) , intent(in)  , value :: context
-      integer (c_int64_t) , intent(in)  , value :: cord_num
-      integer (c_int64_t) , intent(in)  , value :: elec_num
-      integer (c_int64_t) , intent(in)  , value :: nucl_num
-      integer (c_int64_t) , intent(in)  , value :: walk_num
-      real    (c_double ) , intent(in)          :: een_rescaled_e_deriv_e(elec_num,4,elec_num,0:cord_num,walk_num)
-      real    (c_double ) , intent(in)          :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
-      real    (c_double ) , intent(out)         :: dtmp_c(elec_num,nucl_num,0:cord_num,0:cord_num-1,walk_num)
-
-      integer(c_int32_t), external :: qmckl_compute_dtmp_c_f
-      info = qmckl_compute_dtmp_c_f &
-	     (context, cord_num, elec_num, nucl_num, walk_num, een_rescaled_e_deriv_e, een_rescaled_n, dtmp_c)
-
-    end function qmckl_compute_dtmp_c
     #+end_src
 
 *** Compute dtmp_c (OpenACC offload)
@@ -5798,77 +5945,90 @@ end function qmckl_compute_dtmp_c_f
     | ~een_rescaled_n~         | ~double[walk_num][0:cord_num][nucl_num][elec_num]~               | in     | Electron-nucleus rescaled factor              |
     | ~dtmp_c~                 | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][elec_num]~ | out    | vector of non-zero coefficients               |
 
-    #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_dtmp_c_acc_offload_f(context, cord_num, elec_num, nucl_num, &
-     walk_num, een_rescaled_e_deriv_e, een_rescaled_n, dtmp_c) &
-     result(info)
-  use qmckl
-  implicit none
-  integer(qmckl_context), intent(in)  :: context
-  integer*8             , intent(in)  :: cord_num
-  integer*8             , intent(in)  :: elec_num
-  integer*8             , intent(in)  :: nucl_num
-  integer*8             , intent(in)  :: walk_num
-  double precision      , intent(in)  :: een_rescaled_e_deriv_e(elec_num, 4, elec_num, 0:cord_num, walk_num)
-  double precision      , intent(in)  :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
-  double precision      , intent(out) :: dtmp_c(elec_num, 4, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
-  double precision                    :: tmp
-  integer*8                           :: nw, i, j, jj, k, kk, l
 
-  info = QMCKL_SUCCESS
-  if (context == QMCKL_NULL_CONTEXT) then
-     info = QMCKL_INVALID_CONTEXT
-     return
-  endif
+    #+begin_src c :comments org :tangle (eval c) :noweb yes
+#ifdef HAVE_OPENACC_OFFLOAD
+qmckl_exit_code qmckl_compute_dtmp_c_acc_offload (
+	  const qmckl_context context,
+	  const int64_t cord_num,
+	  const int64_t elec_num,
+	  const int64_t nucl_num,
+	  const int64_t walk_num,
+	  const double* een_rescaled_e_deriv_e,
+	  const double* een_rescaled_n,
+	  double* const dtmp_c ) {
 
-  if (cord_num <= 0) then
-     info = QMCKL_INVALID_ARG_2
-     return
-  endif
+  if (context == QMCKL_NULL_CONTEXT) {
+     return QMCKL_INVALID_CONTEXT;
+  }
 
-  if (elec_num <= 0) then
-     info = QMCKL_INVALID_ARG_3
-     return
-  endif
+  if (cord_num <= 0) {
+     return QMCKL_INVALID_ARG_2;
+  }
 
-  if (nucl_num <= 0) then
-     info = QMCKL_INVALID_ARG_4
-     return
-  endif
+  if (elec_num <= 0) {
+     return QMCKL_INVALID_ARG_3;
+  }
 
-  !$acc parallel
-	!$acc loop independent gang worker vector collapse(6)
-  do nw=1, walk_num
-  do i=0, cord_num-1
+  if (nucl_num <= 0) {
+     return QMCKL_INVALID_ARG_4;
+  }
 
-	do j=0,cord_num
-	do jj=1,nucl_num
-    do k=1,4
-	  do kk=1,elec_num
+  // Compute strides...
+  // For dtmp_c
+  int stride_l_d  = elec_num;
+  int stride_k_d  = stride_l_d * 4;
+  int stride_j_d  = stride_k_d * nucl_num;
+  int stride_i_d  = stride_j_d * (cord_num+1);
+  int stride_nw_d = stride_i_d * cord_num;
+  // For een_rescaled_e_deriv_e
+  int stride_l_e  = elec_num;
+  int stride_n_e  = stride_l_e * 4;
+  int stride_i_e  = stride_n_e * elec_num;
+  int stride_nw_e = stride_i_e * cord_num;
+  // For een_rescaled_n
+  int stride_k_n  = elec_num;
+  int stride_j_n  = stride_k_n * nucl_num;
+  int stride_nw_n = stride_j_n * (cord_num+1);
 
-      tmp = 0.0
-      do l=1,elec_num
-		  tmp = tmp + &
-	      een_rescaled_e_deriv_e(kk, k, l, i, nw) * een_rescaled_n(l, jj, j, nw)
-      end do
-	    dtmp_c(kk, k, jj, j, i, nw ) = tmp
 
-    end do
-	  end do
-  end do
-  end do
+  //#pragma acc parallel
+  //#pragma loop independent gang worker vector collapse(6)
+  for (int nw=0; nw < walk_num; nw++) {
+    for (int i=0; i < cord_num; i++) {
 
-  end do
-  end do
-  !$acc end parallel
+      // Single DGEMM
+      for(int j=0; j<cord_num+1; j++) {
+        for(int k=0; k<nucl_num; k++) {
+          for(int l=0; l<4; l++) {
+            for(int m=0; m<elec_num; m++) {
 
-end function qmckl_compute_dtmp_c_acc_offload_f
+              // Single reduction
+              for(int n=0; n<elec_num; n++){
+                // TODO Fix indexing issues
+                dtmp_c[m + l * stride_l_d + k * stride_k_d + j * stride_j_d + i * stride_i_d + nw * stride_nw_d] =
+                dtmp_c[m + l * stride_l_d + k * stride_k_d + j * stride_j_d + i * stride_i_d + nw * stride_nw_d];
+                //een_rescaled_e_deriv_e[m + l * stride_l_e +  n * stride_n_e + i * stride_i_e + nw * stride_nw_e] *
+                //een_rescaled_n[n * + k * stride_k_n + j * stride_j_n + nw * stride_nw_n];
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return QMCKL_SUCCESS;
+}
+#endif
     #+end_src
 
     #+CALL: generate_c_header(table=qmckl_factor_dtmp_c_acc_offload_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
 
     #+RESULTS:
     #+begin_src c :tangle (eval h_func) :comments org
+
+#ifdef HAVE_OPENACC_OFFLOAD
     qmckl_exit_code qmckl_compute_dtmp_c_acc_offload (
 	  const qmckl_context context,
 	  const int64_t cord_num,
@@ -5878,38 +6038,11 @@ end function qmckl_compute_dtmp_c_acc_offload_f
 	  const double* een_rescaled_e_deriv_e,
 	  const double* een_rescaled_n,
 	  double* const dtmp_c );
-    #+end_src
-
-
-    #+CALL: generate_c_interface(table=qmckl_factor_dtmp_c_acc_offload_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
-
-    #+RESULTS:
-    #+begin_src f90 :tangle (eval f) :comments org :exports none
-    integer(c_int32_t) function qmckl_compute_dtmp_c_acc_offload &
-	(context, cord_num, elec_num, nucl_num, walk_num, een_rescaled_e_deriv_e, een_rescaled_n, dtmp_c) &
-	bind(C) result(info)
-
-      use, intrinsic :: iso_c_binding
-      implicit none
-
-      integer (c_int64_t) , intent(in)  , value :: context
-      integer (c_int64_t) , intent(in)  , value :: cord_num
-      integer (c_int64_t) , intent(in)  , value :: elec_num
-      integer (c_int64_t) , intent(in)  , value :: nucl_num
-      integer (c_int64_t) , intent(in)  , value :: walk_num
-      real    (c_double ) , intent(in)          :: een_rescaled_e_deriv_e(elec_num,4,elec_num,0:cord_num,walk_num)
-      real    (c_double ) , intent(in)          :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
-      real    (c_double ) , intent(out)         :: dtmp_c(elec_num,nucl_num,0:cord_num,0:cord_num-1,walk_num)
-
-      integer(c_int32_t), external :: qmckl_compute_dtmp_c_acc_offload_f
-      info = qmckl_compute_dtmp_c_acc_offload_f &
-	     (context, cord_num, elec_num, nucl_num, walk_num, een_rescaled_e_deriv_e, een_rescaled_n, dtmp_c)
-
-    end function qmckl_compute_dtmp_c_acc_offload
+#endif
     #+end_src
 *** Compute dtmp_c (cuBLAS offload)
    :PROPERTIES:
-   :Name:     qmckl_compute_dtmp_c
+   :Name:     qmckl_compute_dtmp_c_cublas_offload
    :CRetType: qmckl_exit_code
    :FRetType: qmckl_exit_code
    :END:
@@ -5926,77 +6059,81 @@ end function qmckl_compute_dtmp_c_acc_offload_f
     | ~een_rescaled_n~         | ~double[walk_num][0:cord_num][nucl_num][elec_num]~               | in     | Electron-nucleus rescaled factor              |
     | ~dtmp_c~                 | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][elec_num]~ | out    | vector of non-zero coefficients               |
 
-    #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_dtmp_c_cublas_offload_f(context, cord_num, elec_num, nucl_num, &
-     walk_num, een_rescaled_e_deriv_e, een_rescaled_n, dtmp_c) &
-     result(info)
-  use qmckl
-  implicit none
-  integer(qmckl_context), intent(in)  :: context
-  integer*8             , intent(in)  :: cord_num
-  integer*8             , intent(in)  :: elec_num
-  integer*8             , intent(in)  :: nucl_num
-  integer*8             , intent(in)  :: walk_num
-  double precision      , intent(in)  :: een_rescaled_e_deriv_e(elec_num, 4, elec_num, 0:cord_num, walk_num)
-  double precision      , intent(in)  :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
-  double precision      , intent(out) :: dtmp_c(elec_num, 4, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
-  double precision                    :: x
-  integer*8                           :: i, j, a, l, kk, p, lmax, nw, ii
-  character                           :: TransA, TransB
-  double precision                    :: alpha, beta
-  integer*8                           :: M, N, K, LDA, LDB, LDC
 
-  TransA = 'N'
-  TransB = 'N'
-  alpha = 1.0d0
-  beta  = 0.0d0
+    #+begin_src c :comments org :tangle (eval c) :noweb yes
+#ifdef HAVE_CUBLAS_OFFLOAD
+qmckl_exit_code qmckl_compute_dtmp_c_cublas_offload (
+	  const qmckl_context context,
+	  const int64_t cord_num,
+	  const int64_t elec_num,
+	  const int64_t nucl_num,
+	  const int64_t walk_num,
+	  const double* een_rescaled_e_deriv_e,
+	  const double* een_rescaled_n,
+	  double* const dtmp_c ) {
 
-  info = QMCKL_SUCCESS
+  qmckl_exit_code  info;
+  char             TransA, TransB;
+  double           alpha, beta;
+  int              M, N, K, LDA, LDB, LDC;
 
-  if (context == QMCKL_NULL_CONTEXT) then
-     info = QMCKL_INVALID_CONTEXT
-     return
-  endif
+  TransA = 'N';
+  TransB = 'N';
+  alpha = 1.0;
+  beta  = 0.0;
 
-  if (cord_num <= 0) then
-     info = QMCKL_INVALID_ARG_2
-     return
-  endif
+  if (context == QMCKL_NULL_CONTEXT) {
+     return QMCKL_INVALID_CONTEXT;
+  }
 
-  if (elec_num <= 0) then
-     info = QMCKL_INVALID_ARG_3
-     return
-  endif
+  if (cord_num <= 0) {
+     return QMCKL_INVALID_ARG_2;
+  }
 
-  if (nucl_num <= 0) then
-     info = QMCKL_INVALID_ARG_4
-     return
-  endif
+  if (elec_num <= 0) {
+     return QMCKL_INVALID_ARG_3;
+  }
 
-  M = 4*elec_num
-  N = nucl_num*(cord_num + 1)
-  K = elec_num
-  LDA = 4*size(een_rescaled_e_deriv_e,1)
-  LDB = size(een_rescaled_n,1)
-  LDC = 4*size(dtmp_c,1)
+  if (nucl_num <= 0) {
+     return QMCKL_INVALID_ARG_4;
+  }
 
-  do nw=1, walk_num
-  do i=0, cord_num-1
-  info = qmckl_dgemm(context,TransA, TransB, M, N, K, alpha,     &
-                     een_rescaled_e_deriv_e(1,1,1,i,nw),LDA*1_8,                     &
-                     een_rescaled_n(1,1,0,nw),LDB*1_8,                     &
-                     beta,                                       &
-                     dtmp_c(1,1,1,0,i,nw),LDC)
-  end do
-  end do
+  M = 4*elec_num;
+  N = nucl_num*(cord_num + 1);
+  K = elec_num;
 
-end function qmckl_compute_dtmp_c_cublas_offload_f
+  LDA = 4*sizeof(een_rescaled_e_deriv_e)/sizeof(double);
+  LDB = sizeof(een_rescaled_n)/sizeof(double);
+  LDC = 4*sizeof(dtmp_c)/sizeof(double);
+
+  // TODO Replace with cuBLAS calls
+  for (int nw=0; nw < walk_num; ++nw) {
+    for (int i=0; nw < cord_num; ++i) {
+      info = qmckl_dgemm(context,TransA, TransB, M, N, K, alpha,        \
+              //&een_rescaled_e_deriv_e[0+0*elec_num+0*elec_num*4+i*elec_num*4*elec_num+nw*elec_num*4*elec_num*(cord_num+1)],
+                &een_rescaled_e_deriv_e[i*elec_num*4*elec_num+nw*elec_num*4*elec_num*(cord_num+1)],                \
+                LDA,                                               \
+              //&een_rescaled_n[0+0*elec_num+0*elec_num*nucl_num+nw*elec_num*nucl_num*(cord_num+1)],
+                &een_rescaled_n[nw*elec_num*nucl_num*(cord_num+1)],   \
+                LDB,                                               \
+                beta,                                              \
+              //&dtmp_c[0+0*elec_num+0*elec_num*4+0*elec_num*4*nucl_num+i*elec_num*4*nucl_num*(cord_num+1)+nw*elec_num*4*nucl_num*(cord_num+1)*cord_num],
+                &dtmp_c[i*elec_num*4*nucl_num*(cord_num+1)+nw*elec_num*4*nucl_num*(cord_num+1)*cord_num], \
+                LDC);
+    }
+  }
+
+  return info;
+}
+#endif
     #+end_src
 
     #+CALL: generate_c_header(table=qmckl_factor_dtmp_c_cublas_offload_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
 
     #+RESULTS:
     #+begin_src c :tangle (eval h_func) :comments org
+
+#ifdef HAVE_CUBLAS_OFFLOAD
     qmckl_exit_code qmckl_compute_dtmp_c_cublas_offload (
 	  const qmckl_context context,
 	  const int64_t cord_num,
@@ -6006,34 +6143,7 @@ end function qmckl_compute_dtmp_c_cublas_offload_f
 	  const double* een_rescaled_e_deriv_e,
 	  const double* een_rescaled_n,
 	  double* const dtmp_c );
-    #+end_src
-
-
-    #+CALL: generate_c_interface(table=qmckl_factor_dtmp_c_cublas_offload_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
-
-    #+RESULTS:
-    #+begin_src f90 :tangle (eval f) :comments org :exports none
-    integer(c_int32_t) function qmckl_compute_dtmp_c_cublas_offload &
-	(context, cord_num, elec_num, nucl_num, walk_num, een_rescaled_e_deriv_e, een_rescaled_n, dtmp_c) &
-	bind(C) result(info)
-
-      use, intrinsic :: iso_c_binding
-      implicit none
-
-      integer (c_int64_t) , intent(in)  , value :: context
-      integer (c_int64_t) , intent(in)  , value :: cord_num
-      integer (c_int64_t) , intent(in)  , value :: elec_num
-      integer (c_int64_t) , intent(in)  , value :: nucl_num
-      integer (c_int64_t) , intent(in)  , value :: walk_num
-      real    (c_double ) , intent(in)          :: een_rescaled_e_deriv_e(elec_num,4,elec_num,0:cord_num,walk_num)
-      real    (c_double ) , intent(in)          :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
-      real    (c_double ) , intent(out)         :: dtmp_c(elec_num,nucl_num,0:cord_num,0:cord_num-1,walk_num)
-
-      integer(c_int32_t), external :: qmckl_compute_dtmp_c_cublas_offload_f
-      info = qmckl_compute_dtmp_c_cublas_offload_f &
-	     (context, cord_num, elec_num, nucl_num, walk_num, een_rescaled_e_deriv_e, een_rescaled_n, dtmp_c)
-
-    end function qmckl_compute_dtmp_c_cublas_offload
+#endif
     #+end_src
 
 *** Test
@@ -6734,37 +6844,6 @@ qmckl_exit_code qmckl_provide_factor_een_deriv_e(qmckl_context context)
       ctx->jastrow.factor_een_deriv_e = factor_een_deriv_e;
     }
 
-    /* Choose the correct compute function (depending on offload type) */
-    bool default_compute = true;
-
-    #ifdef HAVE_OPENACC_OFFLOAD
-    if(ctx->jastrow.offload_type == OFFLOAD_OPENACC) {
-    qmckl_exit_code rc =
-		// CPU version
-      qmckl_compute_factor_een_deriv_e(context,
-
-		// GPU version : No speedup on this kernel yet
-      // qmckl_compute_factor_een_deriv_e_acc_offload(context,
-                              ctx->electron.walk_num,
-                              ctx->electron.num,
-                              ctx->nucleus.num,
-                              ctx->jastrow.cord_num,
-                              ctx->jastrow.dim_cord_vect,
-                              ctx->jastrow.cord_vect_full,
-                              ctx->jastrow.lkpm_combined_index,
-                              ctx->jastrow.tmp_c,
-                              ctx->jastrow.dtmp_c,
-                              ctx->jastrow.een_rescaled_n,
-                              ctx->jastrow.een_rescaled_n_deriv_e,
-                              ctx->jastrow.factor_een_deriv_e);
-      default_compute = false;
-      if (rc != QMCKL_SUCCESS) {
-        return rc;
-      }
-    }
-    #endif
-
-    if(default_compute) {
     qmckl_exit_code rc =
       qmckl_compute_factor_een_deriv_e(context,
                               ctx->electron.walk_num,
@@ -6779,9 +6858,8 @@ qmckl_exit_code qmckl_provide_factor_een_deriv_e(qmckl_context context)
                               ctx->jastrow.een_rescaled_n,
                               ctx->jastrow.een_rescaled_n_deriv_e,
                               ctx->jastrow.factor_een_deriv_e);
-      if (rc != QMCKL_SUCCESS) {
-        return rc;
-      }
+    if (rc != QMCKL_SUCCESS) {
+      return rc;
     }
 
     ctx->jastrow.factor_een_deriv_e_date = ctx->date;
@@ -7178,206 +7256,6 @@ end function qmckl_compute_factor_een_deriv_e_f
 		 factor_een_deriv_e)
 
     end function qmckl_compute_factor_een_deriv_e
-    #+end_src
-
-*** Compute (OpenACC offload)
- :PROPERTIES:
-   :Name:     qmckl_compute_factor_een_deriv_e
-   :CRetType: qmckl_exit_code
-   :FRetType: qmckl_exit_code
-   :END:
-
-    #+NAME: qmckl_factor_een_deriv_e_acc_offload_args
-    | Variable                 | Type                                                                | In/Out | Description                                    |
-    |--------------------------+---------------------------------------------------------------------+--------+------------------------------------------------|
-    | ~context~                | ~qmckl_context~                                                     | in     | Global state                                   |
-    | ~walk_num~               | ~int64_t~                                                           | in     | Number of walkers                              |
-    | ~elec_num~               | ~int64_t~                                                           | in     | Number of electrons                            |
-    | ~nucl_num~               | ~int64_t~                                                           | in     | Number of nucleii                              |
-    | ~cord_num~               | ~int64_t~                                                           | in     | order of polynomials                           |
-    | ~dim_cord_vect~          | ~int64_t~                                                           | in     | dimension of full coefficient vector           |
-    | ~cord_vect_full~         | ~double[dim_cord_vect][nucl_num]~                                   | in     | full coefficient vector                        |
-    | ~lkpm_combined_index~    | ~int64_t[4][dim_cord_vect]~                                         | in     | combined indices                               |
-    | ~tmp_c~                  | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][elec_num]~    | in     | Temporary intermediate tensor                  |
-    | ~dtmp_c~                 | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][4][elec_num]~ | in     | vector of non-zero coefficients                |
-    | ~een_rescaled_n~         | ~double[walk_num][0:cord_num][nucl_num][elec_num]~                  | in     | Electron-nucleus rescaled factor               |
-    | ~een_rescaled_n_deriv_e~ | ~double[walk_num][0:cord_num][nucl_num][4][elec_num]~               | in     | Derivative of Electron-nucleus rescaled factor |
-    | ~factor_een_deriv_e~     | ~double[walk_num][4][elec_num]~                                     | out    | Derivative of Electron-nucleus jastrow         |
-
-
-    #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-#ifdef HAVE_OPENACC_OFFLOAD
-integer function qmckl_compute_factor_een_deriv_e_acc_offload_f(context, walk_num, elec_num, nucl_num, cord_num, dim_cord_vect, &
-                                           cord_vect_full, lkpm_combined_index,                                       &
-                                           tmp_c, dtmp_c, een_rescaled_n, een_rescaled_n_deriv_e, factor_een_deriv_e) &
-     result(info)
-  use qmckl
-  implicit none
-  integer(qmckl_context), intent(in)  :: context
-  integer*8             , intent(in)  :: walk_num, elec_num, cord_num, nucl_num, dim_cord_vect
-  integer*8             , intent(in)  :: lkpm_combined_index(dim_cord_vect,4)
-  double precision      , intent(in)  :: cord_vect_full(nucl_num, dim_cord_vect)
-  double precision      , intent(in)  :: tmp_c(elec_num, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
-  double precision      , intent(in)  :: dtmp_c(elec_num, 4, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
-  double precision      , intent(in)  :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
-  double precision      , intent(in)  :: een_rescaled_n_deriv_e(elec_num, 4, nucl_num, 0:cord_num, walk_num)
-  double precision      , intent(out) :: factor_een_deriv_e(elec_num,4,walk_num)
-
-  integer*8 :: i, a, j, l, k, p, m, n, nw, ii
-  double precision :: accu, accu2, cn
-
-  info = QMCKL_SUCCESS
-
-  if (context == QMCKL_NULL_CONTEXT) then
-     info = QMCKL_INVALID_CONTEXT
-     return
-  endif
-
-  if (walk_num <= 0) then
-     info = QMCKL_INVALID_ARG_2
-     return
-  endif
-
-  if (elec_num <= 0) then
-     info = QMCKL_INVALID_ARG_3
-     return
-  endif
-
-  if (nucl_num <= 0) then
-     info = QMCKL_INVALID_ARG_4
-     return
-  endif
-
-  if (cord_num <= 0) then
-     info = QMCKL_INVALID_ARG_5
-     return
-  endif
-
-  factor_een_deriv_e = 0.0d0
-
-  !$acc parallel
-  do nw =1, walk_num
-  do n = 1, dim_cord_vect
-    l = lkpm_combined_index(n, 1)
-    k = lkpm_combined_index(n, 2)
-    p = lkpm_combined_index(n, 3)
-    m = lkpm_combined_index(n, 4)
-
-    do a = 1, nucl_num
-      cn = cord_vect_full(a, n)
-      if(cn == 0.d0) cycle
-
-      !$acc loop collapse(2)
-      do ii = 1, 4
-        do j = 1, elec_num
-          factor_een_deriv_e(j,ii,nw) = factor_een_deriv_e(j,ii,nw) +                           (&
-                                        tmp_c(j,a,m,k,nw)       * een_rescaled_n_deriv_e(j,ii,a,m+l,nw) + &
-                                        (dtmp_c(j,ii,a,m,k,nw))   * een_rescaled_n(j,a,m+l,nw)            + &
-                                        (dtmp_c(j,ii,a,m+l,k,nw)) * een_rescaled_n(j,a,m  ,nw)              + &
-                                        tmp_c(j,a,m+l,k,nw)     * een_rescaled_n_deriv_e(j,ii,a,m,nw)     &
-                                        ) * cn
-        end do
-      end do
-
-      cn = cn + cn
-
-      !$acc loop
-      do j = 1, elec_num
-        factor_een_deriv_e(j,4,nw) = factor_een_deriv_e(j,4,nw) +                              (&
-                                      (dtmp_c(j,1,a,m  ,k,nw)) * een_rescaled_n_deriv_e(j,1,a,m+l,nw)  + &
-                                      (dtmp_c(j,2,a,m  ,k,nw)) * een_rescaled_n_deriv_e(j,2,a,m+l,nw)  + &
-                                      (dtmp_c(j,3,a,m  ,k,nw)) * een_rescaled_n_deriv_e(j,3,a,m+l,nw)  + &
-                                      (dtmp_c(j,1,a,m+l,k,nw)) * een_rescaled_n_deriv_e(j,1,a,m  ,nw)  + &
-                                      (dtmp_c(j,2,a,m+l,k,nw)) * een_rescaled_n_deriv_e(j,2,a,m  ,nw)  + &
-                                      (dtmp_c(j,3,a,m+l,k,nw)) * een_rescaled_n_deriv_e(j,3,a,m  ,nw)    &
-                                      ) * cn
-      end do
-    end do
-  end do
-  end do
-  !$acc end parallel
-end function qmckl_compute_factor_een_deriv_e_acc_offload_f
-#endif
-    #+end_src
-
-    #+CALL: generate_c_header(table=qmckl_factor_een_deriv_e_acc_offload_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
-
-    #+RESULTS:
-    #+begin_src c :tangle (eval h_func) :comments org
-#ifdef HAVE_OPENACC_OFFLOAD
-	  qmckl_exit_code qmckl_compute_factor_een_deriv_e_acc_offload (
-	  const qmckl_context context,
-	  const int64_t walk_num,
-	  const int64_t elec_num,
-	  const int64_t nucl_num,
-	  const int64_t cord_num,
-	  const int64_t dim_cord_vect,
-	  const double* cord_vect_full,
-	  const int64_t* lkpm_combined_index,
-	  const double* tmp_c,
-	  const double* dtmp_c,
-	  const double* een_rescaled_n,
-	  const double* een_rescaled_n_deriv_e,
-	  double* const factor_een_deriv_e );
-#endif
-    #+end_src
-
-#+CALL: generate_c_interface(table=qmckl_factor_een_deriv_e_acc_offload_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
-
-    #+RESULTS:
-    #+begin_src f90 :tangle (eval f) :comments org :exports none
-#ifdef HAVE_OPENACC_OFFLOAD
-    integer(c_int32_t) function qmckl_compute_factor_een_deriv_e_acc_offload &
-	(context, &
-		 walk_num, &
-		 elec_num, &
-		 nucl_num, &
-		 cord_num, &
-		 dim_cord_vect, &
-		 cord_vect_full, &
-		 lkpm_combined_index, &
-		 tmp_c, &
-		 dtmp_c, &
-		 een_rescaled_n, &
-		 een_rescaled_n_deriv_e, &
-		 factor_een_deriv_e) &
-	bind(C) result(info)
-
-      use, intrinsic :: iso_c_binding
-      implicit none
-
-      integer (c_int64_t) , intent(in)  , value :: context
-      integer (c_int64_t) , intent(in)  , value :: walk_num
-      integer (c_int64_t) , intent(in)  , value :: elec_num
-      integer (c_int64_t) , intent(in)  , value :: nucl_num
-      integer (c_int64_t) , intent(in)  , value :: cord_num
-      integer (c_int64_t) , intent(in)  , value :: dim_cord_vect
-      real    (c_double ) , intent(in)          :: cord_vect_full(nucl_num,dim_cord_vect)
-      integer (c_int64_t) , intent(in)          :: lkpm_combined_index(dim_cord_vect,4)
-      real    (c_double ) , intent(in)          :: tmp_c(elec_num,nucl_num,0:cord_num,0:cord_num-1,walk_num)
-      real    (c_double ) , intent(in)          :: dtmp_c(elec_num,4,nucl_num,0:cord_num,0:cord_num-1,walk_num)
-      real    (c_double ) , intent(in)          :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
-      real    (c_double ) , intent(in)          :: een_rescaled_n_deriv_e(elec_num,4,nucl_num,0:cord_num,walk_num)
-      real    (c_double ) , intent(out)         :: factor_een_deriv_e(elec_num,4,walk_num)
-
-      integer(c_int32_t), external :: qmckl_compute_factor_een_deriv_e_acc_offload_f
-      info = qmckl_compute_factor_een_deriv_e_acc_offload_f &
-	     (context, &
-		 walk_num, &
-		 elec_num, &
-		 nucl_num, &
-		 cord_num, &
-		 dim_cord_vect, &
-		 cord_vect_full, &
-		 lkpm_combined_index, &
-		 tmp_c, &
-		 dtmp_c, &
-		 een_rescaled_n, &
-		 een_rescaled_n_deriv_e, &
-		 factor_een_deriv_e)
-
-    end function qmckl_compute_factor_een_deriv_e_acc_offload
-#endif
     #+end_src
 
 *** Test
