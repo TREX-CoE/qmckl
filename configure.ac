@@ -224,6 +224,47 @@ AS_IF([test "$HAVE_HPC" = "yes"], [
    AC_DEFINE([HAVE_HPC], [1], [If defined, activate HPC routines])
 ])
 
+# Enable Verificarlo tests
+AC_ARG_ENABLE([vfc_ci],
+[  --enable-vfc_ci    Build the library with vfc_ci support],
+[case "${enableval}" in
+  yes) vfc_ci=true &&  FCFLAGS="-D VFC_CI $FCFLAGS" && CFLAGS="-D VFC_CI $CFLAGS";;
+  no)  vfc_ci=false ;;
+  *) AC_MSG_ERROR([bad value ${enableval} for --enable_vfc_ci]) ;;
+esac],[vfc_ci=false])
+AM_CONDITIONAL([VFC_CI], [test x$vfc_ci = xtrue])
+
+if test "$FC" = "verificarlo-f"; then
+  AC_MSG_NOTICE(verificarlo-f detected)
+  # Arguments order is important here
+  FCFLAGS="-Mpreprocess $FCFLAGS"
+fi
+
+## Enable GPU offloading
+
+# OpenACC offloading
+AC_ARG_ENABLE(openacc-offload, [AS_HELP_STRING([--openacc-offload],[Use OpenACC-offloaded functions])], HAVE_OPENACC_OFFLOAD=$enableval, HAVE_OPENACC_OFFLOAD=no)
+AS_IF([test "$HAVE_OPENACC_OFFLOAD" = "yes"], [
+   AC_DEFINE([HAVE_OPENACC_OFFLOAD], [1], [If defined, activate OpenACC-offloaded routines])
+   CFLAGS="$OFFLOAD_FLAGS $OFFLOAD_CFLAGS $CFLAGS"
+   FCFLAGS="$OFFLOAD_FLAGS $OFFLOAD_FCFLAGS -DHAVE_OPENACC_OFFLOAD $FCFLAGS"
+])
+
+# cuBLAS offloading
+AC_ARG_ENABLE(cublas-offload, [AS_HELP_STRING([--cublas-offload],[Use cuBLAS-offloaded functions])], HAVE_CUBLAS_OFFLOAD=$enableval, HAVE_CUBLAS_OFFLOAD=no)
+AS_IF([test "$HAVE_CUBLAS_OFFLOAD" = "yes"], [
+   AC_DEFINE([HAVE_CUBLAS_OFFLOAD], [1], [If defined, activate cuBLAS-offloaded routines])
+   FCFLAGS="-DHAVE_CUBLAS_OFFLOAD"
+])
+
+# General offload
+AS_IF([test "$HAVE_OPENACC_OFFLOAD" = "yes" || test "$HAVE_CUBLAS_OFFLOAD" = "yes"], [
+   CFLAGS="$OFFLOAD_FLAGS $OFFLOAD_CFLAGS $CFLAGS"
+   FCFLAGS="$OFFLOAD_FLAGS $OFFLOAD_FCFLAGS $FCFLAGS"
+])
+
+##
+
 AC_ARG_ENABLE(debug, [AS_HELP_STRING([--enable-debug],[compile for debugging])], ok=$enableval, ok=no)
 if test "$ok" = "yes"; then
         if test "$GCC" = "yes"; then
@@ -319,21 +360,6 @@ if test "x${QMCKL_DEVEL}" != "x"; then
 
 fi
 
-# Enable Verificarlo tests
-AC_ARG_ENABLE([vfc_ci],
-[  --enable-vfc_ci    Build the library with vfc_ci support],
-[case "${enableval}" in
-  yes) vfc_ci=true &&  FCFLAGS="-D VFC_CI $FCFLAGS" && CFLAGS="-D VFC_CI $CFLAGS";;
-  no)  vfc_ci=false ;;
-  *) AC_MSG_ERROR([bad value ${enableval} for --enable_vfc_ci]) ;;
-esac],[vfc_ci=false])
-AM_CONDITIONAL([VFC_CI], [test x$vfc_ci = xtrue])
-
-if test "$FC" = "verificarlo-f"; then
-  AC_MSG_NOTICE(verificarlo-f detected)
-  # Arguments order is important here
-  FCFLAGS="-Mpreprocess $FCFLAGS"
-fi
 
 #PKG-CONFIG
 #mkl-dynamic-lp64-seq
@@ -369,6 +395,8 @@ LDFLAGS:........: ${LDFLAGS}
 LIBS............: ${LIBS}
 USE CHAMELEON...: ${with_chameleon}
 HPC version.....: ${HAVE_HPC}
+OpenACC offload.: ${HAVE_OPENACC_OFFLOAD}
+cuBLAS offload..: ${HAVE_CUBLAS_OFFLOAD}
 
 Package features:
   ${ARGS}
