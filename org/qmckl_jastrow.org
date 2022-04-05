@@ -151,6 +151,7 @@ int main() {
     | ~factor_en_deriv_e_date~  | ~uint64_t~                            | out    | Keep track of the date for the en derivative                      |
     | ~factor_een_deriv_e~      | ~double[4][nelec][walk_num]~          | out    | Derivative of the Jastrow factor: electron-electron-nucleus  part |
     | ~factor_een_deriv_e_date~ | ~uint64_t~                            | out    | Keep track of the date for the een derivative                     |
+    | ~offload_type~            | ~qmckl_jastrow_offload_type~          | in     | Enum type to change offload type at runtime                       |
 
   computed data:
 
@@ -327,6 +328,14 @@ kappa_inv = 1.0/kappa
 
 ** Data structure
 
+#+begin_src c :comments org :tangle (eval h_type)
+typedef enum qmckl_jastrow_offload_type{
+  OFFLOAD_NONE,
+  OFFLOAD_OPENACC,
+  OFFLOAD_CUBLAS
+} qmckl_jastrow_offload_type;
+#+end_src
+
    #+begin_src c :comments org :tangle (eval h_private_type)
 typedef struct qmckl_jastrow_struct{
   int32_t  uninitialized;
@@ -372,6 +381,7 @@ typedef struct qmckl_jastrow_struct{
   uint64_t  een_rescaled_n_deriv_e_date;
   bool     provided;
   char *   type;
+  qmckl_jastrow_offload_type offload_type;
 } qmckl_jastrow_struct;
     #+end_src
 
@@ -416,6 +426,7 @@ qmckl_exit_code  qmckl_get_jastrow_type_nucl_vector  (qmckl_context context, int
 qmckl_exit_code  qmckl_get_jastrow_aord_vector       (qmckl_context context, double * const aord_vector, const int64_t size_max);
 qmckl_exit_code  qmckl_get_jastrow_bord_vector       (qmckl_context context, double * const bord_vector, const int64_t size_max);
 qmckl_exit_code  qmckl_get_jastrow_cord_vector       (qmckl_context context, double * const cord_vector, const int64_t size_max);
+qmckl_exit_code  qmckl_get_jastrow_offload_type      (qmckl_context context, qmckl_jastrow_offload_type * const offload_type);
    #+end_src
 
    Along with these core functions, calculation of the jastrow factor
@@ -713,6 +724,32 @@ qmckl_get_jastrow_cord_vector (const qmckl_context context,
   return QMCKL_SUCCESS;
 }
 
+qmckl_exit_code qmckl_get_jastrow_offload_type (const qmckl_context context, qmckl_jastrow_offload_type* const offload_type) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return (char) 0;
+  }
+
+  if (offload_type == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_get_jastrow_offload_type",
+                           "offload_type is a null pointer");
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  assert (ctx != NULL);
+
+  int32_t mask = 1 << 0;
+
+  if ( (ctx->jastrow.uninitialized & mask) != 0) {
+    return QMCKL_NOT_PROVIDED;
+  }
+
+  *offload_type = ctx->jastrow.offload_type;
+  return QMCKL_SUCCESS;
+}
+
    #+end_src
 
 ** Initialization functions
@@ -727,6 +764,7 @@ qmckl_exit_code  qmckl_set_jastrow_type_nucl_vector  (qmckl_context context, con
 qmckl_exit_code  qmckl_set_jastrow_aord_vector       (qmckl_context context, const double * aord_vector, const int64_t size_max);
 qmckl_exit_code  qmckl_set_jastrow_bord_vector       (qmckl_context context, const double * bord_vector, const int64_t size_max);
 qmckl_exit_code  qmckl_set_jastrow_cord_vector       (qmckl_context context, const double * cord_vector, const int64_t size_max);
+qmckl_exit_code  qmckl_set_jastrow_offload_type      (qmckl_context context, const qmckl_jastrow_offload_type offload_type);
    #+end_src
 
    #+NAME:pre2
@@ -1061,6 +1099,14 @@ qmckl_set_jastrow_cord_vector(qmckl_context context,
   ctx->jastrow.cord_vector = new_array;
 
   <<post2>>
+}
+
+qmckl_exit_code
+qmckl_set_jastrow_offload_type(qmckl_context context, const qmckl_jastrow_offload_type offload_type)
+{
+<<pre2>>
+  ctx->jastrow.offload_type = offload_type;
+  return QMCKL_SUCCESS;
 }
 
    #+end_src
@@ -2559,6 +2605,7 @@ qmckl_exit_code qmckl_compute_factor_en (
 	  double* const factor_en ) {
 
   double  x, x1, power_ser;
+
 
   if (context == QMCKL_NULL_CONTEXT) {
      return QMCKL_INVALID_CONTEXT;
@@ -4812,7 +4859,6 @@ qmckl_exit_code qmckl_provide_lkpm_combined_index(qmckl_context context)
 
 qmckl_exit_code qmckl_provide_tmp_c(qmckl_context context)
 {
-
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return QMCKL_NULL_CONTEXT;
   }
@@ -4844,16 +4890,63 @@ qmckl_exit_code qmckl_provide_tmp_c(qmckl_context context)
       ctx->jastrow.tmp_c = tmp_c;
     }
 
-    rc = qmckl_compute_tmp_c(context,
-                             ctx->jastrow.cord_num,
-                             ctx->electron.num,
-                             ctx->nucleus.num,
-                             ctx->electron.walk_num,
-                             ctx->jastrow.een_rescaled_e,
-                             ctx->jastrow.een_rescaled_n,
-                             ctx->jastrow.tmp_c);
-    if (rc != QMCKL_SUCCESS) {
-      return rc;
+    /* Choose the correct compute function (depending on offload type) */
+    switch(ctx->jastrow.offload_type) {
+      case OFFLOAD_OPENACC:
+        #ifdef HAVE_OPENACC_OFFLOAD
+          rc =
+          qmckl_compute_tmp_c_acc_offload(context,
+                                 ctx->jastrow.cord_num,
+                                 ctx->electron.num,
+                                 ctx->nucleus.num,
+                                 ctx->electron.walk_num,
+                                 ctx->jastrow.een_rescaled_e,
+                                 ctx->jastrow.een_rescaled_n,
+                                 ctx->jastrow.tmp_c);
+        #else
+          rc = qmckl_compute_tmp_c(context,
+                                 ctx->jastrow.cord_num,
+                                 ctx->electron.num,
+                                 ctx->nucleus.num,
+                                 ctx->electron.walk_num,
+                                 ctx->jastrow.een_rescaled_e,
+                                 ctx->jastrow.een_rescaled_n,
+                                 ctx->jastrow.tmp_c);
+
+        #endif
+		  break;
+      case OFFLOAD_CUBLAS:
+        #ifdef HAVE_CUBLAS_OFFLOAD
+          rc =
+          qmckl_compute_tmp_c_cublas_offload(context,
+                                ctx->jastrow.cord_num,
+                                ctx->electron.num,
+                                ctx->nucleus.num,
+                                ctx->electron.walk_num,
+                                ctx->jastrow.een_rescaled_e,
+                                ctx->jastrow.een_rescaled_n,
+                                ctx->jastrow.tmp_c);
+        #else
+          rc = qmckl_compute_tmp_c(context,
+                                ctx->jastrow.cord_num,
+                                ctx->electron.num,
+                                ctx->nucleus.num,
+                                ctx->electron.walk_num,
+                                ctx->jastrow.een_rescaled_e,
+                                ctx->jastrow.een_rescaled_n,
+                                ctx->jastrow.tmp_c);
+        #endif
+		  break;
+      default:
+        rc = qmckl_compute_tmp_c(context,
+                                 ctx->jastrow.cord_num,
+                                 ctx->electron.num,
+                                 ctx->nucleus.num,
+                                 ctx->electron.walk_num,
+                                 ctx->jastrow.een_rescaled_e,
+                                 ctx->jastrow.een_rescaled_n,
+                                 ctx->jastrow.tmp_c);
+		break;
     }
 
     ctx->jastrow.tmp_c_date = ctx->date;
@@ -4864,7 +4957,6 @@ qmckl_exit_code qmckl_provide_tmp_c(qmckl_context context)
 
 qmckl_exit_code qmckl_provide_dtmp_c(qmckl_context context)
 {
-
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return QMCKL_NULL_CONTEXT;
   }
@@ -4896,14 +4988,61 @@ qmckl_exit_code qmckl_provide_dtmp_c(qmckl_context context)
       ctx->jastrow.dtmp_c = dtmp_c;
     }
 
-    rc = qmckl_compute_dtmp_c(context,
-                              ctx->jastrow.cord_num,
-                              ctx->electron.num,
-                              ctx->nucleus.num,
-                              ctx->electron.walk_num,
-                              ctx->jastrow.een_rescaled_e_deriv_e,
-                              ctx->jastrow.een_rescaled_n,
-                              ctx->jastrow.dtmp_c);
+    switch(ctx->jastrow.offload_type) {
+      case OFFLOAD_OPENACC:
+        #ifdef HAVE_OPENACC_OFFLOAD
+         rc = qmckl_compute_dtmp_c_acc_offload(context,
+                                ctx->jastrow.cord_num,
+                                ctx->electron.num,
+                                ctx->nucleus.num,
+                                ctx->electron.walk_num,
+                                ctx->jastrow.een_rescaled_e_deriv_e,
+                                ctx->jastrow.een_rescaled_n,
+                                ctx->jastrow.dtmp_c);
+        #else
+        rc = qmckl_compute_dtmp_c(context,
+                                ctx->jastrow.cord_num,
+                                ctx->electron.num,
+                                ctx->nucleus.num,
+                                ctx->electron.walk_num,
+                                ctx->jastrow.een_rescaled_e_deriv_e,
+                                ctx->jastrow.een_rescaled_n,
+                                ctx->jastrow.dtmp_c);
+        #endif
+		  break;
+      case OFFLOAD_CUBLAS:
+        #ifdef HAVE_CUBLAS_OFFLOAD
+          rc = qmckl_compute_dtmp_c_acc_offload(context,
+                                ctx->jastrow.cord_num,
+                                ctx->electron.num,
+                                ctx->nucleus.num,
+                                ctx->electron.walk_num,
+                                ctx->jastrow.een_rescaled_e_deriv_e,
+                                ctx->jastrow.een_rescaled_n,
+                                ctx->jastrow.dtmp_c);
+       #else
+        rc = qmckl_compute_dtmp_c(context,
+                                ctx->jastrow.cord_num,
+                                ctx->electron.num,
+                                ctx->nucleus.num,
+                                ctx->electron.walk_num,
+                                ctx->jastrow.een_rescaled_e_deriv_e,
+                                ctx->jastrow.een_rescaled_n,
+                                ctx->jastrow.dtmp_c);
+        #endif
+		  break;
+      default:
+        rc = qmckl_compute_dtmp_c(context,
+                                ctx->jastrow.cord_num,
+                                ctx->electron.num,
+                                ctx->nucleus.num,
+                                ctx->electron.walk_num,
+                                ctx->jastrow.een_rescaled_e_deriv_e,
+                                ctx->jastrow.een_rescaled_n,
+                                ctx->jastrow.dtmp_c);
+		  break;
+    }
+
     if (rc != QMCKL_SUCCESS) {
       return rc;
     }
@@ -5499,7 +5638,226 @@ qmckl_exit_code qmckl_compute_tmp_c (const qmckl_context context,
 #endif
 }
     #+end_src
-  
+    
+*** Compute tmp_c (OpenACC offload)
+   :PROPERTIES:
+   :Name:     qmckl_compute_tmp_c_acc_offload
+   :CRetType: qmckl_exit_code
+   :FRetType: qmckl_exit_code
+   :END:
+
+    #+NAME: qmckl_factor_tmp_c_acc_offload_args
+    | Variable         | Type                                                             | In/Out | Description                       |
+    |------------------+------------------------------------------------------------------+--------+-----------------------------------|
+    | ~context~        | ~qmckl_context~                                                  | in     | Global state                      |
+    | ~cord_num~       | ~int64_t~                                                        | in     | Order of polynomials              |
+    | ~elec_num~       | ~int64_t~                                                        | in     | Number of electrons               |
+    | ~nucl_num~       | ~int64_t~                                                        | in     | Number of nucleii                 |
+    | ~walk_num~       | ~int64_t~                                                        | in     | Number of walkers                 |
+    | ~een_rescaled_e~ | ~double[walk_num][0:cord_num][elec_num][elec_num]~               | in     | Electron-electron rescaled factor |
+    | ~een_rescaled_n~ | ~double[walk_num][0:cord_num][nucl_num][elec_num]~               | in     | Electron-nucleus rescaled factor  |
+    | ~tmp_c~          | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][elec_num]~ | out    | vector of non-zero coefficients   |
+
+
+    #+begin_src c :comments org :tangle (eval c) :noweb yes
+#ifdef HAVE_OPENACC_OFFLOAD
+qmckl_exit_code qmckl_compute_tmp_c_acc_offload (
+	  const qmckl_context context,
+	  const int64_t cord_num,
+	  const int64_t elec_num,
+	  const int64_t nucl_num,
+	  const int64_t walk_num,
+	  const double* een_rescaled_e,
+	  const double* een_rescaled_n,
+	  double* const tmp_c ) {
+
+  if (context == QMCKL_NULL_CONTEXT) {
+    return QMCKL_INVALID_CONTEXT;
+  }
+
+  if (cord_num <= 0) {
+    return QMCKL_INVALID_ARG_2;
+  }
+
+  if (elec_num <= 0) {
+    return QMCKL_INVALID_ARG_3;
+  }
+
+  if (nucl_num <= 0) {
+    return QMCKL_INVALID_ARG_4;
+  }
+
+  // Compute array access strides:
+  // For tmp_c...
+  int stride_k_c  = elec_num;
+  int stride_j_c  = stride_k_c * nucl_num;
+  int stride_i_c  = stride_j_c * (cord_num+1);
+  int stride_nw_c = stride_i_c * cord_num;
+  // For een_rescaled_e...
+  int stride_m_e  = elec_num;
+  int stride_i_e  = stride_m_e * elec_num;
+  int stride_nw_e = stride_i_e * (cord_num+1);
+  // For een_rescaled_n...
+  int stride_k_n  = elec_num;
+  int stride_j_n  = stride_k_n * nucl_num;
+  int stride_nw_n = stride_j_n * (cord_num+1);
+
+  #pragma acc parallel
+  #pragma acc loop independent gang worker vector collapse(5)
+  for (int nw=0; nw < walk_num; ++nw) {
+    for (int i=0; i<cord_num; ++i){
+
+      // Replacement for single DGEMM
+      for (int j=0; j<cord_num+1; j++) {
+        for (int k=0; k<nucl_num; k++) {
+          for (int l=0; l<elec_num; l++) {
+
+            // Single reduction
+			  tmp_c[l + k*stride_k_c + j*stride_j_c + i*stride_i_c + nw*stride_nw_c] = 0;
+            for (int m=0; m<elec_num; m++) {
+              tmp_c[l + k*stride_k_c + j*stride_j_c + i*stride_i_c + nw*stride_nw_c] =
+              tmp_c[l + k*stride_k_c + j*stride_j_c + i*stride_i_c + nw*stride_nw_c] +
+              een_rescaled_e[l + m*stride_m_e + i*stride_i_e + nw*stride_nw_e] *
+              een_rescaled_n[m + k*stride_k_n + j*stride_j_n + nw*stride_nw_n];
+            }
+
+          }
+        }
+      }
+    }
+  }
+
+  return QMCKL_SUCCESS;
+}
+#endif
+    #+end_src
+
+    #+CALL: generate_c_header(table=qmckl_factor_tmp_c_acc_offload_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+
+    #+RESULTS:
+    #+begin_src c :tangle (eval h_func) :comments org
+#ifdef HAVE_OPENACC_OFFLOAD
+    qmckl_exit_code qmckl_compute_tmp_c_acc_offload (
+	  const qmckl_context context,
+	  const int64_t cord_num,
+	  const int64_t elec_num,
+	  const int64_t nucl_num,
+	  const int64_t walk_num,
+	  const double* een_rescaled_e,
+	  const double* een_rescaled_n,
+	  double* const tmp_c );
+#endif
+    #+end_src
+
+ TODO: FIX dtmp_c dimension in the table.
+
+*** Compute tmp_c (cuBLAS offload)
+   :PROPERTIES:
+   :Name:     qmckl_compute_tmp_c_acc_offload
+   :CRetType: qmckl_exit_code
+   :FRetType: qmckl_exit_code
+   :END:
+
+    #+NAME: qmckl_factor_tmp_c_cublas_offload_args
+    | Variable         | Type                                                             | In/Out | Description                       |
+    |------------------+------------------------------------------------------------------+--------+-----------------------------------|
+    | ~context~        | ~qmckl_context~                                                  | in     | Global state                      |
+    | ~cord_num~       | ~int64_t~                                                        | in     | Order of polynomials              |
+    | ~elec_num~       | ~int64_t~                                                        | in     | Number of electrons               |
+    | ~nucl_num~       | ~int64_t~                                                        | in     | Number of nucleii                 |
+    | ~walk_num~       | ~int64_t~                                                        | in     | Number of walkers                 |
+    | ~een_rescaled_e~ | ~double[walk_num][0:cord_num][elec_num][elec_num]~               | in     | Electron-electron rescaled factor |
+    | ~een_rescaled_n~ | ~double[walk_num][0:cord_num][nucl_num][elec_num]~               | in     | Electron-nucleus rescaled factor  |
+    | ~tmp_c~          | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][elec_num]~ | out    | vector of non-zero coefficients   |
+
+
+    #+begin_src c :comments org :tangle (eval c) :noweb yes
+#ifdef HAVE_CUBLAS_OFFLOAD
+qmckl_exit_code qmckl_compute_tmp_c_cublas_offload (
+	  const qmckl_context context,
+	  const int64_t cord_num,
+	  const int64_t elec_num,
+	  const int64_t nucl_num,
+	  const int64_t walk_num,
+	  const double* een_rescaled_e,
+	  const double* een_rescaled_n,
+	  double* const tmp_c ) {
+
+  if (context == QMCKL_NULL_CONTEXT) {
+    return QMCKL_INVALID_CONTEXT;
+  }
+
+  if (cord_num <= 0) {
+    return QMCKL_INVALID_ARG_2;
+  }
+
+  if (elec_num <= 0) {
+    return QMCKL_INVALID_ARG_3;
+  }
+
+  if (nucl_num <= 0) {
+    return QMCKL_INVALID_ARG_4;
+  }
+
+  if (walk_num <= 0) {
+    return QMCKL_INVALID_ARG_5;
+  }
+
+  qmckl_exit_code info = QMCKL_SUCCESS;
+
+  const char  TransA = 'N';
+  const char  TransB = 'N';
+  const double alpha = 1.0;
+  const double beta  = 0.0;
+
+  const int64_t M = elec_num;
+  const int64_t N = nucl_num*(cord_num + 1);
+  const int64_t K = elec_num;
+
+  const int64_t LDA = elec_num;
+  const int64_t LDB = elec_num;
+  const int64_t LDC = elec_num;
+
+  const int64_t af = elec_num*elec_num;
+  const int64_t bf = elec_num*nucl_num*(cord_num+1);
+  const int64_t cf = bf;
+
+  // TODO Replace with calls to cuBLAS
+  for (int64_t nw=0; nw < walk_num; ++nw) {
+    for (int64_t i=0; i<cord_num; ++i){
+    info = qmckl_dgemm(context, TransA, TransB, M, N, K, alpha,     \
+                       &(een_rescaled_e[af*(i+nw*(cord_num+1))]), \
+                       LDA,                                        \
+                       &(een_rescaled_n[bf*nw]), \
+                       LDB,                                        \
+                       beta,                                       \
+                       &(tmp_c[cf*(i+nw*cord_num)]), \
+                       LDC);
+    }
+  }
+
+  return info;
+}
+#endif
+    #+end_src
+
+    #+CALL: generate_c_header(table=qmckl_factor_tmp_c_cublas_offload_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+
+    #+RESULTS:
+    #+begin_src c :tangle (eval h_func) :comments org
+#ifdef HAVE_CUBLAS_OFFLOAD
+    qmckl_exit_code qmckl_compute_tmp_c_cublas_offload (
+	  const qmckl_context context,
+	  const int64_t cord_num,
+	  const int64_t elec_num,
+	  const int64_t nucl_num,
+	  const int64_t walk_num,
+	  const double* een_rescaled_e,
+	  const double* een_rescaled_n,
+	  double* const tmp_c );
+#endif
+    #+end_src
+
  TODO: FIX dtmp_c dimension in the table.
 *** Compute dtmp_c
    :PROPERTIES:
@@ -5738,6 +6096,228 @@ qmckl_exit_code qmckl_compute_dtmp_c_hpc (
 	  const double* een_rescaled_e_deriv_e,
 	  const double* een_rescaled_n,
 	  double* const dtmp_c );
+    #+end_src
+    
+*** Compute dtmp_c (OpenACC offload)
+   :PROPERTIES:
+   :Name:     qmckl_compute_dtmp_c_acc_offload
+   :CRetType: qmckl_exit_code
+   :FRetType: qmckl_exit_code
+   :END:
+
+    #+NAME: qmckl_factor_dtmp_c_acc_offload_args
+    | Variable                 | Type                                                             | In/Out | Description                                   |
+    |--------------------------+------------------------------------------------------------------+--------+-----------------------------------------------|
+    | ~context~                | ~qmckl_context~                                                  | in     | Global state                                  |
+    | ~cord_num~               | ~int64_t~                                                        | in     | Order of polynomials                          |
+    | ~elec_num~               | ~int64_t~                                                        | in     | Number of electrons                           |
+    | ~nucl_num~               | ~int64_t~                                                        | in     | Number of nucleii                             |
+    | ~walk_num~               | ~int64_t~                                                        | in     | Number of walkers                             |
+    | ~een_rescaled_e_deriv_e~ | ~double[walk_num][0:cord_num][elec_num][4][elec_num]~            | in     | Electron-electron rescaled factor derivatives |
+    | ~een_rescaled_n~         | ~double[walk_num][0:cord_num][nucl_num][elec_num]~               | in     | Electron-nucleus rescaled factor              |
+    | ~dtmp_c~                 | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][elec_num]~ | out    | vector of non-zero coefficients               |
+
+
+    #+begin_src c :comments org :tangle (eval c) :noweb yes
+#ifdef HAVE_OPENACC_OFFLOAD
+qmckl_exit_code qmckl_compute_dtmp_c_acc_offload (
+	  const qmckl_context context,
+	  const int64_t cord_num,
+	  const int64_t elec_num,
+	  const int64_t nucl_num,
+	  const int64_t walk_num,
+	  const double* een_rescaled_e_deriv_e,
+	  const double* een_rescaled_n,
+	  double* const dtmp_c ) {
+
+  if (context == QMCKL_NULL_CONTEXT) {
+     return QMCKL_INVALID_CONTEXT;
+  }
+
+  if (cord_num <= 0) {
+     return QMCKL_INVALID_ARG_2;
+  }
+
+  if (elec_num <= 0) {
+     return QMCKL_INVALID_ARG_3;
+  }
+
+  if (nucl_num <= 0) {
+     return QMCKL_INVALID_ARG_4;
+  }
+
+  // Compute strides...
+  // For dtmp_c
+  int stride_l_d  = elec_num;
+  int stride_k_d  = stride_l_d * 4;
+  int stride_j_d  = stride_k_d * nucl_num;
+  int stride_i_d  = stride_j_d * (cord_num+1);
+  int stride_nw_d = stride_i_d * cord_num;
+  // For een_rescaled_e_deriv_e
+  int stride_l_e  = elec_num;
+  int stride_n_e  = stride_l_e * 4;
+  int stride_i_e  = stride_n_e * elec_num;
+  int stride_nw_e = stride_i_e * cord_num;
+  // For een_rescaled_n
+  int stride_k_n  = elec_num;
+  int stride_j_n  = stride_k_n * nucl_num;
+  int stride_nw_n = stride_j_n * (cord_num+1);
+
+
+  #pragma acc parallel
+  #pragma loop independent gang worker vector collapse(6)
+  for (int nw=0; nw < walk_num; nw++) {
+    for (int i=0; i < cord_num; i++) {
+
+      // Single DGEMM
+      for(int j=0; j<cord_num+1; j++) {
+        for(int k=0; k<nucl_num; k++) {
+          for(int l=0; l<4; l++) {
+            for(int m=0; m<elec_num; m++) {
+
+              // Single reduction
+				dtmp_c[m + l * stride_l_d + k * stride_k_d + j * stride_j_d + i * stride_i_d + nw * stride_nw_d] = 0;
+              for(int n=0; n<elec_num; n++){
+                dtmp_c[m + l * stride_l_d + k * stride_k_d + j * stride_j_d + i * stride_i_d + nw * stride_nw_d] =
+                dtmp_c[m + l * stride_l_d + k * stride_k_d + j * stride_j_d + i * stride_i_d + nw * stride_nw_d] +
+                een_rescaled_e_deriv_e[m + l * stride_l_e +  n * stride_n_e + i * stride_i_e + nw * stride_nw_e] *
+                een_rescaled_n[n + k * stride_k_n + j * stride_j_n + nw * stride_nw_n];
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return QMCKL_SUCCESS;
+}
+#endif
+    #+end_src
+
+    #+CALL: generate_c_header(table=qmckl_factor_dtmp_c_acc_offload_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+
+    #+RESULTS:
+    #+begin_src c :tangle (eval h_func) :comments org
+
+#ifdef HAVE_OPENACC_OFFLOAD
+    qmckl_exit_code qmckl_compute_dtmp_c_acc_offload (
+	  const qmckl_context context,
+	  const int64_t cord_num,
+	  const int64_t elec_num,
+	  const int64_t nucl_num,
+	  const int64_t walk_num,
+	  const double* een_rescaled_e_deriv_e,
+	  const double* een_rescaled_n,
+	  double* const dtmp_c );
+#endif
+    #+end_src
+*** Compute dtmp_c (cuBLAS offload)
+   :PROPERTIES:
+   :Name:     qmckl_compute_dtmp_c_cublas_offload
+   :CRetType: qmckl_exit_code
+   :FRetType: qmckl_exit_code
+   :END:
+
+    #+NAME: qmckl_factor_dtmp_c_cublas_offload_args
+    | Variable                 | Type                                                             | In/Out | Description                                   |
+    |--------------------------+------------------------------------------------------------------+--------+-----------------------------------------------|
+    | ~context~                | ~qmckl_context~                                                  | in     | Global state                                  |
+    | ~cord_num~               | ~int64_t~                                                        | in     | Order of polynomials                          |
+    | ~elec_num~               | ~int64_t~                                                        | in     | Number of electrons                           |
+    | ~nucl_num~               | ~int64_t~                                                        | in     | Number of nucleii                             |
+    | ~walk_num~               | ~int64_t~                                                        | in     | Number of walkers                             |
+    | ~een_rescaled_e_deriv_e~ | ~double[walk_num][0:cord_num][elec_num][4][elec_num]~            | in     | Electron-electron rescaled factor derivatives |
+    | ~een_rescaled_n~         | ~double[walk_num][0:cord_num][nucl_num][elec_num]~               | in     | Electron-nucleus rescaled factor              |
+    | ~dtmp_c~                 | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][elec_num]~ | out    | vector of non-zero coefficients               |
+
+
+    #+begin_src c :comments org :tangle (eval c) :noweb yes
+#ifdef HAVE_CUBLAS_OFFLOAD
+qmckl_exit_code qmckl_compute_dtmp_c_cublas_offload (
+	  const qmckl_context context,
+	  const int64_t cord_num,
+	  const int64_t elec_num,
+	  const int64_t nucl_num,
+	  const int64_t walk_num,
+	  const double* een_rescaled_e_deriv_e,
+	  const double* een_rescaled_n,
+	  double* const dtmp_c ) {
+
+  if (context == QMCKL_NULL_CONTEXT) {
+     return QMCKL_INVALID_CONTEXT;
+  }
+
+  if (cord_num <= 0) {
+     return QMCKL_INVALID_ARG_2;
+  }
+
+  if (elec_num <= 0) {
+     return QMCKL_INVALID_ARG_3;
+  }
+
+  if (nucl_num <= 0) {
+     return QMCKL_INVALID_ARG_4;
+  }
+
+  if (walk_num <= 0) {
+     return QMCKL_INVALID_ARG_5;
+  }
+
+  qmckl_exit_code  info = QMCKL_SUCCESS;
+
+  const char  TransA = 'N';
+  const char  TransB = 'N';
+  const double alpha = 1.0;
+  const double beta  = 0.0;
+
+  const int64_t M = 4*elec_num;
+  const int64_t N = nucl_num*(cord_num + 1);
+  const int64_t K = elec_num;
+
+  const int64_t LDA = 4*elec_num;
+  const int64_t LDB = elec_num;
+  const int64_t LDC = 4*elec_num;
+
+  const int64_t af = elec_num*elec_num*4;
+  const int64_t bf = elec_num*nucl_num*(cord_num+1);
+  const int64_t cf = elec_num*4*nucl_num*(cord_num+1);
+
+  // TODO Replace with calls to cuBLAS
+  for (int64_t nw=0; nw < walk_num; ++nw) {
+    for (int64_t i=0; i < cord_num; ++i) {
+      info = qmckl_dgemm(context, TransA, TransB, M, N, K, alpha,        \
+                &(een_rescaled_e_deriv_e[af*(i+nw*(cord_num+1))]), \
+                LDA,                                               \
+                &(een_rescaled_n[bf*nw]),   \
+                LDB,                                               \
+                beta,                                              \
+                &(dtmp_c[cf*(i+nw*cord_num)]), \
+                LDC);
+    }
+  }
+
+  return info;
+}
+#endif
+    #+end_src
+
+    #+CALL: generate_c_header(table=qmckl_factor_dtmp_c_cublas_offload_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+
+    #+RESULTS:
+    #+begin_src c :tangle (eval h_func) :comments org
+
+#ifdef HAVE_CUBLAS_OFFLOAD
+    qmckl_exit_code qmckl_compute_dtmp_c_cublas_offload (
+	  const qmckl_context context,
+	  const int64_t cord_num,
+	  const int64_t elec_num,
+	  const int64_t nucl_num,
+	  const int64_t walk_num,
+	  const double* een_rescaled_e_deriv_e,
+	  const double* een_rescaled_n,
+	  double* const dtmp_c );
+#endif
     #+end_src
 
 *** Test
