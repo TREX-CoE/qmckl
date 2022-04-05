@@ -210,6 +210,16 @@ case $FC in
 
 esac
 
+case $CC in
+
+  *gcc*)
+        CFLAGS="$CFLAGS -fPIC"
+        ;;
+  *nvc*)
+        CFLAGS="$CFLAGS -fPIC"
+        ;;
+esac
+
 
 # Options.
 AC_ARG_ENABLE(hpc, [AS_HELP_STRING([--enable-hpc],[Use HPC-optimized functions])], HAVE_HPC=$enableval, HAVE_HPC=no)
@@ -236,34 +246,32 @@ fi
 ## Enable GPU offloading
 
 # OpenACC offloading
-AC_ARG_ENABLE(enable-openacc, [AS_HELP_STRING([--enable-openacc],[Use OpenACC-offloaded functions])], HAVE_OPENACC_OFFLOAD=$enableval, HAVE_OPENACC_OFFLOAD=no)
+AC_ARG_ENABLE(openacc, [AS_HELP_STRING([--enable-openacc],[Use OpenACC-offloaded functions])], HAVE_OPENACC_OFFLOAD=$enableval, HAVE_OPENACC_OFFLOAD=no)
 AS_IF([test "$HAVE_OPENACC_OFFLOAD" = "yes"], [
   AC_DEFINE([HAVE_OPENACC_OFFLOAD], [1], [If defined, activate OpenACC-offloaded routines])
   case $CC in
 
     *gcc*)
-          CFLAGS="$CFLAGS -fPIC -fopenacc"
+          CFLAGS="$CFLAGS -fopenacc"
           ;;
     *nvc*)
-          CFLAGS="$CFLAGS -fPIC -mp -target=gpu"
+          CFLAGS="$CFLAGS -mp -target=gpu"
           ;;
   esac
 
-  CFLAGS="$CFLAGS"
-#  FCFLAGS="$OFFLOAD_FLAGS $OFFLOAD_FCFLAGS -DHAVE_OPENACC_OFFLOAD $FCFLAGS"
 ])
 
 # cuBLAS offloading
-AC_ARG_ENABLE(enable-cublas, [AS_HELP_STRING([--enable-cublas],[Use cuBLAS-offloaded functions])], HAVE_CUBLAS_OFFLOAD=$enableval, HAVE_CUBLAS_OFFLOAD=no)
+AC_ARG_ENABLE(cublas, [AS_HELP_STRING([--enable-cublas],[Use cuBLAS-offloaded functions])], HAVE_CUBLAS_OFFLOAD=$enableval, HAVE_CUBLAS_OFFLOAD=no)
 AS_IF([test "$HAVE_CUBLAS_OFFLOAD" = "yes"], [
   AC_DEFINE([HAVE_CUBLAS_OFFLOAD], [1], [If defined, activate cuBLAS-offloaded routines])
   case $CC in
 
     *gcc*)
-          CFLAGS="$CFLAGS -fPIC -fopenacc"
+          CFLAGS="$CFLAGS -fopenacc"
           ;;
     *nvc*)
-          CFLAGS="$CFLAGS -fPIC -mp -target=gpu"
+          CFLAGS="$CFLAGS -mp -target=gpu"
           ;;
   esac
 ])
