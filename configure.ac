@@ -255,7 +255,17 @@ AS_IF([test "$HAVE_OPENACC_OFFLOAD" = "yes"], [
           CFLAGS="$CFLAGS -fopenacc"
           ;;
     *nvc*)
-          CFLAGS="$CFLAGS -mp -target=gpu"
+          CFLAGS="$CFLAGS -acc -mp -target=gpu"
+          ;;
+  esac
+
+  case $FC in
+
+    *gfortran*)
+          FCFLAGS="$FCFLAGS -fopenacc"
+          ;;
+    *nvfortran*)
+          FCFLAGS="$FCFLAGS -acc -mp -target=gpu"
           ;;
   esac
 
@@ -271,7 +281,17 @@ AS_IF([test "$HAVE_CUBLAS_OFFLOAD" = "yes"], [
           CFLAGS="$CFLAGS -fopenacc"
           ;;
     *nvc*)
-          CFLAGS="$CFLAGS -mp -target=gpu"
+          CFLAGS="$CFLAGS -acc -mp -target=gpu"
+          ;;
+  esac
+
+  case $FC in
+
+    *gfortran*)
+          FCFLAGS="$FCFLAGS -fopenacc"
+          ;;
+    *nvfortran*)
+          FCFLAGS="$FCFLAGS -acc -mp -target=gpu"
           ;;
   esac
 ])
