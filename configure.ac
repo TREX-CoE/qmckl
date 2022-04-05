@@ -137,10 +137,10 @@ case "$with_chameleon" in
       [PKG_CFLAGS="$PKG_CFLAGS $LIBCHAMELEON_CFLAGS"
       PKG_LIBS="$PKG_LIBS $LIBCHAMELEON_LIBS"]
                       ,[
-    
+
       ## something went wrong.
       ## try to find the package without pkg-config
-    
+
       ## check that the library is actually new enough.
       ## by testing for a 1.0.0+ function which we use
       AC_CHECK_LIB(chameleon,CHAMELEON_finalize,[LIBCHAMELEON_LIBS="-lchameleon"])
@@ -205,16 +205,9 @@ case $FC in
       ;;
 
  *nvfortran*)
-      FCFLAGS="$FCFLAGS -fPIC -Mnomain -mp -target=gpu"
+      FCFLAGS="$FCFLAGS -fPIC -Mnomain"
       ;;
 
-esac
-
-case $CC in
-
-  *nvc*)
-        CFLAGS="$CFLAGS -fPIC -mp -target=gpu"
-        ;;
 esac
 
 
@@ -243,25 +236,38 @@ fi
 ## Enable GPU offloading
 
 # OpenACC offloading
-AC_ARG_ENABLE(openacc-offload, [AS_HELP_STRING([--openacc-offload],[Use OpenACC-offloaded functions])], HAVE_OPENACC_OFFLOAD=$enableval, HAVE_OPENACC_OFFLOAD=no)
+AC_ARG_ENABLE(enable-openacc, [AS_HELP_STRING([--enable-openacc],[Use OpenACC-offloaded functions])], HAVE_OPENACC_OFFLOAD=$enableval, HAVE_OPENACC_OFFLOAD=no)
 AS_IF([test "$HAVE_OPENACC_OFFLOAD" = "yes"], [
-   AC_DEFINE([HAVE_OPENACC_OFFLOAD], [1], [If defined, activate OpenACC-offloaded routines])
-   CFLAGS="$OFFLOAD_FLAGS $OFFLOAD_CFLAGS $CFLAGS"
-   FCFLAGS="$OFFLOAD_FLAGS $OFFLOAD_FCFLAGS -DHAVE_OPENACC_OFFLOAD $FCFLAGS"
+  AC_DEFINE([HAVE_OPENACC_OFFLOAD], [1], [If defined, activate OpenACC-offloaded routines])
+  case $CC in
+
+    *gcc*)
+          CFLAGS="$CFLAGS -fPIC -fopenacc"
+          ;;
+    *nvc*)
+          CFLAGS="$CFLAGS -fPIC -mp -target=gpu"
+          ;;
+  esac
+
+  CFLAGS="$CFLAGS"
+#  FCFLAGS="$OFFLOAD_FLAGS $OFFLOAD_FCFLAGS -DHAVE_OPENACC_OFFLOAD $FCFLAGS"
 ])
 
 # cuBLAS offloading
-AC_ARG_ENABLE(cublas-offload, [AS_HELP_STRING([--cublas-offload],[Use cuBLAS-offloaded functions])], HAVE_CUBLAS_OFFLOAD=$enableval, HAVE_CUBLAS_OFFLOAD=no)
+AC_ARG_ENABLE(enable-cublas, [AS_HELP_STRING([--enable-cublas],[Use cuBLAS-offloaded functions])], HAVE_CUBLAS_OFFLOAD=$enableval, HAVE_CUBLAS_OFFLOAD=no)
 AS_IF([test "$HAVE_CUBLAS_OFFLOAD" = "yes"], [
-   AC_DEFINE([HAVE_CUBLAS_OFFLOAD], [1], [If defined, activate cuBLAS-offloaded routines])
-   FCFLAGS="-DHAVE_CUBLAS_OFFLOAD"
+  AC_DEFINE([HAVE_CUBLAS_OFFLOAD], [1], [If defined, activate cuBLAS-offloaded routines])
+  case $CC in
+
+    *gcc*)
+          CFLAGS="$CFLAGS -fPIC -fopenacc"
+          ;;
+    *nvc*)
+          CFLAGS="$CFLAGS -fPIC -mp -target=gpu"
+          ;;
+  esac
 ])
 
-# General offload
-AS_IF([test "$HAVE_OPENACC_OFFLOAD" = "yes" || test "$HAVE_CUBLAS_OFFLOAD" = "yes"], [
-   CFLAGS="$OFFLOAD_FLAGS $OFFLOAD_CFLAGS $CFLAGS"
-   FCFLAGS="$OFFLOAD_FLAGS $OFFLOAD_FCFLAGS $FCFLAGS"
-])
 
 ##
 
