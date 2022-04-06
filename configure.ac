@@ -93,6 +93,7 @@ AC_PROG_F77
 m4_version_prereq([2.70],[], [AC_PROG_CC_C99])
 AS_IF([test "$ac_cv_prog_cc_c99" = "no"], [AC_MSG_ERROR([The compiler does not support C99])])
 AC_PROG_CC_C_O
+AM_PROG_CC_C_O
 AC_PROG_FC
 AC_PROG_FC_C_O
 AC_FC_PP_DEFINE
@@ -255,7 +256,7 @@ AS_IF([test "$HAVE_OPENACC_OFFLOAD" = "yes"], [
           CFLAGS="$CFLAGS -fopenacc"
           ;;
     *nvc*)
-          CFLAGS="$CFLAGS -acc -mp -target=gpu"
+          CFLAGS="$CFLAGS -acc"
           ;;
   esac
 
@@ -265,7 +266,7 @@ AS_IF([test "$HAVE_OPENACC_OFFLOAD" = "yes"], [
           FCFLAGS="$FCFLAGS -fopenacc"
           ;;
     *nvfortran*)
-          FCFLAGS="$FCFLAGS -acc -mp -target=gpu"
+          FCFLAGS="$FCFLAGS -acc"
           ;;
   esac
 
@@ -281,7 +282,7 @@ AS_IF([test "$HAVE_CUBLAS_OFFLOAD" = "yes"], [
           CFLAGS="$CFLAGS -fopenacc"
           ;;
     *nvc*)
-          CFLAGS="$CFLAGS -acc -mp -target=gpu"
+          CFLAGS="$CFLAGS -acc"
           ;;
   esac
 
@@ -291,7 +292,7 @@ AS_IF([test "$HAVE_CUBLAS_OFFLOAD" = "yes"], [
           FCFLAGS="$FCFLAGS -fopenacc"
           ;;
     *nvfortran*)
-          FCFLAGS="$FCFLAGS -acc -mp -target=gpu"
+          FCFLAGS="$FCFLAGS -acc"
           ;;
   esac
 ])
