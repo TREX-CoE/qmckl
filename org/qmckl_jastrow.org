@@ -5916,7 +5916,7 @@ qmckl_compute_tmp_c_acc_offload (const qmckl_context context,
   const int64_t size_e = walk_num*(cord_num+1)*elec_num*elec_num;
   const int64_t size_n = walk_num*(cord_num+1)*nucl_num*elec_num;
 
-#pragma acc parallel copyout(tmp_c [0:size_tmp_c]) copyin(een_rescaled_e[0:size_e], een_rescaled_n[0:size_n])
+  #pragma acc parallel copyout(tmp_c [0:size_tmp_c]) copyin(een_rescaled_e[0:size_e], een_rescaled_n[0:size_n])
   {
 #pragma acc loop independent gang worker vector collapse(5)
     for (int nw=0; nw < walk_num; ++nw) {
@@ -5931,16 +5931,15 @@ qmckl_compute_tmp_c_acc_offload (const qmckl_context context,
               tmp_c[l + k*stride_k_c + j*stride_j_c + i*stride_i_c + nw*stride_nw_c] = 0.;
               for (int m=0; m<elec_num; m++) {
                 tmp_c[l + k*stride_k_c + j*stride_j_c + i*stride_i_c + nw*stride_nw_c] =
-                  tmp_c[l + k*stride_k_c + j*stride_j_c + i*stride_i_c + nw*stride_nw_c] +
-                  een_rescaled_e[l + m*stride_m_e + i*stride_i_e + nw*stride_nw_e] *
-                  een_rescaled_n[m + k*stride_k_n + j*stride_j_n + nw*stride_nw_n];
-              }
-
+                tmp_c[l + k*stride_k_c + j*stride_j_c + i*stride_i_c + nw*stride_nw_c] +
+                een_rescaled_e[l + m*stride_m_e + i*stride_i_e + nw*stride_nw_e] *
+                een_rescaled_n[m + k*stride_k_n + j*stride_j_n + nw*stride_nw_n];
             }
           }
         }
       }
     }
+  }
   }
 
   return QMCKL_SUCCESS;
@@ -6013,10 +6012,10 @@ qmckl_compute_tmp_c_omp_offload (const qmckl_context context,
   const int64_t size_n = walk_num*(cord_num+1)*nucl_num*elec_num;
 
 
-#pragma omp target teams distribute parallel for collapse(5) \
-            map(to:een_rescaled_e[0:size_e], \
-                   een_rescaled_n[0:size_n]) \
-            map(from:tmp_c[0:size_tmp_c])
+  // WARNING This implementation seems unomptimized
+  #pragma omp target map(from:tmp_c[0:size_tmp_c]) map(to:een_rescaled_e[0:size_e], een_rescaled_n[0:size_n])
+  {
+  #pragma omp teams distribute parallel for collapse(5)
     for (int nw=0; nw < walk_num; ++nw) {
       for (int i=0; i<cord_num; ++i){
 
@@ -6033,12 +6032,12 @@ qmckl_compute_tmp_c_omp_offload (const qmckl_context context,
                   een_rescaled_e[l + m*stride_m_e + i*stride_i_e + nw*stride_nw_e] *
                   een_rescaled_n[m + k*stride_k_n + j*stride_j_n + nw*stride_nw_n];
               }
-
             }
           }
         }
       }
     }
+  }
 
   return QMCKL_SUCCESS;
 }
@@ -6471,37 +6470,36 @@ qmckl_compute_dtmp_c_acc_offload (
   const int64_t stride_j_n  = stride_k_n * nucl_num;
   const int64_t stride_nw_n = stride_j_n * (cord_num+1);
 
-
   const int64_t size_dtmp_c = walk_num*cord_num*(cord_num+1)*nucl_num*4*elec_num;
   const int64_t size_n = walk_num*(cord_num+1)*nucl_num*elec_num;
   const int64_t size_e = walk_num*(cord_num+1)*elec_num*4*elec_num;
 
   #pragma acc parallel copyout(dtmp_c [0:size_dtmp_c]) copyin(een_rescaled_e_deriv_e[0:size_e], een_rescaled_n[0:size_n])
   {
-      #pragma loop independent gang worker vector collapse(6)
-      for (int nw=0; nw < walk_num; nw++) {
-        for (int i=0; i < cord_num; i++) {
+  #pragma acc loop independent gang worker vector collapse(6)
+  for (int nw=0; nw < walk_num; nw++) {
+    for (int i=0; i < cord_num; i++) {
 
-          // Single DGEMM
-          for(int j=0; j<cord_num+1; j++) {
-            for(int k=0; k<nucl_num; k++) {
-              for(int l=0; l<4; l++) {
-                for(int m=0; m<elec_num; m++) {
+      // Single DGEMM
+      for(int j=0; j<cord_num+1; j++) {
+        for(int k=0; k<nucl_num; k++) {
+          for(int l=0; l<4; l++) {
+            for(int m=0; m<elec_num; m++) {
 
-                  // Single reduction
-                        dtmp_c[m + l * stride_l_d + k * stride_k_d + j * stride_j_d + i * stride_i_d + nw * stride_nw_d] = 0.;
-                  for(int n=0; n<elec_num; n++){
+              // Single reduction
+              dtmp_c[m + l * stride_l_d + k * stride_k_d + j * stride_j_d + i * stride_i_d + nw * stride_nw_d] = 0.;
+              for(int n=0; n<elec_num; n++){
                 dtmp_c[m + l * stride_l_d + k * stride_k_d + j * stride_j_d + i * stride_i_d + nw * stride_nw_d] =
                 dtmp_c[m + l * stride_l_d + k * stride_k_d + j * stride_j_d + i * stride_i_d + nw * stride_nw_d] +
                 een_rescaled_e_deriv_e[m + l * stride_l_e +  n * stride_n_e + i * stride_i_e + nw * stride_nw_e] *
                 een_rescaled_n[n + k * stride_k_n + j * stride_j_n + nw * stride_nw_n];
-                  }
-                }
               }
             }
           }
         }
       }
+    }
+  }
   }
 
   return QMCKL_SUCCESS;
@@ -6575,34 +6573,35 @@ qmckl_exit_code qmckl_compute_dtmp_c_omp_offload (
   const int64_t size_n = walk_num*(cord_num+1)*nucl_num*elec_num;
   const int64_t size_e = walk_num*(cord_num+1)*elec_num*4*elec_num;
 
+  // WARNING This implementation seems unomptimized
+  #pragma omp target map(from:dtmp_c[0:size_dtmp_c]) map(to:een_rescaled_e_deriv_e[0:size_e], een_rescaled_n[0:size_n])
+  {
 
-#pragma omp target teams distribute parallel for collapse(6) \
-            map(to:een_rescaled_e_deriv_e[0:size_e], \
-                   een_rescaled_n[0:size_n]), \
-            map(from:dtmp_c[0:size_dtmp_c])
-      for (int nw=0; nw < walk_num; nw++) {
-        for (int i=0; i < cord_num; i++) {
+  #pragma omp teams distribute parallel for collapse(6)
+  for (int nw=0; nw < walk_num; nw++) {
+    for (int i=0; i < cord_num; i++) {
 
-          // Single DGEMM
-          for(int j=0; j<cord_num+1; j++) {
-            for(int k=0; k<nucl_num; k++) {
-              for(int l=0; l<4; l++) {
-                for(int m=0; m<elec_num; m++) {
+      // Single DGEMM
+      for(int j=0; j<cord_num+1; j++) {
+        for(int k=0; k<nucl_num; k++) {
+          for(int l=0; l<4; l++) {
+            for(int m=0; m<elec_num; m++) {
 
-                  // Single reduction
-                  dtmp_c[m + l * stride_l_d + k * stride_k_d + j * stride_j_d + i * stride_i_d + nw * stride_nw_d] = 0.;
-                  for(int n=0; n<elec_num; n++){
-                    dtmp_c[m + l * stride_l_d + k * stride_k_d + j * stride_j_d + i * stride_i_d + nw * stride_nw_d] =
-                      dtmp_c[m + l * stride_l_d + k * stride_k_d + j * stride_j_d + i * stride_i_d + nw * stride_nw_d] +
-                      een_rescaled_e_deriv_e[m + l * stride_l_e +  n * stride_n_e + i * stride_i_e + nw * stride_nw_e] *
-                      een_rescaled_n[n + k * stride_k_n + j * stride_j_n + nw * stride_nw_n];
-                  }
-                }
+              // Single reduction
+              dtmp_c[m + l * stride_l_d + k * stride_k_d + j * stride_j_d + i * stride_i_d + nw * stride_nw_d] = 0;
+              for(int n=0; n<elec_num; n++){
+                dtmp_c[m + l * stride_l_d + k * stride_k_d + j * stride_j_d + i * stride_i_d + nw * stride_nw_d] =
+                dtmp_c[m + l * stride_l_d + k * stride_k_d + j * stride_j_d + i * stride_i_d + nw * stride_nw_d] +
+                een_rescaled_e_deriv_e[m + l * stride_l_e +  n * stride_n_e + i * stride_i_e + nw * stride_nw_e] *
+                een_rescaled_n[n + k * stride_k_n + j * stride_j_n + nw * stride_nw_n];
               }
             }
           }
         }
       }
+    }
+  }
+  }
 
   return QMCKL_SUCCESS;
 }
