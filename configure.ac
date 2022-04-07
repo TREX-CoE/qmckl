@@ -310,20 +310,21 @@ AS_IF([test "$HAVE_CUBLAS_OFFLOAD" = "yes"], [
   case $CC in
 
     *gcc*)
-          CFLAGS="$CFLAGS -fopenacc"
+          CFLAGS="$CFLAGS -fopenmp"
+          LDFLAGS="-lcublas"
           ;;
     *nvc*)
-          CFLAGS="$CFLAGS -acc=gpu"
+          CFLAGS="$CFLAGS -mp=gpu -cudalib=cublas"
           ;;
   esac
 
   case $FC in
 
     *gfortran*)
-          FCFLAGS="$FCFLAGS -fopenacc"
+          FCFLAGS="$FCFLAGS -fopenmp"
           ;;
     *nvfortran*)
-          FCFLAGS="$FCFLAGS -acc=gpu"
+          FCFLAGS="$FCFLAGS -mp=gpu -cudalib=cublas"
           ;;
   esac
 ])
