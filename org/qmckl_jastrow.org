@@ -2032,7 +2032,6 @@ qmckl_exit_code qmckl_provide_factor_ee_deriv_e(qmckl_context context)
                                          ctx->jastrow.bord_vector,
                                          ctx->electron.ee_distance_rescaled,
                                          ctx->electron.ee_distance_rescaled_deriv_e,
-                                         ctx->jastrow.asymp_jasb,
                                          ctx->jastrow.factor_ee_deriv_e);
     if (rc != QMCKL_SUCCESS) {
       return rc;
@@ -2063,14 +2062,13 @@ qmckl_exit_code qmckl_provide_factor_ee_deriv_e(qmckl_context context)
     | ~bord_vector~                  | ~double[bord_num+1]~                      | in     | List of coefficients        |
     | ~ee_distance_rescaled~         | ~double[walk_num][elec_num][elec_num]~    | in     | Electron-electron distances |
     | ~ee_distance_rescaled_deriv_e~ | ~double[walk_num][4][elec_num][elec_num]~ | in     | Electron-electron distances |
-    | ~asymp_jasb~                   | ~double[2]~                               | in     | Electron-electron distances |
     | ~factor_ee_deriv_e~            | ~double[walk_num][4][elec_num]~           | out    | Electron-electron distances |
 
     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_factor_ee_deriv_e_f( &
+integer function qmckl_compute_factor_ee_deriv_e_doc_f( &
      context, walk_num, elec_num, up_num, bord_num, &
      bord_vector, ee_distance_rescaled, ee_distance_rescaled_deriv_e,  &
-     asymp_jasb, factor_ee_deriv_e) &
+     factor_ee_deriv_e) &
      result(info)
   use qmckl
   implicit none
@@ -2079,10 +2077,9 @@ integer function qmckl_compute_factor_ee_deriv_e_f( &
   double precision      , intent(in)  :: bord_vector(bord_num + 1)
   double precision      , intent(in)  :: ee_distance_rescaled(elec_num, elec_num,walk_num)
   double precision      , intent(in)  :: ee_distance_rescaled_deriv_e(4,elec_num, elec_num,walk_num)   !TODO
-  double precision      , intent(in)  :: asymp_jasb(2)
   double precision      , intent(out) :: factor_ee_deriv_e(elec_num,4,walk_num)
 
-  integer*8 :: i, j, p, ipar, nw, ii
+  integer*8 :: i, j, p, nw, ii
   double precision   :: x, spin_fact, y
   double precision   :: den, invden, invden2, invden3, xinv
   double precision   :: lap1, lap2, lap3, third
@@ -2126,7 +2123,6 @@ integer function qmckl_compute_factor_ee_deriv_e_f( &
         invden2     = invden * invden
         invden3     = invden2 * invden
         xinv        = 1.0d0 / (x + 1.0d-18)
-        ipar        = 1
 
         dx(1) = ee_distance_rescaled_deriv_e(1, i, j, nw)
         dx(2) = ee_distance_rescaled_deriv_e(2, i, j, nw)
@@ -2168,7 +2164,120 @@ integer function qmckl_compute_factor_ee_deriv_e_f( &
   end do
   end do
 
-end function qmckl_compute_factor_ee_deriv_e_f
+end function qmckl_compute_factor_ee_deriv_e_doc_f
+    #+end_src
+
+    #+begin_src c :comments org :tangle (eval c) :noweb yes
+qmckl_exit_code qmckl_compute_factor_ee_deriv_e_hpc(
+      const qmckl_context context,
+      const int64_t walk_num,
+      const int64_t elec_num,
+      const int64_t up_num,
+      const int64_t bord_num,
+      const double* bord_vector,
+      const double* ee_distance_rescaled,
+      const double* ee_distance_rescaled_deriv_e,
+      double* const factor_ee_deriv_e ) {
+
+  int64_t ii;
+  double  pow_ser_g[3];
+  double  dx[4];
+  double  x, spin_fact, y;
+  double  den, invden, invden2, invden3, xinv;
+  double  lap1, lap2, lap3, third;
+
+  if (context == QMCKL_NULL_CONTEXT) {
+    return QMCKL_INVALID_CONTEXT;
+  } 
+
+  if (walk_num <= 0) {
+    return QMCKL_INVALID_ARG_2;
+  } 
+
+  if (elec_num <= 0) {
+    return QMCKL_INVALID_ARG_3;
+  }
+
+  if (bord_num <= 0) {
+    return QMCKL_INVALID_ARG_4;
+  }
+
+  
+  for (int nw = 0; nw < walk_num; ++nw) {
+    for (int ii = 0; ii < 4; ++ii) {
+      for (int j = 0; j < elec_num; ++j) {
+        factor_ee_deriv_e[j + ii * elec_num + nw * elec_num * 4]  = 0.0;
+      }
+    }
+  }
+  
+  third = 1.0 / 3.0;
+
+  for (int nw = 0; nw < walk_num; ++nw) {
+    for (int i = 0; i < elec_num; ++i) {
+      for (int j = 0; j < elec_num; ++j) {
+        x = ee_distance_rescaled[j + i * elec_num + nw * elec_num * elec_num];
+        if (fabs(x) < 1.0e-18) continue;
+        for (int ii = 0; ii < 3; ++ii){
+            pow_ser_g[ii] = 0.0;
+        }    
+        spin_fact   = 1.0;
+        den         = 1.0 + bord_vector[1] * x;
+        invden      = 1.0 / den;
+        invden2     = invden * invden;
+        invden3     = invden2 * invden;
+        xinv        = 1.0 / (x + 1.0e-18);
+        
+        dx[0] = ee_distance_rescaled_deriv_e[0 \
+                                           + j * 4 + i * 4 * elec_num \
+                                           + nw * 4 * elec_num * elec_num];
+        dx[1] = ee_distance_rescaled_deriv_e[1  \
+                                           + j * 4 + i * 4 * elec_num \
+                                           + nw * 4 * elec_num * elec_num];
+        dx[2] = ee_distance_rescaled_deriv_e[2  \
+                                           + j * 4 + i * 4 * elec_num \
+                                           + nw * 4 * elec_num * elec_num];
+        dx[3] = ee_distance_rescaled_deriv_e[3  \
+                                           + j * 4 + i * 4 * elec_num \
+                                           + nw * 4 * elec_num * elec_num];
+
+        if((i <= (up_num-1) && j <= (up_num-1) ) || (i > (up_num-1) && j > (up_num-1))) {
+          spin_fact = 0.5;
+        }
+
+        lap1 = 0.0;
+        lap2 = 0.0;
+        lap3 = 0.0;
+        for (int ii = 0; ii < 3; ++ii) {
+          x = ee_distance_rescaled[j + i * elec_num + nw * elec_num * elec_num];
+          if (fabs(x) < 1.0e-18) continue;
+          for (int p = 2; p < bord_num+1; ++p) {
+            y = p * bord_vector[(p-1) + 1] * x;
+            pow_ser_g[ii] = pow_ser_g[ii] + y * dx[ii];
+            lap1 = lap1 + (p - 1) * y * xinv * dx[ii] * dx[ii];
+            lap2 = lap2 + y;
+            x = x * ee_distance_rescaled[j + i * elec_num + nw * elec_num * elec_num];
+          }
+
+          lap3 = lap3 - 2.0 * bord_vector[1] * dx[ii] * dx[ii];
+
+          factor_ee_deriv_e[i  + ii * elec_num  + nw * elec_num * 4 ] +=              \
+                                       + spin_fact * bord_vector[0] * dx[ii] * invden2 \
+                                       + pow_ser_g[ii] ;
+        }
+
+        ii = 3;
+        lap2 = lap2 * dx[ii] * third;
+        lap3 = lap3 + den * dx[ii];
+        lap3 = lap3 * (spin_fact * bord_vector[0] * invden3);
+        factor_ee_deriv_e[i + ii*elec_num + nw * elec_num * 4] += lap1 + lap2 + lap3;
+
+      }
+    }
+  }
+  
+  return QMCKL_SUCCESS;
+}
     #+end_src
 
 #   #+CALL: generate_c_header(table=qmckl_factor_ee_deriv_e_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
@@ -2184,17 +2293,16 @@ end function qmckl_compute_factor_ee_deriv_e_f
           const double* bord_vector,
           const double* ee_distance_rescaled,
           const double* ee_distance_rescaled_deriv_e,
-          const double* asymp_jasb,
           double* const factor_ee_deriv_e );
     #+end_src
 
 
-    #+CALL: generate_c_interface(table=qmckl_factor_ee_deriv_e_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+    #+CALL: generate_c_interface(table=qmckl_factor_ee_deriv_e_args,rettyp=get_value("CRetType"),fname="qmckl_compute_factor_ee_deriv_e_doc")
 
     #+RESULTS:
     #+begin_src f90 :tangle (eval f) :comments org :exports none
-    integer(c_int32_t) function qmckl_compute_factor_ee_deriv_e &
-        (context, &
+integer(c_int32_t) function qmckl_compute_factor_ee_deriv_e_doc &
+    (context, &
          walk_num, &
          elec_num, &
          up_num, &
@@ -2202,7 +2310,6 @@ end function qmckl_compute_factor_ee_deriv_e_f
          bord_vector, &
          ee_distance_rescaled, &
          ee_distance_rescaled_deriv_e, &
-         asymp_jasb, &
          factor_ee_deriv_e) &
         bind(C) result(info)
 
@@ -2217,12 +2324,11 @@ end function qmckl_compute_factor_ee_deriv_e_f
       real    (c_double ) , intent(in)          :: bord_vector(bord_num+1)
       real    (c_double ) , intent(in)          :: ee_distance_rescaled(elec_num,elec_num,walk_num)
       real    (c_double ) , intent(in)          :: ee_distance_rescaled_deriv_e(elec_num,elec_num,4,walk_num)
-      real    (c_double ) , intent(in)          :: asymp_jasb(2)
       real    (c_double ) , intent(out)         :: factor_ee_deriv_e(elec_num,4,walk_num)
 
-      integer(c_int32_t), external :: qmckl_compute_factor_ee_deriv_e_f
-      info = qmckl_compute_factor_ee_deriv_e_f &
-             (context, &
+      integer(c_int32_t), external :: qmckl_compute_factor_ee_deriv_e_doc_f
+      info = qmckl_compute_factor_ee_deriv_e_doc_f &
+         (context, &
          walk_num, &
          elec_num, &
          up_num, &
@@ -2230,11 +2336,60 @@ end function qmckl_compute_factor_ee_deriv_e_f
          bord_vector, &
          ee_distance_rescaled, &
          ee_distance_rescaled_deriv_e, &
-         asymp_jasb, &
          factor_ee_deriv_e)
 
-    end function qmckl_compute_factor_ee_deriv_e
+    end function qmckl_compute_factor_ee_deriv_e_doc
     #+end_src
+    
+    #+begin_src c :tangle (eval h_private_func) :comments org
+    qmckl_exit_code qmckl_compute_factor_ee_deriv_e_hpc (
+      const qmckl_context context,
+      const int64_t walk_num,
+      const int64_t elec_num,
+      const int64_t up_num,
+      const int64_t bord_num,
+      const double* bord_vector,
+      const double* ee_distance_rescaled,
+      const double* ee_distance_rescaled_deriv_e,
+      double* const factor_ee_deriv_e );
+    #+end_src
+
+    #+begin_src c :tangle (eval h_private_func) :comments org
+    qmckl_exit_code qmckl_compute_factor_ee_deriv_e_doc (
+      const qmckl_context context,
+      const int64_t walk_num,
+      const int64_t elec_num,
+      const int64_t up_num,
+      const int64_t bord_num,
+      const double* bord_vector,
+      const double* ee_distance_rescaled,
+      const double* ee_distance_rescaled_deriv_e,
+      double* const factor_ee_deriv_e );
+    #+end_src
+
+    #+begin_src c :comments org :tangle (eval c) :noweb yes
+    qmckl_exit_code qmckl_compute_factor_ee_deriv_e (
+      const qmckl_context context,
+      const int64_t walk_num,
+      const int64_t elec_num,
+      const int64_t up_num,
+      const int64_t bord_num,
+      const double* bord_vector,
+      const double* ee_distance_rescaled,
+      const double* ee_distance_rescaled_deriv_e,
+      double* const factor_ee_deriv_e ) {
+
+      #ifdef HAVE_HPC
+      return qmckl_compute_factor_ee_deriv_e_hpc(context, walk_num, elec_num, up_num, bord_num, bord_vector, ee_distance_rescaled, ee_distance_rescaled_deriv_e, factor_ee_deriv_e ); 
+      #else
+      return qmckl_compute_factor_ee_deriv_e_doc(context, walk_num, elec_num, up_num, bord_num, bord_vector, ee_distance_rescaled, ee_distance_rescaled_deriv_e, factor_ee_deriv_e ); 
+      #endif
+}
+    #+end_src
+
+
+
+
 
 *** Test
     #+begin_src python :results output :exports none :noweb yes
@@ -2353,7 +2508,6 @@ assert(fabs(factor_ee_deriv_e[0][0][0]-0.16364894652107934) < 1.e-12);
 assert(fabs(factor_ee_deriv_e[0][1][0]+0.6927548119830084 ) < 1.e-12);
 assert(fabs(factor_ee_deriv_e[0][2][0]-0.073267755223968  ) < 1.e-12);
 assert(fabs(factor_ee_deriv_e[0][3][0]-1.5111672803213185 ) < 1.e-12);
-
      #+end_src
 
 ** Electron-nucleus component \(f_{en}\)
