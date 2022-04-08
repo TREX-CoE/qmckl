@@ -304,9 +304,10 @@ AS_IF([test "$enable_gpu" = "openacc"], [
 ])
 
 # cuBLAS offloading
-AC_ARG_WITH(cublas, [AS_HELP_STRING([--with-cublas],[Use cuBLAS-offloaded functions])], HAVE_CUBLAS_OFFLOAD=$withval, HAVE_CUBLAS_OFFLOAD=no)
-AS_IF([test "$HAVE_CUBLAS_OFFLOAD" = "yes"], [
+HAVE_OPENACC_OFFLOAD="no"
+AS_IF([test "$enable_gpu" = "cublas"], [
   AC_DEFINE([HAVE_CUBLAS_OFFLOAD], [1], [If defined, activate cuBLAS-offloaded routines])
+  HAVE_CUBLAS_OFFLOAD="yes"
   case $CC in
 
     *gcc*)
