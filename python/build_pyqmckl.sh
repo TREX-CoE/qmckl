@@ -3,6 +3,8 @@
 set -e
 set -x
 
+cp ../include/qmckl.h .
+
 # check if qmckl header exists
 if [[ ! -f 'qmckl.h' ]]; then
   echo "qmckl.h NOT FOUND"
