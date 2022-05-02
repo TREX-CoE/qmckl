@@ -11,25 +11,22 @@
 /* Include stdint to recognize types from stdint.h */
 %include <stdint.i>
 
-
-/* Include typemaps to play with input/output re-casting
-   Useful when working with C pointers
-*/
+/* Include typemaps to play with input/output re-casting (e.g. C pointers) */
 %include typemaps.i
 
-/* Return TREXIO exit code from trexio_open as part of the output tuple */
 %apply int *OUTPUT { qmckl_exit_code *exit_code};
 
-/* This enables access to trexio_[...]_read_dset_str_low set of functions
-   in order to return one long string with TREXIO_DELIM delimeter as 2-nd argument of output tuple
-   */
+/* Avoid passing file_name length as an additiona argument */
+%apply (char *STRING, int LENGTH) { (const char* file_name, const int64_t size_max) };
+
+/* For functions that return strings */
 %include <cstring.i>
 
+%cstring_bounded_output(char* function_name, 1024);
+%cstring_bounded_output(char* message, 1024);
 
-/* This block is needed make SWIG treat (double * dset_out|_in, int64_t dim_out|_in) pattern
-   as a special case in order to return the NumPy array to Python from C pointer to array
-   provided by trexio_read_safe_[dset_num] function.
-   NOTE: numpy.i is currently not part of SWIG but included in the numpy distribution (under numpy/tools/swig/numpy.i)
+/* This block is needed make SWIG convert NumPy arrays to/from from the C pointer and size_max argument.
+   NOTE: `numpy.i` interface file is not part of SWIG but it is included in the numpy distribution (under numpy/tools/swig/numpy.i)
 */
 %include "numpy.i"
 
