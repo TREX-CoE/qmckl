@@ -131,14 +131,13 @@ with open("qmckl.h", 'r') as f_in:
 
 processed = list(arrays.keys()) + list(numbers.keys())
 
-for pub_func in qmckl_public_api:
-    if pub_func not in processed and 'set' not in pub_func:
-        print("TODO", pub_func)
+#for pub_func in qmckl_public_api:
+    #if pub_func not in processed and 'set' not in pub_func:
+        #print("TODO", pub_func)
     #print(v['datatype'])
 
-
-for k,v in numbers.items():
-    print(v)
+#for k,v in numbers.items():
+#    print(v)
 
 
 with open("pyqmckl_include.i", 'w') as f_out:
@@ -151,7 +150,7 @@ with open("pyqmckl_include.i", 'w') as f_out:
         elif 'float' in v['datatype'] or 'double' in v['datatype']:
             swig_type = 'float'
         elif 'char' in v['datatype'] or 'bool' in v['datatype']:
-            print('SWIG, skipping')
+            #print('SWIG, skipping', v['datatype'], v['pattern'])
             continue
         else:
             raise TypeError(f"Unknown datatype for swig conversion: {v['datatype']}")
@@ -160,7 +159,7 @@ with open("pyqmckl_include.i", 'w') as f_out:
 
     for k,v in arrays.items():
         if 'char' in v['datatype']:
-            print("String type")
+            #print("String type", k, v)
             pass
 
         if len(v['pattern'].split(',')) != 2:
@@ -171,10 +170,6 @@ with open("pyqmckl_include.i", 'w') as f_out:
             f_out.write(f"%apply ( {v['datatype']}* ARGOUT_ARRAY1 , int64_t DIM1 ) {{ {v['pattern']} }};\n")
         elif 'set' in k:
             f_out.write(f"%apply ( {v['datatype']}* IN_ARRAY1 , int64_t DIM1 ) {{ {v['pattern']} }};\n")
-        else:
-            print("HOW-TO ?", k)
-
-
-
-
+        #else:
+            #print("HOW-TO ?", k)
 
