@@ -49,12 +49,12 @@ AS_IF([test -d ${srcdir}/.git],
 AC_ARG_WITH(ifort, [AS_HELP_STRING([--with-ifort],[Use Intel Fortran compiler])], with_ifort=$withval, with_ifort=no)
 AS_IF([test "$with_ifort" == "yes"], [
   FC=ifort
-  FCFLAGS="-xHost -ip -Ofast -ftz -finline -g -mkl=sequential" ])
+  FCFLAGS="-march=native -ip -Ofast -ftz -finline -g -mkl=sequential" ])
 
 AC_ARG_WITH(icc, [AS_HELP_STRING([--with-icc],[Use Intel C compiler])], with_icc=$withval, with_icc=no)
 AS_IF([test "$with_icc" == "yes"], [
   CC=icc
-  CFLAGS="-xHost -ip -Ofast -ftz -finline -g -mkl=sequential" ])
+  CFLAGS="-march=native -ip -Ofast -ftz -finline -g -mkl=sequential" ])
 
 AS_IF([test "$with_icc"."$with_ifort" == "yes.yes"], [
   ax_blas_ok="yes"
@@ -200,16 +200,22 @@ AS_IF([test "$BLAS_LIBS" == "$LAPACK_LIBS"], [BLAS_LIBS=""])
 # Specific options required with some compilers
 case $FC in
 
- ifort*)
+ *ifort*)
       FCFLAGS="$FCFLAGS -nofor-main"
       ;;
 
-#gfortran*)
-#     # Order is important here
-#     FCFLAGS="-cpp $FCFLAGS"
-#     ;;
+ *nvfortran*)
+      FCFLAGS="$FCFLAGS -fPIC -Mnomain"
+      ;;
+
 esac
 
+case $CC in
+
+  *nvc*)
+        CFLAGS="$CFLAGS -fPIC"
+        ;;
+esac
 
 
 # Options.
@@ -358,7 +364,7 @@ CC..............: ${CC}
 CPPFLAGS........: ${CPPFLAGS}
 CFLAGS..........: ${CFLAGS}
 FC..............: ${FC}
-FCLAGS..........: ${FCFLAGS}
+FCFLAGS.........: ${FCFLAGS}
 LDFLAGS:........: ${LDFLAGS}
 LIBS............: ${LIBS}
 USE CHAMELEON...: ${with_chameleon}
