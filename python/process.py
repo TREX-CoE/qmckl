@@ -13,7 +13,7 @@ numbers = {}
 qmckl_public_api = []
 
 
-with open("include/qmckl.h", 'r') as f_in:
+with open("qmckl.h", 'r') as f_in:
     for line in f_in:
         
         if get_name:
@@ -103,10 +103,8 @@ with open("include/qmckl.h", 'r') as f_in:
 
         #if 'num' in line and 'get' in func_name and not 'qmckl_get' in line and collect:
         if 'get' in func_name and not 'qmckl_get' in line and collect and ';' in line:
-
-            print(func_name)
-            print(line)
-
+            #print(func_name)
+            #print(line)
             pattern = line.replace(';','').replace(')','').strip()
             datatype = pattern.replace('const','').replace('*','').split()[0]
 
@@ -143,7 +141,7 @@ for k,v in numbers.items():
     print(v)
 
 
-with open("python/pyqmckl_include.i", 'w') as f_out:
+with open("pyqmckl_include.i", 'w') as f_out:
 
     swig_type = ''
     for v in numbers.values():
