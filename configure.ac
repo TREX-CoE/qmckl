@@ -317,6 +317,8 @@ if test "x${QMCKL_DEVEL}" != "x"; then
         HAS_CPPCHECK=1
   fi
 
+  AX_PKG_SWIG(4.0.0, [], AC_MSG_WARN([SWIG is required to build Python API.]) )
+
 fi
 
 # Enable Verificarlo tests
