@@ -5,6 +5,8 @@ set -x
 
 cp ../include/qmckl.h .
 
+cd src/
+
 # check if qmckl header exists
 if [[ ! -f 'qmckl.h' ]]; then
   echo "qmckl.h NOT FOUND"
@@ -12,7 +14,7 @@ if [[ ! -f 'qmckl.h' ]]; then
 fi
 
 # process the qmckl header file to get patterns for SWIG
-python process.py
+python process_header.py
 
 # check if SWIG files exist
 SWIG_LIST='pyqmckl.i pyqmckl_include.i numpy.i'
@@ -32,8 +34,10 @@ cc -c -fPIC `pkg-config --cflags qmckl` -I/usr/include/python3.8 pyqmckl_wrap.c 
 # link against the previously installed QMCkl library (as detected by pkg-config)
 cc -shared pyqmckl_wrap.o `pkg-config --libs qmckl` -o _pyqmckl.so
 
+cd ..
+
 # test
-cp _pyqmckl.so pyqmckl.py -- test/
+cp src/_pyqmckl.so src/pyqmckl.py -- test/
 cd test 
 python test_api.py
 
