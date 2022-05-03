@@ -3,7 +3,7 @@
 set -e
 set -x
 
-cp ../include/qmckl.h .
+cp ../include/qmckl.h src/
 
 cd src/
 
@@ -26,18 +26,6 @@ for file in $SWIG_LIST; do
 done
 
 # run SWIG interface file to produce the Python wrappers
-swig -python -py3 -o pyqmckl_wrap.c pyqmckl.i 
-
-# compile the wrapper code
-cc -c -fPIC `pkg-config --cflags qmckl` -I/usr/include/python3.8 pyqmckl_wrap.c -o pyqmckl_wrap.o
-
-# link against the previously installed QMCkl library (as detected by pkg-config)
-cc -shared pyqmckl_wrap.o `pkg-config --libs qmckl` -o _pyqmckl.so
+swig -python -py3 -builtin -threads -o pyqmckl_wrap.c pyqmckl.i 
 
 cd ..
-
-# test
-cp src/_pyqmckl.so src/pyqmckl.py -- test/
-cd test 
-python test_api.py
-
