@@ -3,6 +3,7 @@
 set -x
 set -e
 
+# swig pre-processing
 ./build_pyqmckl.sh
 
 cd src/
@@ -15,9 +16,10 @@ cc -shared pyqmckl_wrap.o `pkg-config --libs qmckl` -o _pyqmckl.so
 
 cd ..
 
-# test
+# copy the produced files into the test dir
 cp src/_pyqmckl.so src/pyqmckl.py test/
 
+# run tests
 cd test/ 
 python test_api.py
 cd ..
