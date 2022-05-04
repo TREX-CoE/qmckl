@@ -14,8 +14,8 @@ with open("README.md", "r") as fh:
 # Define the name of the Python package
 MODULE_NAME = "qmckl"
 
-# Define pyqmckl extension module based on SWIG interface file (requires qmckl.h)
-pyqmckl_module =  Extension(name               = "._" + MODULE_NAME,
+# Define qmckl extension module based on SWIG interface file (requires qmckl.h)
+qmckl_module =  Extension(name               = "._" + MODULE_NAME,
                             sources            = [ join("src", MODULE_NAME + "_wrap.c") ],
                             #include_dirs       = [numpy_includedir],
                             #library_dirs       = [],
@@ -34,7 +34,7 @@ setup(name             = MODULE_NAME,
       description      = """Python API of the QMCkl library""",
       long_description = long_description,
       long_description_content_type = "text/markdown",
-      ext_modules      = [pyqmckl_module],
+      ext_modules      = [qmckl_module],
       py_modules       = [MODULE_NAME],
       url              = "https://github.com/TREX-CoE/qmckl",
       license          = "BSD",

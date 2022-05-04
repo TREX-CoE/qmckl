@@ -1,6 +1,9 @@
+#!/usr/bin/env python3
 
 import os
+import sys
 
+qmckl_h = sys.argv[1]
 
 collect = False
 process = False
@@ -13,9 +16,9 @@ numbers = {}
 qmckl_public_api = []
 qmckl_errors = []
 
-with open("qmckl.h", 'r') as f_in:
+with open(qmckl_h, 'r') as f_in:
     for line in f_in:
-        
+
         # get the errors but without the type cast because SWIG does not recognize it
         if '#define' in line and 'qmckl_exit_code' in line:
             qmckl_errors.append(line.strip().replace('(qmckl_exit_code)',''))
@@ -62,11 +65,11 @@ with open("qmckl.h", 'r') as f_in:
                         #    print(pattern)
                 continue
 
-            # if size_max is not provided then the function should deal with numbers or string 
+            # if size_max is not provided then the function should deal with numbers or string
             #elif 'num' in line and 'get' in func_name:
             elif ';' in line and 'get' in func_name:
-                # special case 
-                if 'size_max' in line: 
+                # special case
+                if 'size_max' in line:
                     continue
 
                 #print(line)
@@ -145,7 +148,7 @@ processed = list(arrays.keys()) + list(numbers.keys())
 #    print(v)
 
 
-with open("pyqmckl_include.i", 'w') as f_out:
+with open("qmckl_include.i", 'w') as f_out:
 
     # write the list of errors as constants without the type cast
     for e in qmckl_errors:
@@ -154,7 +157,7 @@ with open("pyqmckl_include.i", 'w') as f_out:
 
     swig_type = ''
     for v in numbers.values():
-        
+
         if 'int' in v['datatype']:
             swig_type = 'int'
         elif 'float' in v['datatype'] or 'double' in v['datatype']:

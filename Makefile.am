@@ -65,7 +65,7 @@ AM_CPPFLAGS += -DQMCKL_TEST_DIR=\"$(QMCKL_TEST_DIR)\"
 
 lib_LTLIBRARIES = src/libqmckl.la
 src_libqmckl_la_SOURCES = $(qmckl_h) $(src_qmckl_f) $(C_FILES) $(F_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES)
-src_libqmckl_la_LDFLAGS = $(LDFLAGS) 
+src_libqmckl_la_LDFLAGS = $(LDFLAGS)
 
 CLEANFILES+=$(test_qmckl_fo) $(src_qmckl_fo) $(test_qmckl_o) $(src_qmckl_o) $(FH_TYPE_FILES) $(FH_FUNC_FILES)
 
@@ -172,26 +172,39 @@ cppcheck.out: $(qmckl_h)
 
 setup_py          =  $(srcdir)/python/setup.py
 process_header_py =  $(srcdir)/python/src/process_header.py
-qmckl_py          =  $(srcdir)/python/qmckl.py
 test_py           =  $(srcdir)/python/test/test_api.py
-qmckl_wrap_c      =  $(srcdir)/python/src/qmckl_wrap.c
-pyqmckl_i         =  $(srcdir)/python/src/pyqmckl.i 
-pyqmckl_include_i =  $(srcdir)/python/src/pyqmckl_include.i 
+qmckl_i           =  $(srcdir)/python/src/qmckl.i
 numpy_i           =  $(srcdir)/python/src/numpy.i
+qmckl_wrap_c    =  python/src/qmckl_wrap.c
+qmckl_include_i =  python/src/qmckl_include.i
+qmckl_py        =  python/qmckl/qmckl.py
+
+$(qmckl_include_i):  $(qmckl_h) $(process_header_py)
+	$(MKDIR_P) python/src
+	python $(process_header_py) $(qmckl_h)
+	mv qmckl_include.i $(qmckl_include_i)
 
 
-python-install: $(qmckl_h) $(pyqmckl_i) $(process_header_py) $(setup_py)
-	cp $(qmckl_h) $(srcdir)/python/src/
-	cd $(srcdir)/python/ && \
-		./pip_install_pyqmckl.sh
+$(qmckl_py): $(qmckl_i) $(qmckl_include_i)
+	swig -Iinclude -Ipython/src -python -py3 -builtin -o $(qmckl_wrap_c) $(qmckl_i)
+
+$(qmckl_wrap_c): $(qmckl_py)
+
+python-install: $(qmckl_h) $(qmckl_i) $(setup_py) $(qmckl_py) $(qmckl_wrap_c)
+	$(MKDIR_P) python/src
+	cd python ; \
+	[[ ! -f  pyproject.toml ]] && \
+	    cp $(abs_srcdir)/python/{pyproject.toml,requirements.txt,README.md,setup.py} . ; \
+	cp src/qmckl.py . ; \
+	pip install .
 
 python-test: $(test_py)
-	cd $(srcdir)/python/test/ && \
+	cd $(abs_srcdir)/python/test/ && \
 		python test_api.py
 
 CLEANFILES += $(qmckl_wrap_c) \
-	      $(qmckl_py) \
-	      $(pyqmckl_include_i) 
+	      $(qmckl_include_i) \
+	      $(qmckl_py)
 
 .PHONY: cppcheck python-test python-install
 

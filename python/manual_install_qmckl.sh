@@ -4,7 +4,7 @@ set -x
 set -e
 
 # swig pre-processing
-./build_pyqmckl.sh
+./build_qmckl.sh
 
 cd src/
 
@@ -12,7 +12,7 @@ cd src/
 cc -c -fPIC `pkg-config --cflags qmckl` -I/usr/include/python3.8 qmckl_wrap.c -o qmckl_wrap.o
 
 # link against the previously installed QMCkl library (as detected by pkg-config)
-cc -shared pyqmckl_wrap.o `pkg-config --libs qmckl` -o _qmckl.so
+cc -shared qmckl_wrap.o `pkg-config --libs qmckl` -o _qmckl.so
 
 cd ..
 
