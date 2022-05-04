@@ -172,9 +172,9 @@ cppcheck.out: $(qmckl_h)
 
 setup_py          =  $(srcdir)/python/setup.py
 process_header_py =  $(srcdir)/python/src/process_header.py
-pyqmckl_py        =  $(srcdir)/python/pyqmckl/pyqmckl.py
+qmckl_py          =  $(srcdir)/python/qmckl.py
 test_py           =  $(srcdir)/python/test/test_api.py
-pyqmckl_wrap_c    =  $(srcdir)/python/src/pyqmckl_wrap.c
+qmckl_wrap_c      =  $(srcdir)/python/src/qmckl_wrap.c
 pyqmckl_i         =  $(srcdir)/python/src/pyqmckl.i 
 pyqmckl_include_i =  $(srcdir)/python/src/pyqmckl_include.i 
 numpy_i           =  $(srcdir)/python/src/numpy.i
@@ -189,9 +189,9 @@ python-test: $(test_py)
 	cd $(srcdir)/python/test/ && \
 		python test_api.py
 
-CLEANFILES += $(pyqmckl_wrap_c) \
-	      $(pyqmckl_include_i) \
-	      $(pyqmckl_py)
+CLEANFILES += $(qmckl_wrap_c) \
+	      $(qmckl_py) \
+	      $(pyqmckl_include_i) 
 
 .PHONY: cppcheck python-test python-install
 

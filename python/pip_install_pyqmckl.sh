@@ -12,6 +12,3 @@ cp src/qmckl.py ./
 # install using pip
 pip install .
 
-cd test
-python test_api.py
-cd ..

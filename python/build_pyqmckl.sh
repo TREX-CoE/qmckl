@@ -3,13 +3,13 @@
 set -e
 set -x
 
-cp ../include/qmckl.h src/
+#cp ../include/qmckl.h src/
 
 cd src/
 
 # check if qmckl header exists
 if [[ ! -f 'qmckl.h' ]]; then
-  echo "qmckl.h NOT FOUND"
+  echo "qmckl.h NOT FOUND in the src/ directory"
   exit 1
 fi
 
@@ -20,7 +20,7 @@ python process_header.py
 SWIG_LIST='pyqmckl.i pyqmckl_include.i numpy.i'
 for file in $SWIG_LIST; do
   if [[ ! -f $file ]]; then
-    echo "$file NOT FOUND"
+    echo "$file NOT FOUND in the src/ directory"
     exit 1
   fi
 done
