@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-setup.py file for pyqmckl package
+setup.py file for qmckl package
 """
 
 from setuptools import setup, Extension
@@ -11,49 +11,33 @@ from os.path import join
 with open("README.md", "r") as fh:
     long_description = fh.read()
 
-# Read the version string from the file
-VERSIONFILE = "pyqmckl/_version.py"
-try:
-    exec(open(VERSIONFILE).read())
-except:
-    raise IOError("Could not open the version file %s." % (VERSIONFILE, ))
-
-version_r = __version__
-if not version_r:
-    raise RuntimeError("Unable to find a version string in %s." % (VERSIONFILE, ))
-
-
 # Define the name of the Python package
-mod_name = 'pyqmckl'
-
+MODULE_NAME = "qmckl"
 
 # Define pyqmckl extension module based on SWIG interface file (requires qmckl.h)
-pyqmckl_module =  Extension(name               = mod_name + '._' + mod_name,
-                            sources            = [ join('src', mod_name + '_wrap.c') ],
+pyqmckl_module =  Extension(name               = "._" + MODULE_NAME,
+                            sources            = [ join("src", MODULE_NAME + "_wrap.c") ],
                             #include_dirs       = [numpy_includedir],
                             #library_dirs       = [],
-                            #runtime_library_dirs = [],
-                            libraries          = ['qmckl'],
-                            extra_compile_args = ['-Wall'],
+                            libraries          = ["qmckl"],
+                            extra_compile_args = ["-Wall"],
                             #extra_link_args    = [h5_ldflags],
-                            #swig_opts          = ['-py3' , '-builtin'],
-                            depends            = [ join('src', 'qmckl.h') ],
-                            language           = 'c'
+                            depends            = [ join("src", "qmckl.h") ],
+                            language           = "c"
                             )
 
 
-setup(name             = mod_name,
-      version          = version_r,
+setup(name             = MODULE_NAME,
+      version          = "0.2.0",
       author           = "TREX-CoE",
       author_email     = "posenitskiy@irsamc.ups-tlse.fr",
       description      = """Python API of the QMCkl library""",
       long_description = long_description,
       long_description_content_type = "text/markdown",
       ext_modules      = [pyqmckl_module],
-      py_modules       = [mod_name],
-      packages         = [mod_name],
-      url              = 'https://github.com/TREX-CoE/qmckl',
-      license          = 'BSD',
+      py_modules       = [MODULE_NAME],
+      url              = "https://github.com/TREX-CoE/qmckl",
+      license          = "BSD",
       classifiers=[
          "Intended Audience :: Science/Research",
          "Intended Audience :: Developers",
@@ -69,5 +53,5 @@ setup(name             = mod_name,
          "Operating System :: MacOS"
       ],
       python_requires = ">=3.0",
-      install_requires = ['numpy>=1.17.3']
+      install_requires = ["numpy>=1.17.3"]
       )

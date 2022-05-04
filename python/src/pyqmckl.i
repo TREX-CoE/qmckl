@@ -1,4 +1,4 @@
-%module pyqmckl
+%module qmckl
 /* Define SWIGWORDSIZE in order to properly align long integers on 64-bit system */
 #define SWIGWORDSIZE64
 %{
@@ -7,6 +7,11 @@
 #include "qmckl.h"
 %}
 
+/*
+ * Get rid of the function prefixes, as the scripting language will use
+ * the module's namespace.
+ */
+%rename("%(strip:[qmckl_])s") "";
 
 /* Include stdint to recognize types from stdint.h */
 %include <stdint.i>
