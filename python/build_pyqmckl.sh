@@ -26,6 +26,8 @@ for file in $SWIG_LIST; do
 done
 
 # run SWIG interface file to produce the Python wrappers
-swig -python -py3 -builtin -threads -o pyqmckl_wrap.c pyqmckl.i 
+# `-threads` to release GIL before the call to C functions (for multi-threading)
+# `-builtin` to activate Python-ic built-in types
+swig -python -py3 -builtin -o qmckl_wrap.c pyqmckl.i 
 
 cd ..
