@@ -52,7 +52,7 @@ if sizeof(result) == sizeof(qmckl_exit_code), e.g. for functions that return non
 */
 %exception {
   $action
-  if (result != 0 && sizeof(result) == sizeof(qmckl_exit_code)) {
+  if (result != QMCKL_SUCCESS && sizeof(result) == sizeof(qmckl_exit_code)) {
     SWIG_exception_fail(SWIG_RuntimeError, qmckl_string_of_error(result));
   }
 }

@@ -11,11 +11,16 @@ func_name = ''
 arrays = {}
 numbers = {}
 qmckl_public_api = []
-
+qmckl_errors = []
 
 with open("qmckl.h", 'r') as f_in:
     for line in f_in:
         
+        # get the errors but without the type cast because SWIG does not recognize it
+        if '#define' in line and 'qmckl_exit_code' in line:
+            qmckl_errors.append(line.strip().replace('(qmckl_exit_code)',''))
+            continue
+
         if get_name:
             words = line.strip().split()
             if '(' in words[0]:
@@ -141,6 +146,11 @@ processed = list(arrays.keys()) + list(numbers.keys())
 
 
 with open("pyqmckl_include.i", 'w') as f_out:
+
+    # write the list of errors as constants without the type cast
+    for e in qmckl_errors:
+        line = e.replace('#define', '%constant qmckl_exit_code').replace('(','=').replace(')',';')
+        f_out.write(line + '\n')
 
     swig_type = ''
     for v in numbers.values():

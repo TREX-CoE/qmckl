@@ -21,30 +21,30 @@ ctx = pq.qmckl_context_create()
 fname = join('data', 'Alz_small.h5')
 
 rc = pq.qmckl_trexio_read(ctx, fname)
-assert rc==0
+assert rc==pq.QMCKL_SUCCESS
 print(pq.qmckl_string_of_error(rc))
 
 rc = pq.qmckl_set_electron_walk_num(ctx, walk_num)
-assert rc==0
+assert rc==pq.QMCKL_SUCCESS
 
 rc, mo_num = pq.qmckl_get_mo_basis_mo_num(ctx)
-assert rc==0
+assert rc==pq.QMCKL_SUCCESS
 
 rc = pq.qmckl_set_electron_coord(ctx, 'T', coord)
-assert rc==0
+assert rc==pq.QMCKL_SUCCESS
 
 size_max = 5*walk_num*elec_num*mo_num
 
 
 
 rc, mo_vgl = pq.qmckl_get_mo_basis_mo_vgl(ctx, size_max)
-assert rc==0
+assert rc==pq.QMCKL_SUCCESS
 
 start = time.clock_gettime_ns(time.CLOCK_REALTIME)
 
 for _ in range(ITERMAX):
     rc, mo_vgl_in = pq.qmckl_get_mo_basis_mo_vgl_inplace(ctx, size_max)
-    assert rc==0
+    assert rc==pq.QMCKL_SUCCESS
 
 end = time.clock_gettime_ns(time.CLOCK_REALTIME)
 
