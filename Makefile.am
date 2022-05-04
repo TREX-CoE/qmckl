@@ -181,12 +181,12 @@ numpy_i           =  $(srcdir)/python/src/numpy.i
 
 
 python-install: $(qmckl_h) $(pyqmckl_i) $(process_header_py) $(setup_py)
-	cp $(qmckl_h) python/src/
-	cd python/ && \
+	cp $(qmckl_h) $(srcdir)/python/src/
+	cd $(srcdir)/python/ && \
 		./pip_install_pyqmckl.sh
 
 python-test: $(test_py)
-	cd python/test/ && \
+	cd $(srcdir)/python/test/ && \
 		python test_api.py
 
 CLEANFILES += $(pyqmckl_wrap_c) \
