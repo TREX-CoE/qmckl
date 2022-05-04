@@ -3,6 +3,7 @@
 setup.py file for qmckl package
 """
 
+import os, sys
 from setuptools import setup, Extension
 from os.path import join
 
@@ -11,19 +12,36 @@ from os.path import join
 with open("README.md", "r") as fh:
     long_description = fh.read()
 
+# this was recommended to solve the problem of the missing numpy header files
+try:
+    import numpy
+except ImportError:
+    raise Exception("numpy Python package cannot be imported.")
+
+numpy_includedir = numpy.get_include()
+
 # Define the name of the Python package
 MODULE_NAME = "qmckl"
 
+# derive the QMCkl libdir and includedir
+QMCKL_LIBDIR     = os.environ.get("QMCKL_LIBDIR", None)
+QMCKL_INCLUDEDIR = os.environ.get("QMCKL_INCLUDEDIR", None)
+
+libdir_undefined     = QMCKL_LIBDIR is None or QMCKL_LIBDIR==""
+includedir_undefined = QMCKL_INCLUDEDIR is None or QMCKL_INCLUDEDIR==""
+
+
 # Define qmckl extension module based on SWIG interface file (requires qmckl.h)
-qmckl_module =  Extension(name               = "._" + MODULE_NAME,
-                            sources            = [ join("src", MODULE_NAME + "_wrap.c") ],
-                            #include_dirs       = [numpy_includedir],
-                            #library_dirs       = [],
-                            libraries          = ["qmckl"],
-                            extra_compile_args = ["-Wall"],
-                            #extra_link_args    = [h5_ldflags],
-                            depends            = [ join("src", "qmckl.h") ],
-                            language           = "c"
+qmckl_module   =  Extension(name                 = "._" + MODULE_NAME,
+                            sources              = [ join("src", MODULE_NAME + "_wrap.c") ],
+                            include_dirs         = [numpy_includedir, QMCKL_INCLUDEDIR],
+                            #library_dirs         = [QMCKL_LIBDIR],
+                            runtime_library_dirs = [QMCKL_LIBDIR],
+                            libraries            = ["qmckl"],
+                            extra_compile_args   = ["-Wall"],
+                            extra_link_args      = ["-L" + QMCKL_LIBDIR],
+                            depends              = [ join("src", "qmckl.h") ],
+                            language             = "c"
                             )
 
 

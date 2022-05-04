@@ -196,6 +196,8 @@ python-install: $(qmckl_h) $(qmckl_i) $(setup_py) $(qmckl_py) $(qmckl_wrap_c)
 	[[ ! -f  pyproject.toml ]] && \
 	    cp $(abs_srcdir)/python/{pyproject.toml,requirements.txt,README.md,setup.py} . ; \
 	cp src/qmckl.py . ; \
+	export QMCKL_INCLUDEDIR="$(prefix)/include" ; \
+	export QMCKL_LIBDIR="$(prefix)/lib" ; \
 	pip install .
 
 python-test: $(test_py)
