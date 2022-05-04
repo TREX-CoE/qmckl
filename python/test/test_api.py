@@ -18,33 +18,32 @@ ITERMAX = 10
 
 ctx = pq.qmckl_context_create()
 
+try:
+    pq.qmckl_trexio_read(ctx, 'fake.h5')
+except RuntimeError:
+    print('Error handling check: passed')
+
 fname = join('data', 'Alz_small.h5')
 
-rc = pq.qmckl_trexio_read(ctx, fname)
-assert rc==pq.QMCKL_SUCCESS
-print(pq.qmckl_string_of_error(rc))
+pq.qmckl_trexio_read(ctx, fname)
+print('trexio_read: passed')
 
-rc = pq.qmckl_set_electron_walk_num(ctx, walk_num)
-assert rc==pq.QMCKL_SUCCESS
+pq.qmckl_set_electron_walk_num(ctx, walk_num)
 
-rc, mo_num = pq.qmckl_get_mo_basis_mo_num(ctx)
-assert rc==pq.QMCKL_SUCCESS
+mo_num = pq.qmckl_get_mo_basis_mo_num(ctx)
+assert mo_num == 404
 
-rc = pq.qmckl_set_electron_coord(ctx, 'T', coord)
-assert rc==pq.QMCKL_SUCCESS
+pq.qmckl_set_electron_coord(ctx, 'T', coord)
 
 size_max = 5*walk_num*elec_num*mo_num
 
-
-
-rc, mo_vgl = pq.qmckl_get_mo_basis_mo_vgl(ctx, size_max)
-assert rc==pq.QMCKL_SUCCESS
+mo_vgl = pq.qmckl_get_mo_basis_mo_vgl(ctx, size_max)
+assert mo_vgl.size == size_max
 
 start = time.clock_gettime_ns(time.CLOCK_REALTIME)
 
 for _ in range(ITERMAX):
-    rc, mo_vgl_in = pq.qmckl_get_mo_basis_mo_vgl_inplace(ctx, size_max)
-    assert rc==pq.QMCKL_SUCCESS
+    mo_vgl_in = pq.qmckl_get_mo_basis_mo_vgl_inplace(ctx, size_max)
 
 end = time.clock_gettime_ns(time.CLOCK_REALTIME)
 

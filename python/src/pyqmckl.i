@@ -45,21 +45,34 @@ import_array();
 
 /* exception.i is a generic (language-independent) module */
 %include "exception.i"
-/* Error handling 
+
+/* Error handling */
+%typemap(out) qmckl_exit_code %{
+    if ($1 != QMCKL_SUCCESS) {
+        SWIG_exception(SWIG_RuntimeError, qmckl_string_of_error($1));
+    }
+    $result = Py_None;
+    Py_INCREF(Py_None); /* Py_None is a singleton so increment its reference if used. */
+%}
+
+/* More swig-y solution (e.g. compatible beyond Python) BUT it does not consume the qmckl_exit_code output as the solution above 
 TODO: the sizeof() check below if a dummy workaround
 It is good to skip exception raise for functions like context_create and others, but might fail
 if sizeof(result) == sizeof(qmckl_exit_code), e.g. for functions that return non-zero integers or floats
 */
+/*
 %exception {
   $action
   if (result != QMCKL_SUCCESS && sizeof(result) == sizeof(qmckl_exit_code)) {
     SWIG_exception_fail(SWIG_RuntimeError, qmckl_string_of_error(result));
   }
 }
-
+*/
 /* The exception handling above does not work for void functions like lock/unlock so exclude them for now */
+/*
 %ignore qmckl_lock;
 %ignore qmckl_unlock;
+*/
 
 /* Parse the header files to generate wrappers */
 %include "qmckl.h"
