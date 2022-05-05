@@ -35,6 +35,9 @@ assert mo_num == 404
 
 pq.set_electron_coord(ctx, 'T', coord)
 
+ao_type = pq.get_ao_basis_type(ctx)
+assert 'G' in ao_type
+
 size_max = 5*walk_num*elec_num*mo_num
 
 mo_vgl = pq.get_mo_basis_mo_vgl(ctx, size_max)
