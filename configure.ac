@@ -330,6 +330,26 @@ AS_IF([test "$HAVE_CUBLAS_OFFLOAD" = "yes"], [
   esac
 ])
 
+AC_ARG_ENABLE(malloc-trace, [AS_HELP_STRING([--enable-malloc-trace],[use debug malloc/free])], ok=$enableval, ok=no)
+if test "$ok" = "yes"; then
+	AC_DEFINE(MALLOC_TRACE,"malloc_trace.dat",[Define to use debugging malloc/free])
+        ARGS="${ARGS} malloc-trace"
+fi
+
+AC_ARG_ENABLE(prof, [AS_HELP_STRING([--enable-prof],[compile for profiling])], ok=$enableval, ok=no)
+if test "$ok" = "yes"; then
+	CFLAGS="${CFLAGS} -pg"
+	AC_DEFINE(ENABLE_PROF,1,[Define when using the profiler tool])
+        ARGS="${ARGS} prof"
+fi
+
+AC_ARG_WITH(efence, [AS_HELP_STRING([--with-efence],[use ElectricFence library])], ok=$withval, ok=no)
+if test "$ok" = "yes"; then
+	AC_CHECK_LIB([efence], [malloc])
+        ARGS="${ARGS} efence"
+fi
+
+
 
 ##
 
@@ -355,26 +375,6 @@ if test "$ok" = "yes"; then
 	AC_DEFINE(DEBUG,1,[Define to turn on debugging checks])
         ARGS="${ARGS} debug"
 fi
-
-AC_ARG_ENABLE(malloc-trace, [AS_HELP_STRING([--enable-malloc-trace],[use debug malloc/free])], ok=$enableval, ok=no)
-if test "$ok" = "yes"; then
-	AC_DEFINE(MALLOC_TRACE,"malloc_trace.dat",[Define to use debugging malloc/free])
-        ARGS="${ARGS} malloc-trace"
-fi
-
-AC_ARG_ENABLE(prof, [AS_HELP_STRING([--enable-prof],[compile for profiling])], ok=$enableval, ok=no)
-if test "$ok" = "yes"; then
-	CFLAGS="${CFLAGS} -pg"
-	AC_DEFINE(ENABLE_PROF,1,[Define when using the profiler tool])
-        ARGS="${ARGS} prof"
-fi
-
-AC_ARG_WITH(efence, [AS_HELP_STRING([--with-efence],[use ElectricFence library])], ok=$withval, ok=no)
-if test "$ok" = "yes"; then
-	AC_CHECK_LIB(efence, malloc)
-        ARGS="${ARGS} efence"
-fi
-
 
 # Checks for header files.
 

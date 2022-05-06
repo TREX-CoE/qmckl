@@ -256,10 +256,8 @@ bool qmckl_mo_basis_provided(const qmckl_context context) {
 
    #+end_src
 
-   
 *** Fortran interfaces
 
-    #+begin_src f90 :tangle (eval fh_func) :comments org                         
 interface
   integer(c_int32_t) function qmckl_get_mo_basis_mo_num (context, &
        mo_num) bind(C)
@@ -396,7 +394,7 @@ qmckl_exit_code qmckl_finalize_mo_basis(qmckl_context context) {
   }
 
   assert (ctx->mo_basis.coefficient != NULL);
-  
+
   if (ctx->mo_basis.coefficient_t != NULL) {
     qmckl_exit_code rc = qmckl_free(context, ctx->mo_basis.coefficient);
     if (rc != QMCKL_SUCCESS) {
@@ -473,7 +471,7 @@ qmckl_get_mo_basis_mo_vgl(qmckl_context context,
        use, intrinsic :: iso_c_binding
        import
        implicit none
-       
+
        integer (c_int64_t) , intent(in)  , value :: context
        double precision,     intent(out)         :: mo_vgl(*)
        integer (c_int64_t) , intent(in)  , value :: size_max
@@ -647,8 +645,8 @@ qmckl_exit_code qmckl_provide_mo_vgl(qmckl_context context)
     matrix multiplication instead of a dgemm, as exposed in
     https://dx.doi.org/10.1007/978-3-642-38718-0_14.
 
-    
-    
+
+
     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
 integer function qmckl_compute_mo_basis_mo_vgl_doc_f(context, &
      ao_num, mo_num, point_num, &
@@ -665,26 +663,41 @@ integer function qmckl_compute_mo_basis_mo_vgl_doc_f(context, &
   integer*8 :: i,j,k
   double precision :: c1, c2, c3, c4, c5
 
-  do j=1,point_num
-     mo_vgl(:,:,j) = 0.d0
-     do k=1,ao_num
-        if (ao_vgl(k,1,j) /= 0.d0) then
-           c1 = ao_vgl(k,1,j)
-           c2 = ao_vgl(k,2,j)
-           c3 = ao_vgl(k,3,j)
-           c4 = ao_vgl(k,4,j)
-           c5 = ao_vgl(k,5,j)
-           do i=1,mo_num
-              mo_vgl(i,1,j) = mo_vgl(i,1,j) + coef_normalized_t(i,k) * c1
-              mo_vgl(i,2,j) = mo_vgl(i,2,j) + coef_normalized_t(i,k) * c2
-              mo_vgl(i,3,j) = mo_vgl(i,3,j) + coef_normalized_t(i,k) * c3
-              mo_vgl(i,4,j) = mo_vgl(i,4,j) + coef_normalized_t(i,k) * c4
-              mo_vgl(i,5,j) = mo_vgl(i,5,j) + coef_normalized_t(i,k) * c5
-           end do
-        end if
-     end do
-  end do
+  integer*8 :: LDA, LDB, LDC
+
   info = QMCKL_SUCCESS
+  if (.True.)  then    ! fast algorithm
+     do j=1,point_num
+        mo_vgl(:,:,j) = 0.d0
+        do k=1,ao_num
+           if (ao_vgl(k,1,j) /= 0.d0) then
+              c1 = ao_vgl(k,1,j)
+              c2 = ao_vgl(k,2,j)
+              c3 = ao_vgl(k,3,j)
+              c4 = ao_vgl(k,4,j)
+              c5 = ao_vgl(k,5,j)
+              do i=1,mo_num
+                 mo_vgl(i,1,j) = mo_vgl(i,1,j) + coef_normalized_t(i,k) * c1
+                 mo_vgl(i,2,j) = mo_vgl(i,2,j) + coef_normalized_t(i,k) * c2
+                 mo_vgl(i,3,j) = mo_vgl(i,3,j) + coef_normalized_t(i,k) * c3
+                 mo_vgl(i,4,j) = mo_vgl(i,4,j) + coef_normalized_t(i,k) * c4
+                 mo_vgl(i,5,j) = mo_vgl(i,5,j) + coef_normalized_t(i,k) * c5
+              end do
+           end if
+        end do
+     end do
+     
+  else ! dgemm
+
+    LDA = size(coef_normalized_t,1)
+    LDB = size(ao_vgl,1) 
+    LDC = size(mo_vgl,1)
+
+    info = qmckl_dgemm(context,'N', 'N', mo_num, point_num*5_8, ao_num*1_8, 1.d0,     &
+                                    coef_normalized_t, LDA, ao_vgl, LDB, &
+                                    0.d0, mo_vgl, LDC)
+
+  end if
 
 end function qmckl_compute_mo_basis_mo_vgl_doc_f
     #+end_src
@@ -700,7 +713,7 @@ end function qmckl_compute_mo_basis_mo_vgl_doc_f
          const int64_t point_num,
          const double* coef_normalized_t,
          const double* ao_vgl,
-         double* const mo_vgl ); 
+         double* const mo_vgl );
    #+end_src
 
    #+CALL: generate_c_header(table=qmckl_mo_basis_mo_vgl_args,rettyp=get_value("CRetType"),fname="qmckl_compute_mo_basis_mo_vgl_doc"))
@@ -714,11 +727,11 @@ end function qmckl_compute_mo_basis_mo_vgl_doc_f
          const int64_t point_num,
          const double* coef_normalized_t,
          const double* ao_vgl,
-         double* const mo_vgl ); 
+         double* const mo_vgl );
    #+end_src
 
    #+CALL: generate_c_interface(table=qmckl_mo_basis_mo_vgl_args,rettyp=get_value("CRetType"),fname="qmckl_compute_mo_basis_mo_vgl_doc"))
-   
+
     #+RESULTS:
     #+begin_src f90 :tangle (eval f) :comments org :exports none
     integer(c_int32_t) function qmckl_compute_mo_basis_mo_vgl_doc &
@@ -743,7 +756,7 @@ end function qmckl_compute_mo_basis_mo_vgl_doc_f
     end function qmckl_compute_mo_basis_mo_vgl_doc
     #+end_src
 
-    #+begin_src c :tangle (eval c) :comments org                                                                             
+    #+begin_src c :tangle (eval c) :comments org
 qmckl_exit_code
 qmckl_compute_mo_basis_mo_vgl (const qmckl_context context,
                             const int64_t ao_num,
@@ -760,12 +773,12 @@ qmckl_compute_mo_basis_mo_vgl (const qmckl_context context,
 #endif
 }
     #+end_src
-    
-    
-*** HPC version
-    
 
-    #+begin_src c :tangle (eval h_func) :comments org                                                                             
+
+*** HPC version
+
+
+    #+begin_src c :tangle (eval h_func) :comments org
 #ifdef HAVE_HPC
 qmckl_exit_code
 qmckl_compute_mo_basis_mo_vgl_hpc (const qmckl_context context,
@@ -778,7 +791,7 @@ qmckl_compute_mo_basis_mo_vgl_hpc (const qmckl_context context,
 #endif
     #+end_src
 
-    #+begin_src c :tangle (eval c) :comments org                                                                             
+    #+begin_src c :tangle (eval c) :comments org
 #ifdef HAVE_HPC
 qmckl_exit_code
 qmckl_compute_mo_basis_mo_vgl_hpc (const qmckl_context context,
@@ -789,16 +802,19 @@ qmckl_compute_mo_basis_mo_vgl_hpc (const qmckl_context context,
                                    const double* restrict ao_vgl,
                                    double* restrict const mo_vgl )
 {
+  assert (context != QMCKL_NULL_CONTEXT);
+
 #ifdef HAVE_OPENMP
   #pragma omp parallel for
 #endif
   for (int64_t ipoint=0 ; ipoint < point_num ; ++ipoint) {
     double* restrict const vgl1 = &(mo_vgl[ipoint*5*mo_num]);
-    const double* restrict avgl1 = &(ao_vgl[ipoint*5*ao_num]);
     double* restrict const vgl2 =  vgl1 + mo_num;
     double* restrict const vgl3 =  vgl1 + (mo_num << 1);
     double* restrict const vgl4 =  vgl1 + (mo_num << 1) + mo_num;
     double* restrict const vgl5 =  vgl1 + (mo_num << 2);
+
+    const double* restrict avgl1 = &(ao_vgl[ipoint*5*ao_num]);
     const double* restrict avgl2 = avgl1 + ao_num;
     const double* restrict avgl3 = avgl1 + (ao_num << 1);
     const double* restrict avgl4 = avgl1 + (ao_num << 1) + ao_num;
@@ -832,6 +848,7 @@ qmckl_compute_mo_basis_mo_vgl_hpc (const qmckl_context context,
     }
 
     int64_t n;
+
     for (n=0 ; n < nidx-4 ; n+=4) {
       const double* restrict ck1 = coef_normalized_t + idx[n  ]*mo_num;
       const double* restrict ck2 = coef_normalized_t + idx[n+1]*mo_num;
@@ -842,22 +859,22 @@ qmckl_compute_mo_basis_mo_vgl_hpc (const qmckl_context context,
       const double a21 = av1[n+1];
       const double a31 = av1[n+2];
       const double a41 = av1[n+3];
-      
+
       const double a12 = av2[n  ];
       const double a22 = av2[n+1];
       const double a32 = av2[n+2];
       const double a42 = av2[n+3];
-      
+
       const double a13 = av3[n  ];
       const double a23 = av3[n+1];
       const double a33 = av3[n+2];
       const double a43 = av3[n+3];
-      
+
       const double a14 = av4[n  ];
       const double a24 = av4[n+1];
       const double a34 = av4[n+2];
       const double a44 = av4[n+3];
-      
+
       const double a15 = av5[n  ];
       const double a25 = av5[n+1];
       const double a35 = av5[n+2];
@@ -875,8 +892,7 @@ qmckl_compute_mo_basis_mo_vgl_hpc (const qmckl_context context,
       }
     }
 
-    int64_t n0 = nidx-4;
-    n0 = n0 < 0 ? 0 : n0;
+    const int64_t n0 = n < 0 ? 0 : n;
     for (int64_t m=n0 ; m < nidx ; m+=1) {
       const double* restrict ck = coef_normalized_t + idx[m]*mo_num;
       const double a1 = av1[m];
