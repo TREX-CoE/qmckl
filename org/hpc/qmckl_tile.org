@@ -22,6 +22,18 @@ while also exploiting part of the sparse structure of the matrices.
              │ T_31 │ T_32 │ T_33 │
              │      │      │      │
              └──────┴──────┴──────┘
+
+  In addition to the tiled matrix format, there is also the packed
+  matrix format. In the packed version, each Tile can be further
+  subdevided into panes. The microkernel operates on individual panes.
+
+  
+   Pane
+    │        ┌───┬───┬───┐
+    │        │ 1 │ 4 │ 7 │
+    └───────►│ 2 │ 5 │ 8 │
+             │ 3 │ 6 │ 9 │
+             └───┴───┴───┘
            
   In this file, tiled matrice will be produced for the following
   types:
@@ -153,7 +165,7 @@ qmckl_exit_code $T$_tiled_matrix_init (qmckl_context context,
 qmckl_exit_code $T$_tiled_matrix_init (qmckl_context context,
                                        $T$_tiled_matrix* m,
                                        size_t n_tile_row,
-                                       size_t n_tile_col) {
+                                       size_t n_tile_col) { 
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return QMCKL_INVALID_CONTEXT;
@@ -227,6 +239,153 @@ qmckl_exit_code $T$_tiled_matrix_init (qmckl_context context,
   
 
   #+end_src
+
+** Packed matrix
+
+Packed matrix is a two dimensional matrix which has
+been ordered in a specific format in order to minimize
+cache miss for our specific microkernel.
+
+There are three types of packing formats corresponding
+to the three matrices entering the matrix-matrix product
+expression.
+
+\[
+C = A * B
+\]
+
+The three matrices A, B, and C are packed in the same function
+with different tile and pane dimensions.
+
+  #+NAME: matrix_hpt
+  #+begin_src c
+typedef struct $T$_packed_matrix {
+  double* data;
+  // Type of packing
+  char mType;
+  // Matrix dimension
+  size_t Mt;
+  size_t Nt;
+  // Tile dimension
+  size_t MCt;
+  size_t NCt;
+  // Pane dimension
+  size_t MRt;
+  size_t NRt;
+} $T$_packed_matrix;
+  #+end_src
+   
+  When a packed matrix is initialized, it is set to zero.
+
+  #+NAME: init_hpf
+  #+begin_src c
+qmckl_exit_code $T$_packed_matrix_init (qmckl_context context,
+                                       $T$_packed_matrix* m,
+                                       size_t n_tile_row,
+                                       size_t n_tile_col);
+  #+end_src
+
+  #+NAME: init_c
+  #+begin_src c
+qmckl_exit_code $T$_packed_matrix_init (qmckl_context context,
+                                       $T$_packed_matrix* m,
+                                       size_t n_tile_row,
+                                       size_t n_tile_col) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+} $T$_packed_matrix;
+  #+end_src
+   
+  When a tiled matrix is initialized, it is set to zero.
+
+  #+NAME: init_hpf
+  #+begin_src c
+qmckl_exit_code $T$_packed_matrix_init (qmckl_context context,
+                                       $T$_packed_matrix* m,
+                                       size_t n_tile_row,
+                                       size_t n_tile_col);
+  #+end_src
+
+  #+NAME: init_c
+  #+begin_src c
+qmckl_exit_code $T$_packed_matrix_init (qmckl_context context,
+                                       $T$_packed_matrix* m,
+                                       size_t n_tile_row,
+                                       size_t n_tile_col) { 
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_INVALID_CONTEXT;
+  }
+
+  if (m == NULL) {
+    return qmckl_failwith(context,
+                          QMCKL_INVALID_ARG_2,
+                          "$T$_packed_matrix_init",
+                          NULL);
+  }
+
+  if (n_tile_row == (size_t) 0) {
+    return qmckl_failwith(context,
+                          QMCKL_INVALID_ARG_3,
+                          "$T$_packed_matrix_init",
+                          NULL);
+  }
+
+  if (n_tile_col == (size_t) 0) {
+    return qmckl_failwith(context,
+                          QMCKL_INVALID_ARG_4,
+                          "$T$_packed_matrix_init",
+                          NULL);
+  }
+
+  qmckl_memory_info_struct info = qmckl_memory_info_struct_zero;
+  size_t n = n_tile_row * n_tile_col;
+
+  /* Check overflow */
+  if (n/n_tile_col != n_tile_row
+      || n > SIZE_MAX / sizeof($T$_tile_struct) ) {
+    return qmckl_failwith(context,
+                          QMCKL_ALLOCATION_FAILED,
+                          "$T$_packed_matrix_init",
+                          "n_tile_row * n_tile_col overflows" );
+  }
+  
+  /* Allocate array of column pointers */
+  info.size = n_tile_col * sizeof($T$_tile_struct*) ;
+  m->tile = ($T$_tile_struct**) qmckl_malloc(context, info);
+
+  if (m->tile == NULL) {
+    return qmckl_failwith(context,
+                          QMCKL_ALLOCATION_FAILED,
+                          "$T$_packed_matrix_init",
+                          NULL);
+  }
+  
+
+  /* Allocate array of tiles */
+  info.size = n * sizeof($T$_tile_struct) ;
+  m->tile[0] = ($T$_tile_struct*) qmckl_malloc(context, info);
+
+  if (m->tile[0] == NULL) {
+    return qmckl_failwith(context,
+                          QMCKL_ALLOCATION_FAILED,
+                          "$T$_packed_matrix_init",
+                          NULL);
+  }
+
+  /* Compute array of pointers to the 1st element of columns */
+  for (size_t i=1 ; i<n_tile_col ; ++i) {
+    m->tile[i] = m->tile[i-1] + n_tile_row;
+  }
+  
+  m->n_tile_row = n_tile_row;
+  m->n_tile_col = n_tile_col;
+  return QMCKL_SUCCESS;
+}
+  
+
+  #+end_src
+
 
 * Write templates
 
