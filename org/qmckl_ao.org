@@ -3034,7 +3034,7 @@ qmckl_get_ao_basis_ao_vgl_inplace (qmckl_context context,
                                    double* const ao_vgl,
                                    const int64_t size_max);
     #+end_src
-    
+
     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
 qmckl_exit_code
 qmckl_get_ao_basis_ao_vgl_inplace (qmckl_context context,
@@ -3093,7 +3093,7 @@ qmckl_get_ao_basis_ao_vgl_inplace (qmckl_context context,
     #+end_src
 
 
-    
+
     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
 qmckl_exit_code
 qmckl_get_ao_basis_ao_value (qmckl_context context,
@@ -3161,7 +3161,7 @@ qmckl_get_ao_basis_ao_value_inplace (qmckl_context context,
                                      double* const ao_value,
                                      const int64_t size_max);
     #+end_src
-    
+
     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
 qmckl_exit_code
 qmckl_get_ao_basis_ao_value_inplace (qmckl_context context,
@@ -6521,20 +6521,94 @@ qmckl_compute_ao_vgl_hpc_gaussian (
           exp_mat[iprim][4] = f * (3.0 - 2.0 * ar2[iprim]);
         }
 
+        
+/* --- */
         for (int i=0 ; i<nucleus_shell_num[inucl] ; ++i) {
-          for (int j=0 ; j<5 ; ++j) {
+#ifdef HAVE_OPENMP
+#pragma omp simd simdlen(8)
+#endif
+          for (int j=0 ; j<8 ; ++j) {
             ce_mat[i][j] = 0.;
           }
-        }
-        for (int k=0 ; k<nidx; ++k) {
-          for (int i=0 ; i<nucleus_shell_num[inucl] ; ++i) {
-            if (coef_mat[inucl][i][k] != 0.) {
-              for (int j=0 ; j<5 ; ++j) {
-                ce_mat[i][j] += coef_mat[inucl][i][k] * exp_mat[k][j];
-              }
+          for (int k=0 ; k<nidx; ++k) {
+#ifdef HAVE_OPENMP
+#pragma omp simd simdlen(8)
+#endif
+            for (int j=0 ; j<8 ; ++j) {
+              ce_mat[i][j] += coef_mat[inucl][i][k] * exp_mat[k][j];
             }
           }
+       }
+
+/*
+        for (int i=0 ; i<nucleus_shell_num[inucl] ; ++i) {
+// Following loop is the assembly version AVX2
+          __asm__ volatile (
+            "mov       %[k],%%RSI" "\n\t"     // &(nidx)
+            "mov       %[a],%%RAX" "\n\t"     // &(coef_mat[inucl][i][k])
+            "mov       %[b],%%RBX" "\n\t"     // &(exp_mat[k][0])
+            "mov       %[c],%%RCX" "\n\t"     // &(ce_mat[i][0])
+
+            "vxorpd       %%YMM0,%%YMM0,%%YMM0" "\n\t"   // ce_mat[i][:] = 0.
+            "vxorpd       %%YMM2,%%YMM2,%%YMM2" "\n\t"   // ce_mat[i][:] = 0.
+
+            "test       %%RSI,%%RSI" "\n\t"
+            "je       .L" "K_LOOP" "%=" "\n\t"
+              ".L" "LOOP1" "%=" ":\n\t"
+
+              "vbroadcastsd       0*8(%%RAX),%%YMM1" "\n\t"
+              "vfmadd231pd       0*8(%%RBX),%%YMM1,%%YMM0" "\n\t"
+              "vfmadd231pd       4*8(%%RBX),%%YMM1,%%YMM2" "\n\t"
+              "lea       1*8(%%RAX),%%RAX" "\n\t"
+              "lea       8*8(%%RBX),%%RBX" "\n\t"
+
+              "dec       %%RSI" "\n\t"
+              "jne       .L" "LOOP1" "%=" "\n\t"
+            ".L" "K_LOOP" "%=" ":\n\t"
+            "vmovupd       %%YMM0,0*8(%%RCX)" "\n\t"
+            "vmovupd       %%YMM2,4*8(%%RCX)" "\n\t"
+
+          : :
+          [k] "m"(nidx),
+          [c] "m"(&(ce_mat[i][0])),
+          [a] "m"(&(coef_mat[inucl][i][0])),
+          [b] "m"(&(exp_mat[0][0]))
+          : "rax", "rbx", "rcx", "rsi",
+            "ymm0", "ymm1", "ymm2", "memory" );
+
         }
+      }
+,*/
+
+/*
+// Following loop is the assembly version AVX512
+        for (int i=0 ; i<nucleus_shell_num[inucl] ; ++i) {
+          __asm__ volatile (
+            "mov       %[k],%%RSI" "\n\t"     // &(nidx)
+            "mov       %[a],%%RAX" "\n\t"     // &(coef_mat[inucl][i][k])
+            "mov       %[b],%%RBX" "\n\t"     // &(exp_mat[k][0])
+            "mov       %[c],%%RCX" "\n\t"     // &(ce_mat[i][0])
+
+            "vxorpd       %%ZMM0,%%ZMM0,%%ZMM0" "\n\t"   // ce_mat[i][:] = 0.
+
+            "test       %%RSI,%%RSI" "\n\t"
+            "je       .L" "K_LOOP" "%=" "\n\t"
+              ".L" "LOOP1" "%=" ":\n\t"
+
+              "vbroadcastsd       0*8(%%RAX),%%ZMM1" "\n\t"
+              "vfmadd231pd       0*8(%%RBX),%%ZMM1,%%ZMM0" "\n\t"
+              "lea       1*8(%%RAX),%%RAX" "\n\t"
+              "lea       8*8(%%RBX),%%RBX" "\n\t"
+
+              "dec       %%RSI" "\n\t"
+              "jne       .L" "LOOP1" "%=" "\n\t"
+            ".L" "K_LOOP" "%=" ":\n\t"
+            "vmovupd       %%ZMM0,0*8(%%RCX)" "\n\t"
+
+          : : [k] "m"(nidx), [c] "m"(&(ce_mat[i][0])), [a] "m"(&(coef_mat[inucl][i][0])), [b] "m"(&(exp_mat[0][0])) : "rax", "rbx", "rcx", "rsi", "zmm0", "zmm1", "memory" );
+
+        }
+,*/
 
         const int64_t ishell_start = nucleus_index[inucl];
         const int64_t ishell_end   = nucleus_index[inucl] + nucleus_shell_num[inucl];
@@ -6939,10 +7013,10 @@ def d2f(a,x,y,n):
     elif n == 2: h = np.array([0.,h0,0.])
     elif n == 3: h = np.array([0.,0.,h0])
     return ( fx(a,x+h,y) - 2.*fx(a,x,y) + fx(a,x-h,y) ) / h0**2
-#   return np.sum( [( (2.*b*(x-y)[n-1])**2 -2.*b ) * c * np.exp( -b*(np.linalg.norm(x-y))**2) for b,c in a] ) 
+#   return np.sum( [( (2.*b*(x-y)[n-1])**2 -2.*b ) * c * np.exp( -b*(np.linalg.norm(x-y))**2) for b,c in a] )
 
 def lf(a,x,y):
-#   return np.sum( [( (2.*b*np.linalg.norm(x-y))**2 -6.*b ) * c * np.exp( -b*(np.linalg.norm(x-y))**2) for b,c in a] ) 
+#   return np.sum( [( (2.*b*np.linalg.norm(x-y))**2 -6.*b ) * c * np.exp( -b*(np.linalg.norm(x-y))**2) for b,c in a] )
     return d2f(a,x,y,1) + d2f(a,x,y,2) + d2f(a,x,y,3)
 
 
