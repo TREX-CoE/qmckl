@@ -65,6 +65,7 @@ AM_CPPFLAGS += -DQMCKL_TEST_DIR=\"$(QMCKL_TEST_DIR)\"
 
 lib_LTLIBRARIES = src/libqmckl.la
 src_libqmckl_la_SOURCES = $(qmckl_h) $(src_qmckl_f) $(C_FILES) $(F_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES)
+src_libqmckl_la_LDFLAGS = $(LDFLAGS)
 
 CLEANFILES+=$(test_qmckl_fo) $(src_qmckl_fo) $(test_qmckl_o) $(src_qmckl_o) $(FH_TYPE_FILES) $(FH_FUNC_FILES)
 
@@ -169,6 +170,44 @@ cppcheck.out: $(qmckl_h)
           --language=c --std=c99 -rp --platform=unix64  \
           -I$(srcdir)/include -I$(top_builddir)/include *.c *.h 2>../$@
 
-.PHONY: cppcheck
+setup_py          =  $(srcdir)/python/setup.py
+process_header_py =  $(srcdir)/python/src/process_header.py
+test_py           =  $(srcdir)/python/test/test_api.py
+qmckl_i           =  $(srcdir)/python/src/qmckl.i
+numpy_i           =  $(srcdir)/python/src/numpy.i
+qmckl_wrap_c    =  python/src/qmckl_wrap.c
+qmckl_include_i =  python/src/qmckl_include.i
+qmckl_py        =  python/qmckl/qmckl.py
+
+$(qmckl_include_i):  $(qmckl_h) $(process_header_py)
+	$(MKDIR_P) python/src
+	python $(process_header_py) $(qmckl_h)
+	mv qmckl_include.i $(qmckl_include_i)
+
+
+$(qmckl_py): $(qmckl_i) $(qmckl_include_i)
+	swig -Iinclude -Ipython/src -python -py3 -builtin -o $(qmckl_wrap_c) $(qmckl_i)
+
+$(qmckl_wrap_c): $(qmckl_py)
+
+python-install: $(qmckl_h) $(qmckl_i) $(setup_py) $(qmckl_py) $(qmckl_wrap_c)
+	$(MKDIR_P) python/src
+	cd python ; \
+	[[ ! -f  pyproject.toml ]] && \
+	    cp $(abs_srcdir)/python/{pyproject.toml,requirements.txt,README.md,setup.py} . ; \
+	cp src/qmckl.py . ; \
+	export QMCKL_INCLUDEDIR="$(prefix)/include" ; \
+	export QMCKL_LIBDIR="$(prefix)/lib" ; \
+	pip install .
+
+python-test: $(test_py)
+	cd $(abs_srcdir)/python/test/ && \
+		python test_api.py
+
+CLEANFILES += $(qmckl_wrap_c) \
+	      $(qmckl_include_i) \
+	      $(qmckl_py)
+
+.PHONY: cppcheck python-test python-install
 
 endif
