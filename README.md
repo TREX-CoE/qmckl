@@ -1,5 +1,7 @@
 # QMCkl: Quantum Monte Carlo Kernel Library
 
+<img src="https://trex-coe.eu/sites/default/files/styles/responsive_no_crop/public/2022-01/QMCkl%20code.png?itok=UvOUClA5" width=200>
+
 ![Build Status](https://github.com/TREX-CoE/qmckl/workflows/test-build/badge.svg?branch=master)
 
 The domain of quantum chemistry needs a library in which the main
