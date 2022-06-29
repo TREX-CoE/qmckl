@@ -111,6 +111,10 @@ int main() {
 #include "qmckl_memory_private_func.h"
 #include "qmckl_ao_private_type.h"
 #include "qmckl_ao_private_func.h"
+
+#ifdef HAVE_HPC
+#include <immintrin.h>
+#endif
   #+end_src
 
 * Context
@@ -6411,23 +6415,25 @@ qmckl_compute_ao_vgl_hpc_gaussian (
 #endif
   {
     qmckl_exit_code rc;
-    double ar2[prim_max];
-    int32_t powers[3*size_max];
-    double  poly_vgl_l1[4][4] = {{1.0, 0.0, 0.0, 0.0},
+    double ar2[prim_max]  __attribute__((aligned(64)));
+    int32_t powers[3*size_max]  __attribute__((aligned(64)));
+    double  poly_vgl_l1[4][4] __attribute__((aligned(64))) =
+                                {{1.0, 0.0, 0.0, 0.0},
                                  {0.0, 1.0, 0.0, 0.0},
                                  {0.0, 0.0, 1.0, 0.0},
                                  {0.0, 0.0, 0.0, 1.0}};
-    double  poly_vgl_l2[5][10] = {{1., 0., 0., 0., 0., 0., 0., 0., 0., 0.},
+    double  poly_vgl_l2[5][10]__attribute__((aligned(64))) =
+                                 {{1., 0., 0., 0., 0., 0., 0., 0., 0., 0.},
                                   {0., 1., 0., 0., 0., 0., 0., 0., 0., 0.},
                                   {0., 0., 1., 0., 0., 0., 0., 0., 0., 0.},
                                   {0., 0., 0., 1., 0., 0., 0., 0., 0., 0.},
                                   {0., 0., 0., 0., 2., 0., 0., 2., 0., 2.}};
-    double  poly_vgl[5][size_max];
+    double  poly_vgl[5][size_max]  __attribute__((aligned(64)));
 
-    double exp_mat[prim_max][8];
-    double ce_mat[shell_max][8];
+    double exp_mat[prim_max][8] __attribute__((aligned(64))) ;
+    double ce_mat[shell_max][8] __attribute__((aligned(64))) ;
 
-    double coef_mat[nucl_num][shell_max][prim_max];
+    double coef_mat[nucl_num][shell_max][prim_max]  __attribute__((aligned(64)));
     for (int i=0 ; i<nucl_num ; ++i) {
       for (int j=0 ; j<shell_max; ++j) {
         for (int k=0 ; k<prim_max; ++k) {
@@ -6440,14 +6446,16 @@ qmckl_compute_ao_vgl_hpc_gaussian (
 #pragma omp for
 #endif
     for (int64_t ipoint=0 ; ipoint < point_num ; ++ipoint) {
-      const double e_coord[3] = { coord[ipoint],
-                                  coord[ipoint + point_num],
-                                  coord[ipoint + 2*point_num] };
+      const double e_coord[3]  __attribute__((aligned(64))) =
+              { coord[ipoint],
+               coord[ipoint + point_num],
+               coord[ipoint + 2*point_num] };
 
       for (int64_t inucl=0 ; inucl < nucl_num ; ++inucl) {
-        const double n_coord[3] = { nucl_coord[inucl],
-                                    nucl_coord[inucl + nucl_num],
-                                    nucl_coord[inucl + 2*nucl_num] };
+        const double n_coord[3] __attribute__((aligned(64))) =
+              { nucl_coord[inucl],
+                nucl_coord[inucl + nucl_num],
+                nucl_coord[inucl + 2*nucl_num] };
 
         /* Test if the point is in the range of the nucleus */
         const double x = e_coord[0] - n_coord[0];
@@ -6527,114 +6535,90 @@ qmckl_compute_ao_vgl_hpc_gaussian (
         }
 
 
-/* --- */
-      switch (5) {
-      case(5):
+        /* --- */
+        switch (512) {
+        case(5):
 
-        for (int i=0 ; i<nucleus_shell_num[inucl] ; ++i) {
-          for (int j=0 ; j<5 ; ++j) {
-            ce_mat[i][j] = 0.;
-          }
-          for (int k=0 ; k<nidx; ++k) {
+          for (int i=0 ; i<nucleus_shell_num[inucl] ; ++i) {
             for (int j=0 ; j<5 ; ++j) {
-              ce_mat[i][j] += coef_mat[inucl][i][k] * exp_mat[k][j];
+              ce_mat[i][j] = 0.;
+            }
+            for (int k=0 ; k<nidx; ++k) {
+              const double cm = coef_mat[inucl][i][k];
+              for (int j=0 ; j<5 ; ++j) {
+                ce_mat[i][j] += cm * exp_mat[k][j];
+              }
             }
           }
-       }
+          break;
 
-       break;
-      case(8):
+        case(8):
 
-        for (int i=0 ; i<nucleus_shell_num[inucl] ; ++i) {
-#ifdef HAVE_OPENMP
-#pragma omp simd simdlen(8)
-#endif
-          for (int j=0 ; j<8 ; ++j) {
-            ce_mat[i][j] = 0.;
-          }
-          for (int k=0 ; k<nidx; ++k) {
+          for (int i=0 ; i<nucleus_shell_num[inucl] ; ++i) {
 #ifdef HAVE_OPENMP
 #pragma omp simd simdlen(8)
 #endif
             for (int j=0 ; j<8 ; ++j) {
-              ce_mat[i][j] += coef_mat[inucl][i][k] * exp_mat[k][j];
+              ce_mat[i][j] = 0.;
+            }
+            for (int k=0 ; k<nidx; ++k) {
+              const double cm = coef_mat[inucl][i][k];
+#ifdef HAVE_OPENMP
+#pragma omp simd simdlen(8)
+#endif
+              for (int j=0 ; j<8 ; ++j) {
+                ce_mat[i][j] += cm * exp_mat[k][j];
+              }
             }
           }
-       }
+          break;
 
-       break;
-/*
-       case(256):
+        case(512):
+          for(int i=0; i<nucleus_shell_num[inucl]; ++i){
+            __m512d cemat_avx512;
+            __m512d coefmat_avx512;
+            __m512d expmat_avx512;
 
-// Following loop is the assembly version AVX2
-        for (int i=0 ; i<nucleus_shell_num[inucl] ; ++i) {
-          __asm__ volatile (
-            "mov       %[k],%%RSI" "\n\t"     // &(nidx)
-            "mov       %[a],%%RAX" "\n\t"     // &(coef_mat[inucl][i][k])
-            "mov       %[b],%%RBX" "\n\t"     // &(exp_mat[k][0])
-            "mov       %[c],%%RCX" "\n\t"     // &(ce_mat[i][0])
+            // cemat_avx512 = _mm512_load_pd(&(ce_mat[i][0]));
+            cemat_avx512 = _mm512_xor_pd(cemat_avx512,cemat_avx512);
 
-            "vxorpd       %%YMM0,%%YMM0,%%YMM0" "\n\t"   // ce_mat[i][:] = 0.
-            "vxorpd       %%YMM2,%%YMM2,%%YMM2" "\n\t"   // ce_mat[i][:] = 0.
+            for(int k=0; k<nidx; ++k){
+              coefmat_avx512 = _mm512_set1_pd(coef_mat[inucl][i][k]);
+              expmat_avx512 = _mm512_load_pd(&(exp_mat[k][0]));
+              cemat_avx512 = _mm512_fmadd_pd(coefmat_avx512, expmat_avx512, cemat_avx512);
+            }
+            _mm512_store_pd(&(ce_mat[i][0]),cemat_avx512);
+          }
+          break;
 
-            "test       %%RSI,%%RSI" "\n\t"
-            "je       .L" "K_LOOP" "%=" "\n\t"
-              ".L" "LOOP1" "%=" ":\n\t"
+        case(256):
+          for(int i=0; i<nucleus_shell_num[inucl]; ++i){
+            __m256d cematlow_avx2;
+            __m256d cemathigh_avx2;
+            __m256d coefmat_avx2;
+            __m256d expmatlow_avx2;
+            __m256d expmathigh_avx2;
 
-              "vbroadcastsd       0*8(%%RAX),%%YMM1" "\n\t"
-              "vfmadd231pd       0*8(%%RBX),%%YMM1,%%YMM0" "\n\t"
-              "vfmadd231pd       4*8(%%RBX),%%YMM1,%%YMM2" "\n\t"
-              "lea       1*8(%%RAX),%%RAX" "\n\t"
-              "lea       8*8(%%RBX),%%RBX" "\n\t"
+            // cematlow_avx2 = _mm256_load_pd(&(ce_mat[i][0]));
+            // cemathigh_avx2 = _mm256_load_pd(&(ce_mat[i][4]));
 
-              "dec       %%RSI" "\n\t"
-              "jne       .L" "LOOP1" "%=" "\n\t"
-            ".L" "K_LOOP" "%=" ":\n\t"
-            "vmovupd       %%YMM0,0*8(%%RCX)" "\n\t"
-            "vmovupd       %%YMM2,4*8(%%RCX)" "\n\t"
+            cematlow_avx2 = _mm256_xor_pd(cematlow_avx2,cematlow_avx2);
+            cemathigh_avx2 = _mm256_xor_pd(cemathigh_avx2,cemathigh_avx2);
 
-          : :
-          [k] "m"(nidx),
-          [c] "m"(&(ce_mat[i][0])),
-          [a] "m"(&(coef_mat[inucl][i][0])),
-          [b] "m"(&(exp_mat[0][0]))
-          : "rax", "rbx", "rcx", "rsi",
-            "ymm0", "ymm1", "ymm2", "memory" );
+            for(int k=0; k<nidx; ++k){
+              coefmat_avx2 = _mm256_set1_pd(coef_mat[inucl][i][k]);
 
+              expmatlow_avx2 = _mm256_load_pd(&(exp_mat[k][0]));
+              expmathigh_avx2 = _mm256_load_pd(&(exp_mat[k][4]));
+
+              cematlow_avx2 = _mm256_fmadd_pd(coefmat_avx2, expmatlow_avx2, cematlow_avx2);
+              cemathigh_avx2 = _mm256_fmadd_pd(coefmat_avx2, expmathigh_avx2, cemathigh_avx2);
+
+            }
+            _mm256_store_pd(&ce_mat[i][0],cematlow_avx2);
+            _mm256_store_pd(&ce_mat[i][4],cemathigh_avx2);
+          }
         }
-
-       break;
-       case(512):
-
-// Following loop is the assembly version AVX512
-        for (int i=0 ; i<nucleus_shell_num[inucl] ; ++i) {
-          __asm__ volatile (
-            "mov       %[k],%%RSI" "\n\t"     // &(nidx)
-            "mov       %[a],%%RAX" "\n\t"     // &(coef_mat[inucl][i][k])
-            "mov       %[b],%%RBX" "\n\t"     // &(exp_mat[k][0])
-            "mov       %[c],%%RCX" "\n\t"     // &(ce_mat[i][0])
-
-            "vxorpd       %%ZMM0,%%ZMM0,%%ZMM0" "\n\t"   // ce_mat[i][:] = 0.
-
-            "test       %%RSI,%%RSI" "\n\t"
-            "je       .L" "K_LOOP" "%=" "\n\t"
-              ".L" "LOOP1" "%=" ":\n\t"
-
-              "vbroadcastsd       0*8(%%RAX),%%ZMM1" "\n\t"
-              "vfmadd231pd       0*8(%%RBX),%%ZMM1,%%ZMM0" "\n\t"
-              "lea       1*8(%%RAX),%%RAX" "\n\t"
-              "lea       8*8(%%RBX),%%RBX" "\n\t"
-
-              "dec       %%RSI" "\n\t"
-              "jne       .L" "LOOP1" "%=" "\n\t"
-            ".L" "K_LOOP" "%=" ":\n\t"
-            "vmovupd       %%ZMM0,0*8(%%RCX)" "\n\t"
-
-          : : [k] "m"(nidx), [c] "m"(&(ce_mat[i][0])), [a] "m"(&(coef_mat[inucl][i][0])), [b] "m"(&(exp_mat[0][0])) : "rax", "rbx", "rcx", "rsi", "zmm0", "zmm1", "memory" );
-
-        }
-*/
-       }
 
         const int64_t ishell_start = nucleus_index[inucl];
         const int64_t ishell_end   = nucleus_index[inucl] + nucleus_shell_num[inucl];
