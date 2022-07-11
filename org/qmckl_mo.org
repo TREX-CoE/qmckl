@@ -92,10 +92,12 @@ int main() {
 
   Computed data:
 
-  |---------------+--------------------------+-------------------------------------------------------------------------------------|
-  | ~mo_vgl~      | ~[point_num][5][mo_num]~ | Value, gradients, Laplacian of the MOs at point positions                           |
-  | ~mo_vgl_date~ | ~uint64_t~               | Late modification date of Value, gradients, Laplacian of the MOs at point positions |
-  |---------------+--------------------------+-------------------------------------------------------------------------------------|
+  |-----------------+--------------------------+-------------------------------------------------------------------------------------|
+  | ~mo_value~      | ~[point_num][mo_num]~    | Value of the MOs at point positions                                                 |
+  | ~mo_value_date~ | ~uint64_t~               | Late modification date of the value of the MOs at point positions                   |
+  | ~mo_vgl~        | ~[point_num][5][mo_num]~ | Value, gradients, Laplacian of the MOs at point positions                           |
+  | ~mo_vgl_date~   | ~uint64_t~               | Late modification date of Value, gradients, Laplacian of the MOs at point positions |
+  |-----------------+--------------------------+-------------------------------------------------------------------------------------|
 
 ** Data structure
 
@@ -106,7 +108,9 @@ typedef struct qmckl_mo_basis_struct {
   double * restrict coefficient_t;
 
   double * restrict mo_vgl;
+  double * restrict mo_value;
   uint64_t  mo_vgl_date;
+  uint64_t  mo_value_date;
 
   int32_t   uninitialized;
   bool      provided;
@@ -131,7 +135,7 @@ qmckl_exit_code qmckl_init_mo_basis(qmckl_context context) {
     return false;
   }
 
-  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
   ctx->mo_basis.uninitialized = (1 << 2) - 1;
@@ -158,10 +162,9 @@ qmckl_get_mo_basis_mo_num (const qmckl_context context,
                            QMCKL_INVALID_CONTEXT,
                            "qmckl_get_mo_basis_mo_num",
                            NULL);
-   return (int64_t) 0;
   }
 
-  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
   int32_t mask = 1;
@@ -200,7 +203,7 @@ qmckl_get_mo_basis_coefficient (const qmckl_context context,
                            NULL);
   }
 
-  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
   int32_t mask = 1 << 1;
@@ -248,7 +251,7 @@ bool qmckl_mo_basis_provided(const qmckl_context context) {
     return false;
   }
 
-  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
   return ctx->mo_basis.provided;
@@ -257,10 +260,9 @@ bool qmckl_mo_basis_provided(const qmckl_context context) {
 
    #+end_src
 
-
 *** Fortran interfaces
 
-    #+begin_src f90 :tangle (eval fh_func) :comments org
+   #+begin_src f90 :tangle (eval fh_func) :comments org :exports none
 interface
   integer(c_int32_t) function qmckl_get_mo_basis_mo_num (context, &
        mo_num) bind(C)
@@ -280,7 +282,7 @@ interface
     implicit none
     integer (c_int64_t) , intent(in)  , value :: context
     double precision, intent(out)             :: coefficient(*)
-    integer (c_int64_t) , intent(in)  , value :: size_max
+    integer (c_int64_t) , intent(in), value   :: size_max
   end function qmckl_get_mo_basis_coefficient
 end interface
 
@@ -302,7 +304,14 @@ if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
   return QMCKL_NULL_CONTEXT;
  }
 
-qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+
+if (mask != 0 && !(ctx->mo_basis.uninitialized & mask)) {
+    return qmckl_failwith( context,
+                           QMCKL_ALREADY_SET,
+                           "qmckl_set_mo_*",
+                           NULL);
+ }
    #+end_src
 
    #+NAME:post
@@ -318,6 +327,9 @@ return QMCKL_SUCCESS;
 
    #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
 qmckl_exit_code qmckl_set_mo_basis_mo_num(qmckl_context context, const int64_t mo_num) {
+
+  int32_t mask = 1 ;
+
   <<pre>>
 
   if (mo_num <= 0) {
@@ -327,16 +339,16 @@ qmckl_exit_code qmckl_set_mo_basis_mo_num(qmckl_context context, const int64_t m
                            "mo_num <= 0");
   }
 
-  int32_t mask = 1 ;
   ctx->mo_basis.mo_num = mo_num;
 
   <<post>>
 }
 
 qmckl_exit_code  qmckl_set_mo_basis_coefficient(qmckl_context context, const double* coefficient) {
-  <<pre>>
-
+  
   int32_t mask = 1 << 1;
+
+  <<pre>>
 
   if (ctx->mo_basis.coefficient != NULL) {
     qmckl_exit_code rc = qmckl_free(context, ctx->mo_basis.coefficient);
@@ -383,7 +395,7 @@ qmckl_exit_code qmckl_finalize_mo_basis(qmckl_context context) {
                            NULL);
   }
 
-  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
   qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
@@ -421,7 +433,464 @@ qmckl_exit_code qmckl_finalize_mo_basis(qmckl_context context) {
 
 * Computation
 
-** Computation of MOs
+** Computation of MOs: values only
+
+*** Get
+
+    #+begin_src c :comments org :tangle (eval h_func) :noweb yes
+qmckl_exit_code
+qmckl_get_mo_basis_mo_value(qmckl_context context,
+                            double* const mo_value,
+                            const int64_t size_max);
+    #+end_src
+
+    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code
+qmckl_get_mo_basis_mo_value(qmckl_context context,
+                            double* const mo_value,
+                            const int64_t size_max)
+{
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_exit_code rc;
+
+  rc = qmckl_provide_ao_basis_ao_value(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_mo_value(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  const int64_t sze = ctx->point.num * ctx->mo_basis.mo_num;
+  if (size_max < sze) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_3,
+                           "qmckl_get_mo_basis_mo_value",
+                           "input array too small");
+  }
+  memcpy(mo_value, ctx->mo_basis.mo_value, sze * sizeof(double));
+
+  return QMCKL_SUCCESS;
+}
+    #+end_src
+
+    #+begin_src f90 :tangle (eval fh_func) :comments org :exports none
+  interface
+     integer(c_int32_t) function qmckl_get_mo_basis_mo_value (context, &
+          mo_value, size_max) bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       implicit none
+
+       integer (c_int64_t) , intent(in)  , value :: context
+       double precision,     intent(out)         :: mo_value(*)
+       integer (c_int64_t) , intent(in)  , value :: size_max
+     end function qmckl_get_mo_basis_mo_value
+  end interface
+    #+end_src
+
+    Uses the given array to compute the values.
+
+    #+begin_src c :comments org :tangle (eval h_func) :noweb yes
+qmckl_exit_code
+qmckl_get_mo_basis_mo_value_inplace (qmckl_context context,
+                                     double* const mo_value,
+                                     const int64_t size_max);
+    #+end_src
+
+    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code
+qmckl_get_mo_basis_mo_value_inplace (qmckl_context context,
+                                     double* const mo_value,
+                                     const int64_t size_max)
+{
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_get_mo_basis_mo_value",
+                           NULL);
+  }
+
+  qmckl_exit_code rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  const int64_t sze = ctx->mo_basis.mo_num * ctx->point.num;
+  if (size_max < sze) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_3,
+                           "qmckl_get_mo_basis_mo_value",
+                           "input array too small");
+  }
+
+  rc = qmckl_context_touch(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  double* old_array = ctx->mo_basis.mo_value;
+
+  ctx->mo_basis.mo_value = mo_value;
+
+  rc = qmckl_provide_mo_value(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  ctx->mo_basis.mo_value = old_array;
+
+  return QMCKL_SUCCESS;
+}
+    #+end_src
+
+    #+begin_src f90 :tangle (eval fh_func) :comments org :exports none
+  interface
+     integer(c_int32_t) function qmckl_get_mo_basis_mo_value_inplace (context, &
+          mo_value, size_max) bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       implicit none
+       integer (c_int64_t) , intent(in)  , value :: context
+       double precision,     intent(out)         :: mo_value(*)
+       integer (c_int64_t) , intent(in)  , value :: size_max
+     end function qmckl_get_mo_basis_mo_value_inplace
+  end interface
+    #+end_src
+
+*** Provide
+
+    #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_provide_mo_value(qmckl_context context);
+    #+end_src
+
+    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code qmckl_provide_mo_value(qmckl_context context)
+{
+
+  qmckl_exit_code rc;
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  if (!ctx->ao_basis.provided) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_ao_basis",
+                           NULL);
+  }
+
+  rc = qmckl_provide_ao_basis_ao_value(context);
+  if (rc != QMCKL_SUCCESS) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_ao_value",
+                           NULL);
+  }
+
+  if (!ctx->mo_basis.provided) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_mo_basis",
+                           NULL);
+  }
+
+  /* Compute if necessary */
+  if (ctx->point.date > ctx->mo_basis.mo_value_date) {
+
+    /* Allocate array */
+    if (ctx->mo_basis.mo_value == NULL) {
+
+      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+      mem_info.size = ctx->point.num * ctx->mo_basis.mo_num * sizeof(double);
+      double* mo_value = (double*) qmckl_malloc(context, mem_info);
+
+      if (mo_value == NULL) {
+        return qmckl_failwith( context,
+                               QMCKL_ALLOCATION_FAILED,
+                               "qmckl_mo_basis_mo_value",
+                               NULL);
+      }
+      ctx->mo_basis.mo_value = mo_value;
+    }
+
+    if (ctx->mo_basis.mo_vgl_date == ctx->point.date) {
+
+      // mo_vgl has been computed at this step: Just copy the data.
+      
+      double * v = &(ctx->mo_basis.mo_value[0]);
+      double * vgl = &(ctx->mo_basis.mo_vgl[0]);
+      for (int i=0 ; i<ctx->point.num ; ++i) {
+        for (int k=0 ; k<ctx->mo_basis.mo_num ; ++k) {
+          v[k] = vgl[k];
+        }
+        v   += ctx->mo_basis.mo_num;
+        vgl += ctx->mo_basis.mo_num * 5;
+      }
+
+    } else {
+
+      rc = qmckl_compute_mo_basis_mo_value(context,
+                                           ctx->ao_basis.ao_num,
+                                           ctx->mo_basis.mo_num,
+                                           ctx->point.num,
+                                           ctx->mo_basis.coefficient_t,
+                                           ctx->ao_basis.ao_value,
+                                           ctx->mo_basis.mo_value);
+
+      if (rc != QMCKL_SUCCESS) {
+        return rc;
+      }
+
+    }
+
+    ctx->mo_basis.mo_value_date = ctx->date;
+  }
+
+  return QMCKL_SUCCESS;
+}
+    #+end_src
+
+*** Compute
+   :PROPERTIES:
+   :Name:     qmckl_compute_mo_basis_mo_value
+   :CRetType: qmckl_exit_code
+   :FRetType: qmckl_exit_code
+   :END:
+
+    #+NAME: qmckl_mo_basis_mo_value_args
+    | Variable        | Type                        | In/Out | Description                                     |
+    |-----------------+-----------------------------+--------+-------------------------------------------------|
+    | ~context~       | ~qmckl_context~             | in     | Global state                                    |
+    | ~ao_num~        | ~int64_t~                   | in     | Number of AOs                                   |
+    | ~mo_num~        | ~int64_t~                   | in     | Number of MOs                                   |
+    | ~point_num~     | ~int64_t~                   | in     | Number of points                                |
+    | ~coefficient_t~ | ~double[mo_num][ao_num]~    | in     | Transpose of the AO to MO transformation matrix |
+    | ~ao_value~      | ~double[point_num][ao_num]~ | in     | Value of the AOs                                |
+    | ~mo_value~      | ~double[point_num][mo_num]~ | out    | Value of the MOs                                |
+
+
+    The matrix of AO values is very sparse, so we use a sparse-dense
+    matrix multiplication instead of a dgemm, as exposed in
+    https://dx.doi.org/10.1007/978-3-642-38718-0_14.
+
+
+
+    #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+integer function qmckl_compute_mo_basis_mo_value_doc_f(context, &
+     ao_num, mo_num, point_num, &
+     coefficient_t, ao_value, mo_value) &
+     result(info)
+  use qmckl
+  implicit none
+  integer(qmckl_context), intent(in)  :: context
+  integer*8             , intent(in)  :: ao_num, mo_num
+  integer*8             , intent(in)  :: point_num
+  double precision      , intent(in)  :: ao_value(ao_num,point_num)
+  double precision      , intent(in)  :: coefficient_t(mo_num,ao_num)
+  double precision      , intent(out) :: mo_value(mo_num,point_num)
+  integer*8 :: i,j,k
+  double precision :: c1, c2, c3, c4, c5
+
+  integer*8 :: LDA, LDB, LDC
+
+  info = QMCKL_SUCCESS
+  if (.True.)  then    ! fast algorithm
+     do j=1,point_num
+        mo_value(:,j) = 0.d0
+        do k=1,ao_num
+           if (ao_value(k,j) /= 0.d0) then
+              c1 = ao_value(k,j)
+              do i=1,mo_num
+                 mo_value(i,j) = mo_value(i,j) + coefficient_t(i,k) * c1
+              end do
+           end if
+        end do
+     end do
+     
+  else ! dgemm
+
+    LDA = size(coefficient_t,1)
+    LDB = size(ao_value,1) 
+    LDC = size(mo_value,1)
+
+    info = qmckl_dgemm(context,'N', 'N', mo_num, point_num, ao_num, 1.d0,     &
+                                    coefficient_t, LDA, ao_value, LDB, &
+                                    0.d0, mo_value, LDC)
+
+  end if
+
+end function qmckl_compute_mo_basis_mo_value_doc_f
+    #+end_src
+
+    #+CALL: generate_c_header(table=qmckl_mo_basis_mo_value_args,rettyp=get_value("CRetType"),fname="qmckl_compute_mo_basis_mo_value"))
+
+   #+RESULTS:
+   #+begin_src c :tangle (eval h_func) :comments org
+   qmckl_exit_code qmckl_compute_mo_basis_mo_value (
+         const qmckl_context context,
+         const int64_t ao_num,
+         const int64_t mo_num,
+         const int64_t point_num,
+         const double* coefficient_t,
+         const double* ao_value,
+         double* const mo_value );
+   #+end_src
+
+   #+CALL: generate_c_header(table=qmckl_mo_basis_mo_value_args,rettyp=get_value("CRetType"),fname="qmckl_compute_mo_basis_mo_value_doc"))
+
+   #+RESULTS:
+   #+begin_src c :tangle (eval h_func) :comments org
+   qmckl_exit_code qmckl_compute_mo_basis_mo_value_doc (
+         const qmckl_context context,
+         const int64_t ao_num,
+         const int64_t mo_num,
+         const int64_t point_num,
+         const double* coefficient_t,
+         const double* ao_value,
+         double* const mo_value );
+   #+end_src
+
+   #+CALL: generate_c_interface(table=qmckl_mo_basis_mo_value_args,rettyp=get_value("CRetType"),fname="qmckl_compute_mo_basis_mo_value_doc"))
+
+    #+RESULTS:
+    #+begin_src f90 :tangle (eval f) :comments org :exports none
+    integer(c_int32_t) function qmckl_compute_mo_basis_mo_value_doc &
+        (context, ao_num, mo_num, point_num, coefficient_t, ao_value, mo_value) &
+        bind(C) result(info)
+
+      use, intrinsic :: iso_c_binding
+      implicit none
+
+      integer (c_int64_t) , intent(in)  , value :: context
+      integer (c_int64_t) , intent(in)  , value :: ao_num
+      integer (c_int64_t) , intent(in)  , value :: mo_num
+      integer (c_int64_t) , intent(in)  , value :: point_num
+      real    (c_double ) , intent(in)          :: coefficient_t(ao_num,mo_num)
+      real    (c_double ) , intent(in)          :: ao_value(ao_num,point_num)
+      real    (c_double ) , intent(out)         :: mo_value(mo_num,point_num)
+
+      integer(c_int32_t), external :: qmckl_compute_mo_basis_mo_value_doc_f
+      info = qmckl_compute_mo_basis_mo_value_doc_f &
+             (context, ao_num, mo_num, point_num, coefficient_t, ao_value, mo_value)
+
+    end function qmckl_compute_mo_basis_mo_value_doc
+    #+end_src
+
+    #+begin_src c :tangle (eval c) :comments org
+qmckl_exit_code
+qmckl_compute_mo_basis_mo_value (const qmckl_context context,
+                                 const int64_t ao_num,
+                                 const int64_t mo_num,
+                                 const int64_t point_num,
+                                 const double* coefficient_t,
+                                 const double* ao_value,
+                                 double* const mo_value )
+{
+#ifdef HAVE_HPC
+  return qmckl_compute_mo_basis_mo_value_hpc (context, ao_num, mo_num, point_num, coefficient_t, ao_value, mo_value);
+#else
+  return qmckl_compute_mo_basis_mo_value_doc (context, ao_num, mo_num, point_num, coefficient_t, ao_value, mo_value);
+#endif
+}
+    #+end_src
+
+*** HPC version
+
+
+    #+begin_src c :tangle (eval h_func) :comments org
+#ifdef HAVE_HPC
+qmckl_exit_code
+qmckl_compute_mo_basis_mo_value_hpc (const qmckl_context context,
+                                     const int64_t ao_num,
+                                     const int64_t mo_num,
+                                     const int64_t point_num,
+                                     const double* coefficient_t,
+                                     const double* ao_value,
+                                     double* const mo_value );
+#endif
+    #+end_src
+
+    #+begin_src c :tangle (eval c) :comments org
+#ifdef HAVE_HPC
+qmckl_exit_code
+qmckl_compute_mo_basis_mo_value_hpc (const qmckl_context context,
+                                     const int64_t ao_num,
+                                     const int64_t mo_num,
+                                     const int64_t point_num,
+                                     const double* restrict coefficient_t,
+                                     const double* restrict ao_value,
+                                     double* restrict const mo_value )
+{
+  assert (context != QMCKL_NULL_CONTEXT);
+
+#ifdef HAVE_OPENMP
+  #pragma omp parallel for
+#endif
+  for (int64_t ipoint=0 ; ipoint < point_num ; ++ipoint) {
+    double* restrict const vgl1  = &(mo_value[ipoint*mo_num]);
+    const double* restrict avgl1 = &(ao_value[ipoint*ao_num]);
+
+    for (int64_t i=0 ; i<mo_num ; ++i) {
+      vgl1[i] = 0.;
+    }
+
+    int64_t nidx=0;
+    int64_t idx[ao_num];
+    double  av1[ao_num];
+    for (int64_t k=0 ; k<ao_num ; ++k) {
+      if (avgl1[k] != 0.) {
+        idx[nidx] = k;
+        av1[nidx] = avgl1[k];
+        ++nidx;
+      }
+    }
+
+    int64_t n;
+
+    for (n=0 ; n < nidx-4 ; n+=4) {
+      const double* restrict ck1 = coefficient_t + idx[n  ]*mo_num;
+      const double* restrict ck2 = coefficient_t + idx[n+1]*mo_num;
+      const double* restrict ck3 = coefficient_t + idx[n+2]*mo_num;
+      const double* restrict ck4 = coefficient_t + idx[n+3]*mo_num;
+
+      const double a11 = av1[n  ];
+      const double a21 = av1[n+1];
+      const double a31 = av1[n+2];
+      const double a41 = av1[n+3];
+
+#ifdef HAVE_OPENMP
+#pragma omp simd
+#endif
+      for (int64_t i=0 ; i<mo_num ; ++i) {
+        vgl1[i] = vgl1[i] + ck1[i] * a11 + ck2[i] * a21 + ck3[i] * a31 + ck4[i] * a41;
+      }
+    }
+
+    const int64_t n0 = n < 0 ? 0 : n;
+    for (int64_t m=n0 ; m < nidx ; m+=1) {
+      const double* restrict ck = coefficient_t + idx[m]*mo_num;
+      const double a1 = av1[m];
+
+#ifdef HAVE_OPENMP
+  #pragma omp simd
+#endif
+      for (int64_t i=0 ; i<mo_num ; ++i) {
+        vgl1[i] += ck[i] * a1;
+      }
+    }
+  }
+  return QMCKL_SUCCESS;
+}
+#endif
+    #+end_src
+
+** Computation of MOs: values, gradient, Laplacian
 
 *** Get
 
@@ -451,7 +920,7 @@ qmckl_get_mo_basis_mo_vgl(qmckl_context context,
   rc = qmckl_provide_mo_vgl(context);
   if (rc != QMCKL_SUCCESS) return rc;
 
-  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
   const int64_t sze = ctx->point.num * 5 * ctx->mo_basis.mo_num;
@@ -507,7 +976,7 @@ qmckl_get_mo_basis_mo_vgl_inplace (qmckl_context context,
 
   qmckl_exit_code rc;
 
-  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
   const int64_t sze = ctx->mo_basis.mo_num * 5 * ctx->point.num;
@@ -563,7 +1032,7 @@ qmckl_exit_code qmckl_provide_mo_vgl(qmckl_context context)
     return QMCKL_NULL_CONTEXT;
   }
 
-  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
   if (!ctx->ao_basis.provided) {
@@ -639,7 +1108,7 @@ qmckl_exit_code qmckl_provide_mo_vgl(qmckl_context context)
     | ~ao_num~            | ~int64_t~                      | in     | Number of AOs                                   |
     | ~mo_num~            | ~int64_t~                      | in     | Number of MOs                                   |
     | ~point_num~         | ~int64_t~                      | in     | Number of points                                |
-    | ~coef_normalized_t~ | ~double[mo_num][ao_num]~       | in     | Transpose of the AO to MO transformation matrix |
+    | ~coefficient_t~     | ~double[mo_num][ao_num]~       | in     | Transpose of the AO to MO transformation matrix |
     | ~ao_vgl~            | ~double[point_num][5][ao_num]~ | in     | Value, gradients and Laplacian of the AOs       |
     | ~mo_vgl~            | ~double[point_num][5][mo_num]~ | out    | Value, gradients and Laplacian of the MOs       |
 
@@ -653,7 +1122,7 @@ qmckl_exit_code qmckl_provide_mo_vgl(qmckl_context context)
     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
 integer function qmckl_compute_mo_basis_mo_vgl_doc_f(context, &
      ao_num, mo_num, point_num, &
-     coef_normalized_t, ao_vgl, mo_vgl) &
+     coefficient_t, ao_vgl, mo_vgl) &
      result(info)
   use qmckl
   implicit none
@@ -661,7 +1130,7 @@ integer function qmckl_compute_mo_basis_mo_vgl_doc_f(context, &
   integer*8             , intent(in)  :: ao_num, mo_num
   integer*8             , intent(in)  :: point_num
   double precision      , intent(in)  :: ao_vgl(ao_num,5,point_num)
-  double precision      , intent(in)  :: coef_normalized_t(mo_num,ao_num)
+  double precision      , intent(in)  :: coefficient_t(mo_num,ao_num)
   double precision      , intent(out) :: mo_vgl(mo_num,5,point_num)
   integer*8 :: i,j,k
   double precision :: c1, c2, c3, c4, c5
@@ -676,15 +1145,21 @@ integer function qmckl_compute_mo_basis_mo_vgl_doc_f(context, &
            c4 = ao_vgl(k,4,j)
            c5 = ao_vgl(k,5,j)
            do i=1,mo_num
-              mo_vgl(i,1,j) = mo_vgl(i,1,j) + coef_normalized_t(i,k) * c1
-              mo_vgl(i,2,j) = mo_vgl(i,2,j) + coef_normalized_t(i,k) * c2
-              mo_vgl(i,3,j) = mo_vgl(i,3,j) + coef_normalized_t(i,k) * c3
-              mo_vgl(i,4,j) = mo_vgl(i,4,j) + coef_normalized_t(i,k) * c4
-              mo_vgl(i,5,j) = mo_vgl(i,5,j) + coef_normalized_t(i,k) * c5
+              mo_vgl(i,1,j) = mo_vgl(i,1,j) + coefficient_t(i,k) * c1
+              mo_vgl(i,2,j) = mo_vgl(i,2,j) + coefficient_t(i,k) * c2
+              mo_vgl(i,3,j) = mo_vgl(i,3,j) + coefficient_t(i,k) * c3
+              mo_vgl(i,4,j) = mo_vgl(i,4,j) + coefficient_t(i,k) * c4
+              mo_vgl(i,5,j) = mo_vgl(i,5,j) + coefficient_t(i,k) * c5
            end do
         end if
      end do
   end do
+  info = QMCKL_SUCCESS
+
+! info = qmckl_dgemm(context,'N', 'N', mo_num, point_num, ao_num, 1.d0, &
+!      coefficient_t, int(size(coefficient_t,1),8),      &
+!      ao_vgl, int(size(ao_vgl,1),8), 0.d0,                  &
+!      mo_vgl, int(size(mo_vgl,1),8))
 
 end function qmckl_compute_mo_basis_mo_vgl_doc_f
     #+end_src
@@ -698,7 +1173,7 @@ end function qmckl_compute_mo_basis_mo_vgl_doc_f
          const int64_t ao_num,
          const int64_t mo_num,
          const int64_t point_num,
-         const double* coef_normalized_t,
+         const double* coefficient_t,
          const double* ao_vgl,
          double* const mo_vgl );
    #+end_src
@@ -712,7 +1187,7 @@ end function qmckl_compute_mo_basis_mo_vgl_doc_f
          const int64_t ao_num,
          const int64_t mo_num,
          const int64_t point_num,
-         const double* coef_normalized_t,
+         const double* coefficient_t,
          const double* ao_vgl,
          double* const mo_vgl );
    #+end_src
@@ -722,7 +1197,7 @@ end function qmckl_compute_mo_basis_mo_vgl_doc_f
     #+RESULTS:
     #+begin_src f90 :tangle (eval f) :comments org :exports none
     integer(c_int32_t) function qmckl_compute_mo_basis_mo_vgl_doc &
-        (context, ao_num, mo_num, point_num, coef_normalized_t, ao_vgl, mo_vgl) &
+        (context, ao_num, mo_num, point_num, coefficient_t, ao_vgl, mo_vgl) &
         bind(C) result(info)
 
       use, intrinsic :: iso_c_binding
@@ -732,13 +1207,13 @@ end function qmckl_compute_mo_basis_mo_vgl_doc_f
       integer (c_int64_t) , intent(in)  , value :: ao_num
       integer (c_int64_t) , intent(in)  , value :: mo_num
       integer (c_int64_t) , intent(in)  , value :: point_num
-      real    (c_double ) , intent(in)          :: coef_normalized_t(ao_num,mo_num)
+      real    (c_double ) , intent(in)          :: coefficient_t(ao_num,mo_num)
       real    (c_double ) , intent(in)          :: ao_vgl(ao_num,5,point_num)
       real    (c_double ) , intent(out)         :: mo_vgl(mo_num,5,point_num)
 
       integer(c_int32_t), external :: qmckl_compute_mo_basis_mo_vgl_doc_f
       info = qmckl_compute_mo_basis_mo_vgl_doc_f &
-             (context, ao_num, mo_num, point_num, coef_normalized_t, ao_vgl, mo_vgl)
+             (context, ao_num, mo_num, point_num, coefficient_t, ao_vgl, mo_vgl)
 
     end function qmckl_compute_mo_basis_mo_vgl_doc
     #+end_src
@@ -749,18 +1224,17 @@ qmckl_compute_mo_basis_mo_vgl (const qmckl_context context,
                             const int64_t ao_num,
                             const int64_t mo_num,
                             const int64_t point_num,
-                            const double* coef_normalized_t,
+                            const double* coefficient_t,
                             const double* ao_vgl,
                             double* const mo_vgl )
 {
 #ifdef HAVE_HPC
-  return qmckl_compute_mo_basis_mo_vgl_hpc (context, ao_num, mo_num, point_num, coef_normalized_t, ao_vgl, mo_vgl);
+  return qmckl_compute_mo_basis_mo_vgl_hpc (context, ao_num, mo_num, point_num, coefficient_t, ao_vgl, mo_vgl);
 #else
-  return qmckl_compute_mo_basis_mo_vgl_doc (context, ao_num, mo_num, point_num, coef_normalized_t, ao_vgl, mo_vgl);
+  return qmckl_compute_mo_basis_mo_vgl_doc (context, ao_num, mo_num, point_num, coefficient_t, ao_vgl, mo_vgl);
 #endif
 }
     #+end_src
-
 
 *** HPC version
 
@@ -772,7 +1246,7 @@ qmckl_compute_mo_basis_mo_vgl_hpc (const qmckl_context context,
                                    const int64_t ao_num,
                                    const int64_t mo_num,
                                    const int64_t point_num,
-                                   const double* coef_normalized_t,
+                                   const double* coefficient_t,
                                    const double* ao_vgl,
                                    double* const mo_vgl );
 #endif
@@ -785,20 +1259,23 @@ qmckl_compute_mo_basis_mo_vgl_hpc (const qmckl_context context,
                                    const int64_t ao_num,
                                    const int64_t mo_num,
                                    const int64_t point_num,
-                                   const double* restrict coef_normalized_t,
+                                   const double* restrict coefficient_t,
                                    const double* restrict ao_vgl,
                                    double* restrict const mo_vgl )
 {
+  assert (context != QMCKL_NULL_CONTEXT);
+
 #ifdef HAVE_OPENMP
   #pragma omp parallel for
 #endif
   for (int64_t ipoint=0 ; ipoint < point_num ; ++ipoint) {
     double* restrict const vgl1 = &(mo_vgl[ipoint*5*mo_num]);
-    const double* restrict avgl1 = &(ao_vgl[ipoint*5*ao_num]);
     double* restrict const vgl2 =  vgl1 + mo_num;
     double* restrict const vgl3 =  vgl1 + (mo_num << 1);
     double* restrict const vgl4 =  vgl1 + (mo_num << 1) + mo_num;
     double* restrict const vgl5 =  vgl1 + (mo_num << 2);
+
+    const double* restrict avgl1 = &(ao_vgl[ipoint*5*ao_num]);
     const double* restrict avgl2 = avgl1 + ao_num;
     const double* restrict avgl3 = avgl1 + (ao_num << 1);
     const double* restrict avgl4 = avgl1 + (ao_num << 1) + ao_num;
@@ -820,7 +1297,6 @@ qmckl_compute_mo_basis_mo_vgl_hpc (const qmckl_context context,
     double  av4[ao_num];
     double  av5[ao_num];
     for (int64_t k=0 ; k<ao_num ; ++k) {
-      const double* restrict ck1 = coef_normalized_t + k*mo_num;
       if (avgl1[k] != 0.) {
         idx[nidx] = k;
         av1[nidx] = avgl1[k];
@@ -833,12 +1309,12 @@ qmckl_compute_mo_basis_mo_vgl_hpc (const qmckl_context context,
     }
 
     int64_t n;
+
     for (n=0 ; n < nidx-4 ; n+=4) {
-      int64_t k = idx[n];
-      const double* restrict ck1 = coef_normalized_t + idx[n  ]*mo_num;
-      const double* restrict ck2 = coef_normalized_t + idx[n+1]*mo_num;
-      const double* restrict ck3 = coef_normalized_t + idx[n+2]*mo_num;
-      const double* restrict ck4 = coef_normalized_t + idx[n+3]*mo_num;
+      const double* restrict ck1 = coefficient_t + idx[n  ]*mo_num;
+      const double* restrict ck2 = coefficient_t + idx[n+1]*mo_num;
+      const double* restrict ck3 = coefficient_t + idx[n+2]*mo_num;
+      const double* restrict ck4 = coefficient_t + idx[n+3]*mo_num;
 
       const double a11 = av1[n  ];
       const double a21 = av1[n+1];
@@ -877,15 +1353,14 @@ qmckl_compute_mo_basis_mo_vgl_hpc (const qmckl_context context,
       }
     }
 
-    int64_t n0 = nidx-4;
-    n0 = n0 < 0 ? 0 : n0;
-    for (int64_t n=n0 ; n < nidx ; n+=1) {
-      const double* restrict ck = coef_normalized_t + idx[n]*mo_num;
-      const double a1 = av1[n];
-      const double a2 = av2[n];
-      const double a3 = av3[n];
-      const double a4 = av4[n];
-      const double a5 = av5[n];
+    const int64_t n0 = n < 0 ? 0 : n;
+    for (int64_t m=n0 ; m < nidx ; m+=1) {
+      const double* restrict ck = coefficient_t + idx[m]*mo_num;
+      const double a1 = av1[m];
+      const double a2 = av2[m];
+      const double a3 = av3[m];
+      const double a4 = av4[m];
+      const double a5 = av5[m];
 
 #ifdef HAVE_OPENMP
   #pragma omp simd
@@ -904,9 +1379,9 @@ qmckl_compute_mo_basis_mo_vgl_hpc (const qmckl_context context,
 #endif
     #+end_src
 
-*** Test
+** Test
 
-    #+begin_src python :results output :exports none
+   #+begin_src python :results output :exports none
 import numpy as np
 
 def f(a,x,y):
@@ -966,9 +1441,9 @@ print ( "[2][1][15][14] : %25.15e"% df(a,x,y,2))
 print ( "[3][1][15][14] : %25.15e"% df(a,x,y,3))
 print ( "[4][1][15][14] : %25.15e"% lf(a,x,y))
 
-    #+end_src
+   #+end_src
 
-     #+begin_src c :tangle (eval c_test) :exports none
+    #+begin_src c :tangle (eval c_test) :exports none
 {
 #define walk_num chbrclf_walk_num
 #define elec_num chbrclf_elec_num
@@ -1093,9 +1568,35 @@ assert (rc == QMCKL_SUCCESS);
 
 assert(qmckl_mo_basis_provided(context));
 
+rc = qmckl_context_touch(context);
+assert (rc == QMCKL_SUCCESS);
+
+double mo_value[walk_num*elec_num][chbrclf_mo_num];
+rc = qmckl_get_mo_basis_mo_value(context, &(mo_value[0][0]), walk_num*elec_num*chbrclf_mo_num);
+assert (rc == QMCKL_SUCCESS);
+
 double mo_vgl[walk_num*elec_num][5][chbrclf_mo_num];
 rc = qmckl_get_mo_basis_mo_vgl(context, &(mo_vgl[0][0][0]), walk_num*elec_num*5*chbrclf_mo_num);
 assert (rc == QMCKL_SUCCESS);
+
+for (int i=0 ; i< walk_num*elec_num; ++i) {
+  for (int k=0 ; k< chbrclf_mo_num ; ++k) {
+    assert(fabs(mo_vgl[i][0][k] - mo_value[i][k]) < 1.e-12) ;
+  }
+ }
+
+rc = qmckl_context_touch(context);
+assert (rc == QMCKL_SUCCESS);
+ 
+rc = qmckl_get_mo_basis_mo_value(context, &(mo_value[0][0]), walk_num*elec_num*chbrclf_mo_num);
+assert (rc == QMCKL_SUCCESS);
+
+for (int i=0 ; i< walk_num*elec_num; ++i) {
+  for (int k=0 ; k< chbrclf_mo_num ; ++k) {
+    assert(fabs(mo_vgl[i][0][k] - mo_value[i][k]) < 1.e-12) ;
+  }
+ }
+
 
 // Test overlap of MO
 //double point_x[10];
@@ -1154,7 +1655,7 @@ printf(" mo_vgl mo_vgl[1][26][224] %25.15e\n", mo_vgl[2][1][3]);
 printf("\n");
 }
 
-     #+end_src
+    #+end_src
 
 * End of files                                                     :noexport:
 

@@ -1,0 +1,360 @@
+#+TITLE: Code examples
+#+SETUPFILE: ../tools/theme.setup
+#+INCLUDE: ../tools/lib.org
+  
+In this section, we present examples of usage of QMCkl.
+For simplicity, we assume that the wave function parameters are stored
+in a [[https://github.com/TREX-CoE/trexio][TREXIO]] file.
+
+* Python
+** Check numerically that MOs are orthonormal
+
+   In this example, we will compute numerically the overlap
+   between the molecular orbitals:
+   
+   \[
+      S_{ij} = \int \phi_i(\mathbf{r}) \phi_j(\mathbf{r})
+   \text{d}\mathbf{r} \sim \sum_{k=1}^{N} \phi_i(\mathbf{r}_k)
+   \phi_j(\mathbf{r}_k) \delta \mathbf{r} 
+   \]
+   \[
+      S_{ij} = \langle \phi_i | \phi_j \rangle 
+   \sim \sum_{k=1}^{N} \langle \phi_i | \mathbf{r}_k \rangle
+   \langle \mathbf{r}_k | \phi_j \rangle
+   \]
+   
+
+   #+begin_src python :exports code
+import numpy as np
+import qmckl
+   #+end_src
+
+   #+RESULTS:
+   
+   First, we create a context for the QMCkl calculation, and load the
+   wave function stored in =h2o_5z.h5= inside it. It is a Hartree-Fock
+   determinant for the water molecule in the cc-pV5Z basis set.
+   
+   #+begin_src python :exports code
+trexio_filename = "..//share/qmckl/test_data/h2o_5z.h5"
+
+context = qmckl.context_create()
+qmckl.trexio_read(context, trexio_filename)
+   #+end_src
+
+   #+RESULTS:
+   : None
+
+   We now define the grid points $\mathbf{r}_k$ as a regular grid around the
+   molecule.
+
+   We fetch the nuclear coordinates from the context,
+   
+   #+begin_src python :exports code
+nucl_num = qmckl.get_nucleus_num(context)
+
+nucl_charge = qmckl.get_nucleus_charge(context, nucl_num)
+
+nucl_coord = qmckl.get_nucleus_coord(context, 'N', nucl_num*3)
+nucl_coord = np.reshape(nucl_coord, (3, nucl_num))
+
+for i in range(nucl_num):
+    print("%d  %+f %+f %+f"%(int(nucl_charge[i]),
+                             nucl_coord[i,0],
+                             nucl_coord[i,1],
+                             nucl_coord[i,2]) )
+   #+end_src
+
+   #+begin_example
+8  +0.000000 +0.000000 +0.000000
+1  -1.430429 +0.000000 -1.107157
+1  +1.430429 +0.000000 -1.107157
+   #+end_example
+
+   and compute the coordinates of the grid points:
+   
+   #+begin_src python :exports code
+nx = ( 120, 120, 120 )
+shift = np.array([5.,5.,5.])
+point_num = nx[0] * nx[1] * nx[2]
+
+rmin  = np.array( list([ np.min(nucl_coord[:,a]) for a in range(3) ]) )
+rmax  = np.array( list([ np.max(nucl_coord[:,a]) for a in range(3) ]) )
+
+
+linspace = [ None for i in range(3) ]
+step     = [ None for i in range(3) ]
+for a in range(3):
+    linspace[a], step[a] = np.linspace(rmin[a]-shift[a],
+                                       rmax[a]+shift[a],
+                                       num=nx[a],
+                                       retstep=True)
+
+dr = step[0] * step[1] * step[2]
+   #+end_src
+
+   #+RESULTS:
+   
+   Now the grid is ready, we can create the list of grid points
+   $\mathbf{r}_k$ on which the MOs $\phi_i$ will be evaluated, and
+   transfer them to the QMCkl context:
+
+   #+begin_src python :exports code
+point = []
+for x in linspace[0]:
+    for y in linspace[1]:
+        for z in linspace[2]:
+            point += [ [x, y, z] ]
+
+point = np.array(point)
+point_num = len(point)
+qmckl.set_point(context, 'N', point_num, np.reshape(point, (point_num*3)))
+   #+end_src
+
+   #+RESULTS:
+   : None
+   
+   Then, we evaluate all the MOs at the grid points (and time the execution),
+   and thus obtain the matrix $M_{ki} = \langle \mathbf{r}_k | \phi_i \rangle =
+   \phi_i(\mathbf{r}_k)$.
+
+   #+begin_src python :exports code
+import time
+
+mo_num = qmckl.get_mo_basis_mo_num(context)
+
+before   = time.time()
+mo_value = qmckl.get_mo_basis_mo_value(context, point_num*mo_num)
+after    = time.time()
+
+mo_value = np.reshape( mo_value, (point_num, mo_num) )
+
+print("Number of MOs: ", mo_num)
+print("Number of grid points: ", point_num)
+print("Execution time : ", (after - before), "seconds")
+
+   #+end_src
+
+   #+begin_example
+Number of MOs:  201
+Number of grid points:  1728000
+Execution time :  3.511528968811035 seconds
+   #+end_example
+
+   and finally we compute the overlap between all the MOs as
+   $M^\dagger M$.
+
+   #+begin_src python :exports code
+overlap = mo_value.T @ mo_value * dr
+print (overlap)
+   #+end_src
+
+   #+begin_example
+   [[ 9.88693941e-01  2.34719693e-03 -1.50518232e-08 ...  3.12084178e-09
+     -5.81064929e-10  3.70130091e-02]
+    [ 2.34719693e-03  9.99509628e-01  3.18930040e-09 ... -2.46888958e-10
+     -1.06064273e-09 -7.65567973e-03]
+    [-1.50518232e-08  3.18930040e-09  9.99995073e-01 ... -5.84882580e-06
+     -1.21598117e-06  4.59036468e-08]
+    ...
+    [ 3.12084178e-09 -2.46888958e-10 -5.84882580e-06 ...  1.00019107e+00
+     -2.03342837e-04 -1.36954855e-08]
+    [-5.81064929e-10 -1.06064273e-09 -1.21598117e-06 ... -2.03342837e-04
+      9.99262427e-01  1.18264754e-09]
+    [ 3.70130091e-02 -7.65567973e-03  4.59036468e-08 ... -1.36954855e-08
+      1.18264754e-09  8.97215950e-01]]
+   #+end_example
+
+* Fortran
+** Checking errors
+
+   All QMCkl functions return an error code. A convenient way to handle
+   errors is to write an error-checking function that displays the
+   error in text format and exits the program.
+
+   #+NAME: qmckl_check_error
+   #+begin_src f90 
+subroutine qmckl_check_error(rc, message)
+  use qmckl
+  implicit none
+  integer(qmckl_exit_code), intent(in) :: rc
+  character(len=*)        , intent(in) :: message
+  character(len=128)                   :: str_buffer
+  if (rc /= QMCKL_SUCCESS) then
+     print *, message
+     call qmckl_string_of_error(rc, str_buffer)
+     print *, str_buffer
+     call exit(rc)
+  end if
+end subroutine qmckl_check_error
+   #+end_src
+  
+** Computing an atomic orbital on a grid
+   :PROPERTIES:
+   :header-args: :tangle ao_grid.f90
+   :END:
+
+   The following program, in Fortran, computes the values of an atomic
+   orbital on a regular 3-dimensional grid. The 100^3 grid points are
+   automatically defined, such that the molecule fits in a box with 5
+   atomic units in the borders.
+
+   This program uses the ~qmckl_check_error~ function defined above.
+  
+   To use this program, run
+  
+   #+begin_src bash :tangle no :exports code
+$ ao_grid <trexio_file> <AO_id> <point_num>
+   #+end_src
+
+  
+   #+begin_src f90  :noweb yes
+<<qmckl_check_error>>
+
+program ao_grid
+  use qmckl
+  implicit none
+
+  integer(qmckl_context)    :: qmckl_ctx  ! QMCkl context
+  integer(qmckl_exit_code)  :: rc         ! Exit code of QMCkl functions
+
+  character(len=128)            :: trexio_filename
+  character(len=128)            :: str_buffer
+  integer                       :: ao_id
+  integer                       :: point_num_x
+
+  integer(c_int64_t)            :: nucl_num
+  double precision, allocatable :: nucl_coord(:,:)
+
+  integer(c_int64_t)            :: point_num
+  integer(c_int64_t)            :: ao_num
+  integer(c_int64_t)            :: ipoint, i, j, k
+  double precision              :: x, y, z, dr(3)
+  double precision              :: rmin(3), rmax(3)
+  double precision, allocatable :: points(:,:)
+  double precision, allocatable :: ao_vgl(:,:,:)
+   #+end_src
+
+   Start by fetching the command-line arguments:
+
+   #+begin_src f90 
+  if (iargc() /= 3) then
+     print *, 'Syntax: ao_grid <trexio_file> <AO_id> <point_num>'
+     call exit(-1)
+  end if
+  call getarg(1, trexio_filename)
+  call getarg(2, str_buffer)
+  read(str_buffer, *) ao_id
+  call getarg(3, str_buffer)
+  read(str_buffer, *) point_num_x
+
+  if (point_num_x < 0 .or. point_num_x > 300) then
+     print *, 'Error: 0 < point_num < 300'
+     call exit(-1)
+  end if
+   #+end_src
+
+   Create the QMCkl context and initialize it with the wave function
+   present in the TREXIO file:
+
+   #+begin_src f90 
+  qmckl_ctx = qmckl_context_create()
+  rc  = qmckl_trexio_read(qmckl_ctx, trexio_filename, 1_8*len(trim(trexio_filename)))
+  call qmckl_check_error(rc, 'Read TREXIO')
+   #+end_src
+
+   We need to check that ~ao_id~ is in the range, so we get the total
+   number of AOs from QMCkl:
+  
+   #+begin_src f90 
+  rc = qmckl_get_ao_basis_ao_num(qmckl_ctx, ao_num)
+  call qmckl_check_error(rc, 'Getting ao_num')
+
+  if (ao_id < 0 .or. ao_id > ao_num) then
+     print *, 'Error: 0 < ao_id < ', ao_num
+     call exit(-1)
+  end if
+   #+end_src
+
+   Now we will compute the limits of the box in which the molecule fits.
+   For that, we first need to ask QMCkl the coordinates of nuclei.
+
+   #+begin_src f90 
+  rc = qmckl_get_nucleus_num(qmckl_ctx, nucl_num)
+  call qmckl_check_error(rc, 'Get nucleus num')
+
+  allocate( nucl_coord(3, nucl_num) )
+  rc = qmckl_get_nucleus_coord(qmckl_ctx, 'N', nucl_coord, 3_8*nucl_num)
+  call qmckl_check_error(rc, 'Get nucleus coord')
+   #+end_src
+
+   We now compute the coordinates of opposite points of the box, and
+   the distance between points along the 3 directions:
+
+   #+begin_src f90 
+  rmin(1) = minval( nucl_coord(1,:) ) - 5.d0
+  rmin(2) = minval( nucl_coord(2,:) ) - 5.d0
+  rmin(3) = minval( nucl_coord(3,:) ) - 5.d0
+     
+  rmax(1) = maxval( nucl_coord(1,:) ) + 5.d0
+  rmax(2) = maxval( nucl_coord(2,:) ) + 5.d0
+  rmax(3) = maxval( nucl_coord(3,:) ) + 5.d0
+
+  dr(1:3) = (rmax(1:3) - rmin(1:3)) / dble(point_num_x-1)
+   #+end_src
+
+   We now produce the list of point coordinates where the AO will be
+   evaluated:
+  
+   #+begin_src f90 
+  point_num = point_num_x**3
+  allocate( points(point_num, 3) )
+  ipoint=0
+  z = rmin(3)
+  do k=1,point_num_x
+     y = rmin(2)
+     do j=1,point_num_x
+        x = rmin(1)
+        do i=1,point_num_x
+           ipoint = ipoint+1
+           points(ipoint,1) = x
+           points(ipoint,2) = y
+           points(ipoint,3) = z
+           x = x + dr(1)
+        end do
+        y = y + dr(2)
+     end do
+     z = z + dr(3)
+  end do
+   #+end_src
+  
+   We give the points to QMCkl:
+
+   #+begin_src f90 
+  rc = qmckl_set_point(qmckl_ctx, 'T', point_num, points, size(points)*1_8 )
+  call qmckl_check_error(rc, 'Setting points')
+   #+end_src
+
+   We allocate the space required to retrieve the values, gradients and
+   Laplacian of all AOs, and ask to retrieve the values of the
+   AOs computed at the point positions. 
+  
+   #+begin_src f90 
+  allocate( ao_vgl(ao_num, 5, point_num) )
+  rc = qmckl_get_ao_basis_ao_vgl(qmckl_ctx, ao_vgl, ao_num*5_8*point_num)
+  call qmckl_check_error(rc, 'Setting points')
+   #+end_src
+
+   We finally print the value and Laplacian of the AO:
+
+   #+begin_src f90 
+  do ipoint=1, point_num
+     print '(3(F10.6,X),2(E20.10,X))', points(ipoint, 1:3), ao_vgl(ao_id,1,ipoint), ao_vgl(ao_id,5,ipoint)
+  end do
+   #+end_src
+
+   #+begin_src f90 
+  deallocate( nucl_coord, points, ao_vgl )
+end program ao_grid
+   #+end_src
+
