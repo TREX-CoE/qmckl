@@ -207,7 +207,7 @@ $(qmckl_include_i):  $(qmckl_h) $(process_header_py)
 
 
 $(qmckl_py): $(qmckl_i) $(qmckl_include_i)
-	swig -Iinclude -Ipython/src -python -py3 -builtin -o $(qmckl_wrap_c) $(qmckl_i)
+	$(srcdir)/tools/missing swig -Iinclude -Ipython/src -python -py3 -builtin -o $(qmckl_wrap_c) $(qmckl_i) || :
 
 $(qmckl_wrap_c): $(qmckl_py)
 
