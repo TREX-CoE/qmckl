@@ -62,12 +62,15 @@ int main() {
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
+#include <pthread.h>
 
 #include "qmckl.h"
 #include "qmckl_context_private_type.h"
 #include "qmckl_memory_private_func.h"
 
   #+end_src
+
+
 
 * Context handling
 
@@ -146,7 +149,7 @@ typedef struct qmckl_context_struct {
    the pointer associated with a context is non-null, we can still
    verify that it points to the expected data structure.
 
-   #+begin_src c :comments org :tangle (eval h_private_type) :noweb yes
+   #+begin_src c :comments org :tangle (eval h_private_type) :noweb yes :exports none
 #define VALID_TAG   0xBEEFFACE
 #define INVALID_TAG 0xDEADBEEF
    #+end_src
@@ -156,16 +159,17 @@ typedef struct qmckl_context_struct {
    if the context is valid, ~QMCKL_NULL_CONTEXT~ otherwise.
 
    #+begin_src c :comments org :tangle (eval h_func) :noexport
-qmckl_context qmckl_context_check(const qmckl_context context) ;
+qmckl_context
+qmckl_context_check (const qmckl_context context) ;
    #+end_src
 
-   #+begin_src c :tangle (eval c)
+   #+begin_src c :tangle (eval c) :exports none
 qmckl_context qmckl_context_check(const qmckl_context context) {
 
   if (context == QMCKL_NULL_CONTEXT)
     return QMCKL_NULL_CONTEXT;
 
-  const qmckl_context_struct* const ctx = (const qmckl_context_struct* const) context;
+  const qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
 
   /* Try to access memory */
   if (ctx->tag != VALID_TAG) {
@@ -176,19 +180,27 @@ qmckl_context qmckl_context_check(const qmckl_context context) {
 }
    #+end_src
 
-   The context keeps a ``date'' that allows to check which data needs
+   The context keeps a /date/ that allows to check which data needs
    to be recomputed. The date is incremented when the context is touched.
 
    When a new element is added to the context, the functions
-   [[Creation][qmckl_context_create]], [[Destroy][qmckl_context_destroy]] and [[Copy][qmckl_context_copy]]
+   [[Creation][=qmckl_context_create=]] [[Destroy][=qmckl_context_destroy=]] and [[Copy][=qmckl_context_copy=]]
    should be updated in order to make deep copies.
 
-   #+begin_src c :comments org :tangle (eval h_func) :noexport
-qmckl_exit_code qmckl_context_touch(const qmckl_context context) ;
+   When the electron coordinates have changed, the context is touched
+   using the following function.
+
+   #+begin_src c :comments org :tangle (eval h_func)
+qmckl_exit_code
+qmckl_context_touch (const qmckl_context context);
    #+end_src
 
-   #+begin_src c :tangle (eval c)
-qmckl_exit_code qmckl_context_touch(const qmckl_context context) {
+   This has the effect to increment the date of the context.
+
+   #+begin_src c :tangle (eval c) :exports none
+qmckl_exit_code
+qmckl_context_touch(const qmckl_context context)
+{
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return qmckl_failwith( context,
@@ -197,7 +209,7 @@ qmckl_exit_code qmckl_context_touch(const qmckl_context context) {
                            NULL);
   }
 
-  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
 
   ctx->date += 1UL;
   ctx->point.date += 1UL;
@@ -213,16 +225,16 @@ qmckl_exit_code qmckl_context_touch(const qmckl_context context) {
    - A new context always has all its members initialized with a NULL value
 
    # Header
-   #+begin_src c :comments org :tangle (eval h_func) :exports none
+   #+begin_src c :comments org :tangle (eval h_func)
 qmckl_context qmckl_context_create();
    #+end_src
 
    # Source
-   #+begin_src c :tangle (eval c)
+   #+begin_src c :tangle (eval c) :exports none
 qmckl_context qmckl_context_create() {
 
   qmckl_context_struct* const ctx =
-    (qmckl_context_struct* const) malloc (sizeof(qmckl_context_struct));
+    (qmckl_context_struct*) malloc (sizeof(qmckl_context_struct));
 
   if (ctx == NULL) {
     return QMCKL_NULL_CONTEXT;
@@ -241,7 +253,9 @@ qmckl_context qmckl_context_create() {
     rc = pthread_mutexattr_init(&attr);
     assert (rc == 0);
 
+#ifdef PTHREAD_MUTEX_RECURSIVE
     (void) pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+#endif
 
     rc = pthread_mutex_init ( &(ctx->mutex), &attr);
     assert (rc == 0);
@@ -252,30 +266,30 @@ qmckl_context qmckl_context_create() {
   /* Initialize data */
   {
     ctx->tag = VALID_TAG;
-    
-    const qmckl_context context = (const qmckl_context) ctx;
+
+    const qmckl_context context = (qmckl_context) ctx;
     assert ( qmckl_context_check(context) != QMCKL_NULL_CONTEXT );
-    
+
     qmckl_exit_code rc;
-    
+
     ctx->numprec.precision = QMCKL_DEFAULT_PRECISION;
     ctx->numprec.range = QMCKL_DEFAULT_RANGE;
 
     rc = qmckl_init_point(context);
     assert (rc == QMCKL_SUCCESS);
-    
+
     rc = qmckl_init_electron(context);
     assert (rc == QMCKL_SUCCESS);
-    
+
     rc = qmckl_init_nucleus(context);
     assert (rc == QMCKL_SUCCESS);
-    
+
     rc = qmckl_init_ao_basis(context);
     assert (rc == QMCKL_SUCCESS);
-    
+
     rc = qmckl_init_mo_basis(context);
     assert (rc == QMCKL_SUCCESS);
-    
+
     rc = qmckl_init_determinant(context);
     assert (rc == QMCKL_SUCCESS);
   }
@@ -326,17 +340,17 @@ assert( qmckl_context_check(context) ==  context );
    ~lock_count~ attribute.
 
    # Header
-   #+begin_src c :comments org :tangle (eval h_func) :exports none
+   #+begin_src c :comments org :tangle (eval h_func)
 void qmckl_lock  (qmckl_context context);
 void qmckl_unlock(qmckl_context context);
    #+end_src
 
    # Source
-   #+begin_src c :tangle (eval c)
+   #+begin_src c :tangle (eval c) :exports none
 void qmckl_lock(qmckl_context context) {
   if (context == QMCKL_NULL_CONTEXT)
     return ;
-  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   errno = 0;
   int rc = pthread_mutex_lock( &(ctx->mutex) );
   if (rc != 0) {
@@ -345,13 +359,10 @@ void qmckl_lock(qmckl_context context) {
   }
   assert (rc == 0);
   ctx->lock_count += 1;
-/*
-  printf("  lock : %d\n", ctx->lock_count);
-,*/
 }
 
 void qmckl_unlock(const qmckl_context context) {
-  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   int rc = pthread_mutex_unlock( &(ctx->mutex) );
   if (rc != 0) {
     fprintf(stderr, "DEBUG qmckl_unlock:%s\n", strerror(rc) );
@@ -359,9 +370,6 @@ void qmckl_unlock(const qmckl_context context) {
   }
   assert (rc == 0);
   ctx->lock_count -= 1;
-/*
-  printf("unlock : %d\n", ctx->lock_count);
-,*/
 }
    #+end_src
 
@@ -372,12 +380,14 @@ void qmckl_unlock(const qmckl_context context) {
 
    # Header
    #+begin_src c :comments org :tangle (eval h_func) :exports none
+/*
 qmckl_context qmckl_context_copy(const qmckl_context context);
+*/
    #+end_src
 
 
    # Source
-   #+begin_src c :tangle (eval c)
+   #+begin_src c :tangle (eval c) :exports none
 qmckl_context qmckl_context_copy(const qmckl_context context) {
 
   const qmckl_context checked_context = qmckl_context_check(context);
@@ -391,10 +401,10 @@ qmckl_context qmckl_context_copy(const qmckl_context context) {
   {
 
     const qmckl_context_struct* const old_ctx =
-      (qmckl_context_struct* const) checked_context;
+      (qmckl_context_struct*) checked_context;
 
     qmckl_context_struct* const new_ctx =
-      (qmckl_context_struct* const) malloc (context, sizeof(qmckl_context_struct));
+      (qmckl_context_struct*) malloc (context, sizeof(qmckl_context_struct));
 
     if (new_ctx == NULL) {
       qmckl_unlock(context);
@@ -418,13 +428,13 @@ qmckl_context qmckl_context_copy(const qmckl_context context) {
 
    # Fortran interface
    #+begin_src f90 :tangle (eval fh_func) :exports none
-  interface
-     integer (qmckl_context) function qmckl_context_copy(context) bind(C)
-       use, intrinsic :: iso_c_binding
-       import
-       integer (qmckl_context), intent(in), value :: context
-     end function qmckl_context_copy
-  end interface
+! interface
+!    integer (qmckl_context) function qmckl_context_copy(context) bind(C)
+!      use, intrinsic :: iso_c_binding
+!      import
+!      integer (qmckl_context), intent(in), value :: context
+!    end function qmckl_context_copy
+! end interface
    #+end_src
 
    # Test
@@ -443,18 +453,21 @@ munit_assert_int64(qmckl_context_check(new_context), ==, new_context);
    It frees the context, and returns the previous context.
 
    # Header
-   #+begin_src c :comments org :tangle (eval h_func) :exports none
-qmckl_exit_code qmckl_context_destroy(const qmckl_context context);
+   #+begin_src c :comments org :tangle (eval h_func)
+qmckl_exit_code
+qmckl_context_destroy (const qmckl_context context);
    #+end_src
 
     # Source
-    #+begin_src c :tangle (eval c)
-qmckl_exit_code qmckl_context_destroy(const qmckl_context context) {
+    #+begin_src c :tangle (eval c) :exports none
+qmckl_exit_code
+qmckl_context_destroy (const qmckl_context context)
+{
 
   const qmckl_context checked_context = qmckl_context_check(context);
   if (checked_context == QMCKL_NULL_CONTEXT) return QMCKL_INVALID_CONTEXT;
 
-  qmckl_context_struct* const ctx = (qmckl_context_struct* const) context;
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);  /* Shouldn't be possible because the context is valid */
 
   qmckl_lock(context);

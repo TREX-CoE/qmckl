@@ -65,6 +65,7 @@ AM_CPPFLAGS += -DQMCKL_TEST_DIR=\"$(QMCKL_TEST_DIR)\"
 
 lib_LTLIBRARIES = src/libqmckl.la
 src_libqmckl_la_SOURCES = $(qmckl_h) $(src_qmckl_f) $(C_FILES) $(F_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES)
+src_libqmckl_la_LDFLAGS = $(LDFLAGS)
 
 CLEANFILES+=$(test_qmckl_fo) $(src_qmckl_fo) $(test_qmckl_o) $(src_qmckl_o) $(FH_TYPE_FILES) $(FH_FUNC_FILES)
 
@@ -91,6 +92,36 @@ dist_text_DATA = $(TEXT_FILES)
 html-local: $(htmlize_el) $(dist_html_DATA)
 text: $(htmlize_el) $(dist_text_DATA)
 doc: html text
+
+setup_py          =  $(srcdir)/python/setup.py
+process_header_py =  $(srcdir)/python/src/process_header.py
+test_py           =  $(srcdir)/python/test/test_api.py
+qmckl_i           =  $(srcdir)/python/src/qmckl.i
+numpy_i           =  $(srcdir)/python/src/numpy.i
+qmckl_wrap_c    =  python/src/qmckl_wrap.c
+qmckl_include_i =  python/src/qmckl_include.i
+qmckl_py        =  python/src/qmckl.py
+
+dist_python_DATA = $(setup_py) $(qmckl_py) $(qmckl_wrap_c) \
+                   $(srcdir)/python/pyproject.toml \
+                   $(srcdir)/python/requirements.txt \
+                   $(srcdir)/python/README.md
+
+python-install: $(qmckl_h) $(lib_LTLIBRARIES) $(dist_python_DATA)
+	$(MKDIR_P) python/src
+	cd python ; \
+	[[ ! -f  pyproject.toml ]] && \
+	    cp $(abs_srcdir)/python/{pyproject.toml,requirements.txt,README.md,setup.py} . ; \
+	cp src/qmckl.py . ; \
+	export QMCKL_INCLUDEDIR="$(prefix)/include" ; \
+	export QMCKL_LIBDIR="$(prefix)/lib" ; \
+	pip install .
+
+python-test: $(test_py)
+	cd $(abs_srcdir)/python/test/ && \
+		python test_api.py
+
+.PHONY: python-test python-install cppcheck
 
 
 if QMCKL_DEVEL
@@ -169,6 +200,20 @@ cppcheck.out: $(qmckl_h)
           --language=c --std=c99 -rp --platform=unix64  \
           -I$(srcdir)/include -I$(top_builddir)/include *.c *.h 2>../$@
 
-.PHONY: cppcheck
+$(qmckl_include_i):  $(qmckl_h) $(process_header_py)
+	$(MKDIR_P) python/src
+	python $(process_header_py) $(qmckl_h)
+	mv qmckl_include.i $(qmckl_include_i)
+
+
+$(qmckl_py): $(qmckl_i) $(qmckl_include_i)
+	$(srcdir)/tools/missing swig -Iinclude -Ipython/src -python -py3 -builtin -o $(qmckl_wrap_c) $(qmckl_i) || :
+
+$(qmckl_wrap_c): $(qmckl_py)
+
+
+CLEANFILES += $(qmckl_wrap_c) \
+	      $(qmckl_include_i) \
+	      $(qmckl_py)
 
 endif
