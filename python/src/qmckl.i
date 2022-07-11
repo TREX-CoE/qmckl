@@ -50,6 +50,12 @@ import_array();
 
 /* Handle properly get_point */
 
+/* 
+Looks like SWIG cannot parse the __attribute and __restrict,
+see https://stackoverflow.com/questions/17889678/is-ignoring-attribute-packed-always-safe-in-swig-interfaces 
+*/
+#define __attribute__(x)
+#define __restrict
 
 
 /* exception.i is a generic (language-independent) module */
