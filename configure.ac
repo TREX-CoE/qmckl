@@ -358,8 +358,10 @@ if test "$ok" = "yes"; then
         if test "$GCC" = "yes"; then
 	        CFLAGS="$CFLAGS \
 -g -Wall -W -Wbad-function-cast -Wcast-qual -Warray-bounds -Wdisabled-optimization \
+-fsanitize=address -fno-omit-frame-pointer \
 -Wpointer-arith -Wcast-align -Wpedantic -Wextra -Walloc-zero -Werror \
 "
+		LDFLAGS="$LDFLAGS -fsanitize=address"
         fi
         if test "$GFC" = "yes"; then
 	        FCFLAGS="$FCFLAGS \
