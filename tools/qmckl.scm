@@ -3,16 +3,16 @@
   #:use-module (gnu packages autotools)
   #:use-module (gnu packages pkg-config)
   #:use-module (gnu packages gcc)
-  #:use-module (gnu packages maths)  	;; contains blas, lapack, hdf5
-  #:use-module (trexio) 		;; custom trexio module, has to be provided via -L command line option
+  #:use-module (gnu packages maths)   ;; contains blas, lapack, hdf5
+  #:use-module (trexio)               ;; custom trexio module, has to be provided via the -L command line option
   #:use-module (guix download)
   #:use-module (guix build-system gnu)
   #:use-module (guix licenses)
   ;; the modules below are additional requirements for building the dev version
   #:use-module (guix git-download)
-  #:use-module (gnu packages version-control) ;; this is ONLY needed for cloning the htmlize.el, better to avoid it
   #:use-module (gnu packages python)
   #:use-module (gnu packages emacs)
+  #:use-module (gnu packages swig)
   #:use-module (gnu packages m4))
 
 
@@ -33,7 +33,8 @@
     (build-system gnu-build-system)
     (arguments 
       '(#:configure-flags 
-	'("--enable-hpc" 
+	'("--enable-silent-rules"
+	  "--enable-hpc" 
 	  "--with-openmp")))
     (inputs 
       `(("trexio", trexio) 
@@ -49,15 +50,13 @@
     (license bsd-3)))
 
 
-;; build and installation of this still fails due to some bugs in the tools/build_makefile.py script
-;; which fails to parse the git tree
-;; Guix does not copy .git folder into the source directory during unpack phase !
-(define-public qmckl-master
-  (let ((commit "b33d6e523da8528a824bac8bc46a62a79d0dd846")
+;; Guix does not copy the .git folder so relying on it's presence is a bad practice !
+(define-public qmckl-dev
+  (let ((commit "26f8a1b906c329fa92adc2480e1769b8a90347de")
 	(revision "1"))
   (package
-    (name "qmckl-master")
-    (version (git-version "0.2.3" revision commit))
+    (name "qmckl-dev")
+    (version (git-version "0.2.2" revision commit))
     (source (origin
               (method git-fetch)
               (uri (git-reference
@@ -68,14 +67,15 @@
               (sha256
                (base32
 		;; the hash below is produced by `guix hash -rx .`
-		"1a46s14vki0mhx3g5xclhqllkfw3gc0y583a7la1s7ixm5f7zvim"
+		"0px3880bnciky8mwivll56108j9ncxri3ic2bhavcwn1z12z7lcb"
                 ))))
     (build-system gnu-build-system)
     (arguments 
-      '(#:configure-flags '("--with-openmp")
-	;; ignoring make errors while building htmlized docs is important for the build to pass
-	#:make-flags '("-i")
-	;;))
+      '(#:configure-flags 
+	'("--enable-hpc"
+	  "--with-openmp")
+	;; ignoring make errors is a hack for the build to pass
+	;; #:make-flags '("-i")))
 	#:phases
 	;; this is a workaround to activate QMCKL_DEVEL mode
 	(modify-phases %standard-phases
@@ -97,7 +97,7 @@
 	("automake", automake)
 	("libtool", libtool)
 	("pkg-config", pkg-config)
-	("git", git) ;; this is ONLY needed for cloning the htmlize.el, better to avoid it
+	("swig", swig)
 	("m4", m4)
 	))
     (synopsis "QMCkl: Quantum Monte Carlo Kernel Library")
@@ -110,8 +110,9 @@
 
 (define-public qmckl
   ;; Default version of QMCkl - change this to benchmark installation from Git
+  ;; qmckl-dev)
   qmckl-hpc-0.2.1)
-
 
 ;; return qmckl variable so that `quix package -f qmckl.scm` works
 qmckl
+
