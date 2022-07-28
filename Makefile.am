@@ -88,6 +88,9 @@ dist_html_DATA = $(HTML_FILES) \
 
 dist_text_DATA = $(TEXT_FILES)
 
+# Include Guix manifest in the source code distribution tarball
+tools_qmckl_scm = tools/qmckl.scm
+EXTRA_DIST += $(tools_qmckl_scm)
 
 html-local: $(htmlize_el) $(dist_html_DATA)
 text: $(htmlize_el) $(dist_text_DATA)
