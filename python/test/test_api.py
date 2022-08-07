@@ -28,12 +28,10 @@ fname = join('data', 'Alz_small.h5')
 pq.trexio_read(ctx, fname)
 print('trexio_read: passed')
 
-pq.set_electron_walk_num(ctx, walk_num)
-
 mo_num = pq.get_mo_basis_mo_num(ctx)
 assert mo_num == 404
 
-pq.set_electron_coord(ctx, 'T', coord)
+pq.set_electron_coord(ctx, 'T', walk_num, coord)
 
 size_max = 5*walk_num*elec_num*mo_num
 
