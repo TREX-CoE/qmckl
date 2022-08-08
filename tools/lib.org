@@ -4,17 +4,16 @@
 ** Defines the name of the current file
 
    #+NAME: filename
-   #+begin_src elisp :tangle no 
+   #+begin_src elisp :tangle no
 (file-name-nondirectory (substring buffer-file-name 0 -4))
    #+end_src
-  
+
 ** Function to get the value of a property.
  #+NAME: get_value
  #+begin_src elisp :var key="Type"
 (org-with-point-at org-babel-current-src-block-location
   (org-entry-get nil key t))
  #+end_src
-
 
 ** Table of function arguments
 
@@ -32,7 +31,7 @@
      | ~ldb~     | ~int64_t~        | in     | Leading dimension of array ~B~                |
      | ~C~       | ~double[n][ldc]~ | out    | Array containing the $m \times n$ matrix $C$  |
      | ~ldc~     | ~int64_t~        | in     | Leading dimension of array ~C~                |
-   
+
 
 *** Fortran-C type conversions
 
@@ -124,7 +123,7 @@ for d in parse_table(table):
         const = "const "
     else:
         const = ""
-        
+
     results += [ f"      {const}{c_type} {name}" ]
 
 results=',\n'.join(results)
@@ -146,9 +145,8 @@ return template
           const double* B,
           const int64_t ldb,
           double* const C,
-          const int64_t ldc ); 
+          const int64_t ldc );
     #+end_src
-
 
 *** Generates a C interface to the Fortran function
 
@@ -258,4 +256,168 @@ return results
     #+END_SRC
 
 
-    
+
+** Creating provide functions
+
+    #+NAME: write_provider_header
+    #+BEGIN_SRC python :var group="GROUP" :var data="DATA" :results drawer :noweb yes :wrap "src c :comments org :tangle (eval h_private_func) :noweb yes :export none"
+template = "qmckl_exit_code qmckl_provide_{{ group }}_{{ data }}(qmckl_context context);"
+
+msg = template.replace("{{ group }}", group) \
+              .replace("{{ data }}", data)
+return msg
+    #+END_SRC
+
+    #+RESULTS: write_provider_header
+    #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :export none
+    qmckl_exit_code qmckl_provide_GROUP_DATA(qmckl_context context);
+    #+end_src
+
+    #+NAME: write_provider_pre
+    #+BEGIN_SRC python :var group="GROUP" :var data="DATA" :var dimension="DIMENSION" :results drawer :noweb yes :wrap "src c :comments org :tangle (eval c) :noweb yes :export none"
+template = """qmckl_exit_code qmckl_provide_{{ group }}_{{ data }}(qmckl_context context)
+{
+
+  qmckl_exit_code rc = QMCKL_SUCCESS;
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_provide_{{ group }}_{{ data }}",
+                           NULL);
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  if (!ctx->{{ group }}.provided) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_provide_{{ group }}_{{ data }}",
+                           NULL);
+  }
+
+  /* Compute if necessary */
+  if (ctx->point.date > ctx->{{ group }}.{{ data }}_date) {
+
+    qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+    mem_info.size = {{ dimension }} * sizeof(double);
+
+    if (ctx->{{ group }}.{{ data }} != NULL) {
+      qmckl_memory_info_struct mem_info_test = qmckl_memory_info_struct_zero;
+      rc = qmckl_get_malloc_info(context, ctx->{{ group }}.{{ data }}, &mem_info_test);
+
+      /* if rc != QMCKL_SUCCESS, we are maybe in an _inplace function because the
+         memory was not allocated with qmckl_malloc */
+
+      if ((rc == QMCKL_SUCCESS) && (mem_info_test.size != mem_info.size)) {
+        rc = qmckl_free(context, ctx->{{ group }}.{{ data }});
+        assert (rc == QMCKL_SUCCESS);
+        ctx->{{ group }}.{{ data }} = NULL;
+      }
+    }
+
+    /* Allocate array */
+    if (ctx->{{ group }}.{{ data }} == NULL) {
+
+      double* {{ data }} = (double*) qmckl_malloc(context, mem_info);
+
+      if ({{ data }} == NULL) {
+        return qmckl_failwith( context,
+                               QMCKL_ALLOCATION_FAILED,
+                               "qmckl_{{ group }}_{{ data }}",
+                               NULL);
+      }
+      ctx->{{ group }}.{{ data }} = {{ data }};
+    }
+
+"""
+
+msg = template.replace("{{ group }}", group) \
+              .replace("{{ data }}", data) \
+              .replace("{{ dimension }}", dimension)
+return msg
+    #+END_SRC
+
+    #+RESULTS: write_provider_pre
+    #+begin_src c :comments org :tangle (eval c) :noweb yes :export none
+    qmckl_exit_code qmckl_provide_GROUP_DATA(qmckl_context context)
+    {
+
+      qmckl_exit_code rc;
+
+      if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+        return qmckl_failwith( context,
+                               QMCKL_INVALID_CONTEXT,
+                               "qmckl_provide_GROUP_DATA",
+                               NULL);
+      }
+
+      qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+      assert (ctx != NULL);
+
+      if (!ctx->GROUP.provided) {
+        return qmckl_failwith( context,
+                               QMCKL_NOT_PROVIDED,
+                               "qmckl_provide_GROUP_DATA",
+                               NULL);
+      }
+
+      /* Compute if necessary */
+      if (ctx->point.date > ctx->GROUP.DATA_date) {
+
+        if (ctx->point.alloc_date > ctx->GROUP.DATA_date) {
+          rc = qmckl_free(context, ctx->GROUP.DATA);
+          assert (rc == QMCKL_SUCCESS);
+          ctx->GROUP.DATA = NULL;
+        }
+
+        /* Allocate array */
+        if (ctx->GROUP.DATA == NULL) {
+
+          qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+          mem_info.size = DIMENSION * sizeof(double);
+          double* DATA = (double*) qmckl_malloc(context, mem_info);
+
+          if (DATA == NULL) {
+            return qmckl_failwith( context,
+                                   QMCKL_ALLOCATION_FAILED,
+                                   "qmckl_GROUP_DATA",
+                                   NULL);
+          }
+          ctx->GROUP.DATA = DATA;
+        }
+
+    #+end_src
+
+    #+NAME: write_provider_post
+    #+BEGIN_SRC python :var group="BASIS" :var data="DATA" :results drawer :noweb yes :wrap "src c :comments org :tangle (eval c) :noweb yes :export none"
+template = """    if (rc != QMCKL_SUCCESS) {
+      return rc;
+    }
+
+    ctx->{{ group }}.{{ data }}_date = ctx->date;
+  }
+
+  return QMCKL_SUCCESS;
+}
+"""
+
+msg = template.replace("{{ group }}", group) \
+              .replace("{{ data }}", data)
+
+return msg
+    #+END_SRC
+
+    #+RESULTS: write_provider_post
+    #+begin_src c :comments org :tangle (eval c) :noweb yes :export none
+        if (rc != QMCKL_SUCCESS) {
+          return rc;
+        }
+
+        ctx->BASIS.DATA_date = ctx->date;
+      }
+
+      return QMCKL_SUCCESS;
+    }
+    #+end_src

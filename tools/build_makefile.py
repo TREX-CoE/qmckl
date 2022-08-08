@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python
 #
 # Creates all the dependencies from the org-mode files
 
@@ -248,10 +248,22 @@ def main():
                     "" ]
 
     tmp = "EXTRA_DIST += "
-    r = subprocess.check_output("git ls-tree --name-only -r HEAD".split())
-    for line in r.splitlines():
-       if b"share/qmckl/test_data/" in line:
-         tmp += " \\\n   " + line.decode('utf8')
+    # Manually get the benchmark data list
+    for item in glob(os.path.join("share/qmckl/test_data/", "*")):
+        if os.path.isfile(item):
+            #print(f'Depth 1, file item: {item}')
+            tmp += " \\\n   " + item
+        elif os.path.isdir(item):
+            for item2 in glob(os.path.join(item, "*")):
+                if os.path.isfile(item2):
+                    tmp += " \\\n   " + item2
+                elif os.path.isdir(item2):
+                    for item3 in glob(os.path.join(item2, "*")):
+                        if os.path.isfile(item3):
+                            tmp += " \\\n   " + item3
+                        elif os.path.isdir(item3):
+                            print("Stopping at the depth level 3, not processing")
+
     tmp += "\n"
     output += tmp.split("\n")
 

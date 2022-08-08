@@ -35,7 +35,7 @@
 
 AC_PREREQ([2.69])
 
-AC_INIT([qmckl],[0.1.1],[https://github.com/TREX-CoE/qmckl/issues],[],[https://trex-coe.github.io/qmckl/index.html])
+AC_INIT([qmckl],[0.3.1],[https://github.com/TREX-CoE/qmckl/issues],[],[https://trex-coe.github.io/qmckl/index.html])
 AC_CONFIG_AUX_DIR([tools])
 AM_INIT_AUTOMAKE([subdir-objects color-tests parallel-tests silent-rules 1.11])
 
@@ -49,12 +49,12 @@ AS_IF([test -d ${srcdir}/.git],
 AC_ARG_WITH(ifort, [AS_HELP_STRING([--with-ifort],[Use Intel Fortran compiler])], with_ifort=$withval, with_ifort=no)
 AS_IF([test "$with_ifort" == "yes"], [
   FC=ifort
-  FCFLAGS="-xHost -ip -Ofast -ftz -finline -g -mkl=sequential" ])
+  FCFLAGS="-march=native -ip -Ofast -ftz -finline -g -mkl=sequential" ])
 
 AC_ARG_WITH(icc, [AS_HELP_STRING([--with-icc],[Use Intel C compiler])], with_icc=$withval, with_icc=no)
 AS_IF([test "$with_icc" == "yes"], [
   CC=icc
-  CFLAGS="-xHost -ip -Ofast -ftz -finline -g -mkl=sequential" ])
+  CFLAGS="-march=native -ip -Ofast -ftz -finline -g -mkl=sequential" ])
 
 AS_IF([test "$with_icc"."$with_ifort" == "yes.yes"], [
   ax_blas_ok="yes"
@@ -93,6 +93,7 @@ AC_PROG_F77
 m4_version_prereq([2.70],[], [AC_PROG_CC_C99])
 AS_IF([test "$ac_cv_prog_cc_c99" = "no"], [AC_MSG_ERROR([The compiler does not support C99])])
 AC_PROG_CC_C_O
+AM_PROG_CC_C_O
 AC_PROG_FC
 AC_PROG_FC_C_O
 AC_FC_PP_DEFINE
@@ -137,10 +138,10 @@ case "$with_chameleon" in
       [PKG_CFLAGS="$PKG_CFLAGS $LIBCHAMELEON_CFLAGS"
       PKG_LIBS="$PKG_LIBS $LIBCHAMELEON_LIBS"]
                       ,[
-    
+
       ## something went wrong.
       ## try to find the package without pkg-config
-    
+
       ## check that the library is actually new enough.
       ## by testing for a 1.0.0+ function which we use
       AC_CHECK_LIB(chameleon,CHAMELEON_finalize,[LIBCHAMELEON_LIBS="-lchameleon"])
@@ -200,16 +201,25 @@ AS_IF([test "$BLAS_LIBS" == "$LAPACK_LIBS"], [BLAS_LIBS=""])
 # Specific options required with some compilers
 case $FC in
 
- ifort*)
+ *ifort*)
       FCFLAGS="$FCFLAGS -nofor-main"
       ;;
 
-#gfortran*)
-#     # Order is important here
-#     FCFLAGS="-cpp $FCFLAGS"
-#     ;;
+ *nvfortran*)
+      FCFLAGS="$FCFLAGS -fPIC -Mnomain"
+      ;;
+
 esac
 
+case $CC in
+
+  *gcc*)
+        CFLAGS="$CFLAGS -fPIC"
+        ;;
+  *nvc*)
+        CFLAGS="$CFLAGS -fPIC"
+        ;;
+esac
 
 
 # Options.
@@ -218,28 +228,107 @@ AS_IF([test "$HAVE_HPC" = "yes"], [
    AC_DEFINE([HAVE_HPC], [1], [If defined, activate HPC routines])
 ])
 
-AC_ARG_ENABLE(debug, [AS_HELP_STRING([--enable-debug],[compile for debugging])], ok=$enableval, ok=no)
-if test "$ok" = "yes"; then
-        if test "$GCC" = "yes"; then
-	        CFLAGS="$CFLAGS \
--g -Wall -W -Wbad-function-cast -Wcast-qual -Warray-bounds -Wdisabled-optimization \
--Wpointer-arith -Wcast-align -Wpedantic -Wextra -Walloc-zero -Werror \
-"
-        fi
-        if test "$GFC" = "yes"; then
-	        FCFLAGS="$FCFLAGS \
--g -fcheck=all -Waliasing -Wampersand -Wconversion \
--Wsurprising -ffpe-trap=zero,overflow,underflow \
--Wintrinsics-std -Wno-tabs -Wintrinsic-shadow -Wline-truncation \
--Wreal-q-constant -Wuninitialized  -fbacktrace -finit-real=nan"
-        fi
-        if test "$FC" = "ifort"; then
-	        FCFLAGS="$FCFLAGS \
--traceback -check all -debug all -fpe-all=0  -implicitnone"
-        fi
-	AC_DEFINE(DEBUG,1,[Define to turn on debugging checks])
-        ARGS="${ARGS} debug"
+# Enable Verificarlo tests
+AC_ARG_ENABLE([vfc_ci],
+[  --enable-vfc_ci    Build the library with vfc_ci support],
+[case "${enableval}" in
+  yes) vfc_ci=true &&  FCFLAGS="-D VFC_CI $FCFLAGS" && CFLAGS="-D VFC_CI $CFLAGS";;
+  no)  vfc_ci=false ;;
+  *) AC_MSG_ERROR([bad value ${enableval} for --enable_vfc_ci]) ;;
+esac],[vfc_ci=false])
+AM_CONDITIONAL([VFC_CI], [test x$vfc_ci = xtrue])
+
+if test "$FC" = "verificarlo-f"; then
+  AC_MSG_NOTICE(verificarlo-f detected)
+  # Arguments order is important here
+  FCFLAGS="-Mpreprocess $FCFLAGS"
 fi
+
+## Enable GPU offloading
+
+# GPU offloading
+AC_ARG_ENABLE(gpu, [AS_HELP_STRING([--enable-gpu],[openmp|openacc : Use GPU-offloaded functions])], enable_gpu=$enableval, enable_gpu=no)
+AS_IF([test "$enable_gpu" = "yes"], [enable_gpu="openmp"])
+
+# OpenMP offloading
+HAVE_OPENMP_OFFLOAD="no"
+AS_IF([test "$enable_gpu" = "openmp"], [
+  AC_DEFINE([HAVE_OPENMP_OFFLOAD], [1], [If defined, activate OpenMP-offloaded routines])
+  HAVE_OPENMP_OFFLOAD="yes"
+  case $CC in
+
+    *gcc*)
+          CFLAGS="$CFLAGS -fopenmp"
+          ;;
+    *nvc*)
+          CFLAGS="$CFLAGS -mp=gpu"
+          ;;
+  esac
+
+  case $FC in
+
+    *gfortran*)
+          FCFLAGS="$FCFLAGS -fopenmp"
+          ;;
+    *nvfortran*)
+          FCFLAGS="$FCFLAGS -mp=gpu"
+          ;;
+  esac]
+)
+
+# OpenMP offloading
+HAVE_OPENACC_OFFLOAD="no"
+AS_IF([test "$enable_gpu" = "openacc"], [
+  AC_DEFINE([HAVE_OPENACC_OFFLOAD], [1], [If defined, activate OpenACC-offloaded routines])
+  HAVE_OPENACC_OFFLOAD="yes"
+  case $CC in
+
+    *gcc*)
+          CFLAGS="$CFLAGS -fopenacc"
+          ;;
+    *nvc*)
+          CFLAGS="$CFLAGS -acc=gpu"
+          ;;
+  esac
+
+  case $FC in
+
+    *gfortran*)
+          FCFLAGS="$FCFLAGS -fopenacc"
+          ;;
+    *nvfortran*)
+          FCFLAGS="$FCFLAGS -acc=gpu"
+          ;;
+  esac
+
+])
+
+# cuBLAS offloading
+AC_ARG_WITH(cublas, [AS_HELP_STRING([--with-cublas],[Use cuBLAS-offloaded functions])], HAVE_CUBLAS_OFFLOAD=$withval, HAVE_CUBLAS_OFFLOAD=no)
+AS_IF([test "$HAVE_CUBLAS_OFFLOAD" = "yes"], [
+  AC_DEFINE([HAVE_CUBLAS_OFFLOAD], [1], [If defined, activate cuBLAS-offloaded routines])
+  HAVE_OPENACC_OFFLOAD="yes"
+  case $CC in
+
+    *gcc*)
+          CFLAGS="$CFLAGS -fopenmp"
+          LDFLAGS="-lcublas"
+          ;;
+    *nvc*)
+          CFLAGS="$CFLAGS -mp=gpu -cudalib=cublas"
+          ;;
+  esac
+
+  case $FC in
+
+    *gfortran*)
+          FCFLAGS="$FCFLAGS -fopenmp"
+          ;;
+    *nvfortran*)
+          FCFLAGS="$FCFLAGS -mp=gpu -cudalib=cublas"
+          ;;
+  esac
+])
 
 AC_ARG_ENABLE(malloc-trace, [AS_HELP_STRING([--enable-malloc-trace],[use debug malloc/free])], ok=$enableval, ok=no)
 if test "$ok" = "yes"; then
@@ -256,10 +345,38 @@ fi
 
 AC_ARG_WITH(efence, [AS_HELP_STRING([--with-efence],[use ElectricFence library])], ok=$withval, ok=no)
 if test "$ok" = "yes"; then
-	AC_CHECK_LIB(efence, malloc)
+	AC_CHECK_LIB([efence], [malloc])
         ARGS="${ARGS} efence"
 fi
 
+
+
+##
+
+AC_ARG_ENABLE(debug, [AS_HELP_STRING([--enable-debug],[compile for debugging])], ok=$enableval, ok=no)
+if test "$ok" = "yes"; then
+        if test "$GCC" = "yes"; then
+	        CFLAGS="$CFLAGS \
+-g -Wall -W -Wbad-function-cast -Wcast-qual -Warray-bounds -Wdisabled-optimization \
+-fsanitize=address -fno-omit-frame-pointer \
+-Wpointer-arith -Wcast-align -Wpedantic -Wextra -Walloc-zero -Werror \
+"
+		LDFLAGS="$LDFLAGS -fsanitize=address"
+        fi
+        if test "$GFC" = "yes"; then
+	        FCFLAGS="$FCFLAGS \
+-g -fcheck=all -Waliasing -Wampersand -Wconversion \
+-Wsurprising -ffpe-trap=zero,overflow,underflow \
+-Wintrinsics-std -Wno-tabs -Wintrinsic-shadow -Wline-truncation \
+-Wreal-q-constant -Wuninitialized  -fbacktrace -finit-real=nan"
+        fi
+        if test "$FC" = "ifort"; then
+	        FCFLAGS="$FCFLAGS \
+-traceback -check all -debug all -fpe-all=0  -implicitnone"
+        fi
+	AC_DEFINE(DEBUG,1,[Define to turn on debugging checks])
+        ARGS="${ARGS} debug"
+fi
 
 # Checks for header files.
 
@@ -311,23 +428,10 @@ if test "x${QMCKL_DEVEL}" != "x"; then
         HAS_CPPCHECK=1
   fi
 
+  AX_PKG_SWIG(4.0.0, [], AC_MSG_WARN([SWIG is required to build Python API.]) )
+
 fi
 
-# Enable Verificarlo tests
-AC_ARG_ENABLE([vfc_ci],
-[  --enable-vfc_ci    Build the library with vfc_ci support],
-[case "${enableval}" in
-  yes) vfc_ci=true &&  FCFLAGS="-D VFC_CI $FCFLAGS" && CFLAGS="-D VFC_CI $CFLAGS";;
-  no)  vfc_ci=false ;;
-  *) AC_MSG_ERROR([bad value ${enableval} for --enable_vfc_ci]) ;;
-esac],[vfc_ci=false])
-AM_CONDITIONAL([VFC_CI], [test x$vfc_ci = xtrue])
-
-if test "$FC" = "verificarlo-f"; then
-  AC_MSG_NOTICE(verificarlo-f detected)
-  # Arguments order is important here
-  FCFLAGS="-Mpreprocess $FCFLAGS"
-fi
 
 #PKG-CONFIG
 #mkl-dynamic-lp64-seq
@@ -358,11 +462,14 @@ CC..............: ${CC}
 CPPFLAGS........: ${CPPFLAGS}
 CFLAGS..........: ${CFLAGS}
 FC..............: ${FC}
-FCLAGS..........: ${FCFLAGS}
+FCFLAGS.........: ${FCFLAGS}
 LDFLAGS:........: ${LDFLAGS}
 LIBS............: ${LIBS}
 USE CHAMELEON...: ${with_chameleon}
 HPC version.....: ${HAVE_HPC}
+OpenMP offload..: ${HAVE_OPENMP_OFFLOAD}
+OpenACC offload.: ${HAVE_OPENACC_OFFLOAD}
+cuBLAS offload..: ${HAVE_CUBLAS_OFFLOAD}
 
 Package features:
   ${ARGS}
