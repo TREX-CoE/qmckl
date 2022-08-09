@@ -205,7 +205,7 @@ cppcheck.out: $(qmckl_h)
 
 $(qmckl_include_i):  $(qmckl_h) $(process_header_py)
 	$(MKDIR_P) python/src
-	python $(process_header_py) $(qmckl_h)
+	python3 $(process_header_py) $(qmckl_h)
 	mv qmckl_include.i $(qmckl_include_i)
 
 
