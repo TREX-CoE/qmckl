@@ -889,6 +889,7 @@ integer function qmckl_dgemm_f(context, TransA, TransB, &
      m, n, k, alpha, A, LDA, B, LDB, beta, C, LDC) &
      result(info)
   use qmckl
+  use qmckl_dgemm_tiled_module
   implicit none
   integer(qmckl_context), intent(in)  :: context
   character             , intent(in)  :: TransA, TransB
@@ -900,6 +901,10 @@ integer function qmckl_dgemm_f(context, TransA, TransB, &
   double precision      , intent(in)  :: B(ldb,*)
   integer*8             , intent(in)  :: ldc
   double precision      , intent(out) :: C(ldc,*)
+  double precision,allocatable,dimension(:,:) :: A1
+  double precision,allocatable,dimension(:,:) :: B1
+  double precision,allocatable,dimension(:,:) :: C1
+  integer*8                           :: i, j, LDA1, LDB1, LDC1
 
   info = QMCKL_SUCCESS
 
@@ -938,8 +943,47 @@ integer function qmckl_dgemm_f(context, TransA, TransB, &
      return
   endif
 
-  call dgemm(transA, transB, int(m,4), int(n,4), int(k,4), &
-       alpha, A, int(LDA,4), B, int(LDB,4), beta, C, int(LDC,4))
+  !call dgemm(transA, transB, int(m,4), int(n,4), int(k,4), &
+  !     alpha, A, int(LDA,4), B, int(LDB,4), beta, C, int(LDC,4))
+  
+  ! Copy A to A1
+  allocate(A1(k,m))
+  do j=1,m
+    do i=1,k
+      A1(i,j) = A(j,i)
+    end do
+  end do
+
+  ! Copy B to B1
+  allocate(B1(n,k))
+  do j=1,k
+    do i=1,n
+      B1(i,j) = B(j,i)
+    end do
+  end do
+
+  ! Copy C to C1
+  allocate(C1(n,m))
+  do j=1,m
+    do i=1,n
+      C1(i,j) = C(j,i)
+    end do
+  end do
+
+  LDA1 = size(A1,1)
+  LDB1 = size(B1,1)
+  LDC1 = size(C1,1)
+
+  info = qmckl_dgemm_tiled_avx2(int(m,8), int(n,8), int(k,8), &
+       A1, int(LDA1,8), B1, int(LDB1,8), C1, int(LDC1,8))
+
+  do j=1,n
+  do i=1,m
+     C(i,j) = alpha*C1(j,i) + beta*C(j,i)
+  end do
+  end do
+
+  deallocate(A1,B1,C1)
 
 end function qmckl_dgemm_f
     #+end_src
