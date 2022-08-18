@@ -30,6 +30,8 @@
 %cstring_bounded_output(char* function_name, 1024);
 %cstring_bounded_output(char* message, 1024);
 %cstring_bounded_output(char* const basis_type, 2);
+/* Required for qmckl_last_error function to work */
+%cstring_bounded_output(char* buffer, 1024);
 
 /* This block is needed make SWIG convert NumPy arrays to/from from the C pointer and size_max argument.
    NOTE: `numpy.i` interface file is not part of SWIG but it is included in the numpy distribution (under numpy/tools/swig/numpy.i)
