@@ -20,6 +20,7 @@
 %include typemaps.i
 
 %apply int *OUTPUT { qmckl_exit_code *exit_code};
+%apply double *OUTPUT { double* det_l};
 
 /* Avoid passing file_name length as an additiona argument */
 %apply (char *STRING, int LENGTH) { (const char* file_name, const int64_t size_max) };
@@ -55,6 +56,7 @@ import_array();
 %apply ( double* IN_ARRAY1 , int64_t DIM1 ) { ( const double * A, const int64_t size_max_A) };
 %apply ( double* IN_ARRAY1 , int64_t DIM1 ) { ( const double * B, const int64_t size_max_B) };
 %apply ( double* ARGOUT_ARRAY1 , int64_t DIM1 ) { ( double* const C, const int64_t size_max_C) };
+%apply ( double* ARGOUT_ARRAY1 , int64_t DIM1 ) { ( double* const B, const int64_t size_max_B) };
 
 /* Handle properly get_point */
 

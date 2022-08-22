@@ -1086,7 +1086,7 @@ assert(QMCKL_SUCCESS == test_qmckl_dgemm(context));
 
 ** ~qmckl_dgemm_safe~
 
-   "Size-safe" is a proxy function with the same functionality as ~qmckl_dgemm~
+   "Size-safe" proxy function with the same functionality as ~qmckl_dgemm~
    but with 3 additional arguments. These arguments ~size_max_M~ (where ~M~ is a matix)
    are required primarily for the Python API, where compatibility with
    NumPy arrays implies that sizes of the input and output arrays are provided.
@@ -1621,8 +1621,6 @@ integer function qmckl_adjugate_f(context, na, A, LDA, B, ldb, det_l) &
   integer*8, intent(in)                 :: LDB
   integer*8, intent(in)                 :: na
   double precision, intent(inout)       :: det_l
-
-  integer    :: i,j
 
   info = QMCKL_SUCCESS
 
@@ -2444,6 +2442,159 @@ qmckl_exit_code test_qmckl_adjugate(qmckl_context context);
 assert(QMCKL_SUCCESS == test_qmckl_adjugate(context));
     #+end_src
 
+** ~qmckl_adjugate_safe~
+
+   "Size-safe" proxy function with the same functionality as ~qmckl_adjugate~
+   but with 2 additional arguments. These arguments ~size_max_M~ (where ~M~ is a matix)
+   are required primarily for the Python API, where compatibility with
+   NumPy arrays implies that sizes of the input and output arrays are provided.
+
+
+   #+NAME: qmckl_adjugate_safe_args
+   | Variable     | Type            | In/Out | Description                                    |
+   |--------------+-----------------+--------+------------------------------------------------|
+   | ~context~    | ~qmckl_context~ | in     | Global state                                   |
+   | ~n~          | ~int64_t~       | in     | Number of rows and columns of the input matrix |
+   | ~A~          | ~double[][lda]~ | in     | Array containing the $n \times n$ matrix $A$   |
+   | ~size_max_A~ | ~int64_t~       | in     | Size of the matrix $A$                         |
+   | ~lda~        | ~int64_t~       | in     | Leading dimension of array ~A~                 |
+   | ~B~          | ~double[][ldb]~ | out    | Adjugate of $A$                                |
+   | ~size_max_B~ | ~int64_t~       | in     | Size of the matrix $B$                         |
+   | ~ldb~        | ~int64_t~       | in     | Leading dimension of array ~B~                 |
+   | ~det_l~      | ~double~        | inout  | determinant of $A$                             |
+
+   Requirements:
+
+    - ~context~ is not ~QMCKL_NULL_CONTEXT~
+    - ~n > 0~
+    - ~lda >= m~
+    - ~A~ is allocated with at least $m \times m \times 8$ bytes
+    - ~ldb >= m~
+    - ~B~ is allocated with at least $m \times m \times 8$ bytes
+    - ~size_max_A >= m * m~
+    - ~size_max_B >= m * m~
+
+    #+CALL: generate_c_header(table=qmckl_adjugate_safe_args,rettyp="qmckl_exit_code",fname="qmckl_adjugate_safe")
+
+    #+RESULTS:
+    #+BEGIN_src c :tangle (eval h_func) :comments org
+    qmckl_exit_code qmckl_adjugate_safe (
+	  const qmckl_context context,
+	  const int64_t n,
+	  const double* A,
+	  const int64_t size_max_A,
+	  const int64_t lda,
+	  double* const B,
+	  const int64_t size_max_B,
+	  const int64_t ldb,
+	  double* det_l ); 
+    #+END_src
+
+   For small matrices (\le 5\times 5), we use specialized routines
+   for performance motivations. For larger sizes, we rely on the
+   LAPACK library.
+
+    #+begin_src f90 :tangle (eval f) :exports none
+integer function qmckl_adjugate_safe_f(context, &
+     na, A, size_A, LDA, B, size_B, LDB, det_l) &
+     result(info)
+  use qmckl
+  implicit none
+  integer(qmckl_context)  , intent(in)  :: context
+  double precision, intent(in)          :: A (LDA,*)
+  integer*8, intent(in)                 :: size_A 
+  integer*8, intent(in)                 :: LDA
+  double precision, intent(out)         :: B (LDB,*)
+  integer*8, intent(in)                 :: size_B 
+  integer*8, intent(in)                 :: LDB
+  integer*8, intent(in)                 :: na
+  double precision, intent(inout)       :: det_l
+
+  integer, external :: qmckl_adjugate_f
+
+  info = QMCKL_SUCCESS
+
+  if (size_A < na) then
+     info = QMCKL_INVALID_ARG_4
+     return
+  endif
+
+  if (size_B <= 0_8) then
+     info = QMCKL_INVALID_ARG_7
+     return
+  endif
+
+  info = qmckl_adjugate_f(context, na, A, LDA, B, LDB, det_l) 
+
+  if (info == QMCKL_INVALID_ARG_4) then
+     info = QMCKL_INVALID_ARG_5
+     return
+  endif
+
+  if (info == QMCKL_INVALID_ARG_6) then
+     info = QMCKL_INVALID_ARG_8
+     return
+  endif
+
+end function qmckl_adjugate_safe_f
+    #+end_src
+
+*** C interface
+
+    #+CALL: generate_c_interface(table=qmckl_adjugate_safe_args,rettyp="qmckl_exit_code",fname="qmckl_adjugate_safe")
+
+    #+RESULTS:
+    #+begin_src f90 :tangle (eval f) :comments org :exports none
+    integer(c_int32_t) function qmckl_adjugate_safe &
+        (context, n, A, size_A, lda, B, size_B, ldb, det_l) &
+        bind(C) result(info)
+
+      use, intrinsic :: iso_c_binding
+      implicit none
+
+      integer (c_int64_t) , intent(in)  , value :: context
+      integer (c_int64_t) , intent(in)  , value :: n
+      real    (c_double ) , intent(in)          :: A(lda,*)
+      integer (c_int64_t) , intent(in)  , value :: lda
+      integer (c_int64_t) , intent(in)  , value :: size_A 
+      real    (c_double ) , intent(out)         :: B(ldb,*)
+      integer (c_int64_t) , intent(in)  , value :: ldb
+      integer (c_int64_t) , intent(in)  , value :: size_B 
+      real    (c_double ) , intent(inout)        :: det_l
+
+      integer(c_int32_t), external :: qmckl_adjugate_safe_f
+      info = qmckl_adjugate_safe_f &
+             (context, n, A, size_A, lda, B, size_B, ldb, det_l)
+
+    end function qmckl_adjugate_safe
+    #+end_src
+
+    #+CALL: generate_f_interface(table=qmckl_adjugate_safe_args,rettyp="qmckl_exit_code",fname="qmckl_adjugate_safe")
+
+    #+RESULTS:
+    #+begin_src f90 :tangle (eval fh_func) :comments org :exports none
+    interface
+      integer(c_int32_t) function qmckl_adjugate_safe &
+          (context, n, A, size_A, lda, B, size_B, ldb, det_l) &
+          bind(C)
+        use, intrinsic :: iso_c_binding
+        import
+        implicit none
+
+        integer (c_int64_t) , intent(in)  , value :: context
+        integer (c_int64_t) , intent(in)  , value :: n
+        real    (c_double ) , intent(in)          :: A(lda,*)
+        integer (c_int64_t) , intent(in)  , value :: lda
+        integer (c_int64_t) , intent(in)  , value :: size_A
+        real    (c_double ) , intent(out)         :: B(ldb,*)
+        integer (c_int64_t) , intent(in)  , value :: ldb
+        integer (c_int64_t) , intent(in)  , value :: size_B 
+        real    (c_double ) , intent(inout)        :: det_l
+
+      end function qmckl_adjugate_safe
+    end interface
+    #+end_src
+
 ** ~qmckl_transpose~
 
    Transposes a matrix: $A^\dagger_{ji} = A_{ij}$.
@@ -2543,9 +2694,7 @@ qmckl_transpose (qmckl_context context,
   assert (qmckl_context_destroy(context) == QMCKL_SUCCESS);
   return 0;
 }
-
    #+end_src
-
 
 # -*- mode: org -*-
 # vim: syntax=c
