@@ -71,5 +71,7 @@ setup(name             = MODULE_NAME,
          "Operating System :: MacOS"
       ],
       python_requires = ">=3.0",
-      install_requires = ["numpy>=1.17.3"]
+      # The ABI incompatibility of numpy is a pain, for now set the 
+      # min numpy version such that we have wheels for CPython 3.5 & 3.6
+      install_requires = ["numpy>=1.13.3"]
       )
