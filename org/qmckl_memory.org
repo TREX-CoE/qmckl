@@ -156,7 +156,7 @@ void* qmckl_malloc(qmckl_context context, const qmckl_memory_info_struct info) {
     assert (ctx->memory.element[pos].size == (size_t) 0);
 
     /* Copy info at the new location */
-    ctx->memory.element[pos].size    = info.size;
+    memcpy(&(ctx->memory.element[pos]), &info, sizeof(qmckl_memory_info_struct));
     ctx->memory.element[pos].pointer = pointer;
     ctx->memory.n_allocated += (size_t) 1;
   }
@@ -173,7 +173,7 @@ void* qmckl_malloc(qmckl_context context, const qmckl_memory_info_struct info) {
 qmckl_context context = qmckl_context_create();
 
 qmckl_memory_info_struct info = qmckl_memory_info_struct_zero;
-info.size = (size_t) 3;
+info.size = (size_t) 3*sizeof(int);
 
 /* Allocate an array of ints */
 int *a = (int*) qmckl_malloc(context, info);
@@ -235,7 +235,7 @@ qmckl_exit_code qmckl_free(qmckl_context context, void * const ptr) {
       /* Not found */
       qmckl_unlock(context);
       return qmckl_failwith(context,
-                            QMCKL_FAILURE,
+                            QMCKL_INVALID_ARG_2,
                             "qmckl_free",
                             "Pointer not found in context");
     }
@@ -272,12 +272,101 @@ assert(rc == QMCKL_SUCCESS);
 
 /* Free again */
 rc = qmckl_free(context, a);
-assert(rc == QMCKL_FAILURE);
+assert(rc == QMCKL_INVALID_ARG_2);
 
 /* Clean up */
 rc = qmckl_context_destroy(context);
 assert(rc == QMCKL_SUCCESS);
 
+   #+end_src
+
+* Get the size of a memory block
+
+  All the blocks allocated with ~qmckl_malloc~ keep track of how many
+  bytes were allocated. Using ~qmckl_malloc_size~ allows to get this information.
+
+  # Header
+  #+begin_src c :tangle (eval h_private_func) :noexport
+qmckl_exit_code
+qmckl_get_malloc_info(qmckl_context context,
+                      const void* pointer, 
+                      qmckl_memory_info_struct* info);
+  #+end_src
+
+  # Source
+  #+begin_src c :tangle (eval c)
+qmckl_exit_code
+qmckl_get_malloc_info(qmckl_context context,
+                      const void* ptr, 
+                      qmckl_memory_info_struct* info) 
+{
+
+  assert (qmckl_context_check(context) != QMCKL_NULL_CONTEXT);
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+
+  if (ptr == NULL) {
+    return qmckl_failwith(context,
+                          QMCKL_INVALID_ARG_2,
+                          "qmckl_get_malloc_info",
+                          "Null pointer");
+  }
+
+  if (info == NULL) {
+    return qmckl_failwith(context,
+                          QMCKL_INVALID_ARG_3,
+                          "qmckl_get_malloc_info",
+                          "Null pointer");
+  }
+
+  qmckl_lock(context);
+  {
+    /* Find the pointer entry */
+    size_t pos = (size_t) 0;
+    while ( pos < ctx->memory.array_size && ctx->memory.element[pos].pointer != ptr) {
+      pos += (size_t) 1;
+    }
+
+    if (pos >= ctx->memory.array_size) {
+      /* Not found */
+      qmckl_unlock(context);
+      return qmckl_failwith(context,
+                            QMCKL_INVALID_ARG_2,
+                            "qmckl_get_malloc_info",
+                            "Pointer not found in context");
+    }
+
+    /* Copy info */
+    memcpy(info, &(ctx->memory.element[pos]), sizeof(qmckl_memory_info_struct));
+  }
+  qmckl_unlock(context);
+
+  return QMCKL_SUCCESS;
+}
+  #+end_src
+
+
+   # Test                                                            :noexport:
+   #+begin_src c :tangle (eval c_test)
+/* Create a context */
+context = qmckl_context_create();
+
+info = qmckl_memory_info_struct_zero;
+info.size = (size_t) 3*sizeof(int);
+
+/* Allocate an array of ints */
+a = (int*) qmckl_malloc(context, info);
+
+/* Check that the size of a is 3*sizeof(int) */
+info = qmckl_memory_info_struct_zero;
+rc = qmckl_get_malloc_info(context, NULL, &info);
+assert (rc == QMCKL_INVALID_ARG_2);
+rc = qmckl_get_malloc_info(context, &rc, &info);
+assert (rc == QMCKL_INVALID_ARG_2);
+rc = qmckl_get_malloc_info(context, a, &info);
+assert (rc == QMCKL_SUCCESS);
+assert (info.size == 3*sizeof(int));
+rc = qmckl_context_destroy(context);
    #+end_src
 
 * End of files                                                     :noexport:

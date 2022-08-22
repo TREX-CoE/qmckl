@@ -158,12 +158,12 @@ typedef struct qmckl_local_energy_struct {
   double  * accep_prob;
   double  * r_drift;
   double  * y_move;
-  int64_t   e_kin_date;
-  int64_t   e_pot_date;
-  int64_t   e_local_date;
-  int64_t   accep_prob_date;
-  int64_t   r_drift_date;
-  int64_t   y_move_date;
+  uint64_t   e_kin_date;
+  uint64_t   e_pot_date;
+  uint64_t   e_local_date;
+  uint64_t   accep_prob_date;
+  uint64_t   r_drift_date;
+  uint64_t   y_move_date;
 
   int32_t   uninitialized;
   bool      provided;
@@ -217,10 +217,10 @@ qmckl_exit_code qmckl_get_kinetic_energy(qmckl_context context, double * const k
 
   if(!qmckl_nucleus_provided(context)) return QMCKL_NOT_PROVIDED;
 
-  rc = qmckl_provide_ao_vgl(context);
+  rc = qmckl_provide_ao_basis_ao_vgl(context);
   if (rc != QMCKL_SUCCESS) return rc;
 
-  rc = qmckl_provide_mo_vgl(context);
+  rc = qmckl_provide_mo_basis_mo_vgl(context);
   if (rc != QMCKL_SUCCESS) return rc;
 
   rc = qmckl_provide_kinetic_energy(context);
@@ -229,7 +229,7 @@ qmckl_exit_code qmckl_get_kinetic_energy(qmckl_context context, double * const k
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
-  size_t sze = ctx->electron.walk_num * sizeof(double);
+  size_t sze = ctx->electron.walker.num * sizeof(double);
   memcpy(kinetic_energy, ctx->local_energy.e_kin, sze);
 
   return QMCKL_SUCCESS;
@@ -304,13 +304,18 @@ qmckl_exit_code qmckl_provide_kinetic_energy(qmckl_context context) {
   }
 
   /* Compute if necessary */
-  if (ctx->electron.coord_new_date > ctx->local_energy.e_kin_date) {
+  if (ctx->electron.walker.point.date > ctx->local_energy.e_kin_date) {
+
+    if (ctx->electron.walker.num > ctx->electron.walker_old.num) {
+      free(ctx->local_energy.e_kin);
+      ctx->local_energy.e_kin = NULL;
+    }
 
     /* Allocate array */
     if (ctx->local_energy.e_kin == NULL) {
 
       qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-      mem_info.size = ctx->electron.walk_num * sizeof(double);
+      mem_info.size = ctx->electron.walker.num * sizeof(double);
       double* e_kin = (double*) qmckl_malloc(context, mem_info);
 
       if (e_kin == NULL) {
@@ -324,7 +329,7 @@ qmckl_exit_code qmckl_provide_kinetic_energy(qmckl_context context) {
 
     if (ctx->det.type == 'G') {
       rc = qmckl_compute_kinetic_energy(context,
-                                 ctx->det.walk_num,
+                                 ctx->electron.walker.num,
                                  ctx->det.det_num_alpha,
                                  ctx->det.det_num_beta,
                                  ctx->electron.up_num,
@@ -556,12 +561,9 @@ const double*   nucl_coord    = &(chbrclf_nucl_coord[0][0]);
 rc = qmckl_set_electron_num (context, chbrclf_elec_up_num, chbrclf_elec_dn_num);
 assert (rc == QMCKL_SUCCESS);
 
-rc = qmckl_set_electron_walk_num (context, chbrclf_walk_num);
-assert (rc == QMCKL_SUCCESS);
-
 assert(qmckl_electron_provided(context));
 
-rc = qmckl_set_electron_coord (context, 'N', elec_coord, chbrclf_walk_num*chbrclf_elec_num*3);
+rc = qmckl_set_electron_coord (context, 'N', chbrclf_walk_num, elec_coord, chbrclf_walk_num*chbrclf_elec_num*3);
 assert(rc == QMCKL_SUCCESS);
 
 rc = qmckl_set_nucleus_num (context, chbrclf_nucl_num);
@@ -688,9 +690,6 @@ for(k = 0; k < det_num_beta; ++k)
 rc = qmckl_set_determinant_type (context, typ);
 assert(rc == QMCKL_SUCCESS);
 
-rc = qmckl_set_determinant_walk_num (context, chbrclf_walk_num);
-assert (rc == QMCKL_SUCCESS);
-
 rc = qmckl_set_determinant_det_num_alpha (context, det_num_alpha);
 assert (rc == QMCKL_SUCCESS);
 
@@ -781,10 +780,10 @@ qmckl_exit_code qmckl_get_potential_energy(qmckl_context context, double * const
 
   if(!qmckl_nucleus_provided(context)) return QMCKL_NOT_PROVIDED;
 
-  rc = qmckl_provide_ao_vgl(context);
+  rc = qmckl_provide_ao_basis_ao_vgl(context);
   if (rc != QMCKL_SUCCESS) return rc;
 
-  rc = qmckl_provide_mo_vgl(context);
+  rc = qmckl_provide_mo_basis_mo_vgl(context);
   if (rc != QMCKL_SUCCESS) return rc;
 
   rc = qmckl_provide_potential_energy(context);
@@ -793,7 +792,7 @@ qmckl_exit_code qmckl_get_potential_energy(qmckl_context context, double * const
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
-  size_t sze = ctx->electron.walk_num * sizeof(double);
+  size_t sze = ctx->electron.walker.num * sizeof(double);
   memcpy(potential_energy, ctx->local_energy.e_pot, sze);
 
   return QMCKL_SUCCESS;
@@ -877,19 +876,24 @@ qmckl_exit_code qmckl_provide_potential_energy(qmckl_context context) {
   }
 
   /* Compute if necessary */
-  if (ctx->electron.coord_new_date > ctx->local_energy.e_pot_date) {
+  if (ctx->electron.walker.point.date > ctx->local_energy.e_pot_date) {
+
+    if (ctx->electron.walker.num > ctx->electron.walker_old.num) {
+      free(ctx->local_energy.e_pot);
+      ctx->local_energy.e_pot = NULL;
+    }
 
     /* Allocate array */
     if (ctx->local_energy.e_pot == NULL) {
 
       qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-      mem_info.size = ctx->electron.walk_num * sizeof(double);
+      mem_info.size = ctx->electron.walker.num * sizeof(double);
       double* e_pot = (double*) qmckl_malloc(context, mem_info);
 
       if (e_pot == NULL) {
         return qmckl_failwith( context,
                                QMCKL_ALLOCATION_FAILED,
-                               "qmckl_e_pot",
+                               "qmckl_provide_potential_energy",
                                NULL);
       }
       ctx->local_energy.e_pot = e_pot;
@@ -897,11 +901,11 @@ qmckl_exit_code qmckl_provide_potential_energy(qmckl_context context) {
 
     if (ctx->det.type == 'G') {
       rc = qmckl_compute_potential_energy(context,
-                                 ctx->det.walk_num,
+                                 ctx->electron.walker.num,
                                  ctx->electron.num,
                                  ctx->nucleus.num,
-                                 ctx->electron.ee_pot,
-                                 ctx->electron.en_pot,
+                                 ctx->electron.ee_potential,
+                                 ctx->electron.en_potential,
                                  ctx->nucleus.repulsion,
                                  ctx->local_energy.e_pot);
     } else {
@@ -929,18 +933,18 @@ qmckl_exit_code qmckl_provide_potential_energy(qmckl_context context) {
    :END:
 
     #+NAME: qmckl_compute_potential_energy_args
-   | ~qmckl_context~ | ~context~          | in  | Global state        |
-   | ~int64_t~       | ~walk_num~         | in  | Number of walkers   |
-   | ~int64_t~       | ~elec_num~         | in  | Number of electrons |
-   | ~int64_t~       | ~nucl_num~         | in  | Number of MOs       |
-   | ~double~        | ~ee_pot[walk_num]~ | in  | ee potential        |
-   | ~double~        | ~en_pot[walk_num]~ | in  | en potential        |
-   | ~double~        | ~repulsion~        | in  | en potential        |
-   | ~double~        | ~e_pot[walk_num]~  | out | Potential energy    |
+   | ~qmckl_context~ | ~context~                | in  | Global state        |
+   | ~int64_t~       | ~walk_num~               | in  | Number of walkers   |
+   | ~int64_t~       | ~elec_num~               | in  | Number of electrons |
+   | ~int64_t~       | ~nucl_num~               | in  | Number of MOs       |
+   | ~double~        | ~ee_potential[walk_num]~ | in  | ee potential        |
+   | ~double~        | ~en_potential[walk_num]~ | in  | en potential        |
+   | ~double~        | ~repulsion~              | in  | en potential        |
+   | ~double~        | ~e_pot[walk_num]~        | out | Potential energy    |
 
     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
 integer function qmckl_compute_potential_energy_f(context, walk_num, &
-     elec_num, nucl_num, ee_pot, en_pot, repulsion, e_pot) &
+     elec_num, nucl_num, ee_potential, en_potential, repulsion, e_pot) &
      result(info)
   use qmckl
   implicit none
@@ -948,8 +952,8 @@ integer function qmckl_compute_potential_energy_f(context, walk_num, &
   integer*8, intent(in)             :: walk_num
   integer*8, intent(in)             :: elec_num
   integer*8, intent(in)             :: nucl_num
-  double precision, intent(in)      :: ee_pot(walk_num)
-  double precision, intent(in)      :: en_pot(walk_num)
+  double precision, intent(in)      :: ee_potential(walk_num)
+  double precision, intent(in)      :: en_potential(walk_num)
   double precision, intent(in)      :: repulsion
   double precision, intent(inout)   :: e_pot(walk_num)
   integer*8 :: idet, iwalk, ielec, mo_id, imo
@@ -971,9 +975,8 @@ integer function qmckl_compute_potential_energy_f(context, walk_num, &
      return
   endif
 
-  e_pot = 0.0d0 + repulsion
   do iwalk = 1, walk_num
-    e_pot(iwalk) = e_pot(iwalk) + ee_pot(iwalk) + en_pot(iwalk)
+    e_pot(iwalk) = ee_potential(iwalk) + en_potential(iwalk) + repulsion
   end do
 
 end function qmckl_compute_potential_energy_f
@@ -988,8 +991,8 @@ end function qmckl_compute_potential_energy_f
 	 const int64_t walk_num,
 	 const int64_t elec_num,
 	 const int64_t nucl_num,
-	 const double* ee_pot,
-	 const double* en_pot,
+	 const double* ee_potential,
+	 const double* en_potential,
 	 const double repulsion,
 	 double* const e_pot );
    #+end_src
@@ -999,7 +1002,7 @@ end function qmckl_compute_potential_energy_f
     #+RESULTS:
     #+begin_src f90 :tangle (eval f) :comments org :exports none
     integer(c_int32_t) function qmckl_compute_potential_energy &
-	(context, walk_num, elec_num, nucl_num, ee_pot, en_pot, repulsion, e_pot) &
+	(context, walk_num, elec_num, nucl_num, ee_potential, en_potential, repulsion, e_pot) &
 	bind(C) result(info)
 
       use, intrinsic :: iso_c_binding
@@ -1009,14 +1012,14 @@ end function qmckl_compute_potential_energy_f
       integer (c_int64_t) , intent(in)  , value :: walk_num
       integer (c_int64_t) , intent(in)  , value :: elec_num
       integer (c_int64_t) , intent(in)  , value :: nucl_num
-      real    (c_double ) , intent(in)          :: ee_pot(walk_num)
-      real    (c_double ) , intent(in)          :: en_pot(walk_num)
+      real    (c_double ) , intent(in)          :: ee_potential(walk_num)
+      real    (c_double ) , intent(in)          :: en_potential(walk_num)
       real    (c_double ) , intent(in)  , value :: repulsion
       real    (c_double ) , intent(out)         :: e_pot(walk_num)
 
       integer(c_int32_t), external :: qmckl_compute_potential_energy_f
       info = qmckl_compute_potential_energy_f &
-	     (context, walk_num, elec_num, nucl_num, ee_pot, en_pot, repulsion, e_pot)
+	     (context, walk_num, elec_num, nucl_num, ee_potential, en_potential, repulsion, e_pot)
 
     end function qmckl_compute_potential_energy
     #+end_src
@@ -1065,10 +1068,10 @@ qmckl_exit_code qmckl_get_local_energy(qmckl_context context, double * const loc
 
   if(!qmckl_nucleus_provided(context)) return QMCKL_NOT_PROVIDED;
 
-  rc = qmckl_provide_ao_vgl(context);
+  rc = qmckl_provide_ao_basis_ao_vgl(context);
   if (rc != QMCKL_SUCCESS) return rc;
 
-  rc = qmckl_provide_mo_vgl(context);
+  rc = qmckl_provide_mo_basis_mo_vgl(context);
   if (rc != QMCKL_SUCCESS) return rc;
 
   rc = qmckl_provide_local_energy(context);
@@ -1077,12 +1080,12 @@ qmckl_exit_code qmckl_get_local_energy(qmckl_context context, double * const loc
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
-  const int64_t sze = ctx->electron.walk_num;
+  const int64_t sze = ctx->electron.walker.num;
   if (size_max < sze) {
-    return qmckl_failwith( context,                                                                                          
-                           QMCKL_INVALID_ARG_3,                                                                              
-                           "qmckl_get_local_energy",                                                                      
-                           "input array too small");     
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_3,
+                           "qmckl_get_local_energy",
+                           "input array too small");
   }
   memcpy(local_energy, ctx->local_energy.e_local, sze * sizeof(double));
 
@@ -1159,13 +1162,18 @@ qmckl_exit_code qmckl_provide_local_energy(qmckl_context context) {
   }
 
   /* Compute if necessary */
-  if (ctx->electron.coord_new_date > ctx->local_energy.e_local_date) {
+  if (ctx->electron.walker.point.date > ctx->local_energy.e_local_date) {
+
+    if (ctx->electron.walker.num > ctx->electron.walker_old.num) {
+      free(ctx->local_energy.e_local);
+      ctx->local_energy.e_local = NULL;
+    }
 
     /* Allocate array */
     if (ctx->local_energy.e_local == NULL) {
 
       qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-      mem_info.size = ctx->electron.walk_num * sizeof(double);
+      mem_info.size = ctx->electron.walker.num * sizeof(double);
       double* local_energy = (double*) qmckl_malloc(context, mem_info);
 
       if (local_energy == NULL) {
@@ -1179,7 +1187,7 @@ qmckl_exit_code qmckl_provide_local_energy(qmckl_context context) {
 
     if (ctx->det.type == 'G') {
       rc = qmckl_compute_local_energy(context,
-                                 ctx->det.walk_num,
+                                 ctx->electron.walker.num,
                                  ctx->local_energy.e_kin,
                                  ctx->local_energy.e_pot,
                                  ctx->local_energy.e_local);
@@ -1327,10 +1335,10 @@ qmckl_exit_code qmckl_get_drift_vector(qmckl_context context, double * const dri
 
   if(!qmckl_nucleus_provided(context)) return QMCKL_NOT_PROVIDED;
 
-  rc = qmckl_provide_ao_vgl(context);
+  rc = qmckl_provide_ao_basis_ao_vgl(context);
   if (rc != QMCKL_SUCCESS) return rc;
 
-  rc = qmckl_provide_mo_vgl(context);
+  rc = qmckl_provide_mo_basis_mo_vgl(context);
   if (rc != QMCKL_SUCCESS) return rc;
 
   rc = qmckl_provide_drift_vector(context);
@@ -1339,7 +1347,7 @@ qmckl_exit_code qmckl_get_drift_vector(qmckl_context context, double * const dri
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
-  size_t sze = ctx->electron.walk_num * ctx->electron.num * 3 * sizeof(double);
+  size_t sze = ctx->electron.walker.num * ctx->electron.num * 3 * sizeof(double);
   memcpy(drift_vector, ctx->local_energy.r_drift, sze);
 
   return QMCKL_SUCCESS;
@@ -1398,13 +1406,18 @@ qmckl_exit_code qmckl_provide_drift_vector(qmckl_context context) {
   }
 
   /* Compute if necessary */
-  if (ctx->electron.coord_new_date > ctx->local_energy.r_drift_date) {
+  if (ctx->electron.walker.point.date > ctx->local_energy.r_drift_date) {
+
+    if (ctx->electron.walker.num > ctx->electron.walker_old.num) {
+      free(ctx->local_energy.r_drift);
+      ctx->local_energy.r_drift = NULL;
+    }
 
     /* Allocate array */
     if (ctx->local_energy.r_drift == NULL) {
 
       qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-      mem_info.size = ctx->electron.walk_num * ctx->electron.num * 3 * sizeof(double);
+      mem_info.size = ctx->electron.walker.num * ctx->electron.num * 3 * sizeof(double);
       double* r_drift = (double*) qmckl_malloc(context, mem_info);
 
       if (r_drift == NULL) {
@@ -1419,7 +1432,7 @@ qmckl_exit_code qmckl_provide_drift_vector(qmckl_context context) {
     qmckl_exit_code rc;
     if (ctx->det.type == 'G') {
       rc = qmckl_compute_drift_vector(context,
-                                 ctx->det.walk_num,
+                                 ctx->electron.walker.num,
                                  ctx->det.det_num_alpha,
                                  ctx->det.det_num_beta,
                                  ctx->electron.up_num,

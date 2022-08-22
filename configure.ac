@@ -35,7 +35,7 @@
 
 AC_PREREQ([2.69])
 
-AC_INIT([qmckl],[0.2.1],[https://github.com/TREX-CoE/qmckl/issues],[],[https://trex-coe.github.io/qmckl/index.html])
+AC_INIT([qmckl],[0.3.1],[https://github.com/TREX-CoE/qmckl/issues],[],[https://trex-coe.github.io/qmckl/index.html])
 AC_CONFIG_AUX_DIR([tools])
 AM_INIT_AUTOMAKE([subdir-objects color-tests parallel-tests silent-rules 1.11])
 
@@ -358,8 +358,10 @@ if test "$ok" = "yes"; then
         if test "$GCC" = "yes"; then
 	        CFLAGS="$CFLAGS \
 -g -Wall -W -Wbad-function-cast -Wcast-qual -Warray-bounds -Wdisabled-optimization \
+-fsanitize=address -fno-omit-frame-pointer \
 -Wpointer-arith -Wcast-align -Wpedantic -Wextra -Walloc-zero -Werror \
 "
+		LDFLAGS="$LDFLAGS -fsanitize=address"
         fi
         if test "$GFC" = "yes"; then
 	        FCFLAGS="$FCFLAGS \

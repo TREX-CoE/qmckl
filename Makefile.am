@@ -88,6 +88,9 @@ dist_html_DATA = $(HTML_FILES) \
 
 dist_text_DATA = $(TEXT_FILES)
 
+# Include Guix manifest in the source code distribution tarball
+tools_qmckl_scm = tools/qmckl.scm
+EXTRA_DIST += $(tools_qmckl_scm)
 
 html-local: $(htmlize_el) $(dist_html_DATA)
 text: $(htmlize_el) $(dist_text_DATA)
@@ -202,7 +205,7 @@ cppcheck.out: $(qmckl_h)
 
 $(qmckl_include_i):  $(qmckl_h) $(process_header_py)
 	$(MKDIR_P) python/src
-	python $(process_header_py) $(qmckl_h)
+	python3 $(process_header_py) $(qmckl_h)
 	mv qmckl_include.i $(qmckl_include_i)
 
 

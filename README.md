@@ -76,6 +76,31 @@ sudo make installcheck
 ```
 
 
+## Installation procedure for Guix users
+
+QMCkl can be installed with the [GNU Guix](https://guix.gnu.org) functional package manager.
+The [qmckl.scm](https://github.com/TREX-CoE/qmckl/blob/master/tools/qmckl.scm)
+Schema file contains the manifest specification for the `qmckl` installations.
+It can be installed within the selected `$GUIX_PROFILE` as follows:
+
+```
+guix package \
+	--profile=$GUIX_PROFILE 		\
+	--load-path=<path_to_trexio_scm> 	\
+	--cores=<n_cores>			\
+	--install-from-file=qmckl.scm
+```
+
+where `<path_to_trexio_scm>` should point to a folder, which contains the TREXIO manifest file
+[trexio.scm](https://github.com/TREX-CoE/trexio/blob/master/tools/trexio.scm)
+(e.g. `~/trexio/tools/` if TREXIO repository was cloned under $HOME).
+
+Installation procedures for both development version (`qmckl-dev`) 
+and stable releases (`qmckl-hpc`) are provided.
+One can switch between them using the return value (last line) 
+in the `qmckl.scm` file.
+
+
 ## Linking to your program
 
 The `make install` command takes care of installing the QMCkl shared library on the user machine.
