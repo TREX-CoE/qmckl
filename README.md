@@ -75,6 +75,27 @@ sudo make install
 sudo make installcheck
 ```
 
+## Python API
+
+- [SWIG](https://www.swig.org) (>= 4.0) is required to build the Python API for maintainers
+
+In order to install the `qmckl` Python package, first install the shared C library 
+`libqmckl` following the installation guide above and then run the following command:
+```
+make python-install
+```
+
+To test the installation, run
+```
+make python-test
+```
+
+Minimal example demonstrating the use of the `qmckl` Python API can be found in the
+[test_api.py](https://github.com/TREX-CoE/qmckl/blob/master/python/test/test_api.py) file.
+
+We highly recommend to use 
+[virtual environments](https://docs.python.org/3/tutorial/venv.html) 
+to avoid compatibility issues and to improve reproducibility.
 
 ## Installation procedure for Guix users
 
