@@ -178,58 +178,60 @@ fi
 
 
 # TREXIO
-LIBTREXIO=
 AC_ARG_WITH([trexio],
             [AS_HELP_STRING([--without-trexio],
                             [disable support for TREXIO])],
             [with_trexio=$withval],
             [with_trexio=yes])
 
-case "$with_trexio" in
-  no)
-    : ;;
-  yes)
-        AC_CHECK_LIB([trexio], [trexio_open], [],
-                     [PKG_CHECK_MODULES([TREXIO], [trexio]) ])
-        AC_CHECK_HEADERS([trexio.h], [],
-                         [AC_MSG_ERROR("trexio.h not found")])
-        AC_DEFINE([HAVE_TREXIO], [1], [Define if TREXIO support is available])
-        ARGS="${ARGS} trexio"
-        ;;
-  *)
-        if test ! -d "$withval" ; then
-           AC_MSG_ERROR([--with-trexio=$withval: argument is not a directory])
-        fi
-        TREXIO_LIBS="-L$with_trexio/lib -ltrexio"
-        TREXIO_CFLAGS="-I$with_trexio/include"
-        AC_CHECK_HEADERS([trexio.h], [],
-                         [AC_MSG_ERROR("trexio.h not found")])
-        AC_DEFINE([HAVE_TREXIO], [1], [Define if TREXIO support is available])
-        ARGS="${ARGS} trexio"
-        ;;
-esac
+AS_CASE([$with_trexio],
+  [no], [],
+  [yes],
+  [AC_CHECK_LIB([trexio], [trexio_open], [],
+                [PKG_CHECK_MODULES([TREXIO], [trexio]) ])
+   AC_CHECK_HEADERS([trexio.h], [],
+                    [AC_MSG_ERROR("trexio.h not found")])
+   AC_DEFINE([HAVE_TREXIO], [1], [Define if TREXIO support is available])
+   ARGS="${ARGS} trexio"],
+  [AS_IF([test ! -d "$withval"],
+         [AC_MSG_ERROR([--with-trexio=$withval: argument is not a directory])])
+   TREXIO_LIBS="-L$with_trexio/lib -ltrexio"
+   TREXIO_CFLAGS="-I$with_trexio/include"
+   AC_CHECK_HEADERS([trexio.h], [],
+                    [AC_MSG_ERROR("trexio.h not found")])
+   AC_DEFINE([HAVE_TREXIO], [1], [Define if TREXIO support is available])
+   ARGS="${ARGS} trexio"
+  ])
 
 PKG_CFLAGS="$PKG_CFLAGS $TREXIO_CFLAGS"
 PKG_LIBS="$PKG_LIBS $TREXIO_LIBS"
 
-# QMCKL_DGEMM
-
+# QMCKLDGEMM
 AC_ARG_WITH([qmckldgemm],
-    [AS_HELP_STRING([--with-qmckldgemm],
-        [enable support for the QMCKLDGEMM library])],
-    with_qmckldgemm=$withval,
-    with_qmckldgemm=no)
+            [AS_HELP_STRING([--with-qmckldgemm],
+                            [enable support for QMCKL DGEMM])],
+            [with_qmckldgemm=$withval],
+            [with_qmckldgemm=no])
 
-#AS_IF([test "x$with_qmckldgemm" != xno], [
-#  [ARGS="${ARGS} qmckldgemm"
-#   AC_CHECK_LIB([qmckldgemm], [qmckl_packed_matrix_create], [],
-#                [AS_IF([test "x$with_qmckldgemm" != xcheck],
-#                       [PKG_CHECK_MODULES([QMCKLDGEMM], [qmckldgemm]) ])])],
-#  [AC_DEFINE([HAVE_QMCKLDGEMM], [1], [Define if QMCKLDGEMM is used])]
-#)
+AS_CASE([$with_qmckldgemm],
+  [no], [],
+  [yes],
+  [AC_CHECK_LIB([qmckldgemm], [qmckl_packed_matrix_create], [],
+                [PKG_CHECK_MODULES([QMCKLDGEMM], [qmckldgemm]) ])
+#  AC_CHECK_HEADERS([qmckldgemm.h], [],
+#                   [AC_MSG_ERROR("qmckldgemm.h not found")])
+   AC_DEFINE([HAVE_QMCKLDGEMM], [1], [Define if QMCKL DGEMM support is available])
+   ARGS="${ARGS} qmckldgemm"],
+  [AS_IF([test ! -d "$withval"],
+         [AC_MSG_ERROR([--with-qmckldgemm=$withval: argument is not a directory])])
+   QMCKLDGEMM_LIBS="-L$with_qmckldgemm/lib -lqmckldgemm"
+   QMCKLDGEMM_CFLAGS="-I$with_qmckldgemm/include"
+#  AC_CHECK_HEADERS([qmckldgemm.h], [],
+#                   [AC_MSG_ERROR("qmckldgemm.h not found")])
+   AC_DEFINE([HAVE_QMCKLDGEMM], [1], [Define if QMCKL DGEMM support is available])
+   ARGS="${ARGS} qmckldgemm"
+  ])
 
-#PKG_CFLAGS="$PKG_CFLAGS $QMCKLDGEMM_CFLAGS"
-#PKG_LIBS="$PKG_LIBS $QMCKLDGEMM_LIBS"
 
 ## BLAS
 AX_BLAS([], [AC_MSG_ERROR([BLAS was not found.])])
@@ -240,27 +242,15 @@ AS_IF([test "$BLAS_LIBS" = "$LAPACK_LIBS"], [BLAS_LIBS=""])
 
 
 # Specific options required with some compilers
-case $FC in
+AS_CASE([$FC],
+ [*ifort*], [FCFLAGS="$FCFLAGS -nofor-main"],
+ [*nvfortran*], [FCFLAGS="$FCFLAGS -fPIC -Mnomain"],
+ [])
 
- *ifort*)
-      FCFLAGS="$FCFLAGS -nofor-main"
-      ;;
-
- *nvfortran*)
-      FCFLAGS="$FCFLAGS -fPIC -Mnomain"
-      ;;
-
-esac
-
-case $CC in
-
-  *gcc*)
-        CFLAGS="$CFLAGS -fPIC"
-        ;;
-  *nvc*)
-        CFLAGS="$CFLAGS -fPIC"
-        ;;
-esac
+AS_CASE([$CC],
+  [*gcc*], [CFLAGS="$CFLAGS -fPIC"],
+  [*nvc*], [CFLAGS="$CFLAGS -fPIC"],
+  [])
 
 
 # Options
@@ -306,25 +296,15 @@ HAVE_OPENMP_OFFLOAD="no"
 AS_IF([test "$enable_gpu" = "openmp"], [
   AC_DEFINE([HAVE_OPENMP_OFFLOAD], [1], [If defined, activate OpenMP-offloaded routines])
   HAVE_OPENMP_OFFLOAD="yes"
-  case $CC in
-
-    *gcc*)
-          CFLAGS="$CFLAGS -fopenmp"
-          ;;
-    *nvc*)
-          CFLAGS="$CFLAGS -mp=gpu"
-          ;;
-  esac
-
-  case $FC in
-
-    *gfortran*)
-          FCFLAGS="$FCFLAGS -fopenmp"
-          ;;
-    *nvfortran*)
-          FCFLAGS="$FCFLAGS -mp=gpu"
-          ;;
-  esac]
+  AS_CASE([$CC],
+    [*gcc*], [CFLAGS="$CFLAGS -fopenmp"],
+    [*nvc*], [CFLAGS="$CFLAGS -mp=gpu"],
+    [])
+  AS_CASE([$FC],
+    [*gfortran*],  [FCFLAGS="$FCFLAGS -fopenmp"],
+    [*nvfortran*], [FCFLAGS="$FCFLAGS -mp=gpu"],
+    [])
+  ]
 )
 
 # OpenMP offloading
@@ -332,25 +312,15 @@ HAVE_OPENACC_OFFLOAD="no"
 AS_IF([test "$enable_gpu" = "openacc"], [
   AC_DEFINE([HAVE_OPENACC_OFFLOAD], [1], [If defined, activate OpenACC-offloaded routines])
   HAVE_OPENACC_OFFLOAD="yes"
-  case $CC in
-
-    *gcc*)
-          CFLAGS="$CFLAGS -fopenacc"
-          ;;
-    *nvc*)
-          CFLAGS="$CFLAGS -acc=gpu"
-          ;;
-  esac
-
-  case $FC in
-
-    *gfortran*)
-          FCFLAGS="$FCFLAGS -fopenacc"
-          ;;
-    *nvfortran*)
-          FCFLAGS="$FCFLAGS -acc=gpu"
-          ;;
-  esac
+  AS_CASE([$CC],
+    [*gcc*], [CFLAGS="$CFLAGS -fopenacc"],
+    [*nvc*], [CFLAGS="$CFLAGS -acc=gpu"],
+    [])
+  AS_CASE([$FC],
+    [*gfortran*],  [FCFLAGS="$FCFLAGS -fopenacc"],
+    [*nvfortran*], [FCFLAGS="$FCFLAGS -acc=gpu"],
+    [])
+  ]
 
 ])
 
@@ -359,75 +329,65 @@ AC_ARG_WITH(cublas, [AS_HELP_STRING([--with-cublas],[Use cuBLAS-offloaded functi
 AS_IF([test "$HAVE_CUBLAS_OFFLOAD" = "yes"], [
   AC_DEFINE([HAVE_CUBLAS_OFFLOAD], [1], [If defined, activate cuBLAS-offloaded routines])
   HAVE_OPENACC_OFFLOAD="yes"
-  case $CC in
-
-    *gcc*)
-          CFLAGS="$CFLAGS -fopenmp"
-          LDFLAGS="-lcublas"
-          ;;
-    *nvc*)
-          CFLAGS="$CFLAGS -mp=gpu -cudalib=cublas"
-          ;;
-  esac
-
-  case $FC in
-
-    *gfortran*)
-          FCFLAGS="$FCFLAGS -fopenmp"
-          ;;
-    *nvfortran*)
-          FCFLAGS="$FCFLAGS -mp=gpu -cudalib=cublas"
-          ;;
-  esac
+  AS_CASE([$CC],
+    [*gcc*], [CFLAGS="$CFLAGS -fopenmp"
+              LDFLAGS="-lcublas"],
+    [*nvc*], [CFLAGS="$CFLAGS -mp=gpu -cudalib=cublas"],
+    [])
+  AS_CASE([$FC],
+    [*gfortran*],  [FCFLAGS="$FCFLAGS -fopenmp"],
+    [*nvfortran*], [FCFLAGS="$FCFLAGS -mp=gpu -cudalib=cublas"],
+    [])
+  ]
 ])
 
 AC_ARG_ENABLE(malloc-trace, [AS_HELP_STRING([--enable-malloc-trace],[use debug malloc/free])], ok=$enableval, ok=no)
-if test "$ok" = "yes"; then
+AS_IF([test "$ok" = "yes"], [
 	AC_DEFINE(MALLOC_TRACE,"malloc_trace.dat",[Define to use debugging malloc/free])
         ARGS="${ARGS} malloc-trace"
-fi
+])
 
 AC_ARG_ENABLE(prof, [AS_HELP_STRING([--enable-prof],[compile for profiling])], ok=$enableval, ok=no)
-if test "$ok" = "yes"; then
+AS_IF([test "$ok" = "yes"], [
 	CFLAGS="${CFLAGS} -pg"
 	AC_DEFINE(ENABLE_PROF,1,[Define when using the profiler tool])
         ARGS="${ARGS} prof"
-fi
+])
 
 AC_ARG_WITH(efence, [AS_HELP_STRING([--with-efence],[use ElectricFence library])], ok=$withval, ok=no)
-if test "$ok" = "yes"; then
+AS_IF([test "$ok" = "yes"], [
 	AC_CHECK_LIB([efence], [malloc])
         ARGS="${ARGS} efence"
-fi
+])
 
 
 
 ##
 
 AC_ARG_ENABLE(debug, [AS_HELP_STRING([--enable-debug],[compile for debugging])], ok=$enableval, ok=no)
-if test "$ok" = "yes"; then
-        if test "$GCC" = "yes"; then
+AS_IF([test "$ok" = "yes"], [
+        AS_IF([test "$GCC" = "yes"], [
 	        CFLAGS="$CFLAGS \
 -g -Wall -W -Wbad-function-cast -Wcast-qual -Warray-bounds -Wdisabled-optimization \
 -fsanitize=address -fno-omit-frame-pointer \
 -Wpointer-arith -Wcast-align -Wpedantic -Wextra -Walloc-zero -Werror \
 "
 		LDFLAGS="$LDFLAGS -fsanitize=address"
-        fi
-        if test "$GFC" = "yes"; then
+        ])
+        AS_IF([test "$GFC" = "yes"], [
 	        FCFLAGS="$FCFLAGS \
 -g -fcheck=all -Waliasing -Wampersand -Wconversion \
 -Wsurprising -ffpe-trap=zero,overflow,underflow \
 -Wintrinsics-std -Wno-tabs -Wintrinsic-shadow -Wline-truncation \
 -Wreal-q-constant -Wuninitialized  -fbacktrace -finit-real=nan"
-        fi
-        if test "$FC" = "ifort"; then
+        ])
+        AS_IF([test "$FC" = "ifort"], [
 	        FCFLAGS="$FCFLAGS \
 -traceback -check all -debug all -fpe-all=0  -implicitnone"
-        fi
+        ])
 	AC_DEFINE(DEBUG,1,[Define to turn on debugging checks])
         ARGS="${ARGS} debug"
-fi
+])
 
 # Checks for header files.
 
@@ -452,16 +412,13 @@ AC_TYPE_UINT64_T
 AC_CHECK_FUNCS([memset strerror])
 
 # Development mode
-if test "x$enable_maintainer_mode" = "xyes" ; then
-  QMCKL_DEVEL=" -- Developer mode"
-else
-  QMCKL_DEVEL=""
-fi
+  QMCKL_DEVEL=
+AS_IF([test "x$enable_maintainer_mode" = "xyes"],
+      [QMCKL_DEVEL=" -- Developer mode"])
 
 AM_CONDITIONAL([QMCKL_DEVEL],[test "x$QMCKL_DEVEL" != x])
 
-if test "x${QMCKL_DEVEL}" != "x"; then
-
+AS_IF([test "x${QMCKL_DEVEL}" != "x"], [
   AC_PROG_AWK
   AM_PATH_PYTHON
 
@@ -477,8 +434,7 @@ if test "x${QMCKL_DEVEL}" != "x"; then
   AS_IF([test "x${HAS_CPPCHECK}" != "xno"], [HAS_CPPCHECK=1])
 
   AX_PKG_SWIG(4.0.0, [], AC_MSG_WARN([SWIG is required to build Python API.]) )
-
-fi
+])
 
 
 #PKG-CONFIG
