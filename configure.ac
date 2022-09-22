@@ -190,6 +190,24 @@ AS_IF([test "x$with_trexio" != xno], [
 PKG_CFLAGS="$PKG_CFLAGS $TREXIO_CFLAGS"
 PKG_LIBS="$PKG_LIBS $TREXIO_LIBS"
 
+# QMCKL_DGEMM
+
+AC_ARG_WITH(qmckldgemm, [AS_HELP_STRING([--without-qmckldgemm],[disable support for QMCKLDGEMM])],
+            with_qmckldgemm=$withval, with_qmckldgemm=no)
+
+AS_IF([test "x$with_qmckldgemm" != xno], [
+  AC_DEFINE([HAVE_QMCKLDGEMM], [1], [Define if your have libqmckldgemm])
+  ARGS="${ARGS} qmckldgemm"
+  AC_CHECK_LIB([qmckldgemm], [qmckl_packed_matrix_create],
+       [],
+       [AS_IF([test "x$with_qmckldgemm" != xcheck],
+       [PKG_CHECK_MODULES([QMCKLDGEMM], [qmckldgemm]) ])
+  ])
+])
+
+PKG_CFLAGS="$PKG_CFLAGS $QMCKLDGEMM_CFLAGS"
+PKG_LIBS="$PKG_LIBS $QMCKLDGEMM_LIBS"
+
 ## BLAS
 AX_BLAS([], [AC_MSG_ERROR([BLAS was not found.])])
 
