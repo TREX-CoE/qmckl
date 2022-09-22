@@ -113,10 +113,13 @@ AC_FC_FREEFORM
 AC_PROG_INSTALL
 AC_PROG_LN_S
 PKG_PROG_PKG_CONFIG([])
-PKG_LIBS=
-PKG_CFLAGS=
 
 # Checks for libraries.
+PKG_LIBS=""
+PKG_CFLAGS=""
+PKG_LIBS2=""
+PKG_CFLAGS2=""
+
 AC_FC_LIBRARY_LDFLAGS
 AC_CHECK_LIB([m], [sqrt])
 AC_CHECK_HEADERS([assert.h errno.h math.h pthread.h stdbool.h stdint.h stdio.h stdlib.h string.h])
@@ -144,7 +147,7 @@ fi
 #                    yes)
 #                        PKG_CHECK_MODULES([LIBCHAMELEON],[chameleon >= 1.0.0],
 #                        [PKG_CFLAGS="$PKG_CFLAGS $LIBCHAMELEON_CFLAGS"
-#                        PKG_LIBS="$PKG_LIBS $LIBCHAMELEON_LIBS"]
+#                        PKG_LIBS2="$PKG_LIBS2 $LIBCHAMELEON_LIBS"]
 #                                        ,[
 #
 #                        ## something went wrong.
@@ -197,14 +200,16 @@ AS_CASE([$with_trexio],
          [AC_MSG_ERROR([--with-trexio=$withval: argument is not a directory])])
    TREXIO_LIBS="-L$with_trexio/lib -ltrexio"
    TREXIO_CFLAGS="-I$with_trexio/include"
+   CFLAGS="$CFLAGS $TREXIO_CFLAGS"
+   LIBS="$LIBS $TREXIO_LIBS"
    AC_CHECK_HEADERS([trexio.h], [],
                     [AC_MSG_ERROR("trexio.h not found")])
    AC_DEFINE([HAVE_TREXIO], [1], [Define if TREXIO support is available])
    ARGS="${ARGS} trexio"
   ])
 
-PKG_CFLAGS="$PKG_CFLAGS $TREXIO_CFLAGS"
-PKG_LIBS="$PKG_LIBS $TREXIO_LIBS"
+PKG_CFLAGS2="$PKG_CFLAGS2 $TREXIO_CFLAGS"
+PKG_LIBS2="$PKG_LIBS2 $TREXIO_LIBS"
 
 # QMCKLDGEMM
 AC_ARG_WITH([qmckldgemm],
@@ -218,20 +223,25 @@ AS_CASE([$with_qmckldgemm],
   [yes],
   [AC_CHECK_LIB([qmckldgemm], [qmckl_packed_matrix_create], [],
                 [PKG_CHECK_MODULES([QMCKLDGEMM], [qmckldgemm]) ])
-#  AC_CHECK_HEADERS([qmckldgemm.h], [],
-#                   [AC_MSG_ERROR("qmckldgemm.h not found")])
+   AC_CHECK_HEADERS([qmckl_dgemm.h], [],
+                    [AC_MSG_ERROR("qmckl_dgemm.h not found")])
    AC_DEFINE([HAVE_QMCKLDGEMM], [1], [Define if QMCKL DGEMM support is available])
    ARGS="${ARGS} qmckldgemm"],
   [AS_IF([test ! -d "$withval"],
          [AC_MSG_ERROR([--with-qmckldgemm=$withval: argument is not a directory])])
    QMCKLDGEMM_LIBS="-L$with_qmckldgemm/lib -lqmckldgemm"
    QMCKLDGEMM_CFLAGS="-I$with_qmckldgemm/include"
-#  AC_CHECK_HEADERS([qmckldgemm.h], [],
-#                   [AC_MSG_ERROR("qmckldgemm.h not found")])
+   CFLAGS="$CFLAGS $QMCKLDGEMM_CFLAGS"
+   LIBS="$LIBS $QMCKLDGEMM_LIBS"
+   echo $CFLAGS
+   AC_CHECK_HEADERS([qmckl_dgemm.h], [],
+                    [AC_MSG_ERROR("qmckl_dgemm.h not found")])
    AC_DEFINE([HAVE_QMCKLDGEMM], [1], [Define if QMCKL DGEMM support is available])
    ARGS="${ARGS} qmckldgemm"
   ])
 
+PKG_CFLAGS2="$PKG_CFLAGS2 $QMCKLDGEMM_CFLAGS"
+PKG_LIBS2="$PKG_LIBS2 $QMCKLDGEMM_LIBS"
 
 ## BLAS
 AX_BLAS([], [AC_MSG_ERROR([BLAS was not found.])])
@@ -443,6 +453,8 @@ AS_IF([test "x${QMCKL_DEVEL}" != "x"], [
 PKG_LIBS="$PKG_LIBS $LIBS"
 LIBS="$BLAS_LIBS $LAPACK_LIBS $PKG_LIBS"
 CFLAGS="$CFLAGS $PKG_CFLAGS"
+PKG_LIBS="$PKG_LIBS $PKG_LIBS2"
+PKG_CFLAGS="$PKG_CFLAGS $PKG_CFLAGS2"
 AC_SUBST([PKG_LIBS])
 AC_SUBST([PKG_CFLAGS])
 AC_SUBST([HAS_CPPCHECK])
