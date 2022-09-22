@@ -118,7 +118,7 @@ python-install: $(qmckl_h) $(lib_LTLIBRARIES) $(dist_python_DATA)
 	cp src/qmckl.py . ; \
 	export QMCKL_INCLUDEDIR="$(prefix)/include" ; \
 	export QMCKL_LIBDIR="$(prefix)/lib" ; \
-	pip install .
+	python3 -m pip install .
 
 python-test: $(test_py)
 	cd $(abs_srcdir)/python/test/ && \
