@@ -46,22 +46,35 @@ AS_IF([test -d ${srcdir}/.git],
         [enable_maintainer_mode="no"]
 )
 
-AC_ARG_WITH(ifort, [AS_HELP_STRING([--with-ifort],[Use Intel Fortran compiler])], with_ifort=$withval, with_ifort=no)
-AS_IF([test "$with_ifort" == "yes"], [
+# Intel Fortran compiler
+AC_ARG_WITH([ifort],
+            [AS_HELP_STRING([--with-ifort],
+                            [Use Intel Fortran compiler])],
+            [with_ifort=$withval],
+            [with_ifort=no])
+
+AS_IF([test "$with_ifort" = "yes"], [
   FC=ifort
   FCFLAGS="-march=native -ip -Ofast -ftz -finline -g -mkl=sequential" ])
 
-AC_ARG_WITH(icc, [AS_HELP_STRING([--with-icc],[Use Intel C compiler])], with_icc=$withval, with_icc=no)
-AS_IF([test "$with_icc" == "yes"], [
+# Intel C compiler
+AC_ARG_WITH([icc],
+            [AS_HELP_STRING([--with-icc],
+                            [Use Intel C compiler])],
+            [with_icc=$withval],
+            [with_icc=no])
+
+AS_IF([test "$with_icc" = "yes"], [
   CC=icc
   CFLAGS="-march=native -ip -Ofast -ftz -finline -g -mkl=sequential" ])
 
-AS_IF([test "$with_icc"."$with_ifort" == "yes.yes"], [
+AS_IF([test "$with_icc"."$with_ifort" = "yes.yes"], [
   ax_blas_ok="yes"
   ax_lapack_ok="yes"
   BLAS_LIBS=""
   LAPACK_LIBS=""])
 
+# Default Automake variables
 AM_PROG_AR
 AM_MAINTAINER_MODE()
 LT_INIT
@@ -79,9 +92,7 @@ AC_SUBST([VERSION_MAJOR])
 AC_SUBST([VERSION_MINOR])
 AC_SUBST([VERSION_PATCH])
 
-#AM_SILENT_RULES(yes)
-#AC_SUBST(SHARED_VERSION_INFO)
-#AC_ENABLE_SHARED([no]) dnl shared libs cause too many headaches to be default
+AM_SILENT_RULES(yes)
 
 AC_LANG(C)
 
@@ -99,17 +110,14 @@ AC_PROG_FC_C_O
 AC_FC_PP_DEFINE
 AC_FC_SRCEXT([F90])
 AC_FC_FREEFORM
-LT_INIT
 AC_PROG_INSTALL
 AC_PROG_LN_S
 PKG_PROG_PKG_CONFIG([])
-PKG_LIBS=""
-PKG_CFLAGS=""
+PKG_LIBS=
+PKG_CFLAGS=
 
 # Checks for libraries.
-
 AC_FC_LIBRARY_LDFLAGS
-
 AC_CHECK_LIB([m], [sqrt])
 AC_CHECK_HEADERS([assert.h errno.h math.h pthread.h stdbool.h stdint.h stdio.h stdlib.h string.h])
 
@@ -127,93 +135,108 @@ if test "x$with_omp" = xyes; then
 fi
 
 # CHAMELEON
-AC_ARG_WITH(chameleon,
-  AS_HELP_STRING([--without-chameleon],
-                 [Do not use Chameleon. Default: auto-detect]), [
-case "$with_chameleon" in
-  no)
-    : ;;
-  yes)
-    PKG_CHECK_MODULES([LIBCHAMELEON],[chameleon >= 1.0.0],
-      [PKG_CFLAGS="$PKG_CFLAGS $LIBCHAMELEON_CFLAGS"
-      PKG_LIBS="$PKG_LIBS $LIBCHAMELEON_LIBS"]
-                      ,[
-
-      ## something went wrong.
-      ## try to find the package without pkg-config
-
-      ## check that the library is actually new enough.
-      ## by testing for a 1.0.0+ function which we use
-      AC_CHECK_LIB(chameleon,CHAMELEON_finalize,[LIBCHAMELEON_LIBS="-lchameleon"])
-    ])
-    AH_TEMPLATE(HAVE_CHAMELEON,[Chameleon support is available])
-  ;;
-  *)
-    if test ! -d "$withval" ; then
-      AC_MSG_ERROR([--with-chameleon path does not point to a directory])
-    fi
-    LIBCHAMELEON_LIBS="-L$with_chameleon/lib -lchameleon -lchameleon_starpu -lhqr -lcoreblas"
-    LIBCHAMELEON_CFLAGS="-I$with_chameleon/include $CFLAGS"
-    LIBCHAMELEON_CPPFLAGS="-I$with_chameleon/include $CPPFLAGS"
-  esac
-])
-
-if test "x$LIBCHAMELEON_LIBS" != "x" ; then
-  LIBS="$LIBS $LIBCHAMELEON_LIBS"
-  CFLAGS="$CFLAGS $LIBCHAMELEON_CFLAGS"
-  CPPFLAGS="$CPPFLAGS $LIBCHAMELEON_CPPFLAGS"
-  AC_CHECK_HEADERS([chameleon.h], [], [AC_MSG_ERROR("chamelon.h not found")])
-  AC_DEFINE_UNQUOTED([HAVE_CHAMELEON],1,[CHAMELEON support is available])
-fi
-
-#AS_IF([test "x$with_chameleon" != "xno"], [
-#])
-
-AC_MSG_NOTICE([CHAMELEON library support: ${with_CHAMELEON:=auto} ${LIBCHAMELEON_PATH} ${LIBCHAMELEON_LIBS}])
+#AC_ARG_WITH(chameleon,
+#  AS_HELP_STRING([--without-chameleon],
+#                 [Do not use Chameleon. Default: auto-detect]),
+#                 [case "$with_chameleon" in
+#                    no)
+#                        : ;;
+#                    yes)
+#                        PKG_CHECK_MODULES([LIBCHAMELEON],[chameleon >= 1.0.0],
+#                        [PKG_CFLAGS="$PKG_CFLAGS $LIBCHAMELEON_CFLAGS"
+#                        PKG_LIBS="$PKG_LIBS $LIBCHAMELEON_LIBS"]
+#                                        ,[
+#
+#                        ## something went wrong.
+#                        ## try to find the package without pkg-config
+#
+#                        ## check that the library is actually new enough.
+#                        ## by testing for a 1.0.0+ function which we use
+#                        AC_CHECK_LIB(chameleon,CHAMELEON_finalize,[LIBCHAMELEON_LIBS="-lchameleon"])
+#                        ])
+#                        AH_TEMPLATE(HAVE_CHAMELEON,[Chameleon support is available])
+#                    ;;
+#                    *)
+#                        if test ! -d "$withval" ; then
+#                        AC_MSG_ERROR([--with-chameleon argument does not point to a directory])
+#                        fi
+#                        LIBCHAMELEON_LIBS="-L$with_chameleon/lib -lchameleon -lchameleon_starpu -lhqr -lcoreblas"
+#                        LIBCHAMELEON_CFLAGS="-I$with_chameleon/include $CFLAGS"
+#                        LIBCHAMELEON_CPPFLAGS="-I$with_chameleon/include $CPPFLAGS"
+#                    esac
+#                    ])
+#
+#if test "x$LIBCHAMELEON_LIBS" != "x" ; then
+#  LIBS="$LIBS $LIBCHAMELEON_LIBS"
+#  CFLAGS="$CFLAGS $LIBCHAMELEON_CFLAGS"
+#  CPPFLAGS="$CPPFLAGS $LIBCHAMELEON_CPPFLAGS"
+#  AC_CHECK_HEADERS([chameleon.h], [], [AC_MSG_ERROR("chamelon.h not found")])
+#  AC_DEFINE_UNQUOTED([HAVE_CHAMELEON],1,[CHAMELEON support is available])
+#fi
+#
+#AC_MSG_NOTICE([CHAMELEON library support: ${with_CHAMELEON:=auto} ${LIBCHAMELEON_PATH} ${LIBCHAMELEON_LIBS}])
 
 
 # TREXIO
+LIBTREXIO=
+AC_ARG_WITH([trexio],
+            [AS_HELP_STRING([--without-trexio],
+                            [disable support for TREXIO])],
+            [with_trexio=$withval],
+            [with_trexio=yes])
 
-AC_ARG_WITH(trexio, [AS_HELP_STRING([--without-trexio],[disable support for TREXIO])],
-            with_trexio=$withval, with_trexio=yes)
-
-AS_IF([test "x$with_trexio" != xno], [
-  AC_DEFINE([HAVE_TREXIO], [1], [Define if your have libtrexio])
-  ARGS="${ARGS} trexio"
-  AC_CHECK_LIB([trexio], [trexio_open],
-       [],
-       [AS_IF([test "x$with_trexio" != xcheck],
-       [PKG_CHECK_MODULES([TREXIO], [trexio]) ])
-  ])
-])
+case "$with_trexio" in
+  no)
+    : ;;
+  yes)
+        AC_CHECK_LIB([trexio], [trexio_open], [],
+                     [PKG_CHECK_MODULES([TREXIO], [trexio]) ])
+        AC_CHECK_HEADERS([trexio.h], [],
+                         [AC_MSG_ERROR("trexio.h not found")])
+        AC_DEFINE([HAVE_TREXIO], [1], [Define if TREXIO support is available])
+        ARGS="${ARGS} trexio"
+        ;;
+  *)
+        if test ! -d "$withval" ; then
+           AC_MSG_ERROR([--with-trexio=$withval: argument is not a directory])
+        fi
+        TREXIO_LIBS="-L$with_trexio/lib -ltrexio"
+        TREXIO_CFLAGS="-I$with_trexio/include"
+        AC_CHECK_HEADERS([trexio.h], [],
+                         [AC_MSG_ERROR("trexio.h not found")])
+        AC_DEFINE([HAVE_TREXIO], [1], [Define if TREXIO support is available])
+        ARGS="${ARGS} trexio"
+        ;;
+esac
 
 PKG_CFLAGS="$PKG_CFLAGS $TREXIO_CFLAGS"
 PKG_LIBS="$PKG_LIBS $TREXIO_LIBS"
 
 # QMCKL_DGEMM
 
-AC_ARG_WITH(qmckldgemm, [AS_HELP_STRING([--without-qmckldgemm],[disable support for QMCKLDGEMM])],
-            with_qmckldgemm=$withval, with_qmckldgemm=no)
+AC_ARG_WITH([qmckldgemm],
+    [AS_HELP_STRING([--with-qmckldgemm],
+        [enable support for the QMCKLDGEMM library])],
+    with_qmckldgemm=$withval,
+    with_qmckldgemm=no)
 
-AS_IF([test "x$with_qmckldgemm" != xno], [
-  AC_DEFINE([HAVE_QMCKLDGEMM], [1], [Define if your have libqmckldgemm])
-  ARGS="${ARGS} qmckldgemm"
-  AC_CHECK_LIB([qmckldgemm], [qmckl_packed_matrix_create],
-       [],
-       [AS_IF([test "x$with_qmckldgemm" != xcheck],
-       [PKG_CHECK_MODULES([QMCKLDGEMM], [qmckldgemm]) ])
-  ])
-])
+#AS_IF([test "x$with_qmckldgemm" != xno], [
+#  [ARGS="${ARGS} qmckldgemm"
+#   AC_CHECK_LIB([qmckldgemm], [qmckl_packed_matrix_create], [],
+#                [AS_IF([test "x$with_qmckldgemm" != xcheck],
+#                       [PKG_CHECK_MODULES([QMCKLDGEMM], [qmckldgemm]) ])])],
+#  [AC_DEFINE([HAVE_QMCKLDGEMM], [1], [Define if QMCKLDGEMM is used])]
+#)
 
-PKG_CFLAGS="$PKG_CFLAGS $QMCKLDGEMM_CFLAGS"
-PKG_LIBS="$PKG_LIBS $QMCKLDGEMM_LIBS"
+#PKG_CFLAGS="$PKG_CFLAGS $QMCKLDGEMM_CFLAGS"
+#PKG_LIBS="$PKG_LIBS $QMCKLDGEMM_LIBS"
 
 ## BLAS
 AX_BLAS([], [AC_MSG_ERROR([BLAS was not found.])])
 
 ## LAPACK
 AX_LAPACK([], [AC_MSG_ERROR([LAPACK was not found.])])
-AS_IF([test "$BLAS_LIBS" == "$LAPACK_LIBS"], [BLAS_LIBS=""])
+AS_IF([test "$BLAS_LIBS" = "$LAPACK_LIBS"], [BLAS_LIBS=""])
 
 
 # Specific options required with some compilers
@@ -240,21 +263,31 @@ case $CC in
 esac
 
 
-# Options.
-AC_ARG_ENABLE(hpc, [AS_HELP_STRING([--enable-hpc],[Use HPC-optimized functions])], HAVE_HPC=$enableval, HAVE_HPC=no)
-AS_IF([test "$HAVE_HPC" = "yes"], [
-   AC_DEFINE([HAVE_HPC], [1], [If defined, activate HPC routines])
-])
+# Options
+AC_ARG_ENABLE([hpc],
+              [AS_HELP_STRING([--enable-hpc],
+                              [Use HPC-optimized functions])],
+              [enable_hpc=$enableval],
+              [enable_hpc=no])
 
+AS_IF([test "x$enable_hpc" = "yes"],
+      [AC_DEFINE([HAVE_HPC], [1], [Activate HPC routines])])
+
+echo "XXX VFC"
 # Enable Verificarlo tests
 AC_ARG_ENABLE([vfc_ci],
-[  --enable-vfc_ci    Build the library with vfc_ci support],
-[case "${enableval}" in
-  yes) vfc_ci=true &&  FCFLAGS="-D VFC_CI $FCFLAGS" && CFLAGS="-D VFC_CI $CFLAGS";;
-  no)  vfc_ci=false ;;
-  *) AC_MSG_ERROR([bad value ${enableval} for --enable_vfc_ci]) ;;
-esac],[vfc_ci=false])
-AM_CONDITIONAL([VFC_CI], [test x$vfc_ci = xtrue])
+              [AS_HELP_STRING([--enable-vfc_ci],
+                              [Build the library with vfc_ci support])],
+              [enable_vfc_ci=$enableval],
+              [enable_vfc_ci=no])
+
+vfc_ci="false"
+AS_IF([test "x$enable_vfc_ci" = "yes"],
+       [vfc_ci="true"
+        FCFLAGS="-D VFC_CI $FCFLAGS"
+	CFLAGS="-D VFC_CI $CFLAGS"])
+
+AM_CONDITIONAL([VFC_CI], [test "x$vfc_ci" = "xtrue"])
 
 if test "$FC" = "verificarlo-f"; then
   AC_MSG_NOTICE(verificarlo-f detected)
@@ -419,7 +452,7 @@ AC_TYPE_UINT64_T
 AC_CHECK_FUNCS([memset strerror])
 
 # Development mode
-if test "x$enable_maintainer_mode" == "xyes" ; then
+if test "x$enable_maintainer_mode" = "xyes" ; then
   QMCKL_DEVEL=" -- Developer mode"
 else
   QMCKL_DEVEL=""
@@ -433,18 +466,15 @@ if test "x${QMCKL_DEVEL}" != "x"; then
   AM_PATH_PYTHON
 
   AC_CHECK_PROGS([EMACS],[emacs26 emacs],[no])
-  if test x${EMACS} == xno ; then
-    AC_MSG_ERROR([
+  AS_IF([test "x${EMACS}" = "xno"],
+    [AC_MSG_ERROR([
     --------------------------------------
     Error: Emacs is required for org-mode.
     --------------------------------------
-    ])
-  fi
+    ])])
 
   AC_CHECK_PROGS([HAS_CPPCHECK],[cppcheck],[no])
-  if test x${HAS_CPPCHECK} != xno ; then
-        HAS_CPPCHECK=1
-  fi
+  AS_IF([test "x${HAS_CPPCHECK}" != "xno"], [HAS_CPPCHECK=1])
 
   AX_PKG_SWIG(4.0.0, [], AC_MSG_WARN([SWIG is required to build Python API.]) )
 
@@ -483,11 +513,9 @@ FC..............: ${FC}
 FCFLAGS.........: ${FCFLAGS}
 LDFLAGS:........: ${LDFLAGS}
 LIBS............: ${LIBS}
-USE CHAMELEON...: ${with_chameleon}
+TREXIO..........: ${with_trexio}
+QMCKL_DGEMM.....: ${with_qmckldgemm}
 HPC version.....: ${HAVE_HPC}
-OpenMP offload..: ${HAVE_OPENMP_OFFLOAD}
-OpenACC offload.: ${HAVE_OPENACC_OFFLOAD}
-cuBLAS offload..: ${HAVE_CUBLAS_OFFLOAD}
 
 Package features:
   ${ARGS}
