@@ -282,7 +282,8 @@ AC_ARG_ENABLE([vfc_ci],
 
 AS_IF([test "x$enable_vfc_ci" = "xyes"],
        [FCFLAGS="-D VFC_CI $FCFLAGS"
-	CFLAGS="-D VFC_CI $CFLAGS"])
+	CFLAGS="-D VFC_CI $CFLAGS"
+        LDFLAGS="-lvfc_probes $LDFLAGS"])
 
 AM_CONDITIONAL([VFC_CI], [test "x$vfc_ci" = "xtrue"])
 
