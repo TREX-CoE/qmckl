@@ -279,7 +279,7 @@ AC_ARG_ENABLE([doc],
             [enable_doc=$withval],
             [enable_doc=yes])
 
-AM_CONDITIONAL([HAVE_DOC],[test "x$enable_doc" = "no"])
+AM_CONDITIONAL([HAVE_DOC],[test "x$enable_doc" = "xyes"])
 
 # Enable Verificarlo tests
 AC_ARG_ENABLE([vfc_ci],
