@@ -273,7 +273,6 @@ AC_ARG_ENABLE([hpc],
 AS_IF([test "x$enable_hpc" = "yes"],
       [AC_DEFINE([HAVE_HPC], [1], [Activate HPC routines])])
 
-echo "XXX VFC"
 # Enable Verificarlo tests
 AC_ARG_ENABLE([vfc_ci],
               [AS_HELP_STRING([--enable-vfc_ci],
@@ -281,11 +280,10 @@ AC_ARG_ENABLE([vfc_ci],
               [enable_vfc_ci=$enableval],
               [enable_vfc_ci=no])
 
-vfc_ci="false"
-AS_IF([test "x$enable_vfc_ci" = "yes"],
-       [vfc_ci="true"
-        FCFLAGS="-D VFC_CI $FCFLAGS"
-	CFLAGS="-D VFC_CI $CFLAGS"])
+AS_IF([test "x$enable_vfc_ci" = "xyes"],
+       [FCFLAGS="-D VFC_CI $FCFLAGS"
+	CFLAGS="-D VFC_CI $CFLAGS"
+        LDFLAGS="-lvfc_probes $LDFLAGS"])
 
 AM_CONDITIONAL([VFC_CI], [test "x$vfc_ci" = "xtrue"])
 
