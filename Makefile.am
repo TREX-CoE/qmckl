@@ -72,15 +72,21 @@ CLEANFILES+=$(test_qmckl_fo) $(src_qmckl_fo) $(test_qmckl_o) $(src_qmckl_o) $(FH
 
 include generated.mk
 
+htmldir = $(docdir)/html
+textdir = $(docdir)/text
+htmldir_loc = share/doc/qmckl/html
+textdir_loc = share/doc/qmckl/text
 
 ln_s_verbose   = $(ln_s_verbose_@AM_V@)
 ln_s_verbose_  = $(ln_s_verbose_@AM_DEFAULT_V@)
 ln_s_verbose_0 = @echo "  LN_S     $<";
 
-htmldir = $(docdir)/html
-textdir = $(docdir)/text
-htmldir_loc = share/doc/qmckl/html
-textdir_loc = share/doc/qmckl/text
+# Include Guix manifest in the source code distribution tarball
+tools_qmckl_scm = tools/qmckl.scm
+EXTRA_DIST += $(tools_qmckl_scm)
+
+# Documentation rules
+if HAVE_DOC
 htmlize_el = $(htmldir_loc)/htmlize.el
 dist_html_DATA = $(HTML_FILES) \
         $(htmldir_loc)/qmckl.css \
@@ -88,13 +94,10 @@ dist_html_DATA = $(HTML_FILES) \
 
 dist_text_DATA = $(TEXT_FILES)
 
-# Include Guix manifest in the source code distribution tarball
-tools_qmckl_scm = tools/qmckl.scm
-EXTRA_DIST += $(tools_qmckl_scm)
-
 html-local: $(htmlize_el) $(dist_html_DATA)
 text: $(htmlize_el) $(dist_text_DATA)
 doc: html text
+endif
 
 setup_py          =  $(srcdir)/python/setup.py
 process_header_py =  $(srcdir)/python/src/process_header.py
@@ -131,6 +134,7 @@ if QMCKL_DEVEL
 
 if VFC_CI
 AM_LDFLAGS=-lvfc_probes -lvfc_probes_f
+ACLOCAL_AMFLAGS += -I tools
 endif
 
 EXTRA_DIST += $(ORG_FILES) $(TANGLED_FILES) $(EXPORTED_FILES) $(test_qmckl_f)

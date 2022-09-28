@@ -205,8 +205,12 @@ def main():
               "C_TEST_FILES="+" ".join(C_TEST_FILES),
               "F_TEST_FILES="+" ".join(F_TEST_FILES),
               "TESTS="+" ".join(TESTS.keys()),
-              "HTML_FILES="+" ".join(HTML.values()),
-              "TEXT_FILES="+" ".join(TEXT.values()),
+              "HTML_FILES=",
+              "TEXT_FILES=",
+              "if HAVE_DOC",
+              "HTML_FILES+="+" ".join(HTML.values()),
+              "TEXT_FILES+="+" ".join(TEXT.values()),
+              "endif",
               "" ]
 
     output+= ["",

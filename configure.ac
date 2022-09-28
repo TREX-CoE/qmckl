@@ -273,6 +273,14 @@ AC_ARG_ENABLE([hpc],
 AS_IF([test "x$enable_hpc" = "yes"],
       [AC_DEFINE([HAVE_HPC], [1], [Activate HPC routines])])
 
+AC_ARG_ENABLE([doc],
+            [AS_HELP_STRING([--disable-doc],
+                            [Disable documentation])],
+            [enable_doc=$withval],
+            [enable_doc=yes])
+
+AM_CONDITIONAL([HAVE_DOC],[test "x$enable_doc" = "no"])
+
 # Enable Verificarlo tests
 AC_ARG_ENABLE([vfc_ci],
               [AS_HELP_STRING([--enable-vfc_ci],
@@ -283,7 +291,7 @@ AC_ARG_ENABLE([vfc_ci],
 AS_IF([test "x$enable_vfc_ci" = "xyes"],
        [FCFLAGS="-D VFC_CI $FCFLAGS"
 	CFLAGS="-D VFC_CI $CFLAGS"
-        LDFLAGS="-lvfc_probes $LDFLAGS"])
+        LIBS="$LIBS -lvfc_probes"])
 
 AM_CONDITIONAL([VFC_CI], [test "x$vfc_ci" = "xtrue"])
 
