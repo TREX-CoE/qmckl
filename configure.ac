@@ -383,9 +383,10 @@ AS_IF([test "$ok" = "yes"], [
 AC_ARG_ENABLE(debug, [AS_HELP_STRING([--enable-debug],[compile for debugging])], ok=$enableval, ok=no)
 AS_IF([test "$ok" = "yes"], [
         AS_IF([test "$GCC" = "yes"], [
+                CPPFLAGS="-Wdate-time -D_FORTIFY_SOURCE=2"
 	        CFLAGS="$CFLAGS \
 -g -Wall -W -Wbad-function-cast -Wcast-qual -Warray-bounds -Wdisabled-optimization \
--fsanitize=address -fno-omit-frame-pointer \
+-fsanitize=address -fno-omit-frame-pointer -fstack-protector-strong -Wformat -Werror=format-security \
 -Wpointer-arith -Wcast-align -Wpedantic -Wextra -Walloc-zero -Werror \
 "
 		LDFLAGS="$LDFLAGS -fsanitize=address"
