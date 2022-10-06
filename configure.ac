@@ -192,6 +192,8 @@ AS_CASE([$with_trexio],
   [yes],
   [AC_CHECK_LIB([trexio], [trexio_open], [],
                 [PKG_CHECK_MODULES([TREXIO], [trexio]) ])
+   CFLAGS="$CFLAGS $TREXIO_CFLAGS"
+   LIBS="$LIBS $TREXIO_LIBS"
    AC_CHECK_HEADERS([trexio.h], [],
                     [AC_MSG_ERROR("trexio.h not found")])
    AC_DEFINE([HAVE_TREXIO], [1], [Define if TREXIO support is available])
@@ -223,6 +225,8 @@ AS_CASE([$with_qmckldgemm],
   [yes],
   [AC_CHECK_LIB([qmckldgemm], [qmckl_packed_matrix_create], [],
                 [PKG_CHECK_MODULES([QMCKLDGEMM], [qmckldgemm]) ])
+   CFLAGS="$CFLAGS $QMCKLDGEMM_CFLAGS"
+   LIBS="$LIBS $QMCKLDGEMM_LIBS"
    AC_CHECK_HEADERS([qmckl_dgemm.h], [],
                     [AC_MSG_ERROR("qmckl_dgemm.h not found")])
    AC_DEFINE([HAVE_QMCKLDGEMM], [1], [Define if QMCKL DGEMM support is available])
