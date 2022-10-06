@@ -53,7 +53,7 @@ AC_ARG_WITH([ifort],
             [with_ifort=$withval],
             [with_ifort=no])
 
-AS_IF([test "$with_ifort" = "yes"], [
+AS_IF([test "x$with_ifort" = "xyes"], [
   FC=ifort
   FCFLAGS="-march=native -ip -Ofast -ftz -finline -g -mkl=sequential" ])
 
@@ -64,11 +64,11 @@ AC_ARG_WITH([icc],
             [with_icc=$withval],
             [with_icc=no])
 
-AS_IF([test "$with_icc" = "yes"], [
+AS_IF([test "x$with_icc" = "xyes"], [
   CC=icc
   CFLAGS="-march=native -ip -Ofast -ftz -finline -g -mkl=sequential" ])
 
-AS_IF([test "$with_icc"."$with_ifort" = "yes.yes"], [
+AS_IF([test "x$with_icc.$with_ifort" = "xyes.yes"], [
   ax_blas_ok="yes"
   ax_lapack_ok="yes"
   BLAS_LIBS=""
@@ -102,7 +102,7 @@ AC_PROG_F77
 
 # Make sure the c compiler supports C99
 m4_version_prereq([2.70],[], [AC_PROG_CC_C99])
-AS_IF([test "$ac_cv_prog_cc_c99" = "no"], [AC_MSG_ERROR([The compiler does not support C99])])
+AS_IF([test "x$ac_cv_prog_cc_c99" = "xno"], [AC_MSG_ERROR([The compiler does not support C99])])
 AC_PROG_CC_C_O
 AM_PROG_CC_C_O
 AC_PROG_FC
@@ -274,7 +274,7 @@ AC_ARG_ENABLE([hpc],
               [enable_hpc=$enableval],
               [enable_hpc=no])
 
-AS_IF([test "x$enable_hpc" = "yes"],
+AS_IF([test "x$enable_hpc" = "xyes"],
       [AC_DEFINE([HAVE_HPC], [1], [Activate HPC routines])])
 
 AC_ARG_ENABLE([doc],
@@ -309,11 +309,11 @@ fi
 
 # GPU offloading
 AC_ARG_ENABLE(gpu, [AS_HELP_STRING([--enable-gpu],[openmp|openacc : Use GPU-offloaded functions])], enable_gpu=$enableval, enable_gpu=no)
-AS_IF([test "$enable_gpu" = "yes"], [enable_gpu="openmp"])
+AS_IF([test "x$enable_gpu" = "xyes"], [enable_gpu="openmp"])
 
 # OpenMP offloading
 HAVE_OPENMP_OFFLOAD="no"
-AS_IF([test "$enable_gpu" = "openmp"], [
+AS_IF([test "x$enable_gpu" = "xopenmp"], [
   AC_DEFINE([HAVE_OPENMP_OFFLOAD], [1], [If defined, activate OpenMP-offloaded routines])
   HAVE_OPENMP_OFFLOAD="yes"
   AS_CASE([$CC],
@@ -329,7 +329,7 @@ AS_IF([test "$enable_gpu" = "openmp"], [
 
 # OpenMP offloading
 HAVE_OPENACC_OFFLOAD="no"
-AS_IF([test "$enable_gpu" = "openacc"], [
+AS_IF([test "x$enable_gpu" = "xopenacc"], [
   AC_DEFINE([HAVE_OPENACC_OFFLOAD], [1], [If defined, activate OpenACC-offloaded routines])
   HAVE_OPENACC_OFFLOAD="yes"
   AS_CASE([$CC],
@@ -346,7 +346,7 @@ AS_IF([test "$enable_gpu" = "openacc"], [
 
 # cuBLAS offloading
 AC_ARG_WITH(cublas, [AS_HELP_STRING([--with-cublas],[Use cuBLAS-offloaded functions])], HAVE_CUBLAS_OFFLOAD=$withval, HAVE_CUBLAS_OFFLOAD=no)
-AS_IF([test "$HAVE_CUBLAS_OFFLOAD" = "yes"], [
+AS_IF([test "x$HAVE_CUBLAS_OFFLOAD" = "xyes"], [
   AC_DEFINE([HAVE_CUBLAS_OFFLOAD], [1], [If defined, activate cuBLAS-offloaded routines])
   HAVE_OPENACC_OFFLOAD="yes"
   AS_CASE([$CC],
@@ -362,20 +362,20 @@ AS_IF([test "$HAVE_CUBLAS_OFFLOAD" = "yes"], [
 ])
 
 AC_ARG_ENABLE(malloc-trace, [AS_HELP_STRING([--enable-malloc-trace],[use debug malloc/free])], ok=$enableval, ok=no)
-AS_IF([test "$ok" = "yes"], [
+AS_IF([test "x$ok" = "xyes"], [
 	AC_DEFINE(MALLOC_TRACE,"malloc_trace.dat",[Define to use debugging malloc/free])
         ARGS="${ARGS} malloc-trace"
 ])
 
 AC_ARG_ENABLE(prof, [AS_HELP_STRING([--enable-prof],[compile for profiling])], ok=$enableval, ok=no)
-AS_IF([test "$ok" = "yes"], [
+AS_IF([test "x$ok" = "xyes"], [
 	CFLAGS="${CFLAGS} -pg"
 	AC_DEFINE(ENABLE_PROF,1,[Define when using the profiler tool])
         ARGS="${ARGS} prof"
 ])
 
 AC_ARG_WITH(efence, [AS_HELP_STRING([--with-efence],[use ElectricFence library])], ok=$withval, ok=no)
-AS_IF([test "$ok" = "yes"], [
+AS_IF([test "x$ok" = "xyes"], [
 	AC_CHECK_LIB([efence], [malloc])
         ARGS="${ARGS} efence"
 ])
@@ -385,8 +385,8 @@ AS_IF([test "$ok" = "yes"], [
 ##
 
 AC_ARG_ENABLE(debug, [AS_HELP_STRING([--enable-debug],[compile for debugging])], ok=$enableval, ok=no)
-AS_IF([test "$ok" = "yes"], [
-        AS_IF([test "$GCC" = "yes"], [
+AS_IF([test "x$ok" = "xyes"], [
+        AS_IF([test "x$GCC" = "xyes"], [
                 CPPFLAGS="-Wdate-time -D_FORTIFY_SOURCE=2"
 	        CFLAGS="$CFLAGS \
 -g -Wall -W -Wbad-function-cast -Wcast-qual -Warray-bounds -Wdisabled-optimization \
@@ -395,14 +395,14 @@ AS_IF([test "$ok" = "yes"], [
 "
 		LDFLAGS="$LDFLAGS -fsanitize=address"
         ])
-        AS_IF([test "$GFC" = "yes"], [
+        AS_IF([test "x$GFC" = "xyes"], [
 	        FCFLAGS="$FCFLAGS \
 -g -fcheck=all -Waliasing -Wampersand -Wconversion \
 -Wsurprising -ffpe-trap=zero,overflow,underflow \
 -Wintrinsics-std -Wno-tabs -Wintrinsic-shadow -Wline-truncation \
 -Wreal-q-constant -Wuninitialized  -fbacktrace -finit-real=nan"
         ])
-        AS_IF([test "$FC" = "ifort"], [
+        AS_IF([test "x$FC" = "xifort"], [
 	        FCFLAGS="$FCFLAGS \
 -traceback -check all -debug all -fpe-all=0  -implicitnone"
         ])
