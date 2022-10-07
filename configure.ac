@@ -128,7 +128,7 @@ AC_CHECK_HEADERS([assert.h errno.h math.h pthread.h stdbool.h stdint.h stdio.h s
 AC_CHECK_LIB([pthread], [pthread_create])
 
 # OpenMP
-AC_ARG_WITH(openmp, [AS_HELP_STRING([--with-openmp],[activate OpenMP])], with_omp=$withval, with_omp=no)
+AC_ARG_WITH(openmp, [AS_HELP_STRING([--without-openmp],[deactivate OpenMP])], with_omp=$withval, with_omp=yes)
 if test "x$with_omp" = xyes; then
    AC_DEFINE([HAVE_OPENMP], [1], [Define to use OpenMP threading.])
    AX_OPENMP([],
@@ -486,15 +486,16 @@ ${PACKAGE_NAME} Version ${PACKAGE_VERSION} ${QMCKL_DEVEL}
 Prefix: '${prefix}'.
 
 CC..............: ${CC}
-CPPFLAGS........: ${CPPFLAGS}
 CFLAGS..........: ${CFLAGS}
+CPPFLAGS........: ${CPPFLAGS}
 FC..............: ${FC}
 FCFLAGS.........: ${FCFLAGS}
+HPC version.....: ${HAVE_HPC}
 LDFLAGS:........: ${LDFLAGS}
 LIBS............: ${LIBS}
-TREXIO..........: ${with_trexio}
+OPENMP..........: ${with_omp}
 QMCKL_DGEMM.....: ${with_qmckldgemm}
-HPC version.....: ${HAVE_HPC}
+TREXIO..........: ${with_trexio}
 
 Package features:
   ${ARGS}
