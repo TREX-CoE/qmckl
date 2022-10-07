@@ -45,16 +45,13 @@ pkgconfigdir = $(libdir)/pkgconfig
 pkgconfig_DATA = pkgconfig/qmckl.pc
 
 qmckl_h = include/qmckl.h
-include_HEADERS = $(qmckl_h)
+include_HEADERS = $(qmckl_h) $(src_qmckl_f)
 
 test_qmckl_f  = tests/qmckl_f.F90
 test_qmckl_fo = tests/qmckl_f.o
 src_qmckl_f   = src/qmckl_f.F90
 src_qmckl_fo  = src/qmckl_f.o
 header_tests  = tests/chbrclf.h tests/n2.h
-
-fortrandir = $(datadir)/qmckl/fortran
-fortran_DATA = $(src_qmckl_f)
 
 QMCKL_TEST_DIR = $(abs_srcdir)/share/qmckl/test_data/
 
