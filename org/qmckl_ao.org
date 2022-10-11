@@ -5718,12 +5718,20 @@ qmckl_compute_ao_value_hpc_gaussian (const qmckl_context context,
     double exp_mat[prim_max] __attribute__((aligned(64)));
     double ce_mat[shell_max] __attribute__((aligned(64)));
 
-    double coef_mat[nucl_num][shell_max][prim_max];
+    int coef_mat_sparse_idx[nucl_num][shell_max][prim_max+1];
+    double coef_mat_sparse [nucl_num][shell_max][prim_max+1];
     for (int i=0 ; i<nucl_num ; ++i) {
       for (int j=0 ; j<shell_max; ++j) {
+        int l=1;
         for (int k=0 ; k<prim_max; ++k) {
-          coef_mat[i][j][k] = qmckl_ten3(coef_per_nucleus,k, j, i);
+          const double c = qmckl_ten3(coef_per_nucleus,k, j, i);
+          if (c != 0.) {
+            coef_mat_sparse_idx[i][j][l] = k;
+            coef_mat_sparse[i][j][l] = c;
+            l+=1;
+          }
         }
+        coef_mat_sparse_idx[i][j][0] = l;
       }
     }
 
@@ -5806,8 +5814,12 @@ qmckl_compute_ao_value_hpc_gaussian (const qmckl_context context,
 
         for (int i=0 ; i<nucleus_shell_num[inucl] ; ++i) {
           ce_mat[i] = 0.;
-          for (int k=0 ; k<nidx; ++k) {
-            ce_mat[i] += coef_mat[inucl][i][k] * exp_mat[k];
+          const int* idx = &(coef_mat_sparse_idx[inucl][i][0]);
+          const double* v = &(coef_mat_sparse[inucl][i][0]);
+          for (int l=1 ; l<coef_mat_sparse_idx[inucl][i][0]; ++l) {
+            const int k = idx[l];
+            if (k >= nidx) break;
+            ce_mat[i] += v[l] * exp_mat[k];
           }
         }
 
@@ -6264,6 +6276,7 @@ printf(" ao_value ao_value[26][223] %25.15e\n", ao_value[26][223]);
 printf(" ao_value ao_value[26][224] %25.15e\n", ao_value[26][224]);
 printf("\n");
 
+printf("%e %e\n", ao_value[26][219], 1.020298798341620e-08);
 assert( fabs(ao_value[26][219] - (  1.020298798341620e-08)) < 1.e-14 );
 assert( fabs(ao_value[26][220] - (  1.516643537739178e-08)) < 1.e-14 );
 assert( fabs(ao_value[26][221] - ( -4.686370882518819e-09)) < 1.e-14 );
@@ -6482,7 +6495,7 @@ qmckl_compute_ao_vgl_hpc_gaussian (
                                    const qmckl_tensor coef_per_nucleus,
                                    double* restrict const ao_vgl )
 {
- <<ao_value_constants>>
+  <<ao_value_constants>>
 
 #ifdef HAVE_OPENMP
 #pragma omp parallel
@@ -6495,26 +6508,34 @@ qmckl_compute_ao_vgl_hpc_gaussian (
     double exp_mat[prim_max][8] __attribute__((aligned(64))) ;
     double ce_mat[shell_max][8] __attribute__((aligned(64))) ;
 
-    double coef_mat[nucl_num][shell_max][prim_max]  __attribute__((aligned(64)));
+    double coef_mat_sparse[nucl_num][shell_max][prim_max+1];
+    int coef_mat_sparse_idx[nucl_num][shell_max][prim_max+1];
     for (int i=0 ; i<nucl_num ; ++i) {
       for (int j=0 ; j<shell_max; ++j) {
+        int l=1;
         for (int k=0 ; k<prim_max; ++k) {
-          coef_mat[i][j][k] = qmckl_ten3(coef_per_nucleus,k, j, i);
+          const double c = qmckl_ten3(coef_per_nucleus,k, j, i);
+          if (c != 0.) {
+            coef_mat_sparse_idx[i][j][l] = k;
+            coef_mat_sparse[i][j][l] = c;
+            l+=1;
+          }
         }
+        coef_mat_sparse_idx[i][j][0] = l;
       }
     }
 
     double  poly_vgl_l1[4][4] __attribute__((aligned(64))) =
-                                {{1.0, 0.0, 0.0, 0.0},
-                                 {0.0, 1.0, 0.0, 0.0},
-                                 {0.0, 0.0, 1.0, 0.0},
-                                 {0.0, 0.0, 0.0, 1.0}};
+      {{1.0, 0.0, 0.0, 0.0},
+       {0.0, 1.0, 0.0, 0.0},
+       {0.0, 0.0, 1.0, 0.0},
+       {0.0, 0.0, 0.0, 1.0}};
     double  poly_vgl_l2[5][10]__attribute__((aligned(64))) =
-                                 {{1., 0., 0., 0., 0., 0., 0., 0., 0., 0.},
-                                  {0., 1., 0., 0., 0., 0., 0., 0., 0., 0.},
-                                  {0., 0., 1., 0., 0., 0., 0., 0., 0., 0.},
-                                  {0., 0., 0., 1., 0., 0., 0., 0., 0., 0.},
-                                  {0., 0., 0., 0., 2., 0., 0., 2., 0., 2.}};
+      {{1., 0., 0., 0., 0., 0., 0., 0., 0., 0.},
+       {0., 1., 0., 0., 0., 0., 0., 0., 0., 0.},
+       {0., 0., 1., 0., 0., 0., 0., 0., 0., 0.},
+       {0., 0., 0., 1., 0., 0., 0., 0., 0., 0.},
+       {0., 0., 0., 0., 2., 0., 0., 2., 0., 2.}};
     double  poly_vgl[5][size_max]  __attribute__((aligned(64)));
 
 #ifdef HAVE_OPENMP
@@ -6612,89 +6633,29 @@ qmckl_compute_ao_vgl_hpc_gaussian (
 
 
         /* --- */
-        switch (5) {
-        case(8):
 
-          for (int i=0 ; i<nucleus_shell_num[inucl] ; ++i) {
+        //        if (do_sparse) {
+        for (int i=0 ; i<nucleus_shell_num[inucl] ; ++i) {
+#ifdef HAVE_OPENMP
+#pragma omp simd
+#endif
+          for (int j=0 ; j<8 ; ++j) {
+            ce_mat[i][j] = 0.;
+          }
+          const int* idx = &(coef_mat_sparse_idx[inucl][i][0]);
+          const double* v = &(coef_mat_sparse[inucl][i][0]);
+          for (int l=1 ; l<idx[0]; ++l) {
+            const int k = idx[l];
+            if (k >= nidx) break;
 #ifdef HAVE_OPENMP
 #pragma omp simd
 #endif
             for (int j=0 ; j<8 ; ++j) {
-              ce_mat[i][j] = 0.;
+              ce_mat[i][j] += v[l] * exp_mat[k][j];
             }
-            for (int k=0 ; k<nidx; ++k) {
-              const double cm = coef_mat[inucl][i][k];
-#ifdef HAVE_OPENMP
-#pragma omp simd
-#endif
-              for (int j=0 ; j<8 ; ++j) {
-                ce_mat[i][j] += cm * exp_mat[k][j];
-              }
-            }
-          }
-          break;
-
-        case(5):
-
-          for (int i=0 ; i<nucleus_shell_num[inucl] ; ++i) {
-            for (int j=0 ; j<5 ; ++j) {
-              ce_mat[i][j] = 0.;
-            }
-            for (int k=0 ; k<nidx; ++k) {
-              const double cm = coef_mat[inucl][i][k];
-              for (int j=0 ; j<5 ; ++j) {
-                ce_mat[i][j] += cm * exp_mat[k][j];
-              }
-            }
-          }
-          break;
-
-        case(512):
-          for(int i=0; i<nucleus_shell_num[inucl]; ++i){
-            __m512d cemat_avx512;
-            __m512d coefmat_avx512;
-            __m512d expmat_avx512;
-
-            // cemat_avx512 = _mm512_load_pd(&(ce_mat[i][0]));
-            cemat_avx512 = _mm512_xor_pd(cemat_avx512,cemat_avx512);
-
-            for(int k=0; k<nidx; ++k){
-              coefmat_avx512 = _mm512_set1_pd(coef_mat[inucl][i][k]);
-              expmat_avx512 = _mm512_load_pd(&(exp_mat[k][0]));
-              cemat_avx512 = _mm512_fmadd_pd(coefmat_avx512, expmat_avx512, cemat_avx512);
-            }
-            _mm512_store_pd(&(ce_mat[i][0]),cemat_avx512);
-          }
-          break;
-
-        case(256):
-          for(int i=0; i<nucleus_shell_num[inucl]; ++i){
-            __m256d cematlow_avx2;
-            __m256d cemathigh_avx2;
-            __m256d coefmat_avx2;
-            __m256d expmatlow_avx2;
-            __m256d expmathigh_avx2;
-
-            // cematlow_avx2 = _mm256_load_pd(&(ce_mat[i][0]));
-            // cemathigh_avx2 = _mm256_load_pd(&(ce_mat[i][4]));
-
-            cematlow_avx2 = _mm256_xor_pd(cematlow_avx2,cematlow_avx2);
-            cemathigh_avx2 = _mm256_xor_pd(cemathigh_avx2,cemathigh_avx2);
-
-            for(int k=0; k<nidx; ++k){
-              coefmat_avx2 = _mm256_set1_pd(coef_mat[inucl][i][k]);
-
-              expmatlow_avx2 = _mm256_load_pd(&(exp_mat[k][0]));
-              expmathigh_avx2 = _mm256_load_pd(&(exp_mat[k][4]));
-
-              cematlow_avx2 = _mm256_fmadd_pd(coefmat_avx2, expmatlow_avx2, cematlow_avx2);
-              cemathigh_avx2 = _mm256_fmadd_pd(coefmat_avx2, expmathigh_avx2, cemathigh_avx2);
-
-            }
-            _mm256_store_pd(&ce_mat[i][0],cematlow_avx2);
-            _mm256_store_pd(&ce_mat[i][4],cemathigh_avx2);
           }
         }
+
 
         const int64_t ishell_start = nucleus_index[inucl];
         const int64_t ishell_end   = nucleus_index[inucl] + nucleus_shell_num[inucl];
