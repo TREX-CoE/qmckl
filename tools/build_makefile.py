@@ -235,7 +235,7 @@ def main():
                 "$(src_qmckl_fo): $(src_qmckl_f)" ]
     for f in sorted(DEPS.keys()):
         if not DEPS[f][-1].endswith(".tangled"):
-            output += [ f + ": " + " ".join(DEPS[f]) ]
+            output += [ f + ": include/config.h " + " ".join(DEPS[f]) ]
 
     output+= ["",
               "## Test files",
