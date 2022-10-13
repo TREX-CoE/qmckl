@@ -105,6 +105,7 @@ qmckl_wrap_c    =  python/src/qmckl_wrap.c
 qmckl_include_i =  python/src/qmckl_include.i
 qmckl_py        =  python/src/qmckl.py
 
+if HAVE_PYTHON
 dist_python_DATA = $(setup_py) $(qmckl_py) $(qmckl_wrap_c) \
                    $(srcdir)/python/pyproject.toml \
                    $(srcdir)/python/requirements.txt \
@@ -124,7 +125,9 @@ python-test: $(test_py)
 	cd $(abs_srcdir)/python/test/ && \
 		python test_api.py
 
-.PHONY: python-test python-install cppcheck
+endif
+
+.PHONY: cppcheck python-test python-install
 
 
 if QMCKL_DEVEL

@@ -53,6 +53,7 @@ make -j
 make -j check
 
 cd ..
+
 mkdir -p _build_intel_fast/_install
 cd _build_intel_fast
 ../configure --prefix=$PWD/_install --enable-hpc --with-icc --with-ifort 

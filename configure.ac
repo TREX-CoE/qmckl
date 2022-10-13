@@ -283,10 +283,11 @@ AS_IF([test "x$enable_hpc" = "xyes"],
 AC_ARG_ENABLE([doc],
             [AS_HELP_STRING([--disable-doc],
                             [Disable documentation])],
-            [enable_doc=$withval],
+            [enable_doc=$enableval],
             [enable_doc=yes])
 
 AM_CONDITIONAL([HAVE_DOC],[test "x$enable_doc" = "xyes"])
+
 
 # Enable Verificarlo tests
 AC_ARG_ENABLE([vfc_ci],
@@ -442,6 +443,14 @@ AS_IF([test "x$enable_maintainer_mode" = "xyes"],
 
 AM_CONDITIONAL([QMCKL_DEVEL],[test "x$QMCKL_DEVEL" != x])
 
+AC_ARG_ENABLE([python],
+            [AS_HELP_STRING([--disable-python],
+                            [Disable building Python binding])],
+            [enable_python=$enableval],
+            [enable_python=yes])
+
+AM_CONDITIONAL([HAVE_PYTHON],[test "x$enable_python" = "xyes"])
+
 AS_IF([test "x${QMCKL_DEVEL}" != "x"], [
   AC_PROG_AWK
   AM_PATH_PYTHON
@@ -457,7 +466,9 @@ AS_IF([test "x${QMCKL_DEVEL}" != "x"], [
   AC_CHECK_PROGS([HAS_CPPCHECK],[cppcheck],[no])
   AS_IF([test "x${HAS_CPPCHECK}" != "xno"], [HAS_CPPCHECK=1])
 
-  AX_PKG_SWIG(4.0.0, [], AC_MSG_WARN([SWIG is required to build Python API.]) )
+  AS_IF([test "x$enable_python" = "xyes"], [
+    AX_PKG_SWIG(4.0.0, [], AC_MSG_WARN([SWIG is required to build Python API.]) )
+  ] )
 ])
 
 
@@ -497,6 +508,7 @@ HPC version.....: ${HAVE_HPC}
 LDFLAGS:........: ${LDFLAGS}
 LIBS............: ${LIBS}
 OPENMP..........: ${with_omp}
+PYTHON..........: ${enable_python}
 QMCKL_DGEMM.....: ${with_qmckldgemm}
 TREXIO..........: ${with_trexio}
 
