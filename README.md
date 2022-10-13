@@ -36,6 +36,30 @@ make
 make check
 ```
 
+A good practice is to make out-of-source builds, because you can easily find
+out what files have been produced by the build system, and you can also work
+with differently configured versions of the library at the same time.
+
+For example, you can create a debug build compiled with gcc, and a fast build
+compiled with Intel compilers:
+
+```
+./autogen.sh
+
+mkdir -p _build_gcc_debug/_install
+cd _build_gcc_debug
+../configure --enable-debug --prefix=$PWD/_install
+make -j
+make -j check
+
+cd ..
+mkdir -p _build_intel_fast/_install
+cd _build_intel_fast
+../configure --prefix=$PWD/_install --enable-hpc --with-icc --with-ifort 
+make -j
+make -j check
+```
+
 ## For users
 
 Obtain a source distribution.
@@ -51,8 +75,7 @@ To build an optimized version with Intel compilers:
 ./configure \
    --with-icc \
    --with-ifort \
-   --enable-hpc \
-   --with-openmp
+   --enable-hpc 
 ```
 
 To build an optimized version with GCC:
@@ -62,8 +85,7 @@ To build an optimized version with GCC:
   CFLAGS="-g -O2 -march=native  -flto -fno-trapping-math -fno-math-errno -ftree-vectorize" \
   FC=gfortran \
   FCFLAGS="-g -O2 -march=native  -flto -ftree-vectorize" \
-  --enable-hpc \
-  --with-openmp
+  --enable-hpc 
 ```
 
 
