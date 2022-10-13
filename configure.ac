@@ -259,11 +259,14 @@ AS_IF([test "$BLAS_LIBS" = "$LAPACK_LIBS"], [BLAS_LIBS=""])
 AS_CASE([$FC],
  [*ifort*], [FCFLAGS="$FCFLAGS -nofor-main"],
  [*nvfortran*], [FCFLAGS="$FCFLAGS -fPIC -Mnomain"],
+ [*pgf90*], [FCFLAGS="$FCFLAGS -fPIC -Mnomain"],
+ [*pgf77*], [FCFLAGS="$FCFLAGS -fPIC -Mnomain"],
  [])
 
 AS_CASE([$CC],
   [*gcc*], [CFLAGS="$CFLAGS -fPIC"],
   [*nvc*], [CFLAGS="$CFLAGS -fPIC"],
+  [*pgcc*], [CFLAGS="$CFLAGS -fPIC"],
   [])
 
 
