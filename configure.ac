@@ -129,13 +129,13 @@ AC_CHECK_LIB([pthread], [pthread_create])
 
 # OpenMP
 AC_ARG_WITH(openmp, [AS_HELP_STRING([--without-openmp],[deactivate OpenMP])], with_omp=$withval, with_omp=yes)
-if test "x$with_omp" = xyes; then
+AS_IF([test "x$with_omp" = xyes], [
    AC_DEFINE([HAVE_OPENMP], [1], [Define to use OpenMP threading.])
    AX_OPENMP([],
     [AC_MSG_ERROR([Could not find OpenMP flags; configure with --without-openmp])])
    CFLAGS="${CFLAGS} ${OPENMP_CFLAGS}"
    FCFLAGS="${CFLAGS} ${OPENMP_FCFLAGS}"
-fi
+])
 
 # CHAMELEON
 #AC_ARG_WITH(chameleon,
@@ -303,11 +303,11 @@ AS_IF([test "x$enable_vfc_ci" = "xyes"],
 
 AM_CONDITIONAL([VFC_CI], [test "x$vfc_ci" = "xtrue"])
 
-if test "$FC" = "verificarlo-f"; then
+AS_IF([test "$FC" = "verificarlo-f"], [
   AC_MSG_NOTICE(verificarlo-f detected)
   # Arguments order is important here
   FCFLAGS="-Mpreprocess $FCFLAGS"
-fi
+])
 
 ## Enable GPU offloading
 
