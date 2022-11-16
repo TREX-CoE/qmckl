@@ -164,13 +164,13 @@ int main() {
 
     | Variable                            | Type                                                              | In/Out                                                                                                  |
     |-------------------------------------+-------------------------------------------------------------------+---------------------------------------------------------------------------------------------------------|
-    | ~dim_c_vector~                        | ~int64_t~                                                         | Number of unique C coefficients                                                                         |
-    | ~dim_c_vector_date~                   | ~uint64_t~                                                        | Number of unique C coefficients                                                                         |
+    | ~dim_c_vector~                      | ~int64_t~                                                         | Number of unique C coefficients                                                                         |
+    | ~dim_c_vector_date~                 | ~uint64_t~                                                        | Number of unique C coefficients                                                                         |
     | ~asymp_jasb~                        | ~double[2]~                                                       | Asymptotic component (up- or down-spin)                                                                 |
     | ~asymp_jasb_date~                   | ~uint64_t~                                                        | Ladt modification of the asymptotic component                                                           |
-    | ~c_vector_full~                       | ~double[dim_c_vector][nucl_num]~                                    | vector of non-zero coefficients                                                                         |
-    | ~c_vector_full_date~                  | ~uint64_t~                                                        | Keep track of changes here                                                                              |
-    | ~lkpm_combined_index~               | ~int64_t[4][dim_c_vector]~                                          | Transform l,k,p, and m into consecutive indices                                                         |
+    | ~c_vector_full~                     | ~double[dim_c_vector][nucl_num]~                                  | vector of non-zero coefficients                                                                         |
+    | ~c_vector_full_date~                | ~uint64_t~                                                        | Keep track of changes here                                                                              |
+    | ~lkpm_combined_index~               | ~int64_t[4][dim_c_vector]~                                        | Transform l,k,p, and m into consecutive indices                                                         |
     | ~lkpm_combined_index_date~          | ~uint64_t~                                                        | Transform l,k,p, and m into consecutive indices                                                         |
     | ~tmp_c~                             | ~double[walker.num][cord_num][cord_num+1][nucl_num][elec_num]~    | vector of non-zero coefficients                                                                         |
     | ~dtmp_c~                            | ~double[walker.num][elec_num][4][nucl_num][cord_num+1][cord_num]~ | vector of non-zero coefficients                                                                         |
@@ -429,6 +429,11 @@ qmckl_exit_code qmckl_init_jastrow(qmckl_context context) {
   ctx->jastrow.uninitialized = (1 << 10) - 1;
 
   /* Default values */
+  ctx->jastrow.aord_num = -1;
+  ctx->jastrow.bord_num = -1;
+  ctx->jastrow.cord_num = -1;
+  ctx->jastrow.type_nucl_num = -1;
+  ctx->jastrow.dim_c_vector = -1;
 
   return QMCKL_SUCCESS;
 }
@@ -491,11 +496,11 @@ qmckl_set_jastrow_aord_num(qmckl_context context, const int64_t aord_num)
 
 <<pre2>>
 
-  if (aord_num <= 0) {
+  if (aord_num < 0) {
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_2,
                            "qmckl_set_jastrow_aord_num",
-                           "aord_num <= 0");
+                           "aord_num < 0");
   }
 
   ctx->jastrow.aord_num = aord_num;
@@ -511,11 +516,11 @@ qmckl_set_jastrow_bord_num(qmckl_context context, const int64_t bord_num)
 
 <<pre2>>
 
-  if (bord_num <= 0) {
+  if (bord_num < 0) {
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_2,
                            "qmckl_set_jastrow_bord_num",
-                           "bord_num <= 0");
+                           "bord_num < 0");
   }
 
   ctx->jastrow.bord_num = bord_num;
@@ -531,14 +536,19 @@ qmckl_set_jastrow_cord_num(qmckl_context context, const int64_t cord_num)
 
 <<pre2>>
 
-  if (cord_num <= 0) {
+  if (cord_num < 0) {
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_2,
                            "qmckl_set_jastrow_cord_num",
-                           "cord_num <= 0");
+                           "cord_num < 0");
   }
 
+  int64_t dim_c_vector = -1;
+  qmckl_exit_code rc = qmckl_compute_dim_c_vector(context, cord_num, &dim_c_vector);
+  assert (rc == QMCKL_SUCCESS);
+
   ctx->jastrow.cord_num = cord_num;
+  ctx->jastrow.dim_c_vector = dim_c_vector;
 
   <<post2>>
 }
@@ -574,15 +584,13 @@ qmckl_set_jastrow_type_nucl_vector(qmckl_context context,
 
 <<pre2>>
 
-  int64_t type_nucl_num;
-  qmckl_exit_code rc = qmckl_get_jastrow_type_nucl_num(context, &type_nucl_num);
-  if (rc != QMCKL_SUCCESS) return rc;
+  int64_t type_nucl_num = ctx->jastrow.type_nucl_num;
 
-  if (type_nucl_num == 0) {
+  if (type_nucl_num <= 0) {
     return qmckl_failwith( context,
-                           QMCKL_FAILURE,
+                           QMCKL_NOT_PROVIDED,
                            "qmckl_set_jastrow_type_nucl_vector",
-                           "type_nucl_num is not set");
+                           "type_nucl_num not initialized");
   }
 
   if (type_nucl_vector == NULL) {
@@ -593,7 +601,7 @@ qmckl_set_jastrow_type_nucl_vector(qmckl_context context,
   }
 
   if (ctx->jastrow.type_nucl_vector != NULL) {
-    rc = qmckl_free(context, ctx->jastrow.type_nucl_vector);
+    qmckl_exit_code rc = qmckl_free(context, ctx->jastrow.type_nucl_vector);
     if (rc != QMCKL_SUCCESS) {
       return qmckl_failwith( context, rc,
                              "qmckl_set_type_nucl_vector",
@@ -629,19 +637,21 @@ qmckl_set_jastrow_a_vector(qmckl_context context,
 
 <<pre2>>
 
-  int64_t aord_num;
-  qmckl_exit_code rc = qmckl_get_jastrow_aord_num(context, &aord_num);
-  if (rc != QMCKL_SUCCESS) return rc;
-
-  int64_t type_nucl_num;
-  rc = qmckl_get_jastrow_type_nucl_num(context, &type_nucl_num);
-  if (rc != QMCKL_SUCCESS) return rc;
-
-  if (aord_num == 0) {
+  int64_t aord_num = ctx->jastrow.aord_num;
+  if (aord_num < 0) {
     return qmckl_failwith( context,
-                           QMCKL_FAILURE,
-                           "qmckl_set_jastrow_coefficient",
-                           "aord_num is not set");
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_set_jastrow_a_vector",
+                           "aord_num not initialized");
+  }
+    
+  int64_t type_nucl_num = ctx->jastrow.type_nucl_num;
+
+  if (type_nucl_num <= 0) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_set_jastrow_a_vector",
+                           "type_nucl_num not initialized");
   }
 
   if (a_vector == NULL) {
@@ -652,7 +662,7 @@ qmckl_set_jastrow_a_vector(qmckl_context context,
   }
 
   if (ctx->jastrow.a_vector != NULL) {
-    rc = qmckl_free(context, ctx->jastrow.a_vector);
+    qmckl_exit_code rc = qmckl_free(context, ctx->jastrow.a_vector);
     if (rc != QMCKL_SUCCESS) {
       return qmckl_failwith( context, rc,
                              "qmckl_set_jastrow_a_vector",
@@ -663,7 +673,7 @@ qmckl_set_jastrow_a_vector(qmckl_context context,
   qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
   mem_info.size = (aord_num + 1) * type_nucl_num * sizeof(double);
 
-  if ((size_t) size_max < mem_info.size/sizeof(double)) {
+  if (size_max < (aord_num+1) ) {
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_3,
                            "qmckl_set_jastrow_a_vector",
@@ -696,15 +706,12 @@ qmckl_set_jastrow_b_vector(qmckl_context context,
 
 <<pre2>>
 
-  int64_t bord_num;
-  qmckl_exit_code rc = qmckl_get_jastrow_bord_num(context, &bord_num);
-  if (rc != QMCKL_SUCCESS) return rc;
-
-  if (bord_num == 0) {
+    int64_t bord_num = ctx->jastrow.bord_num;
+  if (bord_num < 0) {
     return qmckl_failwith( context,
-                           QMCKL_FAILURE,
-                           "qmckl_set_jastrow_coefficient",
-                           "bord_num is not set");
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_set_jastrow_b_vector",
+                           "bord_num not initialized");
   }
 
   if (b_vector == NULL) {
@@ -715,7 +722,7 @@ qmckl_set_jastrow_b_vector(qmckl_context context,
   }
 
   if (ctx->jastrow.b_vector != NULL) {
-    rc = qmckl_free(context, ctx->jastrow.b_vector);
+    qmckl_exit_code rc = qmckl_free(context, ctx->jastrow.b_vector);
     if (rc != QMCKL_SUCCESS) {
       return qmckl_failwith( context, rc,
                              "qmckl_set_jastrow_b_vector",
@@ -726,7 +733,7 @@ qmckl_set_jastrow_b_vector(qmckl_context context,
   qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
   mem_info.size = (bord_num + 1) * sizeof(double);
 
-  if ((size_t) size_max < mem_info.size/sizeof(double)) {
+  if (size_max < (bord_num+1)) {
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_3,
                            "qmckl_set_jastrow_b_vector",
@@ -759,22 +766,20 @@ qmckl_set_jastrow_c_vector(qmckl_context context,
 
 <<pre2>>
 
-  qmckl_exit_code rc = qmckl_provide_dim_c_vector(context);
-  if (rc != QMCKL_SUCCESS) return rc;
-
-  int64_t dim_c_vector;
-  rc = qmckl_get_jastrow_dim_c_vector(context, &dim_c_vector);
-  if (rc != QMCKL_SUCCESS) return rc;
-
-  int64_t type_nucl_num;
-  rc = qmckl_get_jastrow_type_nucl_num(context, &type_nucl_num);
-  if (rc != QMCKL_SUCCESS) return rc;
-
-  if (dim_c_vector == 0) {
+  int64_t type_nucl_num = ctx->jastrow.type_nucl_num;
+  if (type_nucl_num <= 0) {
     return qmckl_failwith( context,
-                           QMCKL_FAILURE,
-                           "qmckl_set_jastrow_coefficient",
-                           "dim_c_vector is not set");
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_set_jastrow_c_vector",
+                           "type_nucl_num not initialized");
+  }
+
+  int64_t dim_c_vector = ctx->jastrow.dim_c_vector;
+  if (dim_c_vector < 0) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_set_jastrow_c_vector",
+                           "cord_num not initialized");
   }
 
   if (c_vector == NULL) {
@@ -785,7 +790,7 @@ qmckl_set_jastrow_c_vector(qmckl_context context,
   }
 
   if (ctx->jastrow.c_vector != NULL) {
-    rc = qmckl_free(context, ctx->jastrow.c_vector);
+    qmckl_exit_code rc = qmckl_free(context, ctx->jastrow.c_vector);
     if (rc != QMCKL_SUCCESS) {
       return qmckl_failwith( context, rc,
                              "qmckl_set_jastrow_c_vector",
@@ -964,7 +969,7 @@ interface
      import
      implicit none
      integer (qmckl_context) , intent(in)  , value :: context
-     integer, intent(in), value  :: size_max
+     integer(c_int64_t), intent(in), value  :: size_max
      double precision, intent(in) :: kappa_en(size_max)
    end function qmckl_set_jastrow_rescale_factor_en
    
@@ -1055,14 +1060,13 @@ qmckl_exit_code  qmckl_get_jastrow_bord_num          (qmckl_context context, int
 qmckl_exit_code  qmckl_get_jastrow_cord_num          (qmckl_context context, int64_t* const bord_num);
 qmckl_exit_code  qmckl_get_jastrow_type_nucl_num     (qmckl_context context, int64_t* const type_nucl_num);
 qmckl_exit_code  qmckl_get_jastrow_type_nucl_vector  (qmckl_context context, int64_t* const type_nucl_num, const int64_t size_max);
-qmckl_exit_code  qmckl_get_jastrow_a_vector       (qmckl_context context, double * const a_vector, const int64_t size_max);
-qmckl_exit_code  qmckl_get_jastrow_b_vector       (qmckl_context context, double * const b_vector, const int64_t size_max);
-qmckl_exit_code  qmckl_get_jastrow_c_vector       (qmckl_context context, double * const c_vector, const int64_t size_max);
+qmckl_exit_code  qmckl_get_jastrow_a_vector          (qmckl_context context, double * const a_vector, const int64_t size_max);
+qmckl_exit_code  qmckl_get_jastrow_b_vector          (qmckl_context context, double * const b_vector, const int64_t size_max);
+qmckl_exit_code  qmckl_get_jastrow_c_vector          (qmckl_context context, double * const c_vector, const int64_t size_max);
 qmckl_exit_code  qmckl_get_jastrow_rescale_factor_ee (const qmckl_context context, double* const rescale_factor_ee);
 qmckl_exit_code  qmckl_get_jastrow_rescale_factor_en (const qmckl_context context, double* const rescale_factor_en, const int64_t size_max);
       #+end_src
 
-# TODO Fortran interface
       
    Along with these core functions, calculation of the jastrow factor
    requires the following additional information to be set:
@@ -1422,6 +1426,108 @@ qmckl_get_jastrow_rescale_factor_en (const qmckl_context context,
 }
       #+end_src
 
+**** Fortran interface
+
+#+begin_src f90 :tangle (eval fh_func) :comments org
+interface
+   integer(qmckl_exit_code) function qmckl_get_jastrow_rescale_factor_ee (context, &
+        kappa_ee) bind(C)
+     use, intrinsic :: iso_c_binding
+     import
+     implicit none
+     integer (qmckl_context) , intent(in)  , value :: context
+     double precision, intent(out) :: kappa_ee
+   end function qmckl_get_jastrow_rescale_factor_ee
+
+   integer(qmckl_exit_code) function qmckl_get_jastrow_rescale_factor_en (context, &
+        kappa_en, size_max) bind(C)
+     use, intrinsic :: iso_c_binding
+     import
+     implicit none
+     integer (qmckl_context) , intent(in), value :: context
+     integer(c_int64_t), intent(in), value       :: size_max
+     double precision, intent(out)               :: kappa_en(size_max)
+   end function qmckl_get_jastrow_rescale_factor_en
+   
+   integer(qmckl_exit_code) function qmckl_get_jastrow_aord_num (context, &
+        aord_num) bind(C)
+     use, intrinsic :: iso_c_binding
+     import
+     implicit none
+     integer (qmckl_context) , intent(in), value :: context
+     integer(c_int64_t), intent(out)             :: aord_num
+   end function qmckl_get_jastrow_aord_num
+   
+   integer(qmckl_exit_code) function qmckl_get_jastrow_bord_num (context, &
+        bord_num) bind(C)
+     use, intrinsic :: iso_c_binding
+     import
+     implicit none
+     integer (qmckl_context) , intent(in), value :: context
+     integer(c_int64_t), intent(out)             :: bord_num
+   end function qmckl_get_jastrow_bord_num
+   
+   integer(qmckl_exit_code) function qmckl_get_jastrow_cord_num (context, &
+        cord_num) bind(C)
+     use, intrinsic :: iso_c_binding
+     import
+     implicit none
+     integer (qmckl_context) , intent(in), value :: context
+     integer(c_int64_t), intent(out)             :: cord_num
+   end function qmckl_get_jastrow_cord_num
+
+   integer(qmckl_exit_code) function qmckl_get_jastrow_type_nucl_num (context, &
+        type_nucl_num) bind(C)
+     use, intrinsic :: iso_c_binding
+     import
+     implicit none
+     integer (qmckl_context) , intent(in), value :: context
+     integer(c_int64_t), intent(out)              :: type_nucl_num
+   end function qmckl_get_jastrow_type_nucl_num
+   
+   integer(qmckl_exit_code) function qmckl_get_jastrow_type_nucl_vector (context, &
+        type_nucl_vector, size_max) bind(C)
+     use, intrinsic :: iso_c_binding
+     import
+     implicit none
+     integer (qmckl_context), intent(in), value :: context
+     integer(c_int64_t), intent(in), value      :: size_max
+     integer(c_int64_t), intent(out)            :: type_nucl_vector(size_max)
+   end function qmckl_get_jastrow_type_nucl_vector
+   
+   integer(qmckl_exit_code) function qmckl_get_jastrow_a_vector(context, &
+        a_vector, size_max) bind(C)
+     use, intrinsic :: iso_c_binding
+     import
+     implicit none
+     integer (qmckl_context) , intent(in), value :: context
+     integer(c_int64_t), intent(in), value       :: size_max
+     double precision, intent(out)               :: a_vector(size_max)
+   end function qmckl_get_jastrow_a_vector
+   
+   integer(qmckl_exit_code) function qmckl_get_jastrow_b_vector(context, &
+        b_vector, size_max) bind(C)
+     use, intrinsic :: iso_c_binding
+     import
+     implicit none
+     integer (qmckl_context) , intent(in)  , value :: context
+     integer(c_int64_t), intent(in), value         :: size_max
+     double precision, intent(out)                 :: b_vector(size_max)
+   end function qmckl_get_jastrow_b_vector
+   
+   integer(qmckl_exit_code) function qmckl_get_jastrow_c_vector(context, &
+        c_vector, size_max) bind(C)
+     use, intrinsic :: iso_c_binding
+     import
+     implicit none
+     integer (qmckl_context) , intent(in)  , value :: context
+     integer(c_int64_t), intent(in), value         :: size_max
+     double precision, intent(out)                 :: c_vector(size_max)
+   end function qmckl_get_jastrow_c_vector
+   
+end interface
+#+end_src
+
 ** Test
    #+begin_src c :tangle (eval c_test)
 /* Reference input data */
@@ -1563,7 +1669,10 @@ qmckl_get_jastrow_asymp_jasb(qmckl_context context,
                              const int64_t size_max)
 {
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return QMCKL_NULL_CONTEXT;
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_get_jastrow_asymp_jasb",
+                           NULL);
   }
 
   qmckl_exit_code rc;
@@ -1599,11 +1708,21 @@ qmckl_exit_code qmckl_provide_jastrow_asymp_jasb(qmckl_context context)
   qmckl_exit_code rc;
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return QMCKL_NULL_CONTEXT;
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_provide_jastrow_asymp_jasb",
+                           NULL);
   }
 
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
+
+  if (!ctx->jastrow.provided) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_provide_jastrow_asymp_jasb",
+                           NULL);
+  }
 
   /* Compute if necessary */
   if (ctx->date > ctx->jastrow.asymp_jasb_date) {
@@ -1678,7 +1797,7 @@ integer function qmckl_compute_jastrow_asymp_jasb_f(context, bord_num, b_vector,
      return
   endif
 
-  if (bord_num <= 0) then
+  if (bord_num < 0) then
      info = QMCKL_INVALID_ARG_2
      return
   endif
@@ -1709,7 +1828,7 @@ qmckl_exit_code qmckl_compute_jastrow_asymp_jasb (
       return QMCKL_INVALID_CONTEXT;
     }
 
-    if (bord_num <= 0) {
+    if (bord_num < 0) {
       return QMCKL_INVALID_ARG_2;
     }
 
@@ -1883,17 +2002,20 @@ qmckl_get_jastrow_factor_ee(qmckl_context context,
                             double* const factor_ee,
                             const int64_t size_max)
 {
-  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return QMCKL_NULL_CONTEXT;
-  }
-
   qmckl_exit_code rc;
 
-  rc = qmckl_provide_factor_ee(context);
-  if (rc != QMCKL_SUCCESS) return rc;
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_get_jastrow_factor_ee",
+                           NULL);
+  }
 
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
+
+  rc = qmckl_provide_jastrow_factor_ee(context);
+  if (rc != QMCKL_SUCCESS) return rc;
 
   int64_t sze=ctx->electron.walker.num;
   if (size_max < sze) {
@@ -1908,23 +2030,49 @@ qmckl_get_jastrow_factor_ee(qmckl_context context,
 }
     #+end_src
 
+**** Fortran interface
+
+#+begin_src f90 :tangle (eval fh_func) :comments org
+interface
+   integer(qmckl_exit_code) function qmckl_get_jastrow_factor_ee (context, &
+        factor_ee, size_max) bind(C)
+     use, intrinsic :: iso_c_binding
+     import
+     implicit none
+     integer (qmckl_context) , intent(in), value :: context
+     integer(c_int64_t), intent(in), value       :: size_max
+     double precision, intent(out)               :: factor_ee(size_max)
+   end function qmckl_get_jastrow_factor_ee
+end interface
+#+end_src
+
 *** Provide                                                        :noexport:
     #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
-qmckl_exit_code qmckl_provide_factor_ee(qmckl_context context);
+qmckl_exit_code qmckl_provide_jastrow_factor_ee(qmckl_context context);
     #+end_src
 
     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
-qmckl_exit_code qmckl_provide_factor_ee(qmckl_context context)
+qmckl_exit_code qmckl_provide_jastrow_factor_ee(qmckl_context context)
 {
 
   qmckl_exit_code rc;
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return QMCKL_NULL_CONTEXT;
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_provide_jastrow_factor_ee",
+                           NULL);
   }
 
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
+
+  if (!ctx->jastrow.provided) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_provide_jastrow_factor_ee",
+                           NULL);
+  }
 
   rc = qmckl_provide_ee_distance_rescaled(context);
   if(rc != QMCKL_SUCCESS) return rc;
@@ -1940,7 +2088,7 @@ qmckl_exit_code qmckl_provide_factor_ee(qmckl_context context)
         rc = qmckl_free(context, ctx->jastrow.factor_ee);
         if (rc != QMCKL_SUCCESS) {
           return qmckl_failwith( context, rc,
-                                 "qmckl_provide_factor_ee",
+                                 "qmckl_provide_jastrow_factor_ee",
                                  "Unable to free ctx->jastrow.factor_ee");
         }
         ctx->jastrow.factor_ee = NULL;
@@ -1957,7 +2105,7 @@ qmckl_exit_code qmckl_provide_factor_ee(qmckl_context context)
       if (factor_ee == NULL) {
         return qmckl_failwith( context,
                                QMCKL_ALLOCATION_FAILED,
-                               "qmckl_provide_factor_ee",
+                               "qmckl_provide_jastrow_factor_ee",
                                NULL);
       }
       ctx->jastrow.factor_ee = factor_ee;
@@ -2036,7 +2184,7 @@ integer function qmckl_compute_factor_ee_f(context, walk_num, elec_num, up_num, 
      return
   endif
   
-  if (bord_num <= 0) then
+  if (bord_num < 0) then
      info = QMCKL_INVALID_ARG_4
      return
   endif
@@ -2101,7 +2249,7 @@ qmckl_exit_code qmckl_compute_factor_ee (
      return QMCKL_INVALID_ARG_3;
   }
 
-  if (bord_num <= 0) {
+  if (bord_num < 0) {
      return QMCKL_INVALID_ARG_4;
   }
 
@@ -2235,7 +2383,7 @@ qmckl_get_jastrow_factor_ee_deriv_e(qmckl_context context,
 
   qmckl_exit_code rc;
 
-  rc = qmckl_provide_factor_ee_deriv_e(context);
+  rc = qmckl_provide_jastrow_factor_ee_deriv_e(context);
   if (rc != QMCKL_SUCCESS) return rc;
 
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
@@ -2257,21 +2405,31 @@ qmckl_get_jastrow_factor_ee_deriv_e(qmckl_context context,
 
 *** Provide                                                        :noexport:
     #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
-qmckl_exit_code qmckl_provide_factor_ee_deriv_e(qmckl_context context);
+qmckl_exit_code qmckl_provide_jastrow_factor_ee_deriv_e(qmckl_context context);
     #+end_src
 
     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
-qmckl_exit_code qmckl_provide_factor_ee_deriv_e(qmckl_context context)
+qmckl_exit_code qmckl_provide_jastrow_factor_ee_deriv_e(qmckl_context context)
 {
 
   qmckl_exit_code rc;
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return QMCKL_NULL_CONTEXT;
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_provide_jastrow_factor_ee_deriv_e",
+                           NULL);
   }
 
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
+
+  if (!ctx->jastrow.provided) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_provide_jastrow_factor_ee_deriv_e",
+                           NULL);
+  }
 
   /* Check if ee rescaled distance is provided */
   rc = qmckl_provide_ee_distance_rescaled(context);
@@ -2289,7 +2447,7 @@ qmckl_exit_code qmckl_provide_factor_ee_deriv_e(qmckl_context context)
         rc = qmckl_free(context, ctx->jastrow.factor_ee_deriv_e);
         if (rc != QMCKL_SUCCESS) {
           return qmckl_failwith( context, rc,
-                                 "qmckl_provide_factor_ee_deriv_e",
+                                 "qmckl_provide_jastrow_factor_ee_deriv_e",
                                  "Unable to free ctx->jastrow.factor_ee_deriv_e");
         }
         ctx->jastrow.factor_ee_deriv_e = NULL;
@@ -2306,7 +2464,7 @@ qmckl_exit_code qmckl_provide_factor_ee_deriv_e(qmckl_context context)
       if (factor_ee_deriv_e == NULL) {
         return qmckl_failwith( context,
                                QMCKL_ALLOCATION_FAILED,
-                               "qmckl_provide_factor_ee_deriv_e",
+                               "qmckl_provide_jastrow_factor_ee_deriv_e",
                                NULL);
       }
       ctx->jastrow.factor_ee_deriv_e = factor_ee_deriv_e;
@@ -2391,7 +2549,7 @@ integer function qmckl_compute_factor_ee_deriv_e_doc_f( &
      return
   endif
 
-  if (bord_num <= 0) then
+  if (bord_num < 0) then
      info = QMCKL_INVALID_ARG_4
      return
   endif
@@ -2486,7 +2644,7 @@ qmckl_exit_code qmckl_compute_factor_ee_deriv_e_hpc(
     return QMCKL_INVALID_ARG_3;
   }
 
-  if (bord_num <= 0) {
+  if (bord_num < 0) {
     return QMCKL_INVALID_ARG_4;
   }
 
@@ -2824,16 +2982,19 @@ qmckl_get_jastrow_factor_en(qmckl_context context,
                             const int64_t size_max)
 {
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return QMCKL_NULL_CONTEXT;
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_get_jastrow_factor_en",
+                           NULL);
   }
-
-  qmckl_exit_code rc;
-
-  rc = qmckl_provide_factor_en(context);
-  if (rc != QMCKL_SUCCESS) return rc;
 
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
+
+  qmckl_exit_code rc;
+
+  rc = qmckl_provide_jastrow_factor_en(context);
+  if (rc != QMCKL_SUCCESS) return rc;
 
   int64_t sze=ctx->electron.walker.num;
   if (size_max < sze) {
@@ -2848,23 +3009,49 @@ qmckl_get_jastrow_factor_en(qmckl_context context,
 }
     #+end_src
 
+**** Fortran interface
+
+#+begin_src f90 :tangle (eval fh_func) :comments org
+interface
+   integer(qmckl_exit_code) function qmckl_get_jastrow_factor_en (context, &
+        factor_en, size_max) bind(C)
+     use, intrinsic :: iso_c_binding
+     import
+     implicit none
+     integer (qmckl_context) , intent(in), value :: context
+     integer(c_int64_t), intent(in), value       :: size_max
+     double precision, intent(out)               :: factor_en(size_max)
+   end function qmckl_get_jastrow_factor_en
+end interface
+#+end_src
+
 *** Provide                                                        :noexport:
     #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
-qmckl_exit_code qmckl_provide_factor_en(qmckl_context context);
+qmckl_exit_code qmckl_provide_jastrow_factor_en(qmckl_context context);
     #+end_src
 
     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
-qmckl_exit_code qmckl_provide_factor_en(qmckl_context context)
+qmckl_exit_code qmckl_provide_jastrow_factor_en(qmckl_context context)
 {
 
   qmckl_exit_code rc;
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return QMCKL_NULL_CONTEXT;
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_provide_jastrow_factor_en",
+                           NULL);
   }
 
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
+
+  if (!ctx->jastrow.provided) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_provide_jastrow_factor_en",
+                           NULL);
+  }
 
   /* Check if en rescaled distance is provided */
   rc = qmckl_provide_en_distance_rescaled(context);
@@ -2878,7 +3065,7 @@ qmckl_exit_code qmckl_provide_factor_en(qmckl_context context)
         rc = qmckl_free(context, ctx->jastrow.factor_en);
         if (rc != QMCKL_SUCCESS) {
           return qmckl_failwith( context, rc,
-                                 "qmckl_provide_factor_en",
+                                 "qmckl_provide_jastrow_factor_en",
                                  "Unable to free ctx->jastrow.factor_en");
         }
         ctx->jastrow.factor_en = NULL;
@@ -2895,7 +3082,7 @@ qmckl_exit_code qmckl_provide_factor_en(qmckl_context context)
       if (factor_en == NULL) {
         return qmckl_failwith( context,
                                QMCKL_ALLOCATION_FAILED,
-                               "qmckl_provide_factor_en",
+                               "qmckl_provide_jastrow_factor_en",
                                NULL);
       }
       ctx->jastrow.factor_en = factor_en;
@@ -2939,7 +3126,7 @@ qmckl_exit_code qmckl_provide_factor_en(qmckl_context context)
     | ~type_nucl_num~        | ~int64_t~                              | in     | Number of unique nuclei    |
     | ~type_nucl_vector~     | ~int64_t[nucl_num]~                    | in     | IDs of unique nucleii      |
     | ~aord_num~             | ~int64_t~                              | in     | Number of coefficients     |
-    | ~a_vector~          | ~double[aord_num+1][type_nucl_num]~    | in     | List of coefficients       |
+    | ~a_vector~             | ~double[aord_num+1][type_nucl_num]~    | in     | List of coefficients       |
     | ~en_distance_rescaled~ | ~double[walk_num][nucl_num][elec_num]~ | in     | Electron-nucleus distances |
     | ~factor_en~            | ~double[walk_num]~                     | out    | Electron-nucleus jastrow   |
 
@@ -2983,7 +3170,7 @@ integer function qmckl_compute_factor_en_f( &
      return
   endif
 
-  if (aord_num <= 0) then
+  if (aord_num < 0) then
      info = QMCKL_INVALID_ARG_7
      return
   endif
@@ -3055,7 +3242,7 @@ qmckl_exit_code qmckl_compute_factor_en (
     return QMCKL_INVALID_ARG_6;
   }
 
-  if (aord_num <= 0) {
+  if (aord_num < 0) {
      return QMCKL_INVALID_ARG_7;
   }
 
@@ -3182,7 +3369,7 @@ qmckl_get_jastrow_factor_en_deriv_e(qmckl_context context,
 
   qmckl_exit_code rc;
 
-  rc = qmckl_provide_factor_en_deriv_e(context);
+  rc = qmckl_provide_jastrow_factor_en_deriv_e(context);
   if (rc != QMCKL_SUCCESS) return rc;
 
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
@@ -3203,21 +3390,31 @@ qmckl_get_jastrow_factor_en_deriv_e(qmckl_context context,
 
 *** Provide                                                        :noexport:
     #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
-qmckl_exit_code qmckl_provide_factor_en_deriv_e(qmckl_context context);
+qmckl_exit_code qmckl_provide_jastrow_factor_en_deriv_e(qmckl_context context);
     #+end_src
 
     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
-qmckl_exit_code qmckl_provide_factor_en_deriv_e(qmckl_context context)
+qmckl_exit_code qmckl_provide_jastrow_factor_en_deriv_e(qmckl_context context)
 {
 
   qmckl_exit_code rc;
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return QMCKL_NULL_CONTEXT;
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_provide_jastrow_factor_en_deriv_e",
+                           NULL);
   }
 
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
+
+  if (!ctx->jastrow.provided) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_provide_jastrow_factor_en_deriv_e",
+                           NULL);
+  }
 
   /* Check if en rescaled distance is provided */
   rc = qmckl_provide_en_distance_rescaled(context);
@@ -3235,7 +3432,7 @@ qmckl_exit_code qmckl_provide_factor_en_deriv_e(qmckl_context context)
         rc = qmckl_free(context, ctx->jastrow.factor_en_deriv_e);
         if (rc != QMCKL_SUCCESS) {
           return qmckl_failwith( context, rc,
-                                 "qmckl_provide_factor_en_deriv_e",
+                                 "qmckl_provide_jastrow_factor_en_deriv_e",
                                  "Unable to free ctx->jastrow.factor_en_deriv_e");
         }
         ctx->jastrow.factor_en_deriv_e = NULL;
@@ -3252,7 +3449,7 @@ qmckl_exit_code qmckl_provide_factor_en_deriv_e(qmckl_context context)
       if (factor_en_deriv_e == NULL) {
         return qmckl_failwith( context,
                                QMCKL_ALLOCATION_FAILED,
-                               "qmckl_provide_factor_en_deriv_e",
+                               "qmckl_provide_jastrow_factor_en_deriv_e",
                                NULL);
       }
       ctx->jastrow.factor_en_deriv_e = factor_en_deriv_e;
@@ -3346,7 +3543,7 @@ integer function qmckl_compute_factor_en_deriv_e_f( &
      return
   endif
 
-  if (aord_num <= 0) then
+  if (aord_num < 0) then
      info = QMCKL_INVALID_ARG_7
      return
   endif
@@ -4259,7 +4456,7 @@ integer function qmckl_compute_een_rescaled_e_doc_f( &
      return
   endif
 
-  if (cord_num <= 0) then
+  if (cord_num < 0) then
      info = QMCKL_INVALID_ARG_4
      return
   endif
@@ -4386,7 +4583,7 @@ qmckl_exit_code qmckl_compute_een_rescaled_e_hpc (
      return QMCKL_INVALID_ARG_3;
   }
 
-  if (cord_num <= 0) {
+  if (cord_num < 0) {
      return QMCKL_INVALID_ARG_4;
   }
 
@@ -4783,7 +4980,7 @@ integer function qmckl_compute_factor_een_rescaled_e_deriv_e_f( &
      return
   endif
 
-  if (cord_num <= 0) then
+  if (cord_num < 0) then
      info = QMCKL_INVALID_ARG_4
      return
   endif
@@ -5760,7 +5957,7 @@ integer function qmckl_compute_een_rescaled_n_f( &
      return
   endif
 
-  if (cord_num <= 0) then
+  if (cord_num < 0) then
      info = QMCKL_INVALID_ARG_5
      return
   endif
@@ -5818,7 +6015,7 @@ qmckl_exit_code qmckl_compute_een_rescaled_n (
     return QMCKL_INVALID_ARG_4;
   }
 
-  if (cord_num <= 0) {
+  if (cord_num < 0) {
     return QMCKL_INVALID_ARG_5;
   }
 
@@ -6122,7 +6319,7 @@ integer function qmckl_compute_factor_een_rescaled_n_deriv_e_f( &
      return
   endif
 
-  if (cord_num <= 0) then
+  if (cord_num < 0) then
      info = QMCKL_INVALID_ARG_5
      return
   endif
@@ -6348,9 +6545,6 @@ qmckl_exit_code qmckl_get_jastrow_dim_c_vector(qmckl_context context, int64_t* c
 
   qmckl_exit_code rc;
 
-  rc = qmckl_provide_dim_c_vector(context);
-  if (rc != QMCKL_SUCCESS) return rc;
-
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
@@ -6367,10 +6561,7 @@ qmckl_exit_code qmckl_get_jastrow_c_vector_full(qmckl_context context, double* c
 
   qmckl_exit_code rc;
 
-  rc = qmckl_provide_dim_c_vector(context);
-  if (rc != QMCKL_SUCCESS) return rc;
-
-  rc = qmckl_provide_c_vector_full(context);
+  rc = qmckl_provide_jastrow_c_vector_full(context);
   if (rc != QMCKL_SUCCESS) return rc;
 
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
@@ -6390,10 +6581,7 @@ qmckl_exit_code qmckl_get_jastrow_lkpm_combined_index(qmckl_context context, int
 
   qmckl_exit_code rc;
 
-  rc = qmckl_provide_dim_c_vector(context);
-  if (rc != QMCKL_SUCCESS) return rc;
-
-  rc = qmckl_provide_c_vector_full(context);
+  rc = qmckl_provide_jastrow_c_vector_full(context);
   if (rc != QMCKL_SUCCESS) return rc;
 
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
@@ -6413,10 +6601,7 @@ qmckl_exit_code qmckl_get_jastrow_tmp_c(qmckl_context context, double* const tmp
 
   qmckl_exit_code rc;
 
-  rc = qmckl_provide_dim_c_vector(context);
-  if (rc != QMCKL_SUCCESS) return rc;
-
-  rc = qmckl_provide_c_vector_full(context);
+  rc = qmckl_provide_jastrow_c_vector_full(context);
   if (rc != QMCKL_SUCCESS) return rc;
 
   rc = qmckl_provide_tmp_c(context);
@@ -6440,10 +6625,7 @@ qmckl_exit_code qmckl_get_jastrow_dtmp_c(qmckl_context context, double* const dt
 
   qmckl_exit_code rc;
 
-  rc = qmckl_provide_dim_c_vector(context);
-  if (rc != QMCKL_SUCCESS) return rc;
-
-  rc = qmckl_provide_c_vector_full(context);
+  rc = qmckl_provide_jastrow_c_vector_full(context);
   if (rc != QMCKL_SUCCESS) return rc;
 
   rc = qmckl_provide_dtmp_c(context);
@@ -6463,15 +6645,14 @@ qmckl_exit_code qmckl_get_jastrow_dtmp_c(qmckl_context context, double* const dt
 *** Provide                                                        :noexport:
 
     #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
-qmckl_exit_code qmckl_provide_dim_c_vector(qmckl_context context);
-qmckl_exit_code qmckl_provide_c_vector_full(qmckl_context context);
+qmckl_exit_code qmckl_provide_jastrow_c_vector_full(qmckl_context context);
 qmckl_exit_code qmckl_provide_lkpm_combined_index(qmckl_context context);
 qmckl_exit_code qmckl_provide_tmp_c(qmckl_context context);
 qmckl_exit_code qmckl_provide_dtmp_c(qmckl_context context);
     #+end_src
 
     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
-qmckl_exit_code qmckl_provide_dim_c_vector(qmckl_context context)
+qmckl_exit_code qmckl_provide_jastrow_c_vector_full(qmckl_context context)
 {
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
@@ -6480,37 +6661,6 @@ qmckl_exit_code qmckl_provide_dim_c_vector(qmckl_context context)
 
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
-
-  /* Compute if necessary */
-  if (ctx->date > ctx->jastrow.dim_c_vector_date) {
-
-    qmckl_exit_code rc =
-      qmckl_compute_dim_c_vector(context,
-                                  ctx->jastrow.cord_num,
-                                  &(ctx->jastrow.dim_c_vector));
-    if (rc != QMCKL_SUCCESS) {
-      return rc;
-    }
-
-    ctx->jastrow.dim_c_vector_date = ctx->date;
-  }
-
-  return QMCKL_SUCCESS;
-}
-
-qmckl_exit_code qmckl_provide_c_vector_full(qmckl_context context)
-{
-
-  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return QMCKL_NULL_CONTEXT;
-  }
-
-  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
-  assert (ctx != NULL);
-
-  /* Check if dim_c_vector is provided */
-  qmckl_exit_code rc = qmckl_provide_dim_c_vector(context);
-  if(rc != QMCKL_SUCCESS) return rc;
 
   /* Compute if necessary */
   if (ctx->date > ctx->jastrow.c_vector_full_date) {
@@ -6525,12 +6675,13 @@ qmckl_exit_code qmckl_provide_c_vector_full(qmckl_context context)
       if (c_vector_full == NULL) {
         return qmckl_failwith( context,
                                QMCKL_ALLOCATION_FAILED,
-                               "qmckl_provide_c_vector_full",
+                               "qmckl_provide_jastrow_c_vector_full",
                                NULL);
       }
       ctx->jastrow.c_vector_full = c_vector_full;
     }
 
+    qmckl_exit_code rc;
     rc = qmckl_compute_c_vector_full(context,
                                       ctx->nucleus.num,
                                       ctx->jastrow.dim_c_vector,
@@ -6558,10 +6709,6 @@ qmckl_exit_code qmckl_provide_lkpm_combined_index(qmckl_context context)
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
-  /* Check if dim_c_vector is provided */
-  qmckl_exit_code rc = qmckl_provide_dim_c_vector(context);
-  if(rc != QMCKL_SUCCESS) return rc;
-
   /* Compute if necessary */
   if (ctx->date > ctx->jastrow.lkpm_combined_index_date) {
 
@@ -6581,6 +6728,7 @@ qmckl_exit_code qmckl_provide_lkpm_combined_index(qmckl_context context)
       ctx->jastrow.lkpm_combined_index = lkpm_combined_index;
     }
 
+    qmckl_exit_code rc;
     rc = qmckl_compute_lkpm_combined_index(context,
                                            ctx->jastrow.cord_num,
                                            ctx->jastrow.dim_c_vector,
@@ -6604,16 +6752,14 @@ qmckl_exit_code qmckl_provide_tmp_c(qmckl_context context)
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
-  /* Check if dim_c_vector is provided */
-  qmckl_exit_code rc = qmckl_provide_dim_c_vector(context);
-  if(rc != QMCKL_SUCCESS) return rc;
+  qmckl_exit_code rc;
 
   /* Compute if necessary */
   if (ctx->date > ctx->jastrow.tmp_c_date) {
 
     if (ctx->electron.walker.num > ctx->electron.walker_old.num) {
       if (ctx->jastrow.tmp_c != NULL) {
-        rc = qmckl_free(context, ctx->jastrow.tmp_c);
+        qmckl_exit_code rc = qmckl_free(context, ctx->jastrow.tmp_c);
         if (rc != QMCKL_SUCCESS) {
           return qmckl_failwith( context, rc,
                                  "qmckl_provide_tmp_c",
@@ -6702,20 +6848,17 @@ qmckl_exit_code qmckl_provide_dtmp_c(qmckl_context context)
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return QMCKL_NULL_CONTEXT;
   }
-
+  
+  qmckl_exit_code rc;
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
-
-  /* Check if dim_c_vector is provided */
-  qmckl_exit_code rc = qmckl_provide_dim_c_vector(context);
-  if(rc != QMCKL_SUCCESS) return rc;
 
   /* Compute if necessary */
   if (ctx->date > ctx->jastrow.dtmp_c_date) {
 
     if (ctx->electron.walker.num > ctx->electron.walker_old.num) {
       if (ctx->jastrow.dtmp_c != NULL) {
-        rc = qmckl_free(context, ctx->jastrow.dtmp_c);
+        qmckl_exit_code rc = qmckl_free(context, ctx->jastrow.dtmp_c);
         if (rc != QMCKL_SUCCESS) {
           return qmckl_failwith( context, rc,
                                  "qmckl_provide_dtmp_c",
@@ -6836,7 +6979,7 @@ integer function qmckl_compute_dim_c_vector_f( &
      return
   endif
 
-  if (cord_num <= 0) then
+  if (cord_num < 0) then
      info = QMCKL_INVALID_ARG_2
      return
   endif
@@ -6873,7 +7016,7 @@ qmckl_exit_code qmckl_compute_dim_c_vector (
     return QMCKL_INVALID_CONTEXT;
   }
 
-  if (cord_num <= 0) {
+  if (cord_num < 0) {
     return QMCKL_INVALID_ARG_2;
   }
 
@@ -6905,7 +7048,6 @@ qmckl_exit_code qmckl_compute_dim_c_vector (
           const int64_t cord_num,
           int64_t* const dim_c_vector );
     #+end_src
-
 
 *** Compute c_vector_full
    :PROPERTIES:
@@ -6959,7 +7101,7 @@ integer function qmckl_compute_c_vector_full_doc_f( &
      return
   endif
 
-  if (dim_c_vector <= 0) then
+  if (dim_c_vector < 0) then
      info = QMCKL_INVALID_ARG_5
      return
   endif
@@ -7020,7 +7162,7 @@ qmckl_exit_code qmckl_compute_c_vector_full_hpc (
      return QMCKL_INVALID_ARG_4;
   }
 
-  if (dim_c_vector <= 0) {
+  if (dim_c_vector < 0) {
      return QMCKL_INVALID_ARG_5;
   }
 
@@ -7089,7 +7231,6 @@ qmckl_exit_code qmckl_compute_c_vector_full (
     #+end_src
 
 
-
 *** Compute lkpm_combined_index
    :PROPERTIES:
    :Name:     qmckl_compute_lkpm_combined_index
@@ -7125,12 +7266,12 @@ integer function qmckl_compute_lkpm_combined_index_f( &
      return
   endif
 
-  if (cord_num <= 0) then
+  if (cord_num < 0) then
      info = QMCKL_INVALID_ARG_2
      return
   endif
 
-  if (dim_c_vector <= 0) then
+  if (dim_c_vector < 0) then
      info = QMCKL_INVALID_ARG_3
      return
   endif
@@ -7172,11 +7313,11 @@ qmckl_exit_code qmckl_compute_lkpm_combined_index (
      return QMCKL_INVALID_CONTEXT;
   }
 
-  if (cord_num <= 0) {
+  if (cord_num < 0) {
      return QMCKL_INVALID_ARG_2;
   }
 
-  if (dim_c_vector <= 0) {
+  if (dim_c_vector < 0) {
      return QMCKL_INVALID_ARG_3;
   }
 
@@ -7215,7 +7356,6 @@ qmckl_exit_code qmckl_compute_lkpm_combined_index (
           const int64_t dim_c_vector,
           int64_t* const lkpm_combined_index );
     #+end_src
-
 
 
 *** Compute tmp_c
@@ -7302,7 +7442,7 @@ integer function qmckl_compute_tmp_c_doc_f( &
      return
   endif
 
-  if (cord_num <= 0) then
+  if (cord_num < 0) then
      info = QMCKL_INVALID_ARG_2
      return
   endif
@@ -7393,7 +7533,7 @@ qmckl_exit_code qmckl_compute_tmp_c_hpc (
     return QMCKL_INVALID_CONTEXT;
   }
 
-  if (cord_num <= 0) {
+  if (cord_num < 0) {
     return QMCKL_INVALID_ARG_2;
   }
 
@@ -7510,7 +7650,7 @@ qmckl_compute_tmp_c_acc_offload (const qmckl_context context,
     return QMCKL_INVALID_CONTEXT;
   }
 
-  if (cord_num <= 0) {
+  if (cord_num < 0) {
     return QMCKL_INVALID_ARG_2;
   }
 
@@ -7605,7 +7745,7 @@ qmckl_compute_tmp_c_omp_offload (const qmckl_context context,
     return QMCKL_INVALID_CONTEXT;
   }
 
-  if (cord_num <= 0) {
+  if (cord_num < 0) {
     return QMCKL_INVALID_ARG_2;
   }
 
@@ -7703,7 +7843,7 @@ qmckl_compute_tmp_c_cublas_offload (const qmckl_context context,
     return QMCKL_INVALID_CONTEXT;
   }
 
-  if (cord_num <= 0) {
+  if (cord_num < 0) {
     return QMCKL_INVALID_ARG_2;
   }
 
@@ -7864,7 +8004,7 @@ integer function qmckl_compute_dtmp_c_doc_f( &
      return
   endif
 
-  if (cord_num <= 0) then
+  if (cord_num < 0) then
      info = QMCKL_INVALID_ARG_2
      return
   endif
@@ -7956,7 +8096,7 @@ qmckl_compute_dtmp_c_hpc (const qmckl_context context,
      return QMCKL_INVALID_CONTEXT;
   }
 
-  if (cord_num <= 0) {
+  if (cord_num < 0) {
      return QMCKL_INVALID_ARG_2;
   }
 
@@ -8038,7 +8178,7 @@ qmckl_compute_dtmp_c_acc_offload (
      return QMCKL_INVALID_CONTEXT;
   }
 
-  if (cord_num <= 0) {
+  if (cord_num < 0) {
      return QMCKL_INVALID_ARG_2;
   }
 
@@ -8136,7 +8276,7 @@ qmckl_exit_code qmckl_compute_dtmp_c_omp_offload (
      return QMCKL_INVALID_CONTEXT;
   }
 
-  if (cord_num <= 0) {
+  if (cord_num < 0) {
      return QMCKL_INVALID_ARG_2;
   }
 
@@ -8238,7 +8378,7 @@ qmckl_compute_dtmp_c_cublas_offload (
     return QMCKL_INVALID_CONTEXT;
   }
 
-  if (cord_num <= 0) {
+  if (cord_num < 0) {
     return QMCKL_INVALID_ARG_2;
   }
 
@@ -8449,6 +8589,22 @@ qmckl_get_jastrow_factor_een(qmckl_context context,
 }
     #+end_src
 
+**** Fortran interface
+
+#+begin_src f90 :tangle (eval fh_func) :comments org
+interface
+   integer(qmckl_exit_code) function qmckl_get_jastrow_factor_een (context, &
+        factor_een, size_max) bind(C)
+     use, intrinsic :: iso_c_binding
+     import
+     implicit none
+     integer (qmckl_context) , intent(in), value :: context
+     integer(c_int64_t), intent(in), value       :: size_max
+     double precision, intent(out)               :: factor_een(size_max)
+   end function qmckl_get_jastrow_factor_een
+end interface
+#+end_src
+
 *** Provide                                                        :noexport:
     #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
 qmckl_exit_code qmckl_provide_factor_een(qmckl_context context);
@@ -8476,7 +8632,7 @@ qmckl_exit_code qmckl_provide_factor_een(qmckl_context context)
   if(rc != QMCKL_SUCCESS) return rc;
 
   /* Check if en rescaled distance derivatives is provided */
-  rc = qmckl_provide_c_vector_full(context);
+  rc = qmckl_provide_jastrow_c_vector_full(context);
   if(rc != QMCKL_SUCCESS) return rc;
 
   /* Check if en rescaled distance derivatives is provided */
@@ -8603,7 +8759,7 @@ integer function qmckl_compute_factor_een_naive_f( &
      return
   endif
 
-  if (cord_num <= 0) then
+  if (cord_num < 0) then
      info = QMCKL_INVALID_ARG_5
      return
   endif
@@ -8770,7 +8926,7 @@ integer function qmckl_compute_factor_een_f( &
      return
   endif
 
-  if (cord_num <= 0) then
+  if (cord_num < 0) then
      info = QMCKL_INVALID_ARG_5
      return
   endif
@@ -8994,7 +9150,7 @@ qmckl_exit_code qmckl_provide_factor_een_deriv_e(qmckl_context context)
   if(rc != QMCKL_SUCCESS) return rc;
 
   /* Check if en rescaled distance derivatives is provided */
-  rc = qmckl_provide_c_vector_full(context);
+  rc = qmckl_provide_jastrow_c_vector_full(context);
   if(rc != QMCKL_SUCCESS) return rc;
 
   /* Check if en rescaled distance derivatives is provided */
@@ -9132,7 +9288,7 @@ integer function qmckl_compute_factor_een_deriv_e_naive_f( &
      return
   endif
 
-  if (cord_num <= 0) then
+  if (cord_num < 0) then
      info = QMCKL_INVALID_ARG_5
      return
   endif
@@ -9329,7 +9485,7 @@ integer function qmckl_compute_factor_een_deriv_e_f( &
      return
   endif
 
-  if (cord_num <= 0) then
+  if (cord_num < 0) then
      info = QMCKL_INVALID_ARG_5
      return
   endif
@@ -9513,6 +9669,9 @@ rc = qmckl_get_jastrow_factor_een_deriv_e(context, &(factor_een_deriv_e[0][0][0]
 
 assert(fabs(factor_een_deriv_e[0][0][0] + 0.0005481671107226865) < 1e-12);
      #+end_src
+
+
+** TODO Jastrow VGL functions
 
 * End of files                                                     :noexport:
 
