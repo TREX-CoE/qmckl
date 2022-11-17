@@ -273,6 +273,7 @@ for i in range(elec_num):
   for j in range(elec_num):
     ee_distance_rescaled[i][j] = ee_distance_rescaled[j][i]
 
+# For N2, we have the following data:
 type_nucl_num = 1
 aord_num     = 5
 bord_num     = 5
@@ -678,7 +679,7 @@ qmckl_set_jastrow_a_vector(qmckl_context context,
   qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
   mem_info.size = (aord_num + 1) * type_nucl_num * sizeof(double);
 
-  if (size_max < (aord_num+1) ) {
+  if (size_max < (aord_num+1)*type_nucl_num ) {
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_3,
                            "qmckl_set_jastrow_a_vector",
@@ -859,6 +860,14 @@ qmckl_set_jastrow_rescale_factor_en(qmckl_context context,
 
   <<pre2>>
 
+      if (ctx->jastrow.type_nucl_num <= 0) {
+        return qmckl_failwith( context,
+                               QMCKL_NOT_PROVIDED,
+                               "qmckl_set_jastrow_rescale_factor_en",
+                               "type_nucl_num not set");
+      }
+
+
       if (rescale_factor_en == NULL) {
         return qmckl_failwith( context,
                                QMCKL_INVALID_ARG_2,
@@ -866,7 +875,7 @@ qmckl_set_jastrow_rescale_factor_en(qmckl_context context,
                                "Null pointer");
       }
 
-      if (size_max < ctx->nucleus.num) {
+      if (size_max < ctx->jastrow.type_nucl_num) {
         return qmckl_failwith( context,
                                QMCKL_INVALID_ARG_3,
                                "qmckl_set_jastrow_rescale_factor_en",
@@ -948,8 +957,15 @@ qmckl_exit_code qmckl_finalize_jastrow(qmckl_context context) {
   ctx->jastrow.gpu_offload = true; // ctx->electron.num > 100;
 #endif
 
+  qmckl_exit_code rc;
 
-  qmckl_exit_code rc = qmckl_context_touch(context);
+  rc = qmckl_provide_jastrow_asymp_jasa(context);
+  assert(rc == QMCKL_SUCCESS);
+
+  rc = qmckl_provide_jastrow_asymp_jasb(context);
+  assert(rc == QMCKL_SUCCESS);
+
+  rc = qmckl_context_touch(context);
   return rc;
 
 
@@ -1683,8 +1699,11 @@ qmckl_get_jastrow_asymp_jasb(qmckl_context context,
 
   qmckl_exit_code rc;
 
+  /* Provided in finalize_jastrow */
+  /*
   rc = qmckl_provide_jastrow_asymp_jasb(context);
-  if (rc != QMCKL_SUCCESS) return rc;
+  if(rc != QMCKL_SUCCESS) return rc;
+  */
 
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
@@ -2099,8 +2118,11 @@ qmckl_exit_code qmckl_provide_jastrow_factor_ee(qmckl_context context)
   rc = qmckl_provide_ee_distance_rescaled(context);
   if(rc != QMCKL_SUCCESS) return rc;
 
+  /* Provided in finalize_jastrow */
+  /*
   rc = qmckl_provide_jastrow_asymp_jasb(context);
   if(rc != QMCKL_SUCCESS) return rc;
+  */
 
   /* Compute if necessary */
   if (ctx->date > ctx->jastrow.factor_ee_date) {
@@ -3012,8 +3034,11 @@ qmckl_get_jastrow_asymp_jasa(qmckl_context context,
 
   qmckl_exit_code rc;
 
+  /* Provided in finalize_jastrow */
+  /*
   rc = qmckl_provide_jastrow_asymp_jasa(context);
-  if (rc != QMCKL_SUCCESS) return rc;
+  if(rc != QMCKL_SUCCESS) return rc;
+  */
 
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
@@ -3096,9 +3121,9 @@ qmckl_exit_code qmckl_provide_jastrow_asymp_jasa(qmckl_context context)
 
     rc = qmckl_compute_jastrow_asymp_jasa(context,
                                   ctx->jastrow.aord_num,
+                                  ctx->jastrow.type_nucl_num,
                                   ctx->jastrow.a_vector,
                                   ctx->jastrow.rescale_factor_en,
-                                  ctx->jastrow.type_nucl_num,
                                   ctx->jastrow.asymp_jasa);
     if (rc != QMCKL_SUCCESS) {
       return rc;
@@ -3123,14 +3148,14 @@ qmckl_exit_code qmckl_provide_jastrow_asymp_jasa(qmckl_context context)
     |---------------------+-------------------------------------+--------+----------------------------|
     | ~context~           | ~qmckl_context~                     | in     | Global state               |
     | ~aord_num~          | ~int64_t~                           | in     | Order of the polynomial    |
-    | ~a_vector~          | ~double[type_nucl_num][aord_num+1]~ | in     | Values of a                |
-    | ~rescale_factor_en~ | ~double~                            | in     | Electron nucleus distances |
     | ~type_nucl_num~     | ~int64_t~                           | in     | Number of nucleus types    |
+    | ~a_vector~          | ~double[type_nucl_num][aord_num+1]~ | in     | Values of a                |
+    | ~rescale_factor_en~ | ~double[type_nucl_num]~             | in     | Electron nucleus distances |
     | ~asymp_jasa~        | ~double[type_nucl_num]~             | out    | Asymptotic value           |
 
     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_jastrow_asymp_jasa_f(context, aord_num, a_vector, &
-     rescale_factor_en, type_nucl_num, asymp_jasa) &
+integer function qmckl_compute_jastrow_asymp_jasa_f(context, aord_num, type_nucl_num, a_vector, &
+     rescale_factor_en, asymp_jasa) &
      result(info)
   use qmckl
   implicit none
@@ -3164,9 +3189,9 @@ integer function qmckl_compute_jastrow_asymp_jasa_f(context, aord_num, a_vector,
      asymp_jasa(i) = a_vector(1,i) * kappa_inv / (1.0d0 + a_vector(2,i) * kappa_inv)
      
      x = kappa_inv
-     do p = 1, aord_num
+     do p = 2, aord_num
         x = x * kappa_inv
-        asymp_jasa(i) = asymp_jasa(i) + a_vector(p + 1, i) * x
+        asymp_jasa(i) = asymp_jasa(i) + a_vector(p+1, i) * x
      end do
      
   end do
@@ -3174,13 +3199,39 @@ integer function qmckl_compute_jastrow_asymp_jasa_f(context, aord_num, a_vector,
 end function qmckl_compute_jastrow_asymp_jasa_f
     #+end_src
 
+   #+CALL: generate_c_interface(table=qmckl_asymp_jasa_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+
+   #+RESULTS:
+   #+begin_src f90 :tangle (eval f) :comments org :exports none
+   integer(c_int32_t) function qmckl_compute_jastrow_asymp_jasa &
+       (context, aord_num, type_nucl_num, a_vector, rescale_factor_en, asymp_jasa) &
+       bind(C) result(info)
+
+     use, intrinsic :: iso_c_binding
+     implicit none
+
+     integer (c_int64_t) , intent(in)  , value :: context
+     integer (c_int64_t) , intent(in)  , value :: aord_num
+     integer (c_int64_t) , intent(in)  , value :: type_nucl_num
+     real    (c_double ) , intent(in)          :: a_vector(aord_num+1,type_nucl_num)
+     real    (c_double ) , intent(in)          :: rescale_factor_en(type_nucl_num)
+     real    (c_double ) , intent(out)         :: asymp_jasa(type_nucl_num)
+
+     integer(c_int32_t), external :: qmckl_compute_jastrow_asymp_jasa_f
+     info = qmckl_compute_jastrow_asymp_jasa_f &
+            (context, aord_num, type_nucl_num, a_vector, rescale_factor_en, asymp_jasa)
+
+   end function qmckl_compute_jastrow_asymp_jasa
+   #+end_src
+
 #+begin_src c :comments org :tangle (eval c) :noweb yes
+/*
 qmckl_exit_code qmckl_compute_jastrow_asymp_jasa (
 	  const qmckl_context context,
 	  const int64_t aord_num,
+	  const int64_t type_nucl_num,
 	  const double* a_vector,
 	  double* const rescale_factor_en,
-	  const int64_t type_nucl_num,
 	  double* const asymp_jasa ) {
 
     if (context == QMCKL_NULL_CONTEXT){
@@ -3193,7 +3244,7 @@ qmckl_exit_code qmckl_compute_jastrow_asymp_jasa (
 
     for (int i = 0 ; i <= type_nucl_num; ++i) {
       const double kappa_inv = 1.0 / rescale_factor_en[i];
-      asymp_jasa[i] =  a_vector[0 + aord_num*i] * kappa_inv / (1.0 + a_vector[1 + aord_num*i] * kappa_inv);
+      asymp_jasa[i] =  a_vector[aord_num*i] * kappa_inv / (1.0 + a_vector[1 + aord_num*i] * kappa_inv);
       
       double x = kappa_inv;
       for (int p = 1; p < aord_num; ++p){
@@ -3204,19 +3255,21 @@ qmckl_exit_code qmckl_compute_jastrow_asymp_jasa (
 
   return QMCKL_SUCCESS;
 }
+*/
 #+end_src
 
-#   #+CALL: generate_c_header(table=qmckl_asymp_jasa_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+   #+CALL: generate_c_header(table=qmckl_asymp_jasa_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
 
-    #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
-    qmckl_exit_code qmckl_compute_jastrow_asymp_jasa (
-          const qmckl_context context,
-          const int64_t aord_num,
-          const double* a_vector,
-          double* const rescale_factor_en,
-          const int64_t type_nucl_num,
-          double* const asymp_jasa );
-    #+end_src
+   #+RESULTS:
+   #+begin_src c :tangle (eval h_func) :comments org
+   qmckl_exit_code qmckl_compute_jastrow_asymp_jasa (
+         const qmckl_context context,
+         const int64_t aord_num,
+         const int64_t type_nucl_num,
+         const double* a_vector,
+         const double* rescale_factor_en,
+         double* const asymp_jasa ); 
+   #+end_src
 
 *** Test
     #+name: asymp_jasa
@@ -3224,7 +3277,6 @@ qmckl_exit_code qmckl_compute_jastrow_asymp_jasa (
 import numpy as np
 
 <<jastrow_data>>
-
 
 asymp_jasa = a_vector[0] * kappa_inv / (1.0 + a_vector[1]*kappa_inv)
 x = kappa_inv
@@ -3240,13 +3292,11 @@ print("asymp_jasa[i]    : ", asymp_jasa)
 
      #+begin_src c :tangle (eval c_test)
 double asymp_jasa[2];
-rc = qmckl_get_jastrow_asymp_jasa(context, asymp_jasa, nucl_num);
+rc = qmckl_get_jastrow_asymp_jasa(context, asymp_jasa, type_nucl_num);
 
 // calculate asymp_jasb
 printf("%e %e\n", asymp_jasa[0], -0.548554);
-printf("%e %e\n", asymp_jasa[1], -0.548554);
 assert(fabs(-0.548554 - asymp_jasa[0]) < 1.e-12);
-assert(fabs(-0.548554 - asymp_jasa[1]) < 1.e-12);
 
      #+end_src
 
@@ -3350,6 +3400,12 @@ qmckl_exit_code qmckl_provide_jastrow_factor_en(qmckl_context context)
   rc = qmckl_provide_en_distance_rescaled(context);
   if(rc != QMCKL_SUCCESS) return rc;
 
+  /* Provided in finalize_jastrow */
+  /*
+  rc = qmckl_provide_jastrow_asymp_jasa(context);
+  if(rc != QMCKL_SUCCESS) return rc;
+  */
+
   /* Compute if necessary */
   if (ctx->date > ctx->jastrow.factor_en_date) {
 
@@ -3390,6 +3446,7 @@ qmckl_exit_code qmckl_provide_jastrow_factor_en(qmckl_context context)
                                  ctx->jastrow.aord_num,
                                  ctx->jastrow.a_vector,
                                  ctx->jastrow.en_distance_rescaled,
+                                 ctx->jastrow.asymp_jasa,
                                  ctx->jastrow.factor_en);
     if (rc != QMCKL_SUCCESS) {
       return rc;
@@ -3421,13 +3478,14 @@ qmckl_exit_code qmckl_provide_jastrow_factor_en(qmckl_context context)
     | ~aord_num~             | ~int64_t~                              | in     | Number of coefficients     |
     | ~a_vector~             | ~double[aord_num+1][type_nucl_num]~    | in     | List of coefficients       |
     | ~en_distance_rescaled~ | ~double[walk_num][nucl_num][elec_num]~ | in     | Electron-nucleus distances |
+    | ~asymp_jasa~           | ~double[type_nucl_num]~                | in     | Type of nuclei             |
     | ~factor_en~            | ~double[walk_num]~                     | out    | Electron-nucleus jastrow   |
 
     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
 integer function qmckl_compute_factor_en_f( &
      context, walk_num, elec_num, nucl_num, type_nucl_num, &
      type_nucl_vector, aord_num, a_vector, &
-     en_distance_rescaled, factor_en) &
+     en_distance_rescaled, asymp_jasa, factor_en) &
      result(info)
   use qmckl
   implicit none
@@ -3436,6 +3494,7 @@ integer function qmckl_compute_factor_en_f( &
   integer*8             , intent(in)  :: type_nucl_vector(nucl_num)
   double precision      , intent(in)  :: a_vector(aord_num + 1, type_nucl_num)
   double precision      , intent(in)  :: en_distance_rescaled(elec_num, nucl_num, walk_num)
+  double precision      , intent(in)  :: asymp_jasa(type_nucl_num)
   double precision      , intent(out) :: factor_en(walk_num)
 
   integer*8 :: i, a, p, nw
@@ -3468,34 +3527,81 @@ integer function qmckl_compute_factor_en_f( &
      return
   endif
 
-  factor_en = 0.0d0
 
   do nw =1, walk_num
-  do a = 1, nucl_num
-     do i = 1, elec_num
-        x = en_distance_rescaled(i, a, nw)
-        power_ser = 0.0d0
+     factor_en(nw) = 0.0d0
+     do a = 1, nucl_num
+        do i = 1, elec_num
+           x = en_distance_rescaled(i, a, nw)
 
-        do p = 2, aord_num
-          x = x * en_distance_rescaled(i, a, nw)
-          power_ser = power_ser + a_vector(p + 1, type_nucl_vector(a)) * x
+           factor_en(nw) = factor_en(nw) + a_vector(1, type_nucl_vector(a)) * x / &
+                (1.0d0 + a_vector(2, type_nucl_vector(a)) * x) - asymp_jasa(type_nucl_vector(a))
+
+           do p = 2, aord_num
+              x = x * en_distance_rescaled(i, a, nw)
+              factor_en(nw) = factor_en(nw) + a_vector(p + 1, type_nucl_vector(a)) * x
+           end do
+
         end do
-
-        factor_en(nw) = factor_en(nw) + a_vector(1, type_nucl_vector(a)) *  &
-                                en_distance_rescaled(i, a, nw) /               &
-                                (1.0d0 + a_vector(2, type_nucl_vector(a)) * &
-                                en_distance_rescaled(i, a, nw))                &
-                                + power_ser
-
      end do
-  end do
   end do
 
 end function qmckl_compute_factor_en_f
     #+end_src
 
 
+   #+CALL: generate_c_interface(table=qmckl_factor_en_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+
+   #+RESULTS:
+   #+begin_src f90 :tangle (eval f) :comments org :exports none
+   integer(c_int32_t) function qmckl_compute_factor_en &
+       (context, &
+        walk_num, &
+        elec_num, &
+        nucl_num, &
+        type_nucl_num, &
+        type_nucl_vector, &
+        aord_num, &
+        a_vector, &
+        en_distance_rescaled, &
+        asymp_jasa, &
+        factor_en) &
+       bind(C) result(info)
+
+     use, intrinsic :: iso_c_binding
+     implicit none
+
+     integer (c_int64_t) , intent(in)  , value :: context
+     integer (c_int64_t) , intent(in)  , value :: walk_num
+     integer (c_int64_t) , intent(in)  , value :: elec_num
+     integer (c_int64_t) , intent(in)  , value :: nucl_num
+     integer (c_int64_t) , intent(in)  , value :: type_nucl_num
+     integer (c_int64_t) , intent(in)          :: type_nucl_vector(nucl_num)
+     integer (c_int64_t) , intent(in)  , value :: aord_num
+     real    (c_double ) , intent(in)          :: a_vector(type_nucl_num,aord_num+1)
+     real    (c_double ) , intent(in)          :: en_distance_rescaled(elec_num,nucl_num,walk_num)
+     real    (c_double ) , intent(in)          :: asymp_jasa(type_nucl_num)
+     real    (c_double ) , intent(out)         :: factor_en(walk_num)
+
+     integer(c_int32_t), external :: qmckl_compute_factor_en_f
+     info = qmckl_compute_factor_en_f &
+            (context, &
+        walk_num, &
+        elec_num, &
+        nucl_num, &
+        type_nucl_num, &
+        type_nucl_vector, &
+        aord_num, &
+        a_vector, &
+        en_distance_rescaled, &
+        asymp_jasa, &
+        factor_en)
+
+   end function qmckl_compute_factor_en
+   #+end_src
+
     #+begin_src c :comments org :tangle (eval c) :noweb yes
+/*
 qmckl_exit_code qmckl_compute_factor_en (
       const qmckl_context context,
       const int64_t walk_num,
@@ -3506,6 +3612,7 @@ qmckl_exit_code qmckl_compute_factor_en (
       const int64_t aord_num,
       const double* a_vector,
       const double* en_distance_rescaled,
+      const double* asymp_jasa,
       double* const factor_en ) {
 
   double  x, x1, power_ser;
@@ -3571,35 +3678,40 @@ qmckl_exit_code qmckl_compute_factor_en (
                         power_ser;
 
       }
+      factor_en[nw] = factor_en[nw] + asymp_jasa[type_nucl_vector[a];
     }
   }
 
   return QMCKL_SUCCESS;
 }
+*/
     #+end_src
 
 
-#   #+CALL: generate_c_header(table=qmckl_factor_en_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+   #+CALL: generate_c_header(table=qmckl_factor_en_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
 
-    #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
-    qmckl_exit_code qmckl_compute_factor_en (
-          const qmckl_context context,
-          const int64_t walk_num,
-          const int64_t elec_num,
-          const int64_t nucl_num,
-          const int64_t type_nucl_num,
-          const int64_t* type_nucl_vector,
-          const int64_t aord_num,
-          const double* a_vector,
-          const double* en_distance_rescaled,
-          double* const factor_en );
-    #+end_src
+   #+RESULTS:
+   #+begin_src c :tangle (eval h_func) :comments org
+   qmckl_exit_code qmckl_compute_factor_en (
+         const qmckl_context context,
+         const int64_t walk_num,
+         const int64_t elec_num,
+         const int64_t nucl_num,
+         const int64_t type_nucl_num,
+         const int64_t* type_nucl_vector,
+         const int64_t aord_num,
+         const double* a_vector,
+         const double* en_distance_rescaled,
+         const double* asymp_jasa,
+         double* const factor_en ); 
+   #+end_src
 
 *** Test
     #+begin_src python :results output :exports none :noweb yes
 import numpy as np
 
 <<jastrow_data>>
+<<asymp_jasa>>
 
 factor_en = 0.0
 for a in range(0,nucl_num):
@@ -3608,18 +3720,20 @@ for a in range(0,nucl_num):
     pow_ser = 0.0
 
     for p in range(2,aord_num+1):
-      x = x * en_distance_rescaled[i][a]
-      pow_ser = pow_ser + a_vector[(p-1) + 1][type_nucl_vector[a]-1] * x
+        x = x * en_distance_rescaled[i][a]
+        pow_ser = pow_ser + a_vector[(p-1) + 1][type_nucl_vector[a]-1] * x
 
-    factor_en = factor_en + a_vector[0][type_nucl_vector[a]-1] * en_distance_rescaled[i][a] \
-                          / (1.0 + a_vector[1][type_nucl_vector[a]-1] * en_distance_rescaled[i][a])     \
+    factor_en = factor_en + a_vector[0][type_nucl_vector[a]-1] * x \
+                          / (1.0 + a_vector[1][type_nucl_vector[a]-1] * x) \
                           + pow_ser
+    factor_en -= asymp_jasa[type_nucl_vector[a]-1]
 print("factor_en        :",factor_en)
 
     #+end_src
 
     #+RESULTS:
-    : factor_en        : -5.865822569188727
+    : asymp_jasa[i]    :  [-0.548554]
+    : factor_en        : 5.1052574308112755
 
 
      #+begin_src c :tangle (eval c_test)
@@ -3630,7 +3744,7 @@ double factor_en[walk_num];
 rc = qmckl_get_jastrow_factor_en(context, factor_en,walk_num);
 
 // calculate factor_en
-assert(fabs(factor_en[0]+5.865822569188727) < 1.e-12);
+assert(fabs(5.1052574308112755 - factor_en[0]) < 1.e-12);
 
      #+end_src
 
@@ -3786,7 +3900,7 @@ qmckl_exit_code qmckl_provide_jastrow_factor_en_deriv_e(qmckl_context context)
     | ~type_nucl_num~                | ~int64_t~                                 | in     | Number of unique nuclei               |
     | ~type_nucl_vector~             | ~int64_t[nucl_num]~                       | in     | IDs of unique nucleii                 |
     | ~aord_num~                     | ~int64_t~                                 | in     | Number of coefficients                |
-    | ~a_vector~                  | ~double[aord_num+1][type_nucl_num]~       | in     | List of coefficients                  |
+    | ~a_vector~                     | ~double[aord_num+1][type_nucl_num]~       | in     | List of coefficients                  |
     | ~en_distance_rescaled~         | ~double[walk_num][nucl_num][elec_num]~    | in     | Electron-nucleus distances            |
     | ~en_distance_rescaled_deriv_e~ | ~double[walk_num][4][nucl_num][elec_num]~ | in     | Electron-nucleus distance derivatives |
     | ~factor_en_deriv_e~            | ~double[walk_num][4][elec_num]~           | out    | Electron-nucleus jastrow              |
@@ -5893,6 +6007,8 @@ qmckl_exit_code qmckl_provide_en_distance_rescaled_deriv_e(qmckl_context context
       qmckl_compute_en_distance_rescaled_deriv_e(context,
                                 ctx->electron.num,
                                 ctx->nucleus.num,
+                                ctx->jastrow.type_nucl_num,
+                                ctx->jastrow.type_nucl_vector,
                                 ctx->jastrow.rescale_factor_en,
                                 ctx->electron.walker.num,
                                 ctx->electron.walker.point.coord.data,
@@ -5922,6 +6038,8 @@ qmckl_exit_code qmckl_provide_en_distance_rescaled_deriv_e(qmckl_context context
     | ~context~                      | ~qmckl_context~                           | in     | Global state                          |
     | ~elec_num~                     | ~int64_t~                                 | in     | Number of electrons                   |
     | ~nucl_num~                     | ~int64_t~                                 | in     | Number of nuclei                      |
+    | ~type_nucl_num~                | ~int64_t~                                 | in     | Number of nucleus types               |
+    | ~type_nucl_vector~             | ~int64_t[type_nucl_num]~                  | in     | Array of nucleus types                |
     | ~rescale_factor_en~            | ~double[nucl_num]~                        | in     | The factors for rescaled distances    |
     | ~walk_num~                     | ~int64_t~                                 | in     | Number of walkers                     |
     | ~elec_coord~                   | ~double[3][walk_num][elec_num]~           | in     | Electron coordinates                  |
@@ -5930,7 +6048,7 @@ qmckl_exit_code qmckl_provide_en_distance_rescaled_deriv_e(qmckl_context context
 
     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
 integer function qmckl_compute_en_distance_rescaled_deriv_e_f(context, elec_num, nucl_num, &
-     rescale_factor_en, walk_num, elec_coord, &
+     type_nucl_num, type_nucl_vector, rescale_factor_en, walk_num, elec_coord, &
      nucl_coord, en_distance_rescaled_deriv_e) &
      result(info)
   use qmckl
@@ -5938,6 +6056,8 @@ integer function qmckl_compute_en_distance_rescaled_deriv_e_f(context, elec_num,
   integer(qmckl_context), intent(in)  :: context
   integer*8             , intent(in)  :: elec_num
   integer*8             , intent(in)  :: nucl_num
+  integer*8             , intent(in)  :: type_nucl_num
+  integer*8             , intent(in)  :: type_nucl_vector(type_nucl_num)
   double precision      , intent(in)  :: rescale_factor_en(nucl_num)
   integer*8             , intent(in)  :: walk_num
   double precision      , intent(in)  :: elec_coord(elec_num,walk_num,3)
@@ -5974,7 +6094,7 @@ integer function qmckl_compute_en_distance_rescaled_deriv_e_f(context, elec_num,
      do k=1,walk_num
         info = qmckl_distance_rescaled_deriv_e(context, 'T', 'T', elec_num, 1_8, &
              elec_coord(1,k,1), elec_num*walk_num, coord, 1_8, &
-             en_distance_rescaled_deriv_e(1,1,i,k), elec_num, rescale_factor_en(i))
+             en_distance_rescaled_deriv_e(1,1,i,k), elec_num, rescale_factor_en(type_nucl_vector(i)))
         if (info /= QMCKL_SUCCESS) then
            return
         endif
@@ -5989,6 +6109,8 @@ qmckl_exit_code qmckl_compute_en_distance_rescaled_deriv_e (
           const qmckl_context context,
           const int64_t elec_num,
           const int64_t nucl_num,
+          const int64_t type_nucl_num,
+          int64_t* const type_nucl_vector,
           const double*  rescale_factor_en,
           const int64_t walk_num,
           const double* elec_coord,
@@ -6004,6 +6126,8 @@ qmckl_exit_code qmckl_compute_en_distance_rescaled_deriv_e (
         (context, &
          elec_num, &
          nucl_num, &
+         type_nucl_num, &
+         type_nucl_vector, &
          rescale_factor_en, &
          walk_num, &
          elec_coord, &
@@ -6017,6 +6141,8 @@ qmckl_exit_code qmckl_compute_en_distance_rescaled_deriv_e (
       integer (c_int64_t) , intent(in)  , value :: context
       integer (c_int64_t) , intent(in)  , value :: elec_num
       integer (c_int64_t) , intent(in)  , value :: nucl_num
+      integer (c_int64_t) , intent(in)  , value :: type_nucl_num
+      integer (c_int64_t) , intent(in)          :: type_nucl_vector(type_nucl_num)
       real    (c_double ) , intent(in)          :: rescale_factor_en(nucl_num)
       integer (c_int64_t) , intent(in)  , value :: walk_num
       real    (c_double ) , intent(in)          :: elec_coord(elec_num,walk_num,3)
@@ -6028,6 +6154,8 @@ qmckl_exit_code qmckl_compute_en_distance_rescaled_deriv_e (
              (context, &
          elec_num, &
          nucl_num, &
+         type_nucl_num, &
+         type_nucl_vector, &
          rescale_factor_en, &
          walk_num, &
          elec_coord, &
@@ -6189,6 +6317,8 @@ qmckl_exit_code qmckl_provide_een_rescaled_n(qmckl_context context)
                                       ctx->electron.walker.num,
                                       ctx->electron.num,
                                       ctx->nucleus.num,
+                                      ctx->jastrow.type_nucl_num,
+                                      ctx->jastrow.type_nucl_vector,
                                       ctx->jastrow.cord_num,
                                       ctx->jastrow.rescale_factor_en,
                                       ctx->electron.en_distance,
@@ -6218,6 +6348,8 @@ qmckl_exit_code qmckl_provide_een_rescaled_n(qmckl_context context)
     | ~walk_num~          | ~int64_t~                                          | in     | Number of walkers                   |
     | ~elec_num~          | ~int64_t~                                          | in     | Number of electrons                 |
     | ~nucl_num~          | ~int64_t~                                          | in     | Number of atoms                     |
+    | ~type_nucl_num~     | ~int64_t~                                          | in     | Number of atom types                |
+    | ~type_nucl_vector~  | ~int64_t[type_nucl_num]~                           | in     | Types of atoms                      |
     | ~cord_num~          | ~int64_t~                                          | in     | Order of polynomials                |
     | ~rescale_factor_en~ | ~double[nucl_num]~                                 | in     | Factor to rescale ee distances      |
     | ~en_distance~       | ~double[walk_num][elec_num][nucl_num]~             | in     | Electron-nucleus distances          |
@@ -6225,7 +6357,8 @@ qmckl_exit_code qmckl_provide_een_rescaled_n(qmckl_context context)
 
     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
 integer function qmckl_compute_een_rescaled_n_f( &
-     context, walk_num, elec_num, nucl_num, cord_num, rescale_factor_en,  &
+     context, walk_num, elec_num, nucl_num, &
+     type_nucl_num, type_nucl_vector, cord_num, rescale_factor_en,  &
      en_distance, een_rescaled_n) &
      result(info)
   use qmckl
@@ -6234,8 +6367,10 @@ integer function qmckl_compute_een_rescaled_n_f( &
   integer*8             , intent(in)  :: walk_num
   integer*8             , intent(in)  :: elec_num
   integer*8             , intent(in)  :: nucl_num
+  integer*8             , intent(in)  :: type_nucl_num
+  integer*8             , intent(in)  :: type_nucl_vector(type_nucl_num)
   integer*8             , intent(in)  :: cord_num
-  double precision      , intent(in)  :: rescale_factor_en(nucl_num)
+  double precision      , intent(in)  :: rescale_factor_en(type_nucl_num)
   double precision      , intent(in)  :: en_distance(elec_num,nucl_num,walk_num)
   double precision      , intent(out) :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
   double precision                    :: x
@@ -6271,34 +6406,38 @@ integer function qmckl_compute_een_rescaled_n_f( &
   ! Prepare table of exponentiated distances raised to appropriate power
   een_rescaled_n             = 0.0d0
   do nw = 1, walk_num
+     
+     ! prepare the actual een table
+     een_rescaled_n(:, :, 0, nw) = 1.0d0
+     
+     do a = 1, nucl_num
+        do i = 1, elec_num
+           een_rescaled_n(i, a, 1, nw) = dexp(-rescale_factor_en(type_nucl_vector(a)) * en_distance(i, a, nw))
+        end do
+     end do
+     
+     do l = 2, cord_num
+        do a = 1, nucl_num
+           do i = 1, elec_num
+              een_rescaled_n(i, a, l, nw) = een_rescaled_n(i, a, l - 1, nw) * een_rescaled_n(i, a, 1, nw)
+           end do
+        end do
+     end do
 
-  ! prepare the actual een table
-  een_rescaled_n(:, :, 0, nw) = 1.0d0
-
-  do a = 1, nucl_num
-    do i = 1, elec_num
-      een_rescaled_n(i, a, 1, nw) = dexp(-rescale_factor_en(a) * en_distance(i, a, nw))
-    end do
-  end do
-
-  do l = 2, cord_num
-    do a = 1, nucl_num
-      do i = 1, elec_num
-        een_rescaled_n(i, a, l, nw) = een_rescaled_n(i, a, l - 1, nw) * een_rescaled_n(i, a, 1, nw)
-      end do
-    end do
-  end do
   end do
 
 end function qmckl_compute_een_rescaled_n_f
     #+end_src
 
     #+begin_src c :comments org :tangle (eval c) :noweb yes
+/*
 qmckl_exit_code qmckl_compute_een_rescaled_n (
       const qmckl_context context,
       const int64_t walk_num,
       const int64_t elec_num,
       const int64_t nucl_num,
+      const int64_t type_nucl_num,
+      int64_t* const type_nucl_vector,
       const int64_t cord_num,
       const double* rescale_factor_en,
       const double* en_distance,
@@ -6327,26 +6466,24 @@ qmckl_exit_code qmckl_compute_een_rescaled_n (
 
   // Prepare table of exponentiated distances raised to appropriate power
   for (int i = 0; i < (walk_num*(cord_num+1)*nucl_num*elec_num); ++i) {
-    een_rescaled_n[i] = 17.0;
+    een_rescaled_n[i] = 1.0;
   }
 
   for (int nw = 0; nw < walk_num; ++nw) {
     for (int a = 0; a < nucl_num; ++a) {
       for (int i = 0; i < elec_num; ++i) {
-        // prepare the actual een table
-        //een_rescaled_n(:, :, 0, nw) = 1.0d0
-        een_rescaled_n[i + a * elec_num + 0 + nw * elec_num*nucl_num*(cord_num+1)] = 1.0;
-        //een_rescaled_n(i, a, 1, nw) = dexp(-rescale_factor_en(a) * en_distance(i, a, nw))
-        een_rescaled_n[i + a*elec_num + elec_num*nucl_num + nw*elec_num*nucl_num*(cord_num+1)] = exp(-rescale_factor_en[a] * \
-                                                                              en_distance[i + a*elec_num + nw*elec_num*nucl_num]);
+        een_rescaled_n[i + a*elec_num + nw * elec_num*nucl_num*(cord_num+1)] = 1.0;
+        een_rescaled_n[i + a*elec_num + elec_num*nucl_num + nw*elec_num*nucl_num*(cord_num+1)] =
+          exp(-rescale_factor_en[type_nucl_vector[a]] * en_distance[i + a*elec_num + nw*elec_num*nucl_num]);
       }
     }
 
     for (int l = 2; l < (cord_num+1); ++l){
       for (int a = 0; a < nucl_num; ++a) {
         for (int i = 0; i < elec_num; ++i) {
-          een_rescaled_n[i + a*elec_num + l*elec_num*nucl_num + nw*elec_num*nucl_num*(cord_num+1)] = een_rescaled_n[i + a*elec_num + (l-1)*elec_num*nucl_num + nw*elec_num*nucl_num*(cord_num+1)] *\
-                                                                                                     een_rescaled_n[i + a*elec_num +       elec_num*nucl_num + nw*elec_num*nucl_num*(cord_num+1)];
+          een_rescaled_n[i + a*elec_num + l*elec_num*nucl_num + nw*elec_num*nucl_num*(cord_num+1)] =
+            een_rescaled_n[i + a*elec_num + (l-1)*elec_num*nucl_num + nw*elec_num*nucl_num*(cord_num+1)] * 
+            een_rescaled_n[i + a*elec_num +       elec_num*nucl_num + nw*elec_num*nucl_num*(cord_num+1)];
         }
       }
     }
@@ -6355,8 +6492,56 @@ qmckl_exit_code qmckl_compute_een_rescaled_n (
 
   return QMCKL_SUCCESS;
 }
+*/
     #+end_src
 
+    #+CALL: generate_c_interface(table=qmckl_factor_een_rescaled_n_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+
+    #+RESULTS:
+    #+begin_src f90 :tangle (eval f) :comments org :exports none
+    integer(c_int32_t) function qmckl_compute_een_rescaled_n &
+        (context, &
+         walk_num, &
+         elec_num, &
+         nucl_num, &
+         type_nucl_num, &
+         type_nucl_vector, &
+         cord_num, &
+         rescale_factor_en, &
+         en_distance, &
+         een_rescaled_n) &
+        bind(C) result(info)
+
+      use, intrinsic :: iso_c_binding
+      implicit none
+
+      integer (c_int64_t) , intent(in)  , value :: context
+      integer (c_int64_t) , intent(in)  , value :: walk_num
+      integer (c_int64_t) , intent(in)  , value :: elec_num
+      integer (c_int64_t) , intent(in)  , value :: nucl_num
+      integer (c_int64_t) , intent(in)  , value :: type_nucl_num
+      integer (c_int64_t) , intent(in)          :: type_nucl_vector(type_nucl_num)
+      integer (c_int64_t) , intent(in)  , value :: cord_num
+      real    (c_double ) , intent(in)          :: rescale_factor_en(nucl_num)
+      real    (c_double ) , intent(in)          :: en_distance(nucl_num,elec_num,walk_num)
+      real    (c_double ) , intent(out)         :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
+
+      integer(c_int32_t), external :: qmckl_compute_een_rescaled_n_f
+      info = qmckl_compute_een_rescaled_n_f &
+             (context, &
+         walk_num, &
+         elec_num, &
+         nucl_num, &
+         type_nucl_num, &
+         type_nucl_vector, &
+         cord_num, &
+         rescale_factor_en, &
+         en_distance, &
+         een_rescaled_n)
+
+    end function qmckl_compute_een_rescaled_n
+    #+end_src
+    
 #   #+CALL: generate_c_header(table=qmckl_factor_een_rescaled_n_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
 
     #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
@@ -6365,6 +6550,8 @@ qmckl_exit_code qmckl_compute_een_rescaled_n (
           const int64_t walk_num,
           const int64_t elec_num,
           const int64_t nucl_num,
+          const int64_t type_nucl_num,
+          int64_t* const type_nucl_vector,
           const int64_t cord_num,
           const double* rescale_factor_en,
           const double* en_distance,
@@ -6538,6 +6725,8 @@ qmckl_exit_code qmckl_provide_een_rescaled_n_deriv_e(qmckl_context context)
                                                      ctx->electron.walker.num,
                                                      ctx->electron.num,
                                                      ctx->nucleus.num,
+                                                     ctx->jastrow.type_nucl_num,
+                                                     ctx->jastrow.type_nucl_vector,
                                                      ctx->jastrow.cord_num,
                                                      ctx->jastrow.rescale_factor_en,
                                                      ctx->electron.walker.point.coord.data,
@@ -6570,6 +6759,8 @@ qmckl_exit_code qmckl_provide_een_rescaled_n_deriv_e(qmckl_context context)
     | ~walk_num~               | ~int64_t~                                             | in     | Number of walkers                   |
     | ~elec_num~               | ~int64_t~                                             | in     | Number of electrons                 |
     | ~nucl_num~               | ~int64_t~                                             | in     | Number of atoms                     |
+    | ~type_nucl_num~          | ~int64_t~                                             | in     | Number of atom types                |
+    | ~type_nucl_vector~       | ~int64_t[type_nucl_num]~                              | in     | Types of atoms                      |
     | ~cord_num~               | ~int64_t~                                             | in     | Order of polynomials                |
     | ~rescale_factor_en~      | ~double[nucl_num]~                                    | in     | Factor to rescale ee distances      |
     | ~coord_ee~               | ~double[walk_num][3][elec_num]~                       | in     | Electron coordinates                |
@@ -6580,7 +6771,7 @@ qmckl_exit_code qmckl_provide_een_rescaled_n_deriv_e(qmckl_context context)
 
     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
 integer function qmckl_compute_factor_een_rescaled_n_deriv_e_f( &
-     context, walk_num, elec_num, nucl_num, &
+     context, walk_num, elec_num, nucl_num, type_nucl_num, type_nucl_vector, &
      cord_num, rescale_factor_en, &
      coord_ee, coord_en, en_distance, een_rescaled_n, een_rescaled_n_deriv_e) &
      result(info)
@@ -6590,8 +6781,10 @@ integer function qmckl_compute_factor_een_rescaled_n_deriv_e_f( &
   integer*8             , intent(in)  :: walk_num
   integer*8             , intent(in)  :: elec_num
   integer*8             , intent(in)  :: nucl_num
+  integer*8             , intent(in)  :: type_nucl_num
+  integer*8             , intent(in)  :: type_nucl_vector(type_nucl_num)
   integer*8             , intent(in)  :: cord_num
-  double precision      , intent(in)  :: rescale_factor_en(nucl_num)
+  double precision      , intent(in)  :: rescale_factor_en(type_nucl_num)
   double precision      , intent(in)  :: coord_ee(elec_num,3,walk_num)
   double precision      , intent(in)  :: coord_en(nucl_num,3)
   double precision      , intent(in)  :: en_distance(elec_num,nucl_num,walk_num)
@@ -6647,7 +6840,7 @@ integer function qmckl_compute_factor_een_rescaled_n_deriv_e_f( &
 
   do l = 0, cord_num
     do a = 1, nucl_num
-      kappa_l = - dble(l) * rescale_factor_en(a)
+      kappa_l = - dble(l) * rescale_factor_en(type_nucl_vector(a))
       do i = 1, elec_num
         een_rescaled_n_deriv_e(i, 1, a, l, nw) = kappa_l * elnuc_dist_deriv_e(1, i, a)
         een_rescaled_n_deriv_e(i, 2, a, l, nw) = kappa_l * elnuc_dist_deriv_e(2, i, a)
@@ -6683,6 +6876,8 @@ end function qmckl_compute_factor_een_rescaled_n_deriv_e_f
           const int64_t walk_num,
           const int64_t elec_num,
           const int64_t nucl_num,
+          const int64_t type_nucl_num,
+          int64_t* const type_nucl_vector,
           const int64_t cord_num,
           const double* rescale_factor_en,
           const double* coord_ee,
@@ -6701,6 +6896,8 @@ end function qmckl_compute_factor_een_rescaled_n_deriv_e_f
          walk_num, &
          elec_num, &
          nucl_num, &
+         type_nucl_num, &
+         type_nucl_vector, &
          cord_num, &
          rescale_factor_en, &
          coord_ee, &
@@ -6717,6 +6914,8 @@ end function qmckl_compute_factor_een_rescaled_n_deriv_e_f
       integer (c_int64_t) , intent(in)  , value :: walk_num
       integer (c_int64_t) , intent(in)  , value :: elec_num
       integer (c_int64_t) , intent(in)  , value :: nucl_num
+      integer (c_int64_t) , intent(in)  , value :: type_nucl_num
+      integer (c_int64_t) , intent(in)          :: type_nucl_vector(type_nucl_num)
       integer (c_int64_t) , intent(in)  , value :: cord_num
       real    (c_double ) , intent(in)          :: rescale_factor_en(nucl_num)
       real    (c_double ) , intent(in)          :: coord_ee(elec_num,3,walk_num)
@@ -6731,6 +6930,8 @@ end function qmckl_compute_factor_een_rescaled_n_deriv_e_f
          walk_num, &
          elec_num, &
          nucl_num, &
+         type_nucl_num, &
+         type_nucl_vector, &
          cord_num, &
          rescale_factor_en, &
          coord_ee, &
