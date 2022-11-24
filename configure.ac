@@ -41,7 +41,7 @@ AM_INIT_AUTOMAKE([subdir-objects color-tests parallel-tests silent-rules 1.11])
 
 # Activate developer mode when the source is the git repository.
 # Otherwise, it is the source distribution and the developer mode should not be activated.
-AS_IF([test -d ${srcdir}/.git],
+AS_IF([test -d ${srcdir}/.maintainer_mode],
         [enable_maintainer_mode="yes"],
         [enable_maintainer_mode="no"]
 )
