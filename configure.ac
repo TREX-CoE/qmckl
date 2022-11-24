@@ -39,9 +39,9 @@ AC_INIT([qmckl],[0.3.1],[https://github.com/TREX-CoE/qmckl/issues],[],[https://t
 AC_CONFIG_AUX_DIR([tools])
 AM_INIT_AUTOMAKE([subdir-objects color-tests parallel-tests silent-rules 1.11])
 
-# Activate developer mode when the source is the git repository.
+# Activate developer mode when the .maintainer_mode file is found
 # Otherwise, it is the source distribution and the developer mode should not be activated.
-AS_IF([test -d ${srcdir}/.maintainer_mode],
+AS_IF([test -f ${srcdir}/.maintainer_mode],
         [enable_maintainer_mode="yes"],
         [enable_maintainer_mode="no"]
 )
