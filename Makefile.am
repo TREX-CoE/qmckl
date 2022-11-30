@@ -127,7 +127,7 @@ python-test: $(test_py)
 
 endif
 
-.PHONY: cppcheck python-test python-install
+.PHONY: cppcheck python-test python-install source
 
 
 if QMCKL_DEVEL
@@ -218,6 +218,7 @@ $(qmckl_py): $(qmckl_i) $(qmckl_include_i)
 
 $(qmckl_wrap_c): $(qmckl_py)
 
+source: $(TANGLED_FILES)
 
 CLEANFILES += $(qmckl_wrap_c) \
 	      $(qmckl_include_i) \
