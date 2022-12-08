@@ -23,7 +23,8 @@ function extract_doc()
   html=${DOCS}/html/$(basename ${org%.org}.html)
   text=${DOCS}/text/$(basename ${org%.org}.txt)
 
-  ${srcdir}/tools/missing emacs --batch  \
+  ${srcdir}/tools/missing \
+        emacs --no-init-file --no-site-lisp --quick --batch \
         --load="${HTMLIZE}"           \
         --load="${CONFIG_DOC}"        \
         ${org}                           \
@@ -53,6 +54,7 @@ do
     # Fail if tangling failed
     if [ $rc -ne 0 ] ; then
        cat $exported
+       rm $exported
        exit $rc
     fi
 done

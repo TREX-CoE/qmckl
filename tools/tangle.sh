@@ -30,7 +30,7 @@ function tangle()
         return
     fi
     ${srcdir}/tools/missing \
-        emacs --batch ${org_file} \
+        emacs --no-init-file --no-site-lisp --quick --batch ${org_file} \
          --load=${srcdir}/tools/config_tangle.el \
         -f org-babel-tangle
 }
@@ -47,6 +47,7 @@ do
     # Fail if tangling failed
     if [[ $rc -ne 0 ]] ; then
        cat $tangled
+       rm $tangled
        exit $rc
     fi
 done
