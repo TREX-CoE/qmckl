@@ -20,8 +20,8 @@ if [ -z ${top_builddir} ] ; then
    exit 1
 fi
 
-if [ -z ${src_qmckl_f} ] ; then
-   echo "Error: src_qmckl_f environment variable is not defined"
+if [ -z ${qmckl_f} ] ; then
+   echo "Error: qmckl_f environment variable is not defined"
    exit 1
 fi
 
@@ -33,7 +33,7 @@ fi
 HEADERS_TYPE="src/qmckl_*_fh_type.F90"
 HEADERS="src/qmckl_*_fh_func.F90"
 
-cat << EOF > ${src_qmckl_f}
+cat << EOF > ${qmckl_f}
 !
 !    ------------------------------------------
 !     QMCkl - Quantum Monte Carlo kernel library
@@ -82,14 +82,14 @@ EOF
 
 for i in ${HEADERS_TYPE}
 do
-    cat $i >> ${src_qmckl_f}
+    cat $i >> ${qmckl_f}
 done
 
 for i in ${HEADERS}
 do
-    cat $i >> ${src_qmckl_f}
+    cat $i >> ${qmckl_f}
 done
 
-cat << EOF >> ${src_qmckl_f}
+cat << EOF >> ${qmckl_f}
 end module qmckl
 EOF

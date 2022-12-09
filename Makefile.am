@@ -45,12 +45,9 @@ pkgconfigdir = $(libdir)/pkgconfig
 pkgconfig_DATA = pkgconfig/qmckl.pc
 
 qmckl_h = include/qmckl.h
-include_HEADERS = $(qmckl_h) $(src_qmckl_f)
+qmckl_f = include/qmckl_f.F90
+include_HEADERS = $(qmckl_h) $(qmckl_f)
 
-test_qmckl_f  = tests/qmckl_f.F90
-test_qmckl_fo = tests/qmckl_f.o
-src_qmckl_f   = src/qmckl_f.F90
-src_qmckl_fo  = src/qmckl_f.o
 header_tests  = tests/chbrclf.h tests/n2.h
 
 QMCKL_TEST_DIR = $(abs_srcdir)/share/qmckl/test_data/
@@ -61,7 +58,7 @@ AM_CPPFLAGS += -DQMCKL_TEST_DIR=\"$(QMCKL_TEST_DIR)\"
 
 
 lib_LTLIBRARIES = src/libqmckl.la
-src_libqmckl_la_SOURCES = $(qmckl_h) $(src_qmckl_f) $(C_FILES) $(F_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES)
+src_libqmckl_la_SOURCES = $(qmckl_h) $(qmckl_f) $(C_FILES) $(F_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES)
 src_libqmckl_la_LDFLAGS = $(LDFLAGS)
 
 CLEANFILES+=$(test_qmckl_fo) $(src_qmckl_fo) $(test_qmckl_o) $(src_qmckl_o) $(FH_TYPE_FILES) $(FH_FUNC_FILES)
@@ -137,11 +134,11 @@ AM_LDFLAGS=-lvfc_probes -lvfc_probes_f
 ACLOCAL_AMFLAGS += -I tools
 endif
 
-EXTRA_DIST += $(ORG_FILES) $(TANGLED_FILES) $(EXPORTED_FILES) $(test_qmckl_f)
+EXTRA_DIST += $(ORG_FILES) $(TANGLED_FILES) $(EXPORTED_FILES)
 
-BUILT_SOURCES = $(C_FILES) $(F_FILES) $(FH_FUNC_FILES) $(FH_TYPE_FILES) $(H_FUNC_FILES) $(H_TYPE_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES) $(src_qmckl_f) $(test_qmckl_f) $(qmckl_h) $(header_tests) $(htmlize_el)
+BUILT_SOURCES = $(C_FILES) $(F_FILES) $(FH_FUNC_FILES) $(FH_TYPE_FILES) $(H_FUNC_FILES) $(H_TYPE_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES) $(qmckl_f) $(qmckl_h) $(header_tests) $(htmlize_el)
 
-CLEANFILES += $(BUILT_SOURCES) $(C_TEST_FILES) $(F_TEST_FILES) $(TANGLED_FILES) $(C_TEST_FILES) $(F_TEST_FILES) $(src_qmckl_f) $(test_qmckl_f) $(qmckl_h) $(HTML_FILES) $(TEXT_FILES) $(EXPORTED_FILES) $(header_tests) $(htmlize_el)
+CLEANFILES += $(BUILT_SOURCES) $(C_TEST_FILES) $(F_TEST_FILES) $(TANGLED_FILES) $(C_TEST_FILES) $(F_TEST_FILES) $(qmckl_f) $(qmckl_h) $(HTML_FILES) $(TEXT_FILES) $(EXPORTED_FILES) $(header_tests) $(htmlize_el)
 
 EXTRA_DIST +=                 \
     tools/build_doc.sh        \
@@ -178,15 +175,12 @@ cat_h_verbose_0 = @echo "  HEADER   $@";
 
 SUFFIXES = .F90 .h .org .c _f.F90 _func.h _type.h _private_func.h _private_type.h
 
-$(test_qmckl_f): $(src_qmckl_f)
-	cp $(src_qmckl_f) $(test_qmckl_f)
-
 $(qmckl_h): $(H_FUNC_FILES) $(H_TYPE_FILES)
 	$(cat_h_verbose)top_builddir=$(abs_top_builddir) srcdir=$(abs_srcdir) qmckl_h=$(qmckl_h) $(srcdir)/tools/build_qmckl_h.sh
 
-$(src_qmckl_f): $(FH_FUNC_FILES) $(FH_TYPE_FILES)
+$(qmckl_f): $(FH_FUNC_FILES) $(FH_TYPE_FILES)
 	echo $(FH_TYPE_FILES) $(FH_FUNC_FILES)
-	$(cat_h_verbose)top_builddir=$(abs_top_builddir) srcdir=$(abs_srcdir) src_qmckl_f=$(src_qmckl_f) $(srcdir)/tools/build_qmckl_f.sh
+	$(cat_h_verbose)top_builddir=$(abs_top_builddir) srcdir=$(abs_srcdir) qmckl_f=$(qmckl_f) $(srcdir)/tools/build_qmckl_f.sh
 
 $(htmlize_el):
 	$(MKDIR_P) $(htmldir_loc) $(textdir_loc)
@@ -218,7 +212,7 @@ $(qmckl_py): $(qmckl_i) $(qmckl_include_i)
 
 $(qmckl_wrap_c): $(qmckl_py)
 
-source: $(TANGLED_FILES) $(qmckl_h) $(src_qmckl_f)
+source: $(TANGLED_FILES) $(qmckl_h) $(qmckl_f)
 
 CLEANFILES += $(qmckl_wrap_c) \
 	      $(qmckl_include_i) \
