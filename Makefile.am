@@ -218,7 +218,7 @@ $(qmckl_py): $(qmckl_i) $(qmckl_include_i)
 
 $(qmckl_wrap_c): $(qmckl_py)
 
-source: $(TANGLED_FILES)
+source: $(TANGLED_FILES) $(qmckl_h) $(src_qmckl_f)
 
 CLEANFILES += $(qmckl_wrap_c) \
 	      $(qmckl_include_i) \
