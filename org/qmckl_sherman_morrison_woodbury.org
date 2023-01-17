@@ -110,6 +110,123 @@ int main() {
 #include <math.h>
 #include "qmckl.h"
 
+#if defined(__AVX512__)
+#define SIMD 8
+#elif defined(__AVX__)
+#define SIMD 4
+#else
+#define SIMD 2
+#endif
+    #+end_src
+
+    #+NAME:naive_template
+    #+begin_src c
+static inline qmckl_exit_code qmckl_sherman_morrison_{Dim}(const qmckl_context context,
+                                const uint64_t N_updates,
+                                const double* Updates,
+                                const uint64_t* Updates_index,
+                                const double breakdown,
+                                double* Slater_inv,
+                                double* determinant) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return qmckl_failwith( context,
+                           QMCKL_NULL_CONTEXT,
+                           "qmckl_sherman_morrison_{Dim}",
+                           NULL);
+  }
+
+// TODO: Specialize for padding
+//  const uint LDS=(1+({Dim}-1)/SIMD) * SIMD;
+  const uint LDS={Dim};
+  double C[{Dim}];
+  double D[{Dim}];
+
+  uint64_t l = 0;
+  // For each update
+  while (l < N_updates) {
+    // C = A^{-1} x U_l
+    for (uint64_t i = 0; i < {Dim}; i++) {
+      C[i] = 0;
+      for (uint64_t j = 0; j < {Dim}; j++) {
+        C[i] += Slater_inv[i * LDS + j] * Updates[l * {Dim} + j];
+      }
+    }
+
+    // Denominator
+    double den = 1 + C[Updates_index[l] - 1];
+
+    if (fabs(den) < breakdown) {
+      return QMCKL_FAILURE;
+    }
+    double iden = 1 / den;
+
+    // Update det(A)
+    if (determinant != NULL)
+      *determinant *= den;
+
+    // D = v^T x A^{-1}
+    for (uint64_t j = 0; j < {Dim}; j++) {
+      D[j] = Slater_inv[(Updates_index[l] - 1) * LDS + j];
+    }
+
+    // A^{-1} = A^{-1} - C x D / den
+    for (uint64_t i = 0; i < {Dim}; i++) {
+      for (uint64_t j = 0; j < {Dim}; j++) {
+        double update = C[i] * D[j] * iden;
+        Slater_inv[i * LDS + j] -= update;
+      }
+    }
+
+    l += 1;
+  }
+
+  return QMCKL_SUCCESS;
+}
+    #+end_src
+
+    #+NAME:naive-python
+    #+begin_src python :noweb yes :exports none
+text="""
+<<naive_template>>
+"""
+result = []
+for Dim in range(1,26):
+  Dim=str(Dim)
+  result.append(text.replace("{Dim}",Dim) )
+
+return '\n'.join(result)
+    #+end_src
+
+    #+RESULTS: naive-python
+
+    #+NAME:naive-python-switch
+    #+begin_src python :noweb yes :exports none
+text="""
+case {Dim}:  
+    return qmckl_sherman_morrison_{Dim}(context,
+                                N_updates,
+                                Updates,
+                                Updates_index,
+                                breakdown,
+                                Slater_inv,
+                                determinant);
+"""
+result = []
+for Dim in range(1,26):
+  Dim=str(Dim)
+  result.append(text.replace("{Dim}",Dim) )
+
+return '\n'.join(result)
+    #+end_src
+
+    #+RESULTS: naive-python-switch
+
+    ------
+
+    #+begin_src c :tangle (eval c) :comments org :noweb yes
+<<naive-python()>>
+
 qmckl_exit_code qmckl_sherman_morrison(const qmckl_context context,
                                 const uint64_t LDS,
                                 const uint64_t Dim,
@@ -121,8 +238,18 @@ qmckl_exit_code qmckl_sherman_morrison(const qmckl_context context,
                                 double* determinant) {
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return QMCKL_NULL_CONTEXT;
+    return qmckl_failwith( context,
+                           QMCKL_NULL_CONTEXT,
+                           "qmckl_sherman_morrison",
+                           NULL);
   }
+
+  if (Dim == LDS) {
+    switch (Dim) {
+    <<naive-python-switch()>>
+    }
+
+  } else {
 
   double C[Dim];
   double D[Dim];
@@ -166,9 +293,70 @@ qmckl_exit_code qmckl_sherman_morrison(const qmckl_context context,
     l += 1;
   }
 
+  }
   return QMCKL_SUCCESS;
 }
     #+end_src
+
+    #+RESULTS: naive_python
+
+    qmckl_exit_code qmckl_sherman_morrison_{Dim}_{LDS}(const qmckl_context context,
+				    const uint64_t N_updates,
+				    const double* Updates,
+				    const uint64_t* Updates_index,
+				    const double breakdown,
+				    double* Slater_inv,
+				    double* determinant) {
+
+      if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+	return QMCKL_NULL_CONTEXT;
+      }
+
+      double C[{Dim}];
+      double D[{Dim}];
+
+      uint64_t l = 0;
+      // For each update
+      while (l < N_updates) {
+	// C = A^{-1} x U_l
+	for (uint64_t i = 0; i < {Dim}; i++) {
+	  C[i] = 0;
+	  for (uint64_t j = 0; j < {Dim}; j++) {
+	    C[i] += Slater_inv[i * {LDS} + j] * Updates[l * {Dim} + j];
+	  }
+	}
+
+	// Denominator
+	double den = 1 + C[Updates_index[l] - 1];
+
+	if (fabs(den) < breakdown) {
+	  return QMCKL_FAILURE;
+	}
+	double iden = 1 / den;
+
+	// Update det(A)
+	if (determinant != NULL)
+	  *determinant *= den;
+
+	// D = v^T x A^{-1}
+	for (uint64_t j = 0; j < {Dim}; j++) {
+	  D[j] = Slater_inv[(Updates_index[l] - 1) * {LDS} + j];
+	}
+
+	// A^{-1} = A^{-1} - C x D / den
+	for (uint64_t i = 0; i < {Dim}; i++) {
+	  for (uint64_t j = 0; j < {Dim}; j++) {
+	    double update = C[i] * D[j] * iden;
+	    Slater_inv[i * {LDS} + j] -= update;
+	  }
+	}
+
+	l += 1;
+      }
+
+      return QMCKL_SUCCESS;
+    }
+    None
 
 *** Performance
 
