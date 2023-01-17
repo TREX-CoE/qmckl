@@ -75,6 +75,7 @@ AS_IF([test "x$with_icc.$with_ifort" = "xyes.yes"], [
   LAPACK_LIBS=""])
 
 # Default Automake variables
+F77=$FC
 AM_PROG_AR
 AM_MAINTAINER_MODE()
 LT_INIT
@@ -212,6 +213,32 @@ AS_CASE([$with_trexio],
 
 PKG_CFLAGS2="$PKG_CFLAGS2 $TREXIO_CFLAGS"
 PKG_LIBS2="$PKG_LIBS2 $TREXIO_LIBS"
+
+
+# Checking SIMD
+AC_MSG_CHECKING([for SIMD length])
+AC_RUN_IFELSE(
+    [AC_LANG_PROGRAM([],[
+int simd=1;
+#if defined(__AVX512F__)
+   simd=8;
+#elif defined(__AVX__)
+   simd=4;
+#elif defined(__SSE2__)
+   simd=2;
+#elif defined(__ARM_NEON__)
+   simd=2;
+#endif
+  return simd;
+])],
+[ SIMD_LENGTH=1 ],
+[ SIMD_LENGTH=$? ],
+[ SIMD_LENGTH=1 ]
+)
+AC_MSG_RESULT([$SIMD_LENGTH])
+AC_DEFINE_UNQUOTED([SIMD_LENGTH], [$SIMD_LENGTH], [Length of SIMD vectors])
+
+
 
 # QMCKLDGEMM
 AC_ARG_WITH([qmckldgemm],
