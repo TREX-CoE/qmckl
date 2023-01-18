@@ -103,31 +103,99 @@ int main() {
 	  double* determinant);
     #+end_src
 
-*** C source
+
+
+
 
     #+begin_src c :tangle (eval c) :comments org
 #include <stdbool.h>
 #include <math.h>
 #include "qmckl.h"
+#include "config.h"
 
-#if defined(__AVX512__)
-#define SIMD 8
-#elif defined(__AVX__)
-#define SIMD 4
-#else
-#define SIMD 2
-#endif
+qmckl_exit_code qmckl_sherman_morrison_hpc(
+    const qmckl_context context,
+    const uint64_t LDS,
+    const uint64_t Dim,
+    const uint64_t N_updates,
+    const double* __restrict Updates,
+    const uint64_t* __restrict Updates_index,
+    const double breakdown,
+    double* __restrict Slater_inv,
+    double* __restrict determinant) {
+
+    if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+        return qmckl_failwith( context,
+            QMCKL_NULL_CONTEXT,
+            "qmckl_sherman_morrison_naive_hpc",
+            NULL);
+    }
+
+    double __attribute__((aligned(8))) C[Dim];
+    double __attribute__((aligned(8))) D[LDS];
+
+    uint32_t l = 0;
+    // For each update
+    while (l < N_updates) {
+        // C = S^{-1} x u_l
+        for (uint32_t i = 0; i < Dim; i++) {
+            C[i] = 0.0f;
+            #pragma ivdep
+            #pragma vector aligned
+            for (uint32_t j = 0; j < LDS; j++) {
+                C[i] += Slater_inv[i * LDS + j] * Updates[l * LDS + j];
+            }
+        }
+
+        // Denominator: v_l^T * C
+        const int cui = Updates_index[l] - 1;
+        double den = 1.0f + C[cui];
+
+        if (fabs(den) < breakdown) {
+            return QMCKL_FAILURE;
+        }
+        double iden = 1.0f / den;
+
+        // Update det(A)
+        if (determinant)
+            *determinant *= den;
+
+        // selecting column: v_l^T * S_inv
+        #pragma ivdep
+        #pragma vector aligned
+        for (uint32_t j = 0; j < LDS; j++) {
+            D[j] = Slater_inv[cui * LDS + j];
+        }
+
+        // A^{-1} = A^{-1} - C x D / den
+        for (uint32_t i = 0; i < Dim; i++) {
+            #pragma ivdep
+            #pragma vector aligned
+            for (uint32_t j = 0; j < LDS; j++) {
+                const double update = C[i] * D[j] * iden;
+                Slater_inv[i * LDS + j] -= update;
+            }
+        }
+        l += 1;
+    }
+    return QMCKL_SUCCESS;
+}
     #+end_src
+
+
+
+
 
     #+NAME:naive_template
     #+begin_src c
-static inline qmckl_exit_code qmckl_sherman_morrison_{Dim}(const qmckl_context context,
+static inline qmckl_exit_code qmckl_sherman_morrison_{Dim}(
+                                const qmckl_context context,
                                 const uint64_t N_updates,
-                                const double* Updates,
-                                const uint64_t* Updates_index,
+                                const double* __restrict Updates,
+                                const uint64_t* __restrict Updates_index,
                                 const double breakdown,
-                                double* Slater_inv,
-                                double* determinant) {
+                                double* __restrict Slater_inv,
+                                double* __restrict determinant) {
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return qmckl_failwith( context,
@@ -136,11 +204,10 @@ static inline qmckl_exit_code qmckl_sherman_morrison_{Dim}(const qmckl_context c
                            NULL);
   }
 
-// TODO: Specialize for padding
-//  const uint LDS=(1+({Dim}-1)/SIMD) * SIMD;
-  const uint LDS={Dim};
-  double C[{Dim}];
-  double D[{Dim}];
+  #define D{Dim}_P ((1+({Dim}-1)/SIMD_LENGTH)*SIMD_LENGTH)
+
+  double __attribute__((aligned(8))) C[{Dim}];
+  double __attribute__((aligned(8))) D[D{Dim}_P];
 
   uint64_t l = 0;
   // For each update
@@ -148,33 +215,40 @@ static inline qmckl_exit_code qmckl_sherman_morrison_{Dim}(const qmckl_context c
     // C = A^{-1} x U_l
     for (uint64_t i = 0; i < {Dim}; i++) {
       C[i] = 0;
-      for (uint64_t j = 0; j < {Dim}; j++) {
-        C[i] += Slater_inv[i * LDS + j] * Updates[l * {Dim} + j];
+      #pragma ivdep
+      #pragma vector aligned
+      for (uint64_t j = 0; j < D{Dim}_P; j++) {
+        C[i] += Slater_inv[i * D{Dim}_P + j] * Updates[l * D{Dim}_P + j];
       }
     }
 
     // Denominator
-    double den = 1 + C[Updates_index[l] - 1];
+    const int cui = Updates_index[l] - 1;
+    double den = 1.0f + C[cui];
 
     if (fabs(den) < breakdown) {
       return QMCKL_FAILURE;
     }
-    double iden = 1 / den;
+    double iden = 1.0f / den;
 
     // Update det(A)
-    if (determinant != NULL)
+    if (determinant)
       *determinant *= den;
 
-    // D = v^T x A^{-1}
-    for (uint64_t j = 0; j < {Dim}; j++) {
-      D[j] = Slater_inv[(Updates_index[l] - 1) * LDS + j];
+    // selecting column: D = v_l^T * S_inv
+    #pragma ivdep
+    #pragma vector aligned
+    for (uint64_t j = 0; j < D{Dim}_P; j++) {
+      D[j] = Slater_inv[cui * D{Dim}_P + j];
     }
 
     // A^{-1} = A^{-1} - C x D / den
     for (uint64_t i = 0; i < {Dim}; i++) {
-      for (uint64_t j = 0; j < {Dim}; j++) {
+      #pragma ivdep
+      #pragma vector aligned
+      for (uint64_t j = 0; j < D{Dim}_P; j++) {
         double update = C[i] * D[j] * iden;
-        Slater_inv[i * LDS + j] -= update;
+        Slater_inv[i * D{Dim}_P + j] -= update;
       }
     }
 
@@ -185,44 +259,50 @@ static inline qmckl_exit_code qmckl_sherman_morrison_{Dim}(const qmckl_context c
 }
     #+end_src
 
+
+
+
+
     #+NAME:naive-python
     #+begin_src python :noweb yes :exports none
 text="""
 <<naive_template>>
 """
 result = []
-for Dim in range(1,26):
+for Dim in range(2, 22):
   Dim=str(Dim)
   result.append(text.replace("{Dim}",Dim) )
 
 return '\n'.join(result)
     #+end_src
 
-    #+RESULTS: naive-python
+
+
+
 
     #+NAME:naive-python-switch
     #+begin_src python :noweb yes :exports none
 text="""
 case {Dim}:  
-    return qmckl_sherman_morrison_{Dim}(context,
-                                N_updates,
-                                Updates,
-                                Updates_index,
-                                breakdown,
-                                Slater_inv,
-                                determinant);
+  return qmckl_sherman_morrison_{Dim}(context,
+      N_updates,
+      Updates,
+      Updates_index,
+      breakdown,
+      Slater_inv,
+      determinant);
 """
 result = []
-for Dim in range(1,26):
+for Dim in range(2, 22):
   Dim=str(Dim)
   result.append(text.replace("{Dim}",Dim) )
 
 return '\n'.join(result)
     #+end_src
 
-    #+RESULTS: naive-python-switch
 
-    ------
+
+
 
     #+begin_src c :tangle (eval c) :comments org :noweb yes
 <<naive-python()>>
@@ -238,125 +318,37 @@ qmckl_exit_code qmckl_sherman_morrison(const qmckl_context context,
                                 double* determinant) {
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return qmckl_failwith( context,
-                           QMCKL_NULL_CONTEXT,
-                           "qmckl_sherman_morrison",
-                           NULL);
+    return qmckl_failwith(context,
+                          QMCKL_NULL_CONTEXT,
+                          "qmckl_sherman_morrison",
+                          NULL);
   }
 
-  if (Dim == LDS) {
+  if (LDS == (1+(Dim-1)/SIMD_LENGTH)*SIMD_LENGTH) { // Most cases
     switch (Dim) {
-    <<naive-python-switch()>>
+      <<naive-python-switch()>>
     }
-
-  } else {
-
-  double C[Dim];
-  double D[Dim];
-
-  uint64_t l = 0;
-  // For each update
-  while (l < N_updates) {
-    // C = A^{-1} x U_l
-    for (uint64_t i = 0; i < Dim; i++) {
-      C[i] = 0;
-      for (uint64_t j = 0; j < Dim; j++) {
-        C[i] += Slater_inv[i * LDS + j] * Updates[l * Dim + j];
-      }
-    }
-
-    // Denominator
-    double den = 1 + C[Updates_index[l] - 1];
-
-    if (fabs(den) < breakdown) {
-      return QMCKL_FAILURE;
-    }
-    double iden = 1 / den;
-
-    // Update det(A)
-    if (determinant != NULL)
-      *determinant *= den;
-
-    // D = v^T x A^{-1}
-    for (uint64_t j = 0; j < Dim; j++) {
-      D[j] = Slater_inv[(Updates_index[l] - 1) * LDS + j];
-    }
-
-    // A^{-1} = A^{-1} - C x D / den
-    for (uint64_t i = 0; i < Dim; i++) {
-      for (uint64_t j = 0; j < Dim; j++) {
-        double update = C[i] * D[j] * iden;
-        Slater_inv[i * LDS + j] -= update;
-      }
-    }
-
-    l += 1;
   }
+  else { // When SIMD_LENGTH > 1, called with LDS == Dim and Dim != (1+(Dim-1)/SIMD_LENGTH)*SIMD_LENGTH)
+    return qmckl_sherman_morrison_hpc(context,
+                                      LDS,
+                                      Dim,
+    	                                N_updates,
+    	                                Updates,
+    	                                Updates_index,
+    	                                breakdown,
+    	                                Slater_inv,
+    	                                determinant);
 
   }
+  
   return QMCKL_SUCCESS;
 }
     #+end_src
 
-    #+RESULTS: naive_python
 
-    qmckl_exit_code qmckl_sherman_morrison_{Dim}_{LDS}(const qmckl_context context,
-				    const uint64_t N_updates,
-				    const double* Updates,
-				    const uint64_t* Updates_index,
-				    const double breakdown,
-				    double* Slater_inv,
-				    double* determinant) {
 
-      if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-	return QMCKL_NULL_CONTEXT;
-      }
 
-      double C[{Dim}];
-      double D[{Dim}];
-
-      uint64_t l = 0;
-      // For each update
-      while (l < N_updates) {
-	// C = A^{-1} x U_l
-	for (uint64_t i = 0; i < {Dim}; i++) {
-	  C[i] = 0;
-	  for (uint64_t j = 0; j < {Dim}; j++) {
-	    C[i] += Slater_inv[i * {LDS} + j] * Updates[l * {Dim} + j];
-	  }
-	}
-
-	// Denominator
-	double den = 1 + C[Updates_index[l] - 1];
-
-	if (fabs(den) < breakdown) {
-	  return QMCKL_FAILURE;
-	}
-	double iden = 1 / den;
-
-	// Update det(A)
-	if (determinant != NULL)
-	  *determinant *= den;
-
-	// D = v^T x A^{-1}
-	for (uint64_t j = 0; j < {Dim}; j++) {
-	  D[j] = Slater_inv[(Updates_index[l] - 1) * {LDS} + j];
-	}
-
-	// A^{-1} = A^{-1} - C x D / den
-	for (uint64_t i = 0; i < {Dim}; i++) {
-	  for (uint64_t j = 0; j < {Dim}; j++) {
-	    double update = C[i] * D[j] * iden;
-	    Slater_inv[i * {LDS} + j] -= update;
-	  }
-	}
-
-	l += 1;
-      }
-
-      return QMCKL_SUCCESS;
-    }
-    None
 
 *** Performance
 
