@@ -175,9 +175,9 @@ with open("qmckl_include.i", 'w') as f_out:
             #print("String type", k, v)
             pass
 
-#        if len(v['pattern'].split(',')) != 2:
+        if len(v['pattern'].split(',')) != 2:
 #            print('Problemo', k, v)
-#            continue
+            continue
 
         if 'get' in k:
             f_out.write(f"%apply ( {v['datatype']}* ARGOUT_ARRAY1 , int64_t DIM1 ) {{ {v['pattern']} }};\n")
