@@ -113,6 +113,23 @@ int main() {
 #include "qmckl.h"
 #include "config.h"
 
+// Order important because
+// __GNUC__ also set in ICC, ICX and CLANG
+// __clang__ also set in ICX
+#if defined(__INTEL_COMPILER)
+  #define IVDEP _Pragma("ivdep")
+  #define ALIGNED _Pragma("vector aligned") 
+#elif defined(__INTEL_LLVM_COMPILER)
+  #define IVDEP _Pragma("ivdep")
+  #define ALIGNED _Pragma("vector aligned") 
+#elif defined(__clang__)
+  #define IVDEP _Pragma("clang loop vectorize(enable)")
+  #define ALIGNED
+#elif defined(__GNUC__)
+  #define IVDEP _Pragma("GCC ivdep")
+  #define ALIGNED
+#endif
+
 qmckl_exit_code qmckl_sherman_morrison_hpc(
     const qmckl_context context,
     const uint64_t LDS,
@@ -140,8 +157,8 @@ qmckl_exit_code qmckl_sherman_morrison_hpc(
         // C = S^{-1} x u_l
         for (uint32_t i = 0; i < Dim; i++) {
             C[i] = 0.0f;
-            #pragma ivdep
-            #pragma vector aligned
+            IVDEP
+            ALIGNED
             for (uint32_t j = 0; j < LDS; j++) {
                 C[i] += Slater_inv[i * LDS + j] * Updates[l * LDS + j];
             }
@@ -161,16 +178,16 @@ qmckl_exit_code qmckl_sherman_morrison_hpc(
             *determinant *= den;
 
         // selecting column: v_l^T * S_inv
-        #pragma ivdep
-        #pragma vector aligned
+        IVDEP
+        ALIGNED
         for (uint32_t j = 0; j < LDS; j++) {
             D[j] = Slater_inv[cui * LDS + j];
         }
 
         // A^{-1} = A^{-1} - C x D / den
         for (uint32_t i = 0; i < Dim; i++) {
-            #pragma ivdep
-            #pragma vector aligned
+            IVDEP
+            ALIGNED
             for (uint32_t j = 0; j < LDS; j++) {
                 const double update = C[i] * D[j] * iden;
                 Slater_inv[i * LDS + j] -= update;
@@ -215,8 +232,8 @@ static inline qmckl_exit_code qmckl_sherman_morrison_{Dim}(
     // C = A^{-1} x U_l
     for (uint64_t i = 0; i < {Dim}; i++) {
       C[i] = 0;
-      #pragma ivdep
-      #pragma vector aligned
+      IVDEP
+      ALIGNED
       for (uint64_t j = 0; j < D{Dim}_P; j++) {
         C[i] += Slater_inv[i * D{Dim}_P + j] * Updates[l * D{Dim}_P + j];
       }
@@ -236,16 +253,16 @@ static inline qmckl_exit_code qmckl_sherman_morrison_{Dim}(
       *determinant *= den;
 
     // selecting column: D = v_l^T * S_inv
-    #pragma ivdep
-    #pragma vector aligned
+    IVDEP
+    ALIGNED
     for (uint64_t j = 0; j < D{Dim}_P; j++) {
       D[j] = Slater_inv[cui * D{Dim}_P + j];
     }
 
     // A^{-1} = A^{-1} - C x D / den
     for (uint64_t i = 0; i < {Dim}; i++) {
-      #pragma ivdep
-      #pragma vector aligned
+      IVDEP
+      ALIGNED
       for (uint64_t j = 0; j < D{Dim}_P; j++) {
         double update = C[i] * D[j] * iden;
         Slater_inv[i * D{Dim}_P + j] -= update;
@@ -329,7 +346,7 @@ qmckl_exit_code qmckl_sherman_morrison(const qmckl_context context,
       <<naive-python-switch()>>
     }
   }
-  else { // When SIMD_LENGTH > 1, called with LDS == Dim and Dim != (1+(Dim-1)/SIMD_LENGTH)*SIMD_LENGTH)
+  else { // When SIMD_LENGTH > 1, called with LDS == Dim AND Dim != (1+(Dim-1)/SIMD_LENGTH)*SIMD_LENGTH)
     return qmckl_sherman_morrison_hpc(context,
                                       LDS,
                                       Dim,
