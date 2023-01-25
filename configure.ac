@@ -471,10 +471,10 @@ AS_IF([test "x$enable_maintainer_mode" = "xyes"],
 AM_CONDITIONAL([QMCKL_DEVEL],[test "x$QMCKL_DEVEL" != x])
 
 AC_ARG_ENABLE([python],
-            [AS_HELP_STRING([--disable-python],
-                            [Disable building Python binding])],
+            [AS_HELP_STRING([--enable-python],
+                            [Enable building the Python binding])],
             [enable_python=$enableval],
-            [enable_python=yes])
+            [enable_python=no])
 
 AM_CONDITIONAL([HAVE_PYTHON],[test "x$enable_python" = "xyes"])
 
