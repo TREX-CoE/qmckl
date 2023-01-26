@@ -198,6 +198,7 @@ cppcheck.out: $(qmckl_h)
           --enable=all --suppress="unusedStructMember"\
 	  --suppress="unusedFunction" \
 	  --suppress="missingIncludeSystem" \
+	  --suppress="knownConditionTrueFalse" \
           --language=c --std=c99 -rp --platform=unix64  \
           -I$(srcdir)/include -I$(top_builddir)/include *.c *.h 2>../$@
 
