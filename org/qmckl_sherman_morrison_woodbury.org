@@ -1762,33 +1762,34 @@ These functions can only be used internally by the kernels in this module.
     #+RESULTS:
     #+begin_src c :tangle (eval h_func) :comments org
     qmckl_exit_code qmckl_slagel_splitting (
-	  const uint64_t LDS,
-	  const uint64_t Dim,
-	  const uint64_t N_updates,
-	  const double* Updates,
-	  const uint64_t* Updates_index,
-	  const double breakdown,
-	  double* Slater_inv,
-	  double* later_updates,
-	  uint64_t* later_index,
-	  uint64_t* later,
-	  double* determinant);
+                      const uint64_t LDS,
+                      const uint64_t Dim,
+                      const uint64_t N_updates,
+                      const double* Updates,
+                      const uint64_t* Updates_index,
+                      const double breakdown,
+                      double* Slater_inv,
+                      double* later_updates,
+                      uint64_t* later_index,
+                      uint64_t* later,
+                      double* determinant);
     #+end_src
 
 *** C source
 
     #+begin_src c :tangle (eval c) :comments org
-qmckl_exit_code qmckl_slagel_splitting(uint64_t LDS,
-                                       uint64_t Dim,
-                                       uint64_t N_updates,
-                                       const double* Updates,
-                                       const uint64_t* Updates_index,
-                                       const double breakdown,
-                                       double* Slater_inv,
-                                       double* later_updates,
-                                       uint64_t* later_index,
-                                       uint64_t* later,
-                                       double* determinant) {
+qmckl_exit_code qmckl_slagel_splitting_hpc(
+                  uint64_t LDS,
+                  uint64_t Dim,
+                  uint64_t N_updates,
+                  const double* __restrict Updates,
+                  const uint64_t* __restrict Updates_index,
+                  const double breakdown,
+                  double* __restrict Slater_inv,
+                  double* __restrict later_updates,
+                  uint64_t* __restrict later_index,
+                  uint64_t* __restrict later,
+                  double* __restrict determinant) {
 
   double __attribute__((aligned(8))) C[LDS];
   double __attribute__((aligned(8))) D[LDS];
@@ -1850,8 +1851,163 @@ qmckl_exit_code qmckl_slagel_splitting(uint64_t LDS,
 
   return QMCKL_SUCCESS;
 }
-
     #+end_src
+
+
+    #+NAME:slagel_splitting_template_code
+    #+begin_src c
+static inline qmckl_exit_code qmckl_slagel_splitting_{Dim}(
+                                uint64_t N_updates,
+                                const double* __restrict Updates,
+                                const uint64_t* __restrict Updates_index,
+                                const double breakdown,
+                                double* __restrict Slater_inv,
+                                double* __restrict later_updates,
+                                uint64_t* __restrict later_index,
+                                uint64_t* __restrict later,
+                                double* __restrict determinant) {
+
+  double __attribute__((aligned(8))) C[D{Dim}_P];
+  double __attribute__((aligned(8))) D[D{Dim}_P];
+
+  uint64_t l = 0;
+  // For each update
+  while (l < N_updates) {
+    // C = S^{-1} x U_l
+    for (uint64_t i = 0; i < {Dim}; i++) {
+      C[i] = 0.0f;
+      IVDEP
+      ALIGNED
+      for (uint64_t j = 0; j < D{Dim}_P; j++) {
+        C[i] += Slater_inv[i * D{Dim}_P + j] * Updates[l * D{Dim}_P + j];
+      }
+    }
+
+    // Denominator
+    const int cui = Updates_index[l] - 1;
+    double den = 1.0f + C[cui];
+    if (fabs(den) < breakdown) {
+      // U_l = U_l / 2: split the update in 2 equal halves and save the
+      // second halve in later_updates
+      IVDEP
+      ALIGNED
+      for (uint64_t i = 0; i < D{Dim}_P; i++) {
+        later_updates[*later * D{Dim}_P + i] = Updates[l * D{Dim}_P + i] * 0.5f;
+        C[i] *= 0.5f;
+      }
+      later_index[*later] = Updates_index[l];
+      (*later)++;
+
+      den = 1.0f + C[cui];
+    } // From here onwards we continue with applying the first halve of the
+      // update to Slater_inv
+    double iden = 1.0f / den;
+
+    if (determinant)
+      *determinant *= den;
+
+    // D = v^T x S^{-1} : 1 x D{Dim}_P
+    IVDEP
+    ALIGNED
+    for (uint64_t j = 0; j < D{Dim}_P; j++) {
+      D[j] = Slater_inv[cui * D{Dim}_P + j];
+    }
+
+    // S^{-1} = S^{-1} - C x D / den
+    for (uint64_t i = 0; i < {Dim}; i++) {
+      IVDEP
+      ALIGNED
+      for (uint64_t j = 0; j < D{Dim}_P; j++) {
+        const double update = C[i] * D[j] * iden;
+        Slater_inv[i * D{Dim}_P + j] -= update;
+      }
+    }
+    l += 1;
+  }
+
+  return QMCKL_SUCCESS;
+}
+    #+end_src
+
+
+    #+NAME:slagel_splitting_kernel_generator
+    #+begin_src python :noweb yes :exports none
+text="""
+<<slagel_splitting_template_code>>
+"""
+result = []
+for Dim in <<kernel_generator_range>>:
+  Dim=str(Dim)
+  result.append(text.replace("{Dim}",Dim) )
+
+return '\n'.join(result)
+    #+end_src
+
+
+    #+NAME:slagel_splitting_switch-case_generator
+    #+begin_src python :noweb yes :exports none
+text="""
+case {Dim}:  
+  return qmckl_slagel_splitting_{Dim}(
+          N_updates,
+          Updates,
+          Updates_index,
+          breakdown,
+          Slater_inv,
+          later_updates,
+          later_index,
+          later,
+          determinant);
+"""
+result = []
+for Dim in <<kernel_generator_range>>:
+  Dim=str(Dim)
+  result.append(text.replace("{Dim}",Dim) )
+
+return '\n'.join(result)
+    #+end_src
+
+
+    #+begin_src c :tangle (eval c) :comments org :noweb yes
+<<slagel_splitting_kernel_generator()>>
+
+qmckl_exit_code qmckl_slagel_splitting(
+                      const uint64_t LDS,
+                      const uint64_t Dim,
+                      const uint64_t N_updates,
+                      const double* Updates,
+                      const uint64_t* Updates_index,
+                      const double breakdown,
+                      double* Slater_inv,
+                      double* later_updates,
+                      uint64_t* later_index,
+                      uint64_t* later,
+                      double* determinant) {
+
+  if (LDS == (1+(Dim-1)/SIMD_LENGTH)*SIMD_LENGTH) { // Most cases
+    switch (Dim) {
+      <<slagel_splitting_switch-case_generator()>>
+    }
+  }
+  else { // When SIMD_LENGTH > 1, called with LDS == Dim AND Dim != (1+(Dim-1)/SIMD_LENGTH)*SIMD_LENGTH)
+    return qmckl_slagel_splitting_hpc(
+                  LDS,
+                  Dim,
+                  N_updates,
+                  Updates,
+                  Updates_index,
+                  breakdown,
+                  Slater_inv,
+                  later_updates,
+                  later_index,
+                  later,
+                  determinant);
+  }
+  
+  return QMCKL_FAILURE;
+}
+    #+end_src
+
 
 *** Performance
 
