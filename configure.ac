@@ -217,6 +217,7 @@ PKG_LIBS2="$PKG_LIBS2 $TREXIO_LIBS"
 
 # Checking SIMD
 AC_MSG_CHECKING([for SIMD length])
+SIMD_LENGTH=1
 AC_RUN_IFELSE(
     [AC_LANG_PROGRAM([],[
 int simd=1;
@@ -230,10 +231,15 @@ int simd=1;
    simd=2;
 #endif
   return simd;
-])],
-[ SIMD_LENGTH=1 ],
-[ SIMD_LENGTH=$? ],
-[ SIMD_LENGTH=1 ]
+])], [SIMD_LENGTH=1],
+[ AS_CASE([$?],
+  [1], [SIMD_LENGTH=1],
+  [2], [SIMD_LENGTH=2],
+  [4], [SIMD_LENGTH=4],
+  [8], [SIMD_LENGTH=8],
+  [16], [SIMD_LENGTH=16],
+  [SIMD_LENGTH=1])],
+  [SIMD_LENGTH=1]
 )
 AC_MSG_RESULT([$SIMD_LENGTH])
 AC_DEFINE_UNQUOTED([SIMD_LENGTH], [$SIMD_LENGTH], [Length of SIMD vectors])
