@@ -9,281 +9,307 @@
 
 * Headers
   #+begin_src elisp :noexport :results none :exports none
-(org-babel-lob-ingest "../tools/lib.org")
-#+end_src
+  (org-babel-lob-ingest "../tools/lib.org")
+  #+end_src
 
   #+begin_src c :comments link :tangle (eval c_test) :noweb yes
-#include "qmckl.h"
-#include "assert.h"
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
-#include <math.h>
+  #include "qmckl.h"
+  #include "assert.h"
+  #ifdef HAVE_CONFIG_H
+    #include "config.h"
+  #endif
+  #include <math.h>
 
-int main() {
-  qmckl_context context;
-  context = qmckl_context_create();
-  qmckl_exit_code rc;
+  int main() {
+    qmckl_context context;
+    context = qmckl_context_create();
+    qmckl_exit_code rc;
   #+end_src
 
   #+NAME:kernel_generator_range
   #+begin_src python :noweb yes :exports none
-range(2, 22)
+  range(2, 22)
   #+end_src
 
 * Naïve Sherman-Morrison
-
 ** ~qmckl_sherman_morrison_naive~
-   :PROPERTIES:
-   :Name:     qmckl_sherman_morrison_naive
-   :CRetType: qmckl_exit_code
-   :FRetType: qmckl_exit_code
-   :END:
+    :PROPERTIES:
+    :Name:     qmckl_sherman_morrison_naive
+    :CRetType: qmckl_exit_code
+    :FRetType: qmckl_exit_code
+    :END:
 
-   This is the simplest of the available Sherman-Morrison-Woodbury kernels. It applies rank-1 updates one by one in
-   the order that is given. It only checks if the denominator in the Sherman-Morrison formula is not too close to
-   zero when an update is evaluated. It will exit with an error code of the denominator is too close to zero.
+    This is the simplest of the available Sherman-Morrison-Woodbury kernels. It applies rank-1 updates one by one in
+    the order that is given. It only checks if the denominator in the Sherman-Morrison formula is not too close to
+    zero when an update is evaluated. It will exit with an error code of the denominator is too close to zero.
 
-   The formula for any update $u_j$ (index $j$ is suppresed for clarity) that is applied is
-   \[
+    The formula for any update $u_j$ (index $j$ is suppresed for clarity) that is applied is
+    \[
     (S + uv^T)^{-1} = S^{-1} - \frac{S^{-1} uv^T S^{-1}}{1 + v^T S^{-1} u}
-   \]
+    \]
 
-   where
-   $S$ is the Slater-matrix,
-   $u$ and $v^T$ are the column and row vectors containing the updates,
-   $S^{-1}$ is the inverse of the Slater-matrix.
+    where
+    $S$ is the Slater-matrix,
+    $u$ and $v^T$ are the column and row vectors containing the updates,
+    $S^{-1}$ is the inverse of the Slater-matrix.
 
-   Even though the Slater-matrix $S$ with all updates applied at once is invertable, during the course of applying
-   updates to the inverse Slater-matrix $S^{-1}$ one-by-one it can happen that one of the intermediate inverse
-   matrices $S^{-1}$ becomes singular. Therefore a global threshold value $\epsilon$ is defined that is used to
-   evaluate each individual update $u_j$ when it is applied.
+    Even though the Slater-matrix $S$ with all updates applied at once is invertable, during the course of applying
+    updates to the inverse Slater-matrix $S^{-1}$ one-by-one it can happen that one of the intermediate inverse
+    matrices $S^{-1}$ becomes singular. Therefore a global threshold value $\epsilon$ is defined that is used to
+    evaluate each individual update $u_j$ when it is applied.
 
-   This value sets the lower bound for which the
-   denominator $1+v_j^TS^{-1}u_j$ is considered to be too small and will most probably result in a singular matrix
-   $S$, or at least in an inverse of $S$ of very poor numerical quality. Therefore, when $1+v_j^TS^{-1}u_j \geq \epsilon$,
-   the update is applied as usual and the kernel exits with return code \texttt{QMCKL_SUCCESS}.
-   If $1+v_j^TS^{-1}u_j \leq \epsilon$ the update is rejected and the kernel exits with return code \texttt{QMCKL_FAILURE}.
+    This value sets the lower bound for which the
+    denominator $1+v_j^TS^{-1}u_j$ is considered to be too small and will most probably result in a singular matrix
+    $S$, or at least in an inverse of $S$ of very poor numerical quality. Therefore, when $1+v_j^TS^{-1}u_j \geq \epsilon$,
+    the update is applied as usual and the kernel exits with return code \texttt{QMCKL_SUCCESS}.
+    If $1+v_j^TS^{-1}u_j \leq \epsilon$ the update is rejected and the kernel exits with return code \texttt{QMCKL_FAILURE}.
 
-   If the determinant of the Slater-matrix is passed, it will be updated to the determinant resulting
-   from applying the updates to the original matrix.
+    If the determinant of the Slater-matrix is passed, it will be updated to the determinant resulting
+    from applying the updates to the original matrix.
 
-   #+NAME: qmckl_sherman_morrison_naive_args
-   | qmckl_context | context                  | in    | Global state                                         |
-   | uint64_t      | LDS                      | in    | Leading dimension of Slater_inv                      |
-   | uint64_t      | Dim                      | in    | Dimension of Slater_inv                              |
-   | uint64_t      | N_updates                | in    | Number of rank-1 updates to be applied to Slater_inv |
-   | double        | Updates[N_updates*Dim]   | in    | Array containing the updates                         |
-   | uint64_t      | Updates_index[N_updates] | in    | Array containing the rank-1 updates                  |
-   | double        | breakdown                | in    | Break-down parameter on which to fail or not         |
-   | double        | Slater_inv[LDS*Dim]      | inout | Array containing the inverse of a Slater-matrix      |
-   | double*       | determinant              | inout | Determinant of the Slater-matrix                     |
+    #+NAME: qmckl_sherman_morrison_naive_args
+    | qmckl_context | context                  | in    | Global state                                         |
+    | uint64_t      | LDS                      | in    | Leading dimension of Slater_inv                      |
+    | uint64_t      | Dim                      | in    | Dimension of Slater_inv                              |
+    | uint64_t      | N_updates                | in    | Number of rank-1 updates to be applied to Slater_inv |
+    | double        | Updates[N_updates*Dim]   | in    | Array containing the updates                         |
+    | uint64_t      | Updates_index[N_updates] | in    | Array containing the rank-1 updates                  |
+    | double        | breakdown                | in    | Break-down parameter on which to fail or not         |
+    | double        | Slater_inv[LDS*Dim]      | inout | Array containing the inverse of a Slater-matrix      |
+    | double*       | determinant              | inout | Determinant of the Slater-matrix                     |
 
 *** Requirements
 
-    * ~context~ is not ~QMCKL_NULL_CONTEXT~
-    * ~LDS >= 2~
-    * ~Dim >= 2~
-    * ~N_updates >= 1~
-    * ~Updates~ is allocated with $N_updates \times Dim$ elements
-    * ~Updates_index~ is allocated with $N_updates$ elements
-    * ~breakdown~ is a small number such that $0 < breakdown << 1$
-    * ~Slater_inv~ is allocated with $Dim \times Dim$ elements
+      * ~context~ is not ~QMCKL_NULL_CONTEXT~
+      * ~LDS >= 2~
+      * ~Dim >= 2~
+      * ~N_updates >= 1~
+      * ~Updates~ is allocated with $N_updates \times Dim$ elements
+      * ~Updates_index~ is allocated with $N_updates$ elements
+      * ~breakdown~ is a small number such that $0 < breakdown << 1$
+      * ~Slater_inv~ is allocated with $Dim \times Dim$ elements
+
+*** Fortran source
+
+   #+begin_src f90 :tangle (eval f)
+     integer function qmckl_sherman_morrison_naive_doc_f &
+	 (context, Dim, N_updates, Updates, Updates_index, breakdown, Slater_inv, determinant) &
+	 bind(C)
+
+       use, intrinsic :: iso_c_binding
+       implicit none
+
+       integer (c_int64_t) , intent(in) , value :: context
+       integer (c_int64_t) , intent(in) , value :: Dim
+       integer (c_int64_t) , intent(in) , value :: N_updates
+       real    (c_double ) , intent(in)         :: Updates(N_updates*Dim)
+       integer (c_int64_t) , intent(in)         :: Updates_index(N_updates)
+       real    (c_double ) , intent(in) , value :: breakdown
+       real    (c_double ) , intent(inout)      :: Slater_inv(Dim*Dim)
+       real    (c_double ) , intent(inout)      :: determinant
+
+       write(*,*) "Function 'qmckl_sherman_morrison_naive_doc_f' does nothing for now..."
+
+     end function qmckl_sherman_morrison_naive_doc_f
+   #+end_src
+
 
 *** C header
 
-    #+CALL: generate_c_header(table=qmckl_sherman_morrison_naive_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+      #+CALL: generate_c_header(table=qmckl_sherman_morrison_naive_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
 
-    #+RESULTS:
-    #+begin_src c :tangle (eval h_func) :comments org
-    qmckl_exit_code qmckl_sherman_morrison_naive(
-	  const qmckl_context context,
-	  const uint64_t LDS,
-	  const uint64_t Dim,
-	  const uint64_t N_updates,
-	  const double* Updates,
-	  const uint64_t* Updates_index,
-	  const double breakdown,
-	  double* Slater_inv,
-	  double* determinant);
-    #+end_src
+      #+RESULTS:
+      #+begin_src c :tangle (eval h_func) :comments org
+      qmckl_exit_code qmckl_sherman_morrison_naive(
+          const qmckl_context context,
+          const uint64_t LDS,
+          const uint64_t Dim,
+          const uint64_t N_updates,
+          const double* Updates,
+          const uint64_t* Updates_index,
+          const double breakdown,
+          double* Slater_inv,
+          double* determinant);
+      #+end_src
 
+      #+begin_src c :tangle (eval h_func) :comments org
+      qmckl_exit_code qmckl_sherman_morrison_naive_doc(
+          const qmckl_context context,
+          const uint64_t Dim,
+          const uint64_t N_updates,
+          const double* Updates,
+          const uint64_t* Updates_index,
+          const double breakdown,
+          double* Slater_inv,
+          double* determinant);
+      #+end_src
 
+*** C source
 
+      #+begin_src c :tangle (eval c) :comments org
+      #include <stdbool.h>
+      #include <math.h>
+      #include "qmckl.h"
+      #include "config.h"
 
+      // Order important because
+      // __GNUC__ also set in ICC, ICX and CLANG
+      // __clang__ also set in ICX
+      #if defined(__INTEL_COMPILER)
+        #define IVDEP _Pragma("ivdep")
+        #define ALIGNED _Pragma("vector aligned") 
+      #elif defined(__INTEL_LLVM_COMPILER)
+        #define IVDEP _Pragma("ivdep")
+        #define ALIGNED _Pragma("vector aligned") 
+      #elif defined(__clang__)
+        #define IVDEP _Pragma("clang loop vectorize(enable)")
+        #define ALIGNED
+      #elif defined(__GNUC__)
+        #define IVDEP _Pragma("GCC ivdep")
+        #define ALIGNED
+      #endif
 
-    #+begin_src c :tangle (eval c) :comments org
-#include <stdbool.h>
-#include <math.h>
-#include "qmckl.h"
-#include "config.h"
+      qmckl_exit_code qmckl_sherman_morrison_naive_hpc(
+          const qmckl_context context,
+          const uint64_t LDS,
+          const uint64_t Dim,
+          const uint64_t N_updates,
+          const double* __restrict Updates,
+          const uint64_t* __restrict Updates_index,
+          const double breakdown,
+          double* __restrict Slater_inv,
+          double* __restrict determinant) {
 
-// Order important because
-// __GNUC__ also set in ICC, ICX and CLANG
-// __clang__ also set in ICX
-#if defined(__INTEL_COMPILER)
-  #define IVDEP _Pragma("ivdep")
-  #define ALIGNED _Pragma("vector aligned") 
-#elif defined(__INTEL_LLVM_COMPILER)
-  #define IVDEP _Pragma("ivdep")
-  #define ALIGNED _Pragma("vector aligned") 
-#elif defined(__clang__)
-  #define IVDEP _Pragma("clang loop vectorize(enable)")
-  #define ALIGNED
-#elif defined(__GNUC__)
-  #define IVDEP _Pragma("GCC ivdep")
-  #define ALIGNED
-#endif
+        if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+            return qmckl_failwith( context,
+                QMCKL_NULL_CONTEXT,
+                "qmckl_sherman_morrison_naive_hpc",
+                NULL);
+        }
 
-qmckl_exit_code qmckl_sherman_morrison_naive_hpc(
-    const qmckl_context context,
-    const uint64_t LDS,
-    const uint64_t Dim,
-    const uint64_t N_updates,
-    const double* __restrict Updates,
-    const uint64_t* __restrict Updates_index,
-    const double breakdown,
-    double* __restrict Slater_inv,
-    double* __restrict determinant) {
+        double __attribute__((aligned(8))) C[Dim];
+        double __attribute__((aligned(8))) D[LDS];
 
-    if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-        return qmckl_failwith( context,
-            QMCKL_NULL_CONTEXT,
-            "qmckl_sherman_morrison_naive_hpc",
-            NULL);
-    }
-
-    double __attribute__((aligned(8))) C[Dim];
-    double __attribute__((aligned(8))) D[LDS];
-
-    uint64_t l = 0;
-    // For each update
-    while (l < N_updates) {
-        // C = S^{-1} x u_l
-        for (uint64_t i = 0; i < Dim; i++) {
+        uint64_t l = 0;
+        // For each update
+        while (l < N_updates) {
+          // C = S^{-1} x u_l
+          for (uint64_t i = 0; i < Dim; i++) {
             C[i] = 0.0f;
             IVDEP
             ALIGNED
             for (uint64_t j = 0; j < LDS; j++) {
-                C[i] += Slater_inv[i * LDS + j] * Updates[l * LDS + j];
+              C[i] += Slater_inv[i * LDS + j] * Updates[l * LDS + j];
             }
-        }
+          }
 
-        // Denominator: v_l^T * C
-        const int cui = Updates_index[l] - 1;
-        double den = 1.0f + C[cui];
+          // Denominator: v_l^T * C
+          const int cui = Updates_index[l] - 1;
+          double den = 1.0f + C[cui];
 
-        if (fabs(den) < breakdown) {
+          if (fabs(den) < breakdown)
             return QMCKL_FAILURE;
-        }
-        double iden = 1.0f / den;
 
-        // Update det(A)
-        if (determinant)
+          double iden = 1.0f / den;
+
+          // Update det(A)
+          if (determinant)
             *determinant *= den;
 
-        // selecting column: v_l^T * S_inv
-        IVDEP
-        ALIGNED
-        for (uint64_t j = 0; j < LDS; j++) {
+          // selecting column: v_l^T * S_inv
+          IVDEP
+          ALIGNED
+          for (uint64_t j = 0; j < LDS; j++) {
             D[j] = Slater_inv[cui * LDS + j];
-        }
+          }
 
-        // A^{-1} = A^{-1} - C x D / den
-        for (uint64_t i = 0; i < Dim; i++) {
+          // A^{-1} = A^{-1} - C x D / den
+          for (uint64_t i = 0; i < Dim; i++) {
             IVDEP
             ALIGNED
             for (uint64_t j = 0; j < LDS; j++) {
-                const double update = C[i] * D[j] * iden;
-                Slater_inv[i * LDS + j] -= update;
+              const double update = C[i] * D[j] * iden;
+              Slater_inv[i * LDS + j] -= update;
             }
+          }
+          l += 1;
         }
-        l += 1;
-    }
-    return QMCKL_SUCCESS;
-}
-    #+end_src
-
-
-
-
-
-    #+NAME:naive_template_code
-    #+begin_src c
-static inline qmckl_exit_code qmckl_sherman_morrison_naive_{Dim}(
-                                const qmckl_context context,
-                                const uint64_t N_updates,
-                                const double* __restrict Updates,
-                                const uint64_t* __restrict Updates_index,
-                                const double breakdown,
-                                double* __restrict Slater_inv,
-                                double* __restrict determinant) {
-
-  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return qmckl_failwith( context,
-                           QMCKL_NULL_CONTEXT,
-                           "qmckl_sherman_morrison_naive_{Dim}",
-                           NULL);
-  }
-
-  #define D{Dim}_P ((1+({Dim}-1)/SIMD_LENGTH)*SIMD_LENGTH)
-
-  double __attribute__((aligned(8))) C[{Dim}];
-  double __attribute__((aligned(8))) D[D{Dim}_P];
-
-  uint64_t l = 0;
-  // For each update
-  while (l < N_updates) {
-    // C = A^{-1} x U_l
-    for (uint64_t i = 0; i < {Dim}; i++) {
-      C[i] = 0;
-      IVDEP
-      ALIGNED
-      for (uint64_t j = 0; j < D{Dim}_P; j++) {
-        C[i] += Slater_inv[i * D{Dim}_P + j] * Updates[l * D{Dim}_P + j];
+        return QMCKL_SUCCESS;
       }
-    }
+      #+end_src
 
-    // Denominator
-    const int cui = Updates_index[l] - 1;
-    double den = 1.0f + C[cui];
+      #+NAME:naive_template_code
+      #+begin_src c
+      static inline qmckl_exit_code qmckl_sherman_morrison_naive_{Dim}(
+          const qmckl_context context,
+          const uint64_t N_updates,
+          const double* __restrict Updates,
+          const uint64_t* __restrict Updates_index,
+          const double breakdown,
+          double* __restrict Slater_inv,
+          double* __restrict determinant) {
 
-    if (fabs(den) < breakdown) {
-      return QMCKL_FAILURE;
-    }
-    double iden = 1.0f / den;
+        if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+          return qmckl_failwith(context,
+              QMCKL_NULL_CONTEXT,
+              "qmckl_sherman_morrison_naive_{Dim}",
+              NULL);
+        }
 
-    // Update det(A)
-    if (determinant)
-      *determinant *= den;
+        #define D{Dim}_P ((1+({Dim}-1)/SIMD_LENGTH)*SIMD_LENGTH)
 
-    // selecting column: D = v_l^T * S_inv
-    IVDEP
-    ALIGNED
-    for (uint64_t j = 0; j < D{Dim}_P; j++) {
-      D[j] = Slater_inv[cui * D{Dim}_P + j];
-    }
+        double __attribute__((aligned(8))) C[{Dim}];
+        double __attribute__((aligned(8))) D[D{Dim}_P];
 
-    // A^{-1} = A^{-1} - C x D / den
-    for (uint64_t i = 0; i < {Dim}; i++) {
-      IVDEP
-      ALIGNED
-      for (uint64_t j = 0; j < D{Dim}_P; j++) {
-        double update = C[i] * D[j] * iden;
-        Slater_inv[i * D{Dim}_P + j] -= update;
+        uint64_t l = 0;
+        // For each update
+        while (l < N_updates) {
+          // C = A^{-1} x U_l
+          for (uint64_t i = 0; i < {Dim}; i++) {
+            C[i] = 0;
+            IVDEP
+            ALIGNED
+            for (uint64_t j = 0; j < D{Dim}_P; j++) {
+              C[i] += Slater_inv[i * D{Dim}_P + j] * Updates[l * D{Dim}_P + j];
+            }
+          }
+
+          // Denominator
+          const int cui = Updates_index[l] - 1;
+          double den = 1.0f + C[cui];
+
+          if (fabs(den) < breakdown) {
+            return QMCKL_FAILURE;
+          }
+          double iden = 1.0f / den;
+
+          // Update det(A)
+          if (determinant)
+            *determinant *= den;
+
+          // selecting column: D = v_l^T * S_inv
+          IVDEP
+          ALIGNED
+          for (uint64_t j = 0; j < D{Dim}_P; j++) {
+            D[j] = Slater_inv[cui * D{Dim}_P + j];
+          }
+
+          // A^{-1} = A^{-1} - C x D / den
+          for (uint64_t i = 0; i < {Dim}; i++) {
+            IVDEP
+            ALIGNED
+            for (uint64_t j = 0; j < D{Dim}_P; j++) {
+              double update = C[i] * D[j] * iden;
+              Slater_inv[i * D{Dim}_P + j] -= update;
+            }
+          }
+
+          l += 1;
+        }
+
+        return QMCKL_SUCCESS;
       }
-    }
-
-    l += 1;
-  }
-
-  return QMCKL_SUCCESS;
-}
-    #+end_src
-
-
-
-
+      #+end_src
 
     #+NAME:naive_kernel_generator
     #+begin_src python :noweb yes :exports none
@@ -297,10 +323,6 @@ for Dim in <<kernel_generator_range>>:
 
 return '\n'.join(result)
     #+end_src
-
-
-
-
 
     #+NAME:naive_switch-case_generator
     #+begin_src python :noweb yes :exports none
@@ -322,10 +344,6 @@ for Dim in <<kernel_generator_range>>:
 return '\n'.join(result)
     #+end_src
 
-
-
-
-
     #+begin_src c :tangle (eval c) :comments org :noweb yes
 <<naive_kernel_generator()>>
 
@@ -346,6 +364,7 @@ qmckl_exit_code qmckl_sherman_morrison_naive(const qmckl_context context,
                           NULL);
   }
 
+  #ifdef HAVE_HPC
   if (LDS == (1+(Dim-1)/SIMD_LENGTH)*SIMD_LENGTH) { // Most cases
     switch (Dim) {
       <<naive_switch-case_generator()>>
@@ -363,20 +382,115 @@ qmckl_exit_code qmckl_sherman_morrison_naive(const qmckl_context context,
     	                                determinant);
 
   }
+  #else
+  return qmckl_sherman_morrison_naive_doc(context,
+                                      Dim,
+    	                                N_updates,
+    	                                Updates,
+    	                                Updates_index,
+    	                                breakdown,
+    	                                Slater_inv,
+    	                                determinant);
+  #endif
   
   return QMCKL_FAILURE;
 }
     #+end_src
 
+*** Test                                                           :noexport:
 
+    The tests for the kernels are executed on datasets that are extracted from a run of 
+    QMC=Chem on Benzene (21 spin-up/21 spin down electrons) using 329 unique alpha determinants. 
+    The tests are run such that the kernels reject the computed inverse whenever the computed 
+    intermediate determinants or denominators are smaller than 1e-3. This is the default value in 
+    QMC=Chem. The tests will return QMCKL_SUCCESS whenever all the elements of the final matrix 
+    $R=S.S^-1 - 1$ are smaller than the given tolerance value of 1e-3, and will return 
+    QMCKL_FAILURE if the values are larger than this tolerance value.
 
+    #+begin_src c :tangle (eval c_test)
+    const uint64_t Dim = 21;
+    const uint64_t LDS = (1+(Dim-1)/SIMD_LENGTH)*SIMD_LENGTH;
+    const double breakdown = 1e-3;
+    const double tolerance = 1e-3;
+    double res[441];
 
+    #include "sm_test.h"
 
-*** Performance
+    assert(Updates1 != NULL);
+    assert(Updates_index1 != NULL);
+    assert(Slater_inv1 != NULL);
 
-    This function performs best when there is only 1 rank-1 update in the update cycle. It is not useful to
-    use Sherman-Morrison with update splitting for these cycles since splitting can never resolve a situation
-    where applying the update causes singular behaviour.
+    // original determinant of Slater1 (before applying updates)
+    double det = 3.407025646103221e-10;
+    rc = qmckl_sherman_morrison_naive(context,
+                                LDS,
+                                Dim,
+                                N_updates1,
+                                Updates1,
+                                Updates_index1,
+                                breakdown,
+                                Slater_inv1,
+                                &det);
+
+    // Check that the determinant is updated properly
+    assert(fabs(det + 4.120398385068217e-10) < 1e-15);
+
+    for (unsigned int i = 0; i < Dim; i++) {
+      for (unsigned int j = 0; j < Dim; j++) {
+        res[i * Dim + j] = 0;
+        for (unsigned int k = 0; k < Dim; k++) {
+          res[i * Dim + j] += Slater1[i * Dim + k] * Slater_inv1[k * LDS + j];
+        }
+      }
+    }
+    rc = QMCKL_SUCCESS;
+    for (unsigned int i = 0; i < Dim; i++) {
+      for (unsigned int j = 0; j < Dim; j++) {
+        if (i == j && fabs(res[i * Dim + j] - 1) > tolerance) {
+          rc = QMCKL_FAILURE;
+        }
+        if (i != j && fabs(res[i * Dim + j]) > tolerance) {
+          rc = QMCKL_FAILURE;
+        }
+      }
+    }
+    assert(rc == QMCKL_SUCCESS);
+    #+end_src
+
+** Performance
+
+    This function performs best when there is only 1 rank-1 update in the update cycle. It is 
+    not useful to use Sherman-Morrison with update splitting for these cycles since splitting 
+    can never resolve a situation where applying the update causes singular behaviour.
+
+** C interface
+#+begin_src f90 :tangle (eval f) :comments org :exports none
+   interface
+     integer(c_int32_t) function qmckl_sherman_morrison_naive_doc &
+	 (context, Dim, N_updates, Updates, Updates_index, breakdown, Slater_inv, determinant) &
+	 bind(C)
+
+       use, intrinsic :: iso_c_binding
+       import
+       implicit none
+
+       integer (c_int64_t) , intent(in) , value :: context
+       integer (c_int64_t) , intent(in) , value :: Dim
+       integer (c_int64_t) , intent(in) , value :: N_updates
+       real    (c_double ) , intent(in)         :: Updates(N_updates*Dim)
+       integer (c_int64_t) , intent(in)         :: Updates_index(N_updates)
+       real    (c_double ) , intent(in) , value :: breakdown
+       real    (c_double ) , intent(inout)      :: Slater_inv(Dim*Dim)
+       real    (c_double ) , intent(inout)      :: determinant
+
+      integer(c_int32_t), external :: qmckl_sherman_morrison_naive_doc_f
+      info = qmckl_sherman_morrison_naive_doc_f &
+                  (context, Dim, N_updates, Updates, &
+                   Updates_index, breakdown, Slater_inv, determinant)
+
+     end function qmckl_sherman_morrison_naive_doc
+   end interface
+   #+end_src
 
 ** Fortran interface                                               :noexport:
    :PROPERTIES:
@@ -412,63 +526,31 @@ qmckl_exit_code qmckl_sherman_morrison_naive(const qmckl_context context,
    end interface
    #+end_src
 
-*** Test                                                           :noexport:
+   #+begin_src f90 :tangle (eval fh_func) :comments org :exports none
+   interface
+     integer(c_int32_t) function qmckl_sherman_morrison_naive_doc &
+	 (context, Dim, N_updates, Updates, Updates_index, breakdown, Slater_inv, determinant) &
+	 bind(C)
 
-The tests for the kernels are executed on datasets that are extracted from a run of QMC=Chem on Benzene (21 spin-up/21 spin down electrons) using 329 unique alpha determinants. The tests are run such that the kernels reject the computed inverse whenever the computed intermediate determinants or denominators are smaller than 1e-3. This is the default value in QMC=Chem. The tests will return QMCKL_SUCCESS whenever all the elements of the final matrix $R=S.S^-1 - 1$ are smaller than the given tolerance value of 1e-3, and will return QMCKL_FAILURE if the values are larger than this tolerance value.
+       use, intrinsic :: iso_c_binding
+       import
+       implicit none
 
-     #+begin_src c :tangle (eval c_test)
-const uint64_t Dim = 21;
-const uint64_t LDS = (1+(Dim-1)/SIMD_LENGTH)*SIMD_LENGTH;
-const double breakdown = 1e-3;
-const double tolerance = 1e-3;
-double res[441];
+       integer (c_int64_t) , intent(in) , value :: context
+       integer (c_int64_t) , intent(in) , value :: Dim
+       integer (c_int64_t) , intent(in) , value :: N_updates
+       real    (c_double ) , intent(in)         :: Updates(N_updates*Dim)
+       integer (c_int64_t) , intent(in)         :: Updates_index(N_updates)
+       real    (c_double ) , intent(in) , value :: breakdown
+       real    (c_double ) , intent(inout)      :: Slater_inv(Dim*Dim)
+       real    (c_double ) , intent(inout)      :: determinant
 
-#include "sm_test.h"
-
-assert(Updates1 != NULL);
-assert(Updates_index1 != NULL);
-assert(Slater_inv1 != NULL);
-
-// original determinant of Slater1 (before applying updates)
-double det = 3.407025646103221e-10;
-rc = qmckl_sherman_morrison_naive(context,
-                            LDS,
-                            Dim,
-                            N_updates1,
-                            Updates1,
-                            Updates_index1,
-                            breakdown,
-                            Slater_inv1,
-                            &det);
-
-// Check that the determinant is updated properly
-assert(fabs(det + 4.120398385068217e-10) < 1e-15);
-
-for (unsigned int i = 0; i < Dim; i++) {
-  for (unsigned int j = 0; j < Dim; j++) {
-    res[i * Dim + j] = 0;
-    for (unsigned int k = 0; k < Dim; k++) {
-      res[i * Dim + j] += Slater1[i * Dim + k] * Slater_inv1[k * LDS + j];
-    }
-  }
-}
-rc = QMCKL_SUCCESS;
-for (unsigned int i = 0; i < Dim; i++) {
-  for (unsigned int j = 0; j < Dim; j++) {
-    if (i == j && fabs(res[i * Dim + j] - 1) > tolerance) {
-      rc = QMCKL_FAILURE;
-    }
-    if (i != j && fabs(res[i * Dim + j]) > tolerance) {
-      rc = QMCKL_FAILURE;
-    }
-  }
-}
-assert(rc == QMCKL_SUCCESS);
-     #+end_src
+     end function qmckl_sherman_morrison_naive_doc
+   end interface
+   #+end_src
 
 * Woodbury 2x2
-
-** ~qmckl_woodbury_2x2~
+  ** ~qmckl_woodbury_2x2~
    :PROPERTIES:
    :Name:     qmckl_woodbury_2x2
    :CRetType: qmckl_exit_code
@@ -790,13 +872,12 @@ qmckl_exit_code qmckl_woodbury_2x2(const qmckl_context context,
 
 
 
-
 *** Performance
 
     This function is most efficient when used in cases where there are only 2 rank-1 updates and
     it is sure they will not result in a singular matrix.
 
-** Fortran interface                                              :noexport:
+  ** Fortran interface                                              :noexport:
    :PROPERTIES:
    :Name:     qmckl_woodbury_2x2
    :CRetType: qmckl_exit_code
@@ -860,7 +941,6 @@ assert(rc == QMCKL_SUCCESS);
      #+end_src
 
 * Woodbury 3x3
-
 ** ~qmckl_woodbury_3x3~
    :PROPERTIES:
    :Name:     qmckl_woodbury_3x3
@@ -1209,13 +1289,12 @@ qmckl_exit_code qmckl_woodbury_3x3(const qmckl_context context,
     #+end_src
 
 
-
 *** Performance...
 
     This function is most efficient when used in cases where there are only 3 rank-1 updates and
     it is sure they will not result in a singular matrix.
 
-** Fortran interface                                               :noexport:
+  ** Fortran interface                                               :noexport:
    :PROPERTIES:
    :Name:     qmckl_woodbury_3x3
    :CRetType: qmckl_exit_code
@@ -1279,7 +1358,6 @@ assert(rc == QMCKL_SUCCESS);
      #+end_src
 
 * Sherman-Morrison with update splitting
-
 ** ~qmckl_sherman_morrison_splitting~
    :PROPERTIES:
    :Name:     qmckl_sherman_morrison_splitting
@@ -1313,7 +1391,6 @@ assert(rc == QMCKL_SUCCESS);
    | double*       | determinant              | inout | Determinant of the Slater-matrix                     |
    If the determinant of the Slater-matrix is passed, it will be updated to the determinant resulting
    from applying the updates to the original matrix.
-
 
 *** Requirements
 
@@ -1454,8 +1531,7 @@ assert(rc == QMCKL_SUCCESS);
      #+end_src
 
 * Woodbury 3x3 and 2x2 with Sherman-Morrison and update splitting
-
-** ~qmckl_sherman_morrison_smw32s~
+  ** ~qmckl_sherman_morrison_smw32s~
    :PROPERTIES:
    :Name:     qmckl_sherman_morrison_smw32s
    :CRetType: qmckl_exit_code
@@ -1639,7 +1715,7 @@ qmckl_exit_code qmckl_sherman_morrison_smw32s(const qmckl_context context,
 
     This kernel performs best for update cycles with 2 or more rank-1 updates and the fail-rate is low.
 
-** Fortran interface                                               :noexport:
+  ** Fortran interface                                               :noexport:
    :PROPERTIES:
    :Name:     qmckl_sherman_morrison_smw32s
    :CRetType: qmckl_exit_code
