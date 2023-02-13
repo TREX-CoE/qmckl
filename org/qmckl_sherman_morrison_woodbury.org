@@ -81,6 +81,9 @@ from applying the updates to the original matrix.
 | ~determinant~   | ~double~                | inout  | Determinant of the Slater-matrix                     |
 
 ** Pedagogical kernel source (in Fortran)
+The following source code written in Fortran is inteded to illustrate how the kernel works. Even though the kernel is
+able to do numerically correct computations, it does not do it in the most efficient way possible. It should therefore
+not be used in real workloads.
 
 #+begin_src f90 :tangle (eval f)
 integer function qmckl_sherman_morrison_naive_doc_f(context, &
@@ -118,6 +121,8 @@ end function qmckl_sherman_morrison_naive_doc_f
 #+end_src
 
 *** C interface to the pedagogical kernel
+The following interface block in Fortran makes sure that the pedagogical kernel,
+written in Fortran, can be called from C using the ~ISO_C_BINDING~. 
 
 #+CALL: generate_c_interface(table=qmckl_sherman_morrison_naive_args,rettyp=get_value("CRetType"),fname="qmckl_sherman_morrison_naive_doc")
 
@@ -210,7 +215,7 @@ qmckl_exit_code qmckl_sherman_morrison_naive_doc (
 #+end_src
 
 ** C sources
-
+Common includes and macros used by all the Sherman-Morrison-Woodbury kernels.
 #+begin_src c :tangle (eval c) :comments org
 #include <stdbool.h>
 #include <math.h>
@@ -235,6 +240,15 @@ qmckl_exit_code qmckl_sherman_morrison_naive_doc (
 #endif
 #+end_src
 
+~qmckl_sherman_morrison_naive_hpc~ is a high performance variation of
+~qmckl_sherman_morrison_naive~ written in C. It is used in cases when ~Dim~ is
+smaller than the leading dimension ~LDS~, irrespective of whetether ~LDS~
+includes zero padding to benefit from SIMD instructions or not. Cases like this
+include situations where one wants to apply updates to a square submatrix of the
+full matrix.
+It takes advantage of memory aligned data and assumes no data dependencies
+inside the loops. The loops are fully vectorised whenever ~Dim~ is an integer
+multiple of ~SIMD_LEGTH~.
 #+begin_src c :tangle (eval c) :comments org
 qmckl_exit_code qmckl_sherman_morrison_naive_hpc(
     const qmckl_context context,
@@ -265,7 +279,7 @@ qmckl_exit_code qmckl_sherman_morrison_naive_hpc(
       C[i] = 0.0f;
       IVDEP
       ALIGNED
-      for (uint64_t j = 0; j < LDS; j++) {
+      for (uint64_t j = 0; j < Dim; j++) {
         C[i] += Slater_inv[i * LDS + j] * Updates[l * LDS + j];
       }
     }
@@ -286,7 +300,7 @@ qmckl_exit_code qmckl_sherman_morrison_naive_hpc(
     // selecting column: v_l^T * S_inv
     IVDEP
     ALIGNED
-    for (uint64_t j = 0; j < LDS; j++) {
+    for (uint64_t j = 0; j < Dim; j++) {
       D[j] = Slater_inv[cui * LDS + j];
     }
 
@@ -294,7 +308,7 @@ qmckl_exit_code qmckl_sherman_morrison_naive_hpc(
     for (uint64_t i = 0; i < Dim; i++) {
       IVDEP
       ALIGNED
-      for (uint64_t j = 0; j < LDS; j++) {
+      for (uint64_t j = 0; j < Dim; j++) {
         const double update = C[i] * D[j] * iden;
         Slater_inv[i * LDS + j] -= update;
       }
