@@ -73,7 +73,7 @@ def main():
         TEXT[org]     = text
         HTML[org]     = html
 
-        grep = open(org, "r").read()
+        grep = open(org, "r", encoding="utf-8").read()
 
         if "(eval c)" in grep:
            C_FILES   += [c]
