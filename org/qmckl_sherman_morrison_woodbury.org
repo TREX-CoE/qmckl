@@ -26,6 +26,7 @@ int main() {
   qmckl_exit_code rc;
 #+end_src
 
+This is the range that determines the how many high performance kernel instantces will be generated, using the C-function templates defined in the sections below. If the name of the C-function template is called ~qmckl_kernel_{Dim}~, then ~range(K, L+1)~ will results in kernel instances from ~qmckl_kernel_K~ to ~qmckl_kernel_L~.
 #+NAME:kernel_generator_range
 #+begin_src python :noweb yes :exports none
 range(2, 22)
@@ -42,6 +43,10 @@ range(2, 22)
 This is the simplest of the available Sherman-Morrison-Woodbury kernels. It applies rank-1 updates one by one in
 the order that is given. It only checks if the denominator in the Sherman-Morrison formula is not too close to
 zero when an update is evaluated. It will exit with an error code of the denominator is too close to zero.
+
+#+TODO
+Change the math notation so that the update vectors appear as row in the math
+so that it is consistent with the representation in C (memory)
 
 The formula for any update $u_j$ (index $j$ is suppresed for clarity) that is applied is
 \[
@@ -85,48 +90,143 @@ The following source code written in Fortran is inteded to illustrate how the ke
 able to do numerically correct computations, it does not do it in the most efficient way possible. It should therefore
 not be used in real workloads.
 
+#+begin_src f90 :tangle (eval f) :comment org :export none
+subroutine convert(upds, s_inv, Updates, Inverse, nupdates, lds, dim)
+  implicit none
+  integer*8 , intent(in)                             :: lds, dim, nupdates
+  real*8    , intent(in)                             :: upds(nupdates * lds)
+  real*8    , intent(in)                             :: s_inv(dim * lds)  
+  real*8    , intent(out) , dimension(lds, nupdates) :: Updates
+  real*8    , intent(out) , dimension(dim, lds)      :: Inverse
+
+  integer*8                                          :: i, j
+
+  ! Construct Updates: lds x nupdates
+  do i = 1, nupdates
+    do j = 1, lds
+      Updates(j, i) = upds((i - 1) * lds + j)
+    end do
+  end do
+
+  ! Construct Inverse: dim x lds
+  do i = 1, dim
+    do j = 1, lds
+      Inverse(i, j) = s_inv((i - 1) * lds + j)
+    end do
+  end do
+end subroutine convert
+#+end_src
+
+#+begin_src f90 :tangle (eval f) :comment org :export none
+subroutine copy_back(Inverse, s_inv, lds, dim)
+  implicit none
+  integer*8 , intent(in)                       :: lds, dim
+  real*8    , intent(in) , dimension(dim, lds) :: Inverse
+  real*8    , intent(out)                      :: s_inv(dim * lds)  
+
+  integer*8                                    :: i, j
+
+  ! Copy updated inverse back to s_inv
+  do i = 1, dim
+    do j = 1, lds
+      s_inv((i - 1) * lds + j) = Inverse(i, j)
+    end do
+  end do
+end subroutine copy_back
+#+end_src
+
 #+begin_src f90 :tangle (eval f)
 integer function qmckl_sherman_morrison_naive_doc_f(context, &
-    LDS, Dim, &
-    N_updates, &
-    Updates, &
-    Updates_index, &
+    lds, dim, &
+    nupdates, &
+    upds, &
+    updates_index, &
     breakdown, &
-    Slater_inv, &
+    s_inv, &
     determinant) result(info)
 
   use qmckl
   implicit none
   integer*8 , intent(in)    :: context
-  integer*8 , intent(in)    :: LDS, Dim
-  integer*8 , intent(in)    :: N_updates
-  integer*8 , intent(in)    :: Updates_index(N_updates)
-  real*8    , intent(in)    :: Updates(N_updates*LDS)
+  integer*8 , intent(in)    :: lds, dim
+  integer*8 , intent(in)    :: nupdates
+  integer*8 , intent(in)    :: updates_index(nupdates)
+  real*8    , intent(in)    :: upds(nupdates * lds)
   real*8    , intent(in)    :: breakdown
-  real*8    , intent(inout) :: Slater_inv(Dim*LDS)
+  real*8    , intent(inout) :: s_inv(dim * lds)
   real*8    , intent(inout) :: determinant
 
-  info = 0
+  real*8 , dimension(lds, nupdates) :: Updates
+  real*8 , dimension(dim, lds)      :: Inverse
+  real*8 , dimension(dim)           :: C
+  real*8 , dimension(lds)           :: D
+  real*8                            :: denominator, idenominator, update
+  integer*8                         :: i, j, l, row
+
+  info = QMCKL_FAILURE
 
   if (context == QMCKL_NULL_CONTEXT) then
     info = QMCKL_INVALID_CONTEXT
     return
   endif
 
-  write(*,*) "Function 'qmckl_sherman_morrison_naive_doc_f' does nothing for now..."
+  call convert(upds, s_inv, Updates, Inverse, nupdates, lds, dim)
+
+  l = 1;
+  ! For each update do...
+  do while (l < nupdates + 1)
+
+    ! Compute C = S^{-1}U(l)
+    do i = 1, dim
+      C(i) = 0
+      do j = 1, dim
+        C(i) = C(i) + Inverse(i, j) * Updates(j, l)
+      end do
+    end do
+
+    ! Compute denominator = 1 + V(l)^TC
+    row = updates_index(l)
+    denominator = 1 + C(row)
+
+    ! Return early if denominator is too small
+    if (abs(denominator) < breakdown) return
+    idenominator = 1 / denominator
+
+    ! Update det(S)
+    determinant = determinant * denominator
+
+    ! selecting column: v_l^T * S_inv
+    D = Inverse(row, :)
+
+    ! A^{-1} = A^{-1} - C x D / denominator
+    do i = 1, dim
+      do j = 1, dim
+        update = C(i) * D(j) * idenominator
+        Inverse(i, j) = Inverse(i, j) - update
+      end do
+    end do
+
+    l = l + 1
+  end do
+
+  ! Copy updated inverse back to s_inv
+  call copy_back(Inverse, s_inv, lds, dim)
 
   info = QMCKL_SUCCESS
 
 end function qmckl_sherman_morrison_naive_doc_f
 #+end_src
 
-*** C interface to the pedagogical kernel
-The following interface block in Fortran makes sure that the pedagogical kernel,
-written in Fortran, can be called from C using the ~ISO_C_BINDING~. 
+*** C interface to the pedagogical kernel (not directly exposed)
+The following Fortran function ~qmckl_sherman_morrison_naive_doc~ makes sure
+that the pedagogical kernel ~qmckl_sherman_morrison_naive_doc_f~, written in
+Fortran, can be called from C using the ~ISO_C_BINDING~. The Fortran function ~qmckl_sherman_morrison_naive_doc~ will be exposed in the header file 'qmckl.h'
+for C users and in the module file 'qmckl_f.F90' for Fortran users.
 
 #+CALL: generate_c_interface(table=qmckl_sherman_morrison_naive_args,rettyp=get_value("CRetType"),fname="qmckl_sherman_morrison_naive_doc")
 
-#+begin_src f90 :tangle (eval f)
+#+RESULTS:
+#+begin_src f90 :tangle (eval f) :comments org :exports none
 integer(c_int32_t) function qmckl_sherman_morrison_naive_doc &
     (context, LDS, Dim, N_updates, Updates, Updates_index, breakdown, Slater_inv, determinant) &
     bind(C) result(info)
@@ -150,6 +250,7 @@ integer(c_int32_t) function qmckl_sherman_morrison_naive_doc &
 
 end function qmckl_sherman_morrison_naive_doc
 #+end_src
+
 
 ** Requirements
 
@@ -318,6 +419,7 @@ qmckl_exit_code qmckl_sherman_morrison_naive_hpc(
 }
 #+end_src
 
+~qmckl_exit_code qmckl_sherman_morrison_naive_{Dim}~ is a C function-template that is used to genereate instances of C fucntions based on the range given above. The advantage of this method is that for each of these instances all the dimensions and loop-bounds are known at compile time, allowing the compiler to optimize more aggressively.
 #+NAME:naive_template_code
 #+begin_src c
   static inline qmckl_exit_code qmckl_sherman_morrison_naive_{Dim}(
@@ -391,6 +493,7 @@ qmckl_exit_code qmckl_sherman_morrison_naive_hpc(
   }
   #+end_src
 
+This is the kernel generator written in Python. It uses the kernel generator range and templates defined above to generate the C kernel instances.
 #+NAME:naive_kernel_generator
 #+begin_src python :noweb yes :exports none
 text="""
@@ -404,6 +507,7 @@ for Dim in <<kernel_generator_range>>:
 return '\n'.join(result)
 #+end_src
 
+Python script that generated C switch cases that call individual kernel instances.
 #+NAME:naive_switch-case_generator
 #+begin_src python :noweb yes :exports none
 text="""
@@ -419,11 +523,12 @@ case {Dim}:
 result = []
 for Dim in <<kernel_generator_range>>:
     Dim=str(Dim)
-result.append(text.replace("{Dim}",Dim) )
+    result.append(text.replace("{Dim}",Dim) )
 
 return '\n'.join(result)
 #+end_src
 
+~qmckl_sherman_morrison_naive~ is the general function that contains decision making logic that calls the proper kernel based on the used library configuration (~--enable-doc~ and ~--enable-hpc~) and the passed array dimensions ~LDS~ and ~Dim~.
 #+begin_src c :tangle (eval c) :comments org :noweb yes
 <<naive_kernel_generator()>>
 
