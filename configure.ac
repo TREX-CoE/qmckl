@@ -223,6 +223,8 @@ AC_RUN_IFELSE(
 int simd=1;
 #if defined(__AVX512F__)
    simd=8;
+#elif defined(__AVX2__)
+   simd=4;
 #elif defined(__AVX__)
    simd=4;
 #elif defined(__SSE2__)
