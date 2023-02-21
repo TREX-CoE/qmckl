@@ -132,7 +132,7 @@ end subroutine convert
 #+end_src
 
 #+begin_src f90 :tangle (eval f) :comment org :exports none
-subroutine copy_back(Inverse, s_inv, lds, dim)
+subroutine copy_back_inv(Inverse, s_inv, lds, dim)
   implicit none
   integer*8 , intent(in)                       :: lds, dim
   real*8    , intent(in) , dimension(dim, lds) :: Inverse
@@ -146,7 +146,25 @@ subroutine copy_back(Inverse, s_inv, lds, dim)
       s_inv((i - 1) * lds + j) = Inverse(i, j)
     end do
   end do
-end subroutine copy_back
+end subroutine copy_back_inv
+#+end_src
+
+#+begin_src f90 :tangle (eval f) :comment org :exports none
+subroutine copy_back_lu(Later_updates, later_upds, lds, nupdates)
+  implicit none
+  integer*8 , intent(in)                            :: lds, nupdates
+  real*8    , intent(in) , dimension(nupdates, lds) :: Later_updates
+  real*8    , intent(out)                           :: later_upds(nupdates * lds)  
+
+  integer*8                                    :: i, j
+
+  ! Copy updated inverse back to s_inv
+  do i = 1, nupdates
+    do j = 1, lds
+      later_upds((i - 1) * lds + j) = Later_updates(i, j)
+    end do
+  end do
+end subroutine copy_back_lu
 #+end_src
 
 #+begin_src f90 :tangle (eval f)
@@ -539,20 +557,21 @@ return '\n'.join(result)
 ~qmckl_sm_naive~ is a generic function that contains decision making logic that calls the proper kernel based on the used library configuration (~--enable-doc~ and ~--enable-hpc~) and the passed array dimensions ~LDS~ and ~Dim~.
 #+begin_src c :tangle (eval c) :comments org :noweb yes
 qmckl_exit_code qmckl_sm_naive(const qmckl_context context,
-                                const uint64_t LDS,
-                                const uint64_t Dim,
-                                const uint64_t N_updates,
-                                const double* Updates,
-                                const uint64_t* Updates_index,
-                                const double breakdown,
-                                double* Slater_inv,
-                                double* determinant) {
+    const uint64_t LDS,
+    const uint64_t Dim,
+    const uint64_t N_updates,
+    const double* Updates,
+    const uint64_t* Updates_index,
+    const double breakdown,
+    double* Slater_inv,
+    double* determinant) {
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return qmckl_failwith(context,
-                          QMCKL_NULL_CONTEXT,
-                          "qmckl_sm_naive",
-                          NULL);
+    return qmckl_failwith(
+        context,
+        QMCKL_NULL_CONTEXT,
+        "qmckl_sm_naive",
+        NULL);
   }
 
   #ifdef HAVE_HPC
@@ -562,26 +581,28 @@ qmckl_exit_code qmckl_sm_naive(const qmckl_context context,
     }
   }
   else { // Updating smaller sub-matrix
-    return qmckl_sm_naive_hpc(context,
-                                      LDS,
-                                      Dim,
-    	                              N_updates,
-    	                              Updates,
-    	                              Updates_index,
-    	                              breakdown,
-    	                              Slater_inv,
-    	                              determinant);
+    return qmckl_sm_naive_hpc(
+        context,
+        LDS,
+        Dim,
+        N_updates,
+        Updates,
+        Updates_index,
+        breakdown,
+        Slater_inv,
+        determinant);
   }
   #else
-  return qmckl_sm_naive_doc(context,
-                                      LDS,
-                                      Dim,
-    	                              N_updates,
-                                      Updates,
-    	                              Updates_index,
-    	                              breakdown,
-    	                              Slater_inv,
-    	                              determinant);
+  return qmckl_sm_naive_doc(
+      context,
+      LDS,
+      Dim,
+      N_updates,
+      Updates,
+      Updates_index,
+      breakdown,
+      Slater_inv,
+      determinant);
   #endif
   
   return QMCKL_FAILURE;
@@ -621,6 +642,32 @@ interface
 end interface
 #+end_src
 
+#+CALL: generate_f_interface(table=qmckl_sm_naive_args,rettyp=get_value("FRetType"),fname=get_value("Name"))
+
+#+RESULTS:
+#+begin_src f90 :tangle (eval fh_func) :comments org :exports none
+interface
+  integer(c_int32_t) function qmckl_sm_naive &
+      (context, LDS, Dim, N_updates, Updates, Updates_index, breakdown, Slater_inv, determinant) &
+      bind(C)
+    use, intrinsic :: iso_c_binding
+    import
+    implicit none
+
+    integer (c_int64_t) , intent(in)  , value :: context
+    integer (c_int64_t) , intent(in)  , value :: LDS
+    integer (c_int64_t) , intent(in)  , value :: Dim
+    integer (c_int64_t) , intent(in)  , value :: N_updates
+    real    (c_double ) , intent(in)          :: Updates(N_updates*LDS)
+    integer (c_int64_t) , intent(in)          :: Updates_index(N_updates)
+    real    (c_double ) , intent(in)  , value :: breakdown
+    real    (c_double ) , intent(inout)        :: Slater_inv(Dim*LDS)
+    real    (c_double ) , intent(inout)        :: determinant
+
+  end function qmckl_sm_naive
+end interface
+#+end_src
+
 #+CALL: generate_f_interface(table=qmckl_sm_naive_args,rettyp=get_value("FRetType"),fname="qmckl_sm_naive_doc")
 
 #+RESULTS:
@@ -644,32 +691,6 @@ interface
     real    (c_double ) , intent(inout)        :: determinant
 
   end function qmckl_sm_naive_doc
-end interface
-#+end_src
-
-#+CALL: generate_f_interface(table=qmckl_sm_naive_args,rettyp=get_value("FRetType"),fname="qmckl_sm_naive")
-
-#+RESULTS:
-#+begin_src f90 :tangle (eval fh_func) :comments org :exports none
-interface
-  integer(c_int32_t) function qmckl_sm_naive &
-      (context, LDS, Dim, N_updates, Updates, Updates_index, breakdown, Slater_inv, determinant) &
-      bind(C)
-    use, intrinsic :: iso_c_binding
-    import
-    implicit none
-
-    integer (c_int64_t) , intent(in)  , value :: context
-    integer (c_int64_t) , intent(in)  , value :: LDS
-    integer (c_int64_t) , intent(in)  , value :: Dim
-    integer (c_int64_t) , intent(in)  , value :: N_updates
-    real    (c_double ) , intent(in)          :: Updates(N_updates*LDS)
-    integer (c_int64_t) , intent(in)          :: Updates_index(N_updates)
-    real    (c_double ) , intent(in)  , value :: breakdown
-    real    (c_double ) , intent(inout)        :: Slater_inv(Dim*LDS)
-    real    (c_double ) , intent(inout)        :: determinant
-
-  end function qmckl_sm_naive
 end interface
 #+end_src
 
@@ -803,27 +824,32 @@ integer function qmckl_sm_splitting_core_doc_f( &
     updates_index, &
     breakdown, &
     s_inv, &
-    later_updates, &
-    later_index, &
-    later, &
+    later_upds, &
+    Later_index, &
+    Later, &
     determinant) result(info)
 
   use qmckl
   implicit none
-  integer*8 , intent(in)    :: context
-  integer*8 , intent(in)    :: lds, dim
-  integer*8 , intent(in)    :: nupdates
-  integer*8 , intent(in)    :: updates_index(nupdates)
-  real*8    , intent(in)    :: upds(nupdates * lds)
-  real*8    , intent(in)    :: breakdown
-  real*8    , intent(inout) :: s_inv(dim * lds)
-  real*8    , intent(inout) :: later_updates(nupdates * lds)
-  integer*8 , intent(inout) :: later_index(nupdates)
-  integer*8 , intent(inout) :: later
-  real*8    , intent(inout) :: determinant
+  integer*8 , intent(in)            :: context
+  integer*8 , intent(in)            :: lds, dim
+  integer*8 , intent(in)            :: nupdates
+  integer*8 , intent(in)            :: updates_index(nupdates)
+  real*8    , intent(in)            :: upds(nupdates * lds)
+  real*8    , intent(in)            :: breakdown
+  real*8    , intent(inout)         :: s_inv(dim * lds)
+  real*8    , intent(inout)         :: determinant
+  integer*8 , intent(inout)         :: Later
+  integer*8 , intent(inout)         :: Later_index(nupdates)
+  real*8    , intent(inout)         :: later_upds(nupdates * lds)
 
-  real*8 , dimension(lds, nupdates) :: Updates
+  real*8 , dimension(nupdates, lds) :: Updates
+  real*8 , dimension(nupdates, lds) :: Later_updates
   real*8 , dimension(dim, lds)      :: Inverse
+  real*8 , dimension(dim)           :: C
+  real*8 , dimension(lds)           :: D
+  real*8                            :: denominator, idenominator, update
+  integer*8                         :: i, j, l, row
 
   info = QMCKL_FAILURE
 
@@ -831,15 +857,65 @@ integer function qmckl_sm_splitting_core_doc_f( &
     info = QMCKL_INVALID_CONTEXT
     return
   endif
-  
+
   ! Convert 'upds' and 's_inv' into the more easily readable Fortran
   ! matrices 'Updates' and 'Inverse'.
   call convert(upds, s_inv, Updates, Inverse, nupdates, lds, dim)
 
-  ! YET TO BE IMPLEMENTED
 
-  ! Copy updated inverse back to s_inv
-  call copy_back(Inverse, s_inv, lds, dim)
+  l = 1;
+  ! For each update do...
+  do while (l < nupdates + 1)
+
+    ! Compute C = S^{-1}U(l)
+    do i = 1, dim
+      C(i) = 0
+      do j = 1, dim
+        C(i) = C(i) + Inverse(i, j) * Updates(j, l)
+      end do
+    end do
+
+    ! Compute denominator = 1 + V(l)^TC
+    row = updates_index(l)
+    denominator = 1 + C(row)
+
+    ! If denominator is too close to zero:
+    ! - Split update in 2 before storing in Later_updates
+    ! - Split previously computed vector C in 2
+    ! - Recompute the denominator
+    if (abs(denominator) < breakdown) then
+      do i = 1, dim
+        Later_updates(i, l) = Updates(i, l) / 2
+        C(i) = C(i) / 2
+      end do
+      Later_index(Later) = updates_index(l)
+      Later = Later + 1
+      denominator = 1 + C(row)
+    end if
+
+    idenominator = 1 / denominator
+
+    ! Update det(S)
+    determinant = determinant * denominator
+
+    ! selecting column: v_l^T * S_inv
+    D = Inverse(row, :)
+
+    ! A^{-1} = A^{-1} - C x D / denominator
+    do i = 1, dim
+      do j = 1, dim
+        update = C(i) * D(j) * idenominator
+        Inverse(i, j) = Inverse(i, j) - update
+      end do
+    end do
+
+    l = l + 1
+  end do
+
+  ! Copy updated inverse and later updates
+  ! back to s_inv and later_upds
+  call copy_back_inv(Inverse, s_inv, lds, dim)
+  call copy_back_lu(Later_Updates, later_upds, lds, nupdates)
 
   info = QMCKL_SUCCESS
 
@@ -854,57 +930,6 @@ Fortran, can be called from C using the ~ISO_C_BINDING~. The Fortran function
 for C users and in the module file 'qmckl_f.F90' for Fortran users.
 
 #+CALL: generate_c_interface(table=qmckl_sm_splitting_core_args,rettyp=get_value("CRetType"),fname="qmckl_sm_splitting_core_doc")
-
-#+RESULTS:
-#+begin_src f90 :tangle (eval f) :comments org :exports none
-integer(c_int32_t) function qmckl_sm_splitting_core_doc &
-    (context, &
-     LDS, &
-     Dim, &
-     N_updates, &
-     Updates, &
-     Updates_index, &
-     breakdown, &
-     Slater_inv, &
-     later_updates, &
-     later_index, &
-     later, &
-     determinant) &
-    bind(C) result(info)
-
-  use, intrinsic :: iso_c_binding
-  implicit none
-
-  integer (c_int64_t) , intent(in)  , value :: context
-  integer (c_int64_t) , intent(in)  , value :: LDS
-  integer (c_int64_t) , intent(in)  , value :: Dim
-  integer (c_int64_t) , intent(in)  , value :: N_updates
-  real    (c_double ) , intent(in)          :: Updates(N_updates*LDS)
-  integer (c_int64_t) , intent(in)          :: Updates_index(N_updates)
-  real    (c_double ) , intent(in)  , value :: breakdown
-  real    (c_double ) , intent(inout)        :: Slater_inv(Dim*LDS)
-  real    (c_double ) , intent(inout)        :: later_updates(N_updates*LDS)
-  integer (c_int64_t) , intent(inout)        :: later_index(N_updates)
-  integer (c_int64_t) , intent(inout)        :: later
-  real    (c_double ) , intent(inout)        :: determinant
-
-  integer(c_int32_t), external :: qmckl_sm_splitting_core_doc_f
-  info = qmckl_sm_splitting_core_doc_f &
-         (context, &
-     LDS, &
-     Dim, &
-     N_updates, &
-     Updates, &
-     Updates_index, &
-     breakdown, &
-     Slater_inv, &
-     later_updates, &
-     later_index, &
-     later, &
-     determinant)
-
-end function qmckl_sm_splitting_core_doc
-#+end_src
 
 *** C headers (exposed in qmckl.h)
 #+CALL: generate_c_header(table=qmckl_sm_splitting_core_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
@@ -926,10 +951,29 @@ qmckl_exit_code qmckl_sm_splitting_core (
       double* determinant ); 
 #+end_src
 
+#+CALL: generate_c_header(table=qmckl_sm_splitting_core_args,rettyp=get_value("CRetType"),fname="qmckl_sm_splitting_core_hpc")
+
+#+RESULTS:
+#+begin_src c :tangle (eval h_private_func) :comments org
+qmckl_exit_code qmckl_sm_splitting_core_hpc (
+      const qmckl_context context,
+      const uint64_t LDS,
+      const uint64_t Dim,
+      const uint64_t N_updates,
+      const double* Updates,
+      const uint64_t* Updates_index,
+      const double breakdown,
+      double* Slater_inv,
+      double* later_updates,
+      uint64_t* later_index,
+      uint64_t* later,
+      double* determinant ); 
+#+end_src
+
 #+CALL: generate_c_header(table=qmckl_sm_splitting_core_args,rettyp=get_value("CRetType"),fname="qmckl_sm_splitting_core_doc")
 
 #+RESULTS:
-#+begin_src c :tangle (eval h_func) :comments org
+#+begin_src c :tangle (eval h_func) :no-expand comments org
 qmckl_exit_code qmckl_sm_splitting_core_doc (
       const qmckl_context context,
       const uint64_t LDS,
@@ -1386,7 +1430,8 @@ able to do numerically correct computations, it does not do it in the most effic
 not be used in real workloads.
 
 #+begin_src f90 :tangle (eval f)
-integer function qmckl_sm_splitting_doc_f(context, &
+integer recursive function qmckl_sm_splitting_doc_f( &
+    context, &
     lds, dim, &
     nupdates, &
     upds, &
@@ -1397,28 +1442,54 @@ integer function qmckl_sm_splitting_doc_f(context, &
 
   use qmckl
   implicit none
-  integer*8 , intent(in)    :: context
-  integer*8 , intent(in)    :: lds, dim
-  integer*8 , intent(in)    :: nupdates
-  integer*8 , intent(in)    :: updates_index(nupdates)
-  real*8    , intent(in)    :: upds(nupdates * lds)
-  real*8    , intent(in)    :: breakdown
-  real*8    , intent(inout) :: s_inv(dim * lds)
-  real*8    , intent(inout) :: determinant
+  integer*8 , intent(in)                :: context
+  integer*8 , intent(in)                :: lds, dim
+  integer*8 , intent(in)                :: nupdates
+  integer*8 , intent(in)                :: updates_index(nupdates)
+  real*8    , intent(in)                :: upds(nupdates * lds)
+  real*8    , intent(in)                :: breakdown
+  real*8    , intent(inout)             :: s_inv(dim * lds)
+  real*8    , intent(inout)             :: determinant
 
-  real*8 , dimension(lds, nupdates) :: Updates
-  real*8 , dimension(dim, lds)      :: Inverse
+  integer*8                             :: Later
+  integer*8 , dimension(nupdates)       :: Later_index
+  real*8    , dimension(nupdates * lds) :: Later_updates
 
   info = QMCKL_FAILURE
 
-  ! Convert 'upds' and 's_inv' into the more easily readable Fortran
-  ! matrices 'Updates' and 'Inverse'.
-  call convert(upds, s_inv, Updates, Inverse, nupdates, lds, dim)
+  if (context == QMCKL_NULL_CONTEXT) then
+    info = QMCKL_INVALID_CONTEXT
+    return
+  endif
 
-  ! YET TO BE IMPLEMENTED
+  Later = 0
+  Later_index = 0
+  Later_updates = 0
 
-  ! Copy updated inverse back to s_inv
-  call copy_back(Inverse, s_inv, lds, dim)
+  info = qmckl_sm_splitting_core_doc_f( &
+    context, &
+    lds, dim, &
+    nupdates, &
+    upds, &
+    updates_index, &
+    breakdown, &
+    s_inv, &
+    Later_updates, &
+    Later_index, &
+    Later, &
+    determinant)
+  
+  if (Later > 0) then
+    info = qmckl_sm_splitting_doc_f( &
+      context, &
+      lds, dim, &
+      Later, &
+      Later_updates, &
+      Later_index, &
+      breakdown, &
+      s_inv, &
+      determinant)
+  end if
 
   info = QMCKL_SUCCESS
 
