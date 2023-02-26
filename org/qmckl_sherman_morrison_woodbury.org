@@ -153,7 +153,7 @@ end subroutine copy_back_inv
 subroutine copy_back_lu(Later_updates, later_upds, lds, nupdates)
   implicit none
   integer*8 , intent(in)                            :: lds, nupdates
-  real*8    , intent(in) , dimension(nupdates, lds) :: Later_updates
+  real*8    , intent(in) , dimension(lds, nupdates) :: Later_updates
   real*8    , intent(out)                           :: later_upds(nupdates * lds)  
 
   integer*8                                    :: i, j
@@ -161,7 +161,7 @@ subroutine copy_back_lu(Later_updates, later_upds, lds, nupdates)
   ! Copy updated inverse back to s_inv
   do i = 1, nupdates
     do j = 1, lds
-      later_upds((i - 1) * lds + j) = Later_updates(i, j)
+      later_upds((i - 1) * lds + j) = Later_updates(j, i)
     end do
   end do
 end subroutine copy_back_lu
@@ -303,7 +303,7 @@ qmckl_exit_code qmckl_sm_naive (
       double* determinant ); 
 #+end_src
 
-#+CALL: generate_c_header(table=qmckl_sm_naive_args,rettyp=get_value("CRetType"),fname="qmckl_sm_naive_hpc")
+#+CALL: generate_private_c_header(table=qmckl_sm_naive_args,rettyp=get_value("CRetType"),fname="qmckl_sm_naive_hpc")
 
 #+RESULTS:
 #+begin_src c :tangle (eval h_private_func) :comments org
@@ -343,6 +343,7 @@ Common includes and macros used by all the Sherman-Morrison-Woodbury kernels.
 #include "qmckl.h"
 #include "config.h"
 #include "assert.h"
+#include "stdio.h"
 
 // Order important because
 // __GNUC__ also set in ICC, ICX and CLANG
@@ -835,21 +836,23 @@ integer function qmckl_sm_splitting_core_doc_f( &
   integer*8 , intent(in)            :: lds, dim
   integer*8 , intent(in)            :: nupdates
   integer*8 , intent(in)            :: updates_index(nupdates)
-  real*8    , intent(in)            :: upds(nupdates * lds)
+  real*8    , intent(in)            :: upds(lds * nupdates)
   real*8    , intent(in)            :: breakdown
   real*8    , intent(inout)         :: s_inv(dim * lds)
   real*8    , intent(inout)         :: determinant
   integer*8 , intent(inout)         :: Later
   integer*8 , intent(inout)         :: Later_index(nupdates)
-  real*8    , intent(inout)         :: later_upds(nupdates * lds)
+  real*8    , intent(inout)         :: later_upds(lds * nupdates)
 
-  real*8 , dimension(nupdates, lds) :: Updates
-  real*8 , dimension(nupdates, lds) :: Later_updates
+  real*8 , dimension(lds, nupdates) :: Updates
+  real*8 , dimension(lds, nupdates) :: Later_updates
   real*8 , dimension(dim, lds)      :: Inverse
   real*8 , dimension(dim)           :: C
   real*8 , dimension(lds)           :: D
   real*8                            :: denominator, idenominator, update
   integer*8                         :: i, j, l, row
+
+  write(*,*) "Entering 'qmckl_sm_splittinig_core_doc_f'"
 
   info = QMCKL_FAILURE
 
@@ -888,7 +891,7 @@ integer function qmckl_sm_splitting_core_doc_f( &
         Later_updates(i, l) = Updates(i, l) / 2
         C(i) = C(i) / 2
       end do
-      Later_index(Later) = updates_index(l)
+      Later_index(Later + 1) = updates_index(l)
       Later = Later + 1
       denominator = 1 + C(row)
     end if
@@ -919,6 +922,8 @@ integer function qmckl_sm_splitting_core_doc_f( &
 
   info = QMCKL_SUCCESS
 
+  write(*,*) "Leaving 'qmckl_sm_splittinig_core_doc_f'"
+  
 end function qmckl_sm_splitting_core_doc_f
 #+end_src
 
@@ -930,6 +935,62 @@ Fortran, can be called from C using the ~ISO_C_BINDING~. The Fortran function
 for C users and in the module file 'qmckl_f.F90' for Fortran users.
 
 #+CALL: generate_c_interface(table=qmckl_sm_splitting_core_args,rettyp=get_value("CRetType"),fname="qmckl_sm_splitting_core_doc")
+
+#+RESULTS:
+#+begin_src f90 :tangle (eval f) :comments org :exports none
+integer(c_int32_t) function qmckl_sm_splitting_core_doc &
+    (context, &
+     LDS, &
+     Dim, &
+     N_updates, &
+     Updates, &
+     Updates_index, &
+     breakdown, &
+     Slater_inv, &
+     later_updates, &
+     later_index, &
+     later, &
+     determinant) &
+    bind(C) result(info)
+
+  use, intrinsic :: iso_c_binding
+  implicit none
+
+  integer (c_int64_t) , intent(in)  , value :: context
+  integer (c_int64_t) , intent(in)  , value :: LDS
+  integer (c_int64_t) , intent(in)  , value :: Dim
+  integer (c_int64_t) , intent(in)  , value :: N_updates
+  real    (c_double ) , intent(in)          :: Updates(N_updates*LDS)
+  integer (c_int64_t) , intent(in)          :: Updates_index(N_updates)
+  real    (c_double ) , intent(in)  , value :: breakdown
+  real    (c_double ) , intent(inout)        :: Slater_inv(Dim*LDS)
+  real    (c_double ) , intent(inout)        :: later_updates(N_updates*LDS)
+  integer (c_int64_t) , intent(inout)        :: later_index(N_updates)
+  integer (c_int64_t) , intent(inout)        :: later
+  real    (c_double ) , intent(inout)        :: determinant
+
+  integer(c_int32_t), external :: qmckl_sm_splitting_core_doc_f
+
+  write(*,*) "Entering 'qmckl_sm_splittinig_core_doc'"
+
+  info = qmckl_sm_splitting_core_doc_f &
+         (context, &
+     LDS, &
+     Dim, &
+     N_updates, &
+     Updates, &
+     Updates_index, &
+     breakdown, &
+     Slater_inv, &
+     later_updates, &
+     later_index, &
+     later, &
+     determinant)
+
+  write(*,*) "Leaving 'qmckl_sm_splittinig_core_doc'"
+  
+end function qmckl_sm_splitting_core_doc
+#+end_src
 
 *** C headers (exposed in qmckl.h)
 #+CALL: generate_c_header(table=qmckl_sm_splitting_core_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
@@ -1221,7 +1282,7 @@ qmckl_exit_code qmckl_sm_splitting_core(
   if (LDS == (1+(Dim-1)/SIMD_LENGTH)*SIMD_LENGTH) { // Most cases
     switch (Dim) {
       <<slagel_splitting_switch-case_generator()>>
-      case default: {
+      default: {
         assert(0 == 1 && "TEMPLATE NOT IMPLEMENTED!");
         break;
       }
@@ -1243,20 +1304,7 @@ qmckl_exit_code qmckl_sm_splitting_core(
         determinant);
   }
   #else
-  // return qmckl_sm_splitting_core_doc(
-  //     context,
-  //     LDS,
-  //     Dim,
-  //     N_updates,
-  //     Updates,
-  //     Updates_index,
-  //     breakdown,
-  //     Slater_inv,
-  //     later_updates,
-  //     later_index,
-  //     later,
-  //     determinant);
-  return qmckl_sm_splitting_core_hpc(
+  return qmckl_sm_splitting_core_doc(
       context,
       LDS,
       Dim,
@@ -1446,7 +1494,7 @@ integer recursive function qmckl_sm_splitting_doc_f( &
   integer*8 , intent(in)                :: lds, dim
   integer*8 , intent(in)                :: nupdates
   integer*8 , intent(in)                :: updates_index(nupdates)
-  real*8    , intent(in)                :: upds(nupdates * lds)
+  real*8    , intent(in)                :: upds(lds * nupdates)
   real*8    , intent(in)                :: breakdown
   real*8    , intent(inout)             :: s_inv(dim * lds)
   real*8    , intent(inout)             :: determinant
@@ -1455,7 +1503,9 @@ integer recursive function qmckl_sm_splitting_doc_f( &
   
   integer*8                             :: Later
   integer*8 , dimension(nupdates)       :: Later_index
-  real*8    , dimension(nupdates * lds) :: Later_updates
+  real*8    , dimension(lds * nupdates) :: Later_updates
+
+  write(*,*) "Entering 'qmckl_sm_splitting_doc_f'"
 
   info = QMCKL_FAILURE
 
@@ -1495,6 +1545,8 @@ integer recursive function qmckl_sm_splitting_doc_f( &
 
   info = QMCKL_SUCCESS
 
+  write(*,*) "Leaving 'qmckl_sm_splitting_doc_f'"
+  
 end function qmckl_sm_splitting_doc_f
 #+end_src
 
@@ -1520,16 +1572,21 @@ integer(c_int32_t) function qmckl_sm_splitting_doc &
   integer (c_int64_t) , intent(in)  , value :: LDS
   integer (c_int64_t) , intent(in)  , value :: Dim
   integer (c_int64_t) , intent(in)  , value :: N_updates
-  real    (c_double ) , intent(in)          :: Updates(N_updates*LDS)
+  real    (c_double ) , intent(in)          :: Updates(LDS*N_updates)
   integer (c_int64_t) , intent(in)          :: Updates_index(N_updates)
   real    (c_double ) , intent(in)  , value :: breakdown
   real    (c_double ) , intent(inout)        :: Slater_inv(Dim*LDS)
   real    (c_double ) , intent(inout)        :: determinant
 
   integer(c_int32_t), external :: qmckl_sm_splitting_doc_f
+
+  write(*,*) "Entering 'qmckl_sm_splitting_doc'"
+  
   info = qmckl_sm_splitting_doc_f &
          (context, LDS, Dim, N_updates, Updates, Updates_index, breakdown, Slater_inv, determinant)
 
+  write(*,*) "Leaving 'qmckl_sm_splitting_doc'"
+  
 end function qmckl_sm_splitting_doc
 #+end_src
 
@@ -1672,6 +1729,8 @@ qmckl_exit_code qmckl_sm_splitting(
     const double breakdown,
     double* Slater_inv,
     double* determinant) {
+  
+  printf("Entering 'qmckl_sm_splitting'\n");
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return qmckl_failwith(
@@ -1680,7 +1739,7 @@ qmckl_exit_code qmckl_sm_splitting(
         "qmckl_sm_splitting",
         NULL);
   }
-  #ifdef HAS_HPC
+  #ifdef HAVE_HPC
     return qmckl_sm_splitting_hpc(
         context,
         LDS,
@@ -1702,17 +1761,9 @@ qmckl_exit_code qmckl_sm_splitting(
         breakdown,
         Slater_inv,
         determinant);
-    // return qmckl_sm_splitting_hpc(
-    //     context,
-    //     LDS,
-    //     Dim,
-    //     N_updates,
-    //     Updates,
-    //     Updates_index,
-    //     breakdown,
-    //     Slater_inv,
-    //     determinant);
   #endif 
+
+  printf("Leaving 'qmckl_sm_splitting'\n");
 
   return QMCKL_SUCCESS; 
 }
