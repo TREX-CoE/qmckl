@@ -1466,13 +1466,114 @@ from applying the updates to the original matrix.
 - ~Slater_inv~ is allocated with $Dim \times Dim$ elements
 
 *** Pedagogical kernel source (in Fortran)
+The following source code written in Fortran is inteded to illustrate how the kernel works. Even though the kernel is
+able to do numerically correct computations, it does not do it in the most efficient way possible. It should therefore
+not be used in real workloads.
+
+#+begin_src f90 :tangle (eval f)
+integer function qmckl_woodbury_2x2_doc_f(&
+    context, &
+    lds, dim, &
+    upds, &
+    updates_index, &
+    breakdown, &
+    s_inv, &
+    determinant) result(info)
+
+  use qmckl
+  implicit none
+  integer*8 , intent(in)            :: context
+  integer*8 , intent(in)            :: lds, dim
+  integer*8 , intent(in)            :: updates_index(2)
+  real*8    , intent(in)            :: upds(2 * lds)
+  real*8    , intent(in)            :: breakdown
+  real*8    , intent(inout)         :: s_inv(dim * lds)
+  real*8    , intent(inout)         :: determinant
+
+  real*8 , dimension(lds, 2)        :: Updates
+  real*8 , dimension(dim, lds)      :: Inverse
+  real*8 , dimension(dim)           :: C
+  real*8 , dimension(lds)           :: D
+  real*8                            :: denominator, idenominator, update
+  integer*8                         :: i, j, l, row
+
+  info = QMCKL_FAILURE
+
+  if (context == QMCKL_NULL_CONTEXT) then
+    info = QMCKL_INVALID_CONTEXT
+    return
+  endif
+
+  ! Convert 'upds' and 's_inv' into the more easily readable Fortran
+  ! matrices 'Updates' and 'Inverse'.
+  call convert(upds, s_inv, Updates, Inverse, int(2,8), lds, dim)
+
+
+
+  ! Copy updated inverse and later updates
+  ! back to s_inv and later_upds
+  call copy_back_inv(Inverse, s_inv, lds, dim)
+
+  info = QMCKL_SUCCESS
+
+end function qmckl_woodbury_2x2_doc_f
+#+end_src
+
 **** C interface (not directly exposed)
+The function ~qmckl_sm_splitting_core_doc~ makes sure that
+~qmckl_sm_splitting_core_doc_f~ can be called from C using the
+~ISO_C_BINDING~. Function ~qmckl_sm_splitting_core_doc~ will be
+exposed in ~qmckl.h~ and ~qmckl_f.F90~, but
+~qmckl_sm_splitting_core_doc_f~ will not.
+
+#+CALL: generate_c_interface(table=qmckl_woodbury_2x2_args,rettyp=get_value("CRetType"),fname="qmckl_woodbury_2x2_doc")
+
+#+RESULTS:
+#+begin_src f90 :tangle (eval f) :comments org :exports none
+integer(c_int32_t) function qmckl_woodbury_2x2_doc &
+    (context, LDS, Dim, Updates, Updates_index, breakdown, Slater_inv, determinant) &
+    bind(C) result(info)
+
+  use, intrinsic :: iso_c_binding
+  implicit none
+
+  integer (c_int64_t) , intent(in)  , value :: context
+  integer (c_int64_t) , intent(in)  , value :: LDS
+  integer (c_int64_t) , intent(in)  , value :: Dim
+  real    (c_double ) , intent(in)          :: Updates(2*Dim)
+  integer (c_int64_t) , intent(in)          :: Updates_index(2)
+  real    (c_double ) , intent(in)  , value :: breakdown
+  real    (c_double ) , intent(inout)        :: Slater_inv(LDS*Dim)
+  real    (c_double ) , intent(inout)        :: determinant
+
+  integer(c_int32_t), external :: qmckl_woodbury_2x2_doc_f
+  info = qmckl_woodbury_2x2_doc_f &
+         (context, LDS, Dim, Updates, Updates_index, breakdown, Slater_inv, determinant)
+
+end function qmckl_woodbury_2x2_doc
+#+end_src
+
 *** C headers (exposed in qmckl.h)
 #+CALL: generate_c_header(table=qmckl_woodbury_2x2_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
 
 #+RESULTS:
 #+begin_src c :tangle (eval h_func) :comments org
 qmckl_exit_code qmckl_woodbury_2x2 (
+      const qmckl_context context,
+      const uint64_t LDS,
+      const uint64_t Dim,
+      const double* Updates,
+      const uint64_t* Updates_index,
+      const double breakdown,
+      double* Slater_inv,
+      double* determinant ); 
+#+end_src
+
+#+CALL: generate_c_header(table=qmckl_woodbury_2x2_args,rettyp=get_value("CRetType"),fname="qmckl_woodbury_2x2_doc")
+
+#+RESULTS:
+#+begin_src c :tangle (eval h_func) :comments org
+qmckl_exit_code qmckl_woodbury_2x2_doc (
       const qmckl_context context,
       const uint64_t LDS,
       const uint64_t Dim,
@@ -1689,40 +1790,55 @@ return ''.join(result)
 
 #+begin_src c :tangle (eval c) :comments org :noweb yes
 <<woodbury_2x2_kernel_generator()>>
+#+end_src
 
+#+begin_src c :tangle (eval c) :comments org :noweb yes
 qmckl_exit_code qmckl_woodbury_2x2(const qmckl_context context,
-                                      const uint64_t LDS,
-                                      const uint64_t Dim,
-                                      const double* Updates,
-                                      const uint64_t* Updates_index,
-                                      const double breakdown,
-                                      double* Slater_inv,
-                                      double* determinant) {
+    const uint64_t LDS,
+    const uint64_t Dim,
+    const double* Updates,
+    const uint64_t* Updates_index,
+    const double breakdown,
+    double* Slater_inv,
+    double* determinant) {
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return qmckl_failwith(context,
-                          QMCKL_NULL_CONTEXT,
-                          "qmckl_woodbury_2x2",
-                          NULL);
+    return qmckl_failwith(
+        context,
+        QMCKL_NULL_CONTEXT,
+        "qmckl_woodbury_2x2",
+        NULL);
   }
 
+  #ifdef HAVE_HPC
   if (LDS == (1+(Dim-1)/SIMD_LENGTH)*SIMD_LENGTH) { // Most cases
     switch (Dim) {
       <<woodbury_2x2_switch-case_generator()>>
     }
   }
-  else { // When SIMD_LENGTH > 1, called with LDS == Dim AND Dim != (1+(Dim-1)/SIMD_LENGTH)*SIMD_LENGTH)
-    return qmckl_woodbury_2x2_hpc(context,
-                            LDS,
-                            Dim,
-                            Updates,
-                            Updates_index,
-                            breakdown,
-                            Slater_inv,
-                            determinant);
-
+  else { // Updating smaller sub-matrix
+    return qmckl_woodbury_2x2_hpc(
+        context,
+        LDS,
+        Dim,
+        Updates,
+        Updates_index,
+        breakdown,
+        Slater_inv,
+        determinant);
   }
-  
+  #else
+  return qmckl_woodbury_2x2_doc(
+      context,
+      LDS,
+      Dim,
+      Updates,
+      Updates_index,
+      breakdown,
+      Slater_inv,
+      determinant);
+  #endif
+
   return QMCKL_FAILURE;
 }
 #+end_src
