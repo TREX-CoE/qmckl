@@ -89,15 +89,15 @@ from applying the updates to the original matrix.
 | ~determinant~   | ~double~                | inout  | Determinant of the Slater-matrix                     |
 
 *** Requirements
-  * ~context~ is not ~QMCKL_NULL_CONTEXT~
-  * ~LDS >= 2~
-  * ~Dim >= 2~
-  * ~N_updates >= 1~
-  * ~Updates~ is allocated with $N_updates \times Dim$ elements
-  * ~Updates_index~ is allocated with $N_updates$ elements
-  * ~breakdown~ is a small number such that $0 < breakdown << 1$
-  * ~Slater_inv~ is allocated with $Dim \times Dim$ elements
-  * ~determinant > 0~
+- ~context~ is not ~QMCKL_NULL_CONTEXT~
+- ~LDS >= 2~
+- ~Dim >= 2~
+- ~N_updates >= 1~
+- ~Updates~ is allocated with $N_updates \times Dim$ elements
+- ~Updates_index~ is allocated with $N_updates$ elements
+- ~breakdown~ is a small number such that $0 < breakdown << 1$
+- ~Slater_inv~ is allocated with $Dim \times Dim$ elements
+- ~determinant > 0~
 
 *** Pedagogical kernel source (in Fortran)
 The following source code written in Fortran is inteded to illustrate how the kernel works. Even though the kernel is
@@ -251,7 +251,7 @@ integer function qmckl_sm_naive_doc_f(context, &
 end function qmckl_sm_naive_doc_f
 #+end_src
 
-**** C interface to the pedagogical kernel (not directly exposed)
+**** C interface (not directly exposed)
 The following Fortran function ~qmckl_sm_naive_doc~ makes sure
 that the pedagogical kernel ~qmckl_sm_naive_doc_f~, written in
 Fortran, can be called from C using the ~ISO_C_BINDING~. The Fortran function ~qmckl_sm_naive_doc~ will be exposed in the header file 'qmckl.h'
@@ -1416,6 +1416,382 @@ end interface
 *** Performance
 This function cannot be used by itself and is used in Sherman-Morrison with update splitting and Woodbury 3x3 and 2x2
 with Sherman-Morrison and update splitting. Please look at the performance reccomendations for those two kernels.
+
+
+* Woodbury 2x2
+** ~qmckl_woodbury_2x2~
+:PROPERTIES:
+:Name:     qmckl_woodbury_2x2
+:CRetType: qmckl_exit_code
+:FRetType: qmckl_exit_code
+:END:
+
+*** Introduction
+The Woodbury 2x2 kernel. It is used to apply two rank-1 updates at once. The formula used in
+this algorithm is called the Woodbury Matrix Identity
+\[
+(S + U V)^{-1}  =  S^{-1} - C B^{-1} D
+\]
+where
+$S$ is the Slater-matrix
+$U$ and $V$ are the matrices containing the updates and the canonical basis matrix
+$S^{-1}$ is the inverse of the Slater-matrix
+$C:= S^{-1}U$, a Dim $\times 2$ matrix
+$B := 1 + VC$, the $2 \times 2$ matrix that is going to be inverted
+$D := VS^{-1}$, a $2 \times Dim$ matrix
+
+If the determinant of the Slater-matrix is passed, it will be updated to the determinant resulting
+from applying the updates to the original matrix.
+
+*** API
+#+NAME: qmckl_woodbury_2x2_args
+| Variable        | Type                | In/Out | Description                                  |
+|-----------------+-------------------+-------+-------------------------------------------------|
+| ~context~       | ~qmckl_context~   | in    | Global state                                    |
+| ~LDS~           | ~uint64_t~        | in    | Leading dimension of Slater_inv                 |
+| ~Dim~           | ~uint64_t~        | in    | Dimension of Slater_inv                         |
+| ~Updates~       | ~double[2*Dim]~   | in    | Array containing the updates                    |
+| ~Updates_index~ | ~uint64_t[2]~     | in    | Array containing the rank-1 updates             |
+| ~breakdown~     | ~double~          | in    | Break-down parameter on which to fail or not    |
+| ~Slater_inv~    | ~double[LDS*Dim]~ | inout | Array containing the inverse of a Slater-matrix |
+| ~determinant~   | ~double~          | inout | Determinant of Slater-matrix                    |
+
+*** Requirements
+- ~context~ is not ~qmckl_null_context~
+- ~LDS >= 2~
+- ~Dim >= 2~
+- ~Updates~ is allocated with $2 \times Dim$ elements
+- ~Updates_index~ is allocated with $2$ elements
+- ~breakdown~ is a small number such that $0 < breakdown << 1$
+- ~Slater_inv~ is allocated with $Dim \times Dim$ elements
+
+*** Pedagogical kernel source (in Fortran)
+**** C interface (not directly exposed)
+*** C headers (exposed in qmckl.h)
+#+CALL: generate_c_header(table=qmckl_woodbury_2x2_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+
+#+RESULTS:
+#+begin_src c :tangle (eval h_func) :comments org
+qmckl_exit_code qmckl_woodbury_2x2 (
+      const qmckl_context context,
+      const uint64_t LDS,
+      const uint64_t Dim,
+      const double* Updates,
+      const uint64_t* Updates_index,
+      const double breakdown,
+      double* Slater_inv,
+      double* determinant ); 
+#+end_src
+
+*** C sources
+#+begin_src c :tangle (eval c) :comments org
+qmckl_exit_code qmckl_woodbury_2x2_hpc(const qmckl_context context,
+    const uint64_t LDS,
+    const uint64_t Dim,
+    const double* __restrict Updates,
+    const uint64_t* __restrict Updates_index,
+    const double breakdown,
+    double* __restrict Slater_inv,
+    double* __restrict determinant) {
+/*
+    C := S^{-1} * U,    dim x 2
+    B := 1 + V * C,     2 x 2
+    D := V * S^{-1},    2 x dim
+*/
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return qmckl_failwith(context,
+                          QMCKL_NULL_CONTEXT,
+                          "qmckl_woodbury_2x2_hpc",
+                          NULL);
+  }
+
+  const uint64_t row1 = (Updates_index[0] - 1);
+  const uint64_t row2 = (Updates_index[1] - 1);
+
+  // Compute C = (S^T)^{-1}U : Dim x 2
+  double __attribute__((aligned(8))) C[2 * Dim];
+  for (uint64_t i = 0; i < Dim; i++) {
+      C[i * 2] = 0;
+      C[i * 2 + 1] = 0;
+      IVDEP
+      ALIGNED
+      for (uint64_t k = 0; k < LDS; k++) {
+          C[i * 2] += Slater_inv[i * LDS + k] * Updates[k];
+          C[i * 2 + 1] += Slater_inv[i * LDS + k] * Updates[LDS + k];
+      }
+  }
+
+  // Compute B = 1 + VC : 2 x 2
+  const double B0 = C[row1 * 2] + 1;
+  const double B1 = C[row1 * 2 + 1];
+  const double B2 = C[row2 * 2];
+  const double B3 = C[row2 * 2 + 1] + 1;
+
+  // Check if determinant of inverted matrix is not zero
+  double det = B0 * B3 - B1 * B2;
+  if (fabs(det) < breakdown) {
+      return QMCKL_FAILURE;
+  }
+
+  // Update det(S) when passed
+  if (determinant)
+      *determinant *= det;
+
+  // Compute B^{-1} with explicit formula for 2 x 2 inversion
+  double __attribute__((aligned(8))) Binv[4], idet = 1.0 / det;
+  Binv[0] = idet * B3;
+  Binv[1] = -1.0 * idet * B1;
+  Binv[2] = -1.0 * idet * B2;
+  Binv[3] = idet * B0;
+
+  // tmp = B^{-1}D : 2 x LDS
+  double __attribute__((aligned(8))) tmp[2 * LDS];
+  double* r1dim = &(Slater_inv[row1 * LDS]);
+  double* r2dim = &(Slater_inv[row2 * LDS]);
+  IVDEP
+  ALIGNED
+  for (uint64_t j = 0; j < LDS; j++) {
+      tmp[j] = Binv[0] * r1dim[j] + Binv[1] * r2dim[j];
+      tmp[LDS + j] = Binv[2] * r1dim[j] + Binv[3] * r2dim[j];
+  }
+
+  // Compute (S^T)^{-1} - C * tmp : Dim x LDS
+  for (uint64_t i = 0; i < Dim; i++) {
+      IVDEP
+      ALIGNED
+      for (uint64_t j = 0; j < LDS; j++) {
+          Slater_inv[i * LDS + j] -= C[i * 2] * tmp[j];
+          Slater_inv[i * LDS + j] -= C[i * 2 + 1] * tmp[LDS + j];
+      }
+  }
+
+  return QMCKL_SUCCESS;
+}
+#+end_src
+
+#+NAME:woodbury_2x2_kernel_template
+#+begin_src c
+static inline qmckl_exit_code qmckl_woodbury_2x2_{Dim}(
+    const qmckl_context context,
+    const double* __restrict Updates,
+    const uint64_t* __restrict Updates_index,
+    const double breakdown,
+    double* __restrict Slater_inv,
+    double* __restrict determinant) {
+/*
+    C := S^{-1} * U,    dim x 2
+    B := 1 + V * C,     2 x 2
+    D := V * S^{-1},    2 x dim
+*/
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return qmckl_failwith(context,
+                          QMCKL_NULL_CONTEXT,
+                          "qmckl_woodbury_2x2_{Dim}",
+                          NULL);
+  }
+
+  const uint64_t row1 = (Updates_index[0] - 1);
+  const uint64_t row2 = (Updates_index[1] - 1);
+
+  // Compute C = (S^T)^{-1}U : {Dim} x 2
+  double __attribute__((aligned(8))) C[2 * {Dim}];
+  for (uint64_t i = 0; i < {Dim}; i++) {
+      C[i * 2] = 0;
+      C[i * 2 + 1] = 0;
+      IVDEP
+      ALIGNED
+      for (uint64_t k = 0; k < D{Dim}_P; k++) {
+          C[i * 2] += Slater_inv[i * D{Dim}_P + k] * Updates[k];
+          C[i * 2 + 1] += Slater_inv[i * D{Dim}_P + k] * Updates[D{Dim}_P + k];
+      }
+  }
+
+  // Compute B = 1 + VC : 2 x 2
+  const double B0 = C[row1 * 2] + 1;
+  const double B1 = C[row1 * 2 + 1];
+  const double B2 = C[row2 * 2];
+  const double B3 = C[row2 * 2 + 1] + 1;
+
+  // Check if determinant of inverted matrix is not zero
+  double det = B0 * B3 - B1 * B2;
+  if (fabs(det) < breakdown) {
+      return QMCKL_FAILURE;
+  }
+
+  // Update det(S) when passed
+  if (determinant)
+      *determinant *= det;
+
+  // Compute B^{-1} with explicit formula for 2 x 2 inversion
+  double __attribute__((aligned(8))) Binv[4], idet = 1.0 / det;
+  Binv[0] = idet * B3;
+  Binv[1] = -1.0 * idet * B1;
+  Binv[2] = -1.0 * idet * B2;
+  Binv[3] = idet * B0;
+
+  // tmp = B^{-1}D : 2 x D{Dim}_P
+  double __attribute__((aligned(8))) tmp[2 * D{Dim}_P];
+  double* r1dim = &(Slater_inv[row1 * D{Dim}_P]);
+  double* r2dim = &(Slater_inv[row2 * D{Dim}_P]);
+  IVDEP
+  ALIGNED
+  for (uint64_t j = 0; j < D{Dim}_P; j++) {
+      tmp[j] = Binv[0] * r1dim[j] + Binv[1] * r2dim[j];
+      tmp[D{Dim}_P + j] = Binv[2] * r1dim[j] + Binv[3] * r2dim[j];
+  }
+
+  // Compute (S^T)^{-1} - C * tmp : {Dim} x D{Dim}_P
+  for (uint64_t i = 0; i < {Dim}; i++) {
+      IVDEP
+      ALIGNED
+      for (uint64_t j = 0; j < D{Dim}_P; j++) {
+          Slater_inv[i * D{Dim}_P + j] -= C[i * 2] * tmp[j];
+          Slater_inv[i * D{Dim}_P + j] -= C[i * 2 + 1] * tmp[D{Dim}_P + j];
+      }
+  }
+
+  return QMCKL_SUCCESS;
+}
+#+end_src
+
+#+NAME:woodbury_2x2_kernel_generator
+#+begin_src python :noweb yes :exports none
+text="""
+<<woodbury_2x2_kernel_template>>
+"""
+result = []
+for Dim in <<kernel_generator_range>>:
+  Dim=str(Dim)
+  result.append(text.replace("{Dim}",Dim) )
+
+return ''.join(result)
+#+end_src
+
+#+NAME:woodbury_2x2_switch-case_generator
+#+begin_src python :noweb yes :exports none
+text="""
+case {Dim}:  
+  return qmckl_woodbury_2x2_{Dim}(context,
+    Updates,
+    Updates_index,
+    breakdown,
+    Slater_inv,
+    determinant);"""
+result = []
+for Dim in <<kernel_generator_range>>:
+  Dim=str(Dim)
+  result.append(text.replace("{Dim}",Dim) )
+
+return ''.join(result)
+#+end_src
+
+#+begin_src c :tangle (eval c) :comments org :noweb yes
+<<woodbury_2x2_kernel_generator()>>
+
+qmckl_exit_code qmckl_woodbury_2x2(const qmckl_context context,
+                                      const uint64_t LDS,
+                                      const uint64_t Dim,
+                                      const double* Updates,
+                                      const uint64_t* Updates_index,
+                                      const double breakdown,
+                                      double* Slater_inv,
+                                      double* determinant) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return qmckl_failwith(context,
+                          QMCKL_NULL_CONTEXT,
+                          "qmckl_woodbury_2x2",
+                          NULL);
+  }
+
+  if (LDS == (1+(Dim-1)/SIMD_LENGTH)*SIMD_LENGTH) { // Most cases
+    switch (Dim) {
+      <<woodbury_2x2_switch-case_generator()>>
+    }
+  }
+  else { // When SIMD_LENGTH > 1, called with LDS == Dim AND Dim != (1+(Dim-1)/SIMD_LENGTH)*SIMD_LENGTH)
+    return qmckl_woodbury_2x2_hpc(context,
+                            LDS,
+                            Dim,
+                            Updates,
+                            Updates_index,
+                            breakdown,
+                            Slater_inv,
+                            determinant);
+
+  }
+  
+  return QMCKL_FAILURE;
+}
+#+end_src
+
+*** Fortran interfaces (exposed in qmckl_f.F90)
+:PROPERTIES:
+:Name:     qmckl_woodbury_2x2
+:CRetType: qmckl_exit_code
+:FRetType: qmckl_exit_code
+:END:
+
+#+CALL: generate_f_interface(table=qmckl_woodbury_2x2_args,rettyp=get_value("FRetType"),fname=get_value("Name"))
+
+#+RESULTS:
+#+begin_src f90 :tangle (eval fh_func) :comments org :exports none
+interface
+  integer(c_int32_t) function qmckl_woodbury_2x2 &
+      (context, LDS, Dim, Updates, Updates_index, breakdown, Slater_inv, determinant) &
+      bind(C)
+    use, intrinsic :: iso_c_binding
+    import
+    implicit none
+
+    integer (c_int64_t) , intent(in)  , value :: context
+    integer (c_int64_t) , intent(in)  , value :: LDS
+    integer (c_int64_t) , intent(in)  , value :: Dim
+    real    (c_double ) , intent(in)          :: Updates(2*Dim)
+    integer (c_int64_t) , intent(in)          :: Updates_index(2)
+    real    (c_double ) , intent(in)  , value :: breakdown
+    real    (c_double ) , intent(inout)        :: Slater_inv(LDS*Dim)
+    real    (c_double ) , intent(inout)        :: determinant
+
+  end function qmckl_woodbury_2x2
+end interface
+#+end_src
+
+*** Performance
+This function is most efficient when used in cases where there are only 2 rank-1 updates and
+it is sure they will not result in a singular matrix.
+
+*** Tests
+#+begin_src c :tangle (eval c_test)
+assert(Updates2 != NULL);
+assert(Updates_index2 != NULL);
+assert(Slater_inv2 != NULL);
+det = -1.4432116661319376e-11;
+rc = qmckl_woodbury_2x2(context, LDS, Dim, Updates2, Updates_index2, breakdown, Slater_inv2, &det);
+assert(fabs(det-2.367058141251457e-10) < 1e-15);
+for (unsigned int i = 0; i < Dim; i++) {
+  for (unsigned int j = 0; j < Dim; j++) {
+    res[i * Dim + j] = 0;
+    for (unsigned int k = 0; k < Dim; k++) {
+      res[i * Dim + j] += Slater2[i * Dim + k] * Slater_inv2[k * LDS + j];
+    }
+  }
+}
+rc = QMCKL_SUCCESS;
+for (unsigned int i = 0; i < Dim; i++) {
+  for (unsigned int j = 0; j < Dim; j++) {
+    if (i == j && fabs(res[i * Dim + j] - 1) > tolerance) {
+      rc = QMCKL_FAILURE;
+    }
+    if (i != j && fabs(res[i * Dim + j]) > tolerance) {
+      rc = QMCKL_FAILURE;
+    }
+  }
+}
+assert(rc == QMCKL_SUCCESS);
+#+end_src
 
 
 * Sherman-Morrison with Slagel Splitting
