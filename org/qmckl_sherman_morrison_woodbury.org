@@ -110,21 +110,21 @@ subroutine convert(upds, s_inv, Updates, Inverse, nupdates, lds, dim)
   integer*8 , intent(in)                             :: lds, dim, nupdates
   real*8    , intent(in)                             :: upds(nupdates * lds)
   real*8    , intent(in)                             :: s_inv(dim * lds)  
-  real*8    , intent(out) , dimension(lds, nupdates) :: Updates
-  real*8    , intent(out) , dimension(dim, lds)      :: Inverse
+  real*8    , intent(out) , dimension(dim, nupdates) :: Updates
+  real*8    , intent(out) , dimension(dim, dim)      :: Inverse
 
   integer*8                                          :: i, j
 
   ! Construct Updates: lds x nupdates
   do i = 1, nupdates
-    do j = 1, lds
+    do j = 1, dim
       Updates(j, i) = upds((i - 1) * lds + j)
     end do
   end do
 
   ! Construct Inverse: dim x lds
   do i = 1, dim
-    do j = 1, lds
+    do j = 1, dim
       Inverse(i, j) = s_inv((i - 1) * lds + j)
     end do
   end do
@@ -135,14 +135,14 @@ end subroutine convert
 subroutine copy_back_inv(Inverse, s_inv, lds, dim)
   implicit none
   integer*8 , intent(in)                       :: lds, dim
-  real*8    , intent(in) , dimension(dim, lds) :: Inverse
+  real*8    , intent(in) , dimension(dim, dim) :: Inverse
   real*8    , intent(out)                      :: s_inv(dim * lds)  
 
   integer*8                                    :: i, j
 
   ! Copy updated inverse back to s_inv
   do i = 1, dim
-    do j = 1, lds
+    do j = 1, dim
       s_inv((i - 1) * lds + j) = Inverse(i, j)
     end do
   end do
@@ -150,17 +150,17 @@ end subroutine copy_back_inv
 #+end_src
 
 #+begin_src f90 :tangle (eval f) :comment org :exports none
-subroutine copy_back_lu(Later_updates, later_upds, lds, nupdates)
+subroutine copy_back_lu(Later_updates, later_upds, lds, dim, nupdates)
   implicit none
-  integer*8 , intent(in)                            :: lds, nupdates
-  real*8    , intent(in) , dimension(lds, nupdates) :: Later_updates
+  integer*8 , intent(in)                            :: lds, dim, nupdates
+  real*8    , intent(in) , dimension(dim, nupdates) :: Later_updates
   real*8    , intent(out)                           :: later_upds(nupdates * lds)  
 
   integer*8                                    :: i, j
 
   ! Copy updated inverse back to s_inv
   do i = 1, nupdates
-    do j = 1, lds
+    do j = 1, dim
       later_upds((i - 1) * lds + j) = Later_updates(j, i)
     end do
   end do
@@ -188,10 +188,10 @@ integer function qmckl_sm_naive_doc_f(context, &
   real*8    , intent(inout) :: s_inv(dim * lds)
   real*8    , intent(inout) :: determinant
 
-  real*8 , dimension(lds, nupdates) :: Updates
-  real*8 , dimension(dim, lds)      :: Inverse
+  real*8 , dimension(dim, nupdates) :: Updates
+  real*8 , dimension(dim, dim)      :: Inverse
   real*8 , dimension(dim)           :: C
-  real*8 , dimension(lds)           :: D
+  real*8 , dimension(dim)           :: D
   real*8                            :: denominator, idenominator, update
   integer*8                         :: i, j, l, row
 
@@ -843,15 +843,13 @@ integer function qmckl_sm_splitting_core_doc_f( &
   integer*8 , intent(inout)         :: Later_index(nupdates)
   real*8    , intent(inout)         :: later_upds(lds * nupdates)
 
-  real*8 , dimension(lds, nupdates) :: Updates
-  real*8 , dimension(lds, nupdates) :: Later_updates
-  real*8 , dimension(dim, lds)      :: Inverse
+  real*8 , dimension(dim, nupdates) :: Updates
+  real*8 , dimension(dim, nupdates) :: Later_updates
+  real*8 , dimension(dim, dim)      :: Inverse
   real*8 , dimension(dim)           :: C
-  real*8 , dimension(lds)           :: D
+  real*8 , dimension(dim)           :: D
   real*8                            :: denominator, idenominator, update
   integer*8                         :: i, j, l, row
-
-  write(*,*) "Entering 'qmckl_sm_splittinig_core_doc_f'"
 
   info = QMCKL_FAILURE
 
@@ -863,7 +861,6 @@ integer function qmckl_sm_splitting_core_doc_f( &
   ! Convert 'upds' and 's_inv' into the more easily readable Fortran
   ! matrices 'Updates' and 'Inverse'.
   call convert(upds, s_inv, Updates, Inverse, nupdates, lds, dim)
-
 
   l = 1;
   ! For each update do...
@@ -917,12 +914,10 @@ integer function qmckl_sm_splitting_core_doc_f( &
   ! Copy updated inverse and later updates
   ! back to s_inv and later_upds
   call copy_back_inv(Inverse, s_inv, lds, dim)
-  call copy_back_lu(Later_Updates, later_upds, lds, nupdates)
+  call copy_back_lu(Later_Updates, later_upds, lds, dim, nupdates)
 
   info = QMCKL_SUCCESS
 
-  write(*,*) "Leaving 'qmckl_sm_splittinig_core_doc_f'"
-  
 end function qmckl_sm_splitting_core_doc_f
 #+end_src
 
@@ -1492,8 +1487,8 @@ integer function qmckl_woodbury_2x2_doc_f(&
 
   real*8 , dimension(lds, 2)        :: Updates
   real*8 , dimension(dim, lds)      :: Inverse
-  real*8 , dimension(dim)           :: C
-  real*8 , dimension(lds)           :: D
+  real*8 , dimension(dim, 2)        :: C
+  real*8 , dimension(2, dim)        :: D
   real*8                            :: denominator, idenominator, update
   integer*8                         :: i, j, l, row
 
@@ -1508,8 +1503,15 @@ integer function qmckl_woodbury_2x2_doc_f(&
   ! matrices 'Updates' and 'Inverse'.
   call convert(upds, s_inv, Updates, Inverse, int(2,8), lds, dim)
 
+  ! Compute C(dim,2) = Inverse(dim,dim) x Updates(dim,2) 
+  do i = 1, dim
+    do j = 1, dim
+      C(i,1) = C(i,1) + Inverse(1,j) * Updates(j,1)
+      C(i,2) = C(i,1) + Inverse(1,j) * Updates(j,2)
+    end do
+  end do
 
-
+  
   ! Copy updated inverse and later updates
   ! back to s_inv and later_upds
   call copy_back_inv(Inverse, s_inv, lds, dim)
@@ -1828,7 +1830,16 @@ qmckl_exit_code qmckl_woodbury_2x2(const qmckl_context context,
         determinant);
   }
   #else
-  return qmckl_woodbury_2x2_doc(
+  // return qmckl_woodbury_2x2_doc(
+  //     context,
+  //     LDS,
+  //     Dim,
+  //     Updates,
+  //     Updates_index,
+  //     breakdown,
+  //     Slater_inv,
+  //     determinant);
+  return qmckl_woodbury_2x2_hpc(
       context,
       LDS,
       Dim,
@@ -1988,9 +1999,7 @@ integer recursive function qmckl_sm_splitting_doc_f( &
   
   integer*8                             :: Later
   integer*8 , dimension(nupdates)       :: Later_index
-  real*8    , dimension(lds * nupdates) :: Later_updates
-
-  write(*,*) "Entering 'qmckl_sm_splitting_doc_f'"
+  real*8    , dimension(dim * nupdates) :: Later_updates
 
   info = QMCKL_FAILURE
 
@@ -2030,8 +2039,6 @@ integer recursive function qmckl_sm_splitting_doc_f( &
 
   info = QMCKL_SUCCESS
 
-  write(*,*) "Leaving 'qmckl_sm_splitting_doc_f'"
-  
 end function qmckl_sm_splitting_doc_f
 #+end_src
 
@@ -2057,21 +2064,16 @@ integer(c_int32_t) function qmckl_sm_splitting_doc &
   integer (c_int64_t) , intent(in)  , value :: LDS
   integer (c_int64_t) , intent(in)  , value :: Dim
   integer (c_int64_t) , intent(in)  , value :: N_updates
-  real    (c_double ) , intent(in)          :: Updates(LDS*N_updates)
+  real    (c_double ) , intent(in)          :: Updates(N_updates*LDS)
   integer (c_int64_t) , intent(in)          :: Updates_index(N_updates)
   real    (c_double ) , intent(in)  , value :: breakdown
   real    (c_double ) , intent(inout)        :: Slater_inv(Dim*LDS)
   real    (c_double ) , intent(inout)        :: determinant
 
   integer(c_int32_t), external :: qmckl_sm_splitting_doc_f
-
-  write(*,*) "Entering 'qmckl_sm_splitting_doc'"
-  
   info = qmckl_sm_splitting_doc_f &
          (context, LDS, Dim, N_updates, Updates, Updates_index, breakdown, Slater_inv, determinant)
 
-  write(*,*) "Leaving 'qmckl_sm_splitting_doc'"
-  
 end function qmckl_sm_splitting_doc
 #+end_src
 
@@ -2214,8 +2216,6 @@ qmckl_exit_code qmckl_sm_splitting(
     const double breakdown,
     double* Slater_inv,
     double* determinant) {
-  
-  printf("Entering 'qmckl_sm_splitting'\n");
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return qmckl_failwith(
@@ -2247,8 +2247,6 @@ qmckl_exit_code qmckl_sm_splitting(
         Slater_inv,
         determinant);
   #endif 
-
-  printf("Leaving 'qmckl_sm_splitting'\n");
 
   return QMCKL_SUCCESS; 
 }
