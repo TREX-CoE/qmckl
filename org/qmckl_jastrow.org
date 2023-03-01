@@ -29,7 +29,7 @@
   J_{\text{ee}}(\mathbf{r}) =
   \sum_{i=1}^{N_\text{elec}} \sum_{j=1}^{i-1}
   \frac{\frac{1}{2}(1+\delta^{\uparrow\downarrow}_{ij}) b_1\, f_{\text{ee}}(r_{ij})}{1+b_2\, f_{\text{ee}}(r_{ij})} +
-  \sum_{p=2}^{N_\text{ord}^b} a_{p+1}\, [f_{\text{ee}}(r_{ij})]^p  - J_{ee}^\infty
+  \sum_{p=2}^{N_\text{ord}^b} b_{p+1}\, [f_{\text{ee}}(r_{ij})]^p  - J_{ee}^\infty
   \]
 
   and $J_{\text{eeN}}$ contains electron-electron-Nucleus terms:
@@ -1651,14 +1651,16 @@ assert(qmckl_nucleus_provided(context));
   compute. If it is the case, then the data is recomputed and the
   current date is stored.
 
-** Asymptotic component for \(J_{ee}\)
+** Asymptotic component for \(J_\text{ee}\)
 
-  Calculate the asymptotic component ~asymp_jasb~ to be substracted from the final
-  electron-electron jastrow factor \(J_{\text{ee}}\). The asymptotic component is calculated
-  via the ~b_vector~ and the electron-electron rescale factor ~rescale_factor_ee~.
+  Calculate the asymptotic component ~asymp_jasb~ to be substracted from the
+  electron-electron jastrow factor \(J_{\text{ee}}\). Two values are
+  computed. The first one is for antiparallel spin pairs, and the
+  second one for parallel spin pairs.
 
   \[
-  J_{\text{ee}}^{\infty} = \frac{b_1 \kappa^{-1}}{1 + b_2  \kappa^{-1}}
+  J_{\text{ee}}^{\infty} = \frac{\frac{1}{2}(1+\delta^{\uparrow \downarrow})\,b_1 \kappa_\text{ee}^{-1}}{1 + b_2\,
+  \kappa_\text{ee}^{-1}} + \sum_{p=2}^{N_\text{ord}^b} b_{p+1}\, \kappa_\text{ee}^{-p}
   \]
 
 *** Get
@@ -1801,8 +1803,31 @@ qmckl_exit_code qmckl_provide_jastrow_asymp_jasb(qmckl_context context)
     | ~rescale_factor_ee~ | ~double~             | in     | Electron coordinates    |
     | ~asymp_jasb~        | ~double[2]~          | out    | Asymptotic value        |
 
+#  #+CALL: generate_c_interface(table=qmckl_asymp_jasb_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+
+   #+begin_src f90 :tangle (eval f) :comments org :exports none
+   integer(c_int32_t) function qmckl_compute_jastrow_asymp_jasb_doc &
+       (context, bord_num, b_vector, rescale_factor_ee, asymp_jasb) &
+       bind(C) result(info)
+
+     use, intrinsic :: iso_c_binding
+     implicit none
+
+     integer (c_int64_t) , intent(in)  , value :: context
+     integer (c_int64_t) , intent(in)  , value :: bord_num
+     real    (c_double ) , intent(in)          :: b_vector(bord_num+1)
+     real    (c_double ) , intent(in)  , value :: rescale_factor_ee
+     real    (c_double ) , intent(out)         :: asymp_jasb(2)
+
+     integer(c_int32_t), external :: qmckl_compute_jastrow_asymp_jasb_doc_f
+     info = qmckl_compute_jastrow_asymp_jasb_doc_f &
+            (context, bord_num, b_vector, rescale_factor_ee, asymp_jasb)
+
+   end function qmckl_compute_jastrow_asymp_jasb_doc
+   #+end_src
+
     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_jastrow_asymp_jasb_f(context, bord_num, b_vector, rescale_factor_ee, asymp_jasb) &
+integer function qmckl_compute_jastrow_asymp_jasb_doc_f(context, bord_num, b_vector, rescale_factor_ee, asymp_jasb) &
      result(info)
   use qmckl
   implicit none
@@ -1839,8 +1864,68 @@ integer function qmckl_compute_jastrow_asymp_jasb_f(context, bord_num, b_vector,
      end do
   end do
 
-end function qmckl_compute_jastrow_asymp_jasb_f
+end function qmckl_compute_jastrow_asymp_jasb_doc_f
     #+end_src
+
+#+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_compute_jastrow_asymp_jasb_doc (const qmckl_context context,
+                                                      const int64_t bord_num,
+                                                      const double* b_vector,
+                                                      const double rescale_factor_ee,
+                                                      double* const asymp_jasb );
+#+end_src
+    
+
+#+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_compute_jastrow_asymp_jasb_hpc (const qmckl_context context,
+                                                      const int64_t bord_num,
+                                                      const double* b_vector,
+                                                      const double rescale_factor_ee,
+                                                      double* const asymp_jasb );
+#+end_src
+
+    #+begin_src c :comments org :tangle (eval c) :noweb yes
+qmckl_exit_code
+qmckl_compute_jastrow_asymp_jasb_hpc (const qmckl_context context,
+                                      const int64_t bord_num,
+                                      const double* b_vector,
+                                      const double rescale_factor_ee,
+                                      double* const asymp_jasb )
+{
+
+  if (context == QMCKL_NULL_CONTEXT) {
+    return QMCKL_INVALID_CONTEXT;
+  }
+
+  if (bord_num < 0) {
+    return QMCKL_INVALID_ARG_2;
+  }
+
+  const double kappa_inv = 1.0 / rescale_factor_ee;
+  const double asym_one = b_vector[0] * kappa_inv / (1.0 + b_vector[1] * kappa_inv);
+  asymp_jasb[0] = asym_one;
+  asymp_jasb[1] = 0.5 * asym_one;
+
+  for (int i = 0 ; i<2 ; ++i) {
+    double x = kappa_inv;
+    for (int p = 1; p < bord_num; ++p) {
+      x *= kappa_inv;
+      asymp_jasb[i] += b_vector[p+1]*x;
+    }
+  }
+
+  return QMCKL_SUCCESS;
+}
+    #+end_src
+
+
+#+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_compute_jastrow_asymp_jasb (const qmckl_context context,
+                                                  const int64_t bord_num,
+                                                  const double* b_vector,
+                                                  const double rescale_factor_ee,
+                                                  double* const asymp_jasb );
+#+end_src
 
 #+begin_src c :comments org :tangle (eval c) :noweb yes
 qmckl_exit_code qmckl_compute_jastrow_asymp_jasb (
@@ -1848,44 +1933,17 @@ qmckl_exit_code qmckl_compute_jastrow_asymp_jasb (
 	  const int64_t bord_num,
 	  const double* b_vector,
 	  const double rescale_factor_ee,
-	  double* const asymp_jasb ) {
-
-    if (context == QMCKL_NULL_CONTEXT){
-      return QMCKL_INVALID_CONTEXT;
-    }
-
-    if (bord_num < 0) {
-      return QMCKL_INVALID_ARG_2;
-    }
-
-    const double kappa_inv = 1.0 / rescale_factor_ee;
-    const double asym_one = b_vector[0] * kappa_inv / (1.0 + b_vector[1] * kappa_inv);
-    asymp_jasb[0] = asym_one;
-    asymp_jasb[1] = 0.5 * asym_one;
-
-    for (int i = 0 ; i <= 1; ++i) {
-      double x = kappa_inv;
-      for (int p = 1; p < bord_num; ++p){
-        x *= kappa_inv;
-        asymp_jasb[i] = asymp_jasb[i] + b_vector[p + 1] * x;
-      }
-    }
-
-  return QMCKL_SUCCESS;
+	  double* const asymp_jasb )
+{
+#ifdef HAVE_HPC
+  return qmckl_compute_jastrow_asymp_jasb_hpc (context,
+	  bord_num, b_vector, rescale_factor_ee, asymp_jasb);
+#else
+  return qmckl_compute_jastrow_asymp_jasb_doc (context,
+	  bord_num, b_vector, rescale_factor_ee, asymp_jasb);
+#endif
 }
 #+end_src
-
-#   #+CALL: generate_c_header(table=qmckl_asymp_jasb_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
-
-    #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
-    qmckl_exit_code qmckl_compute_jastrow_asymp_jasb (
-          const qmckl_context context,
-          const int64_t bord_num,
-          const double* b_vector,
-          const double rescale_factor_ee,
-          double* const asymp_jasb );
-    #+end_src
-
 *** Test
     #+name: asymp_jasb
     #+begin_src python :results output :exports none :noweb yes
@@ -2007,7 +2065,7 @@ assert(fabs(asymp_jasb[1]-0.31567342786262853) < 1.e-12);
   component and the electron-electron rescaled distances ~ee_distance_rescaled~.
 
   \[
-f_\text{ee} = \sum_{i,j<i} \left[ \frac{ \delta B_0\, C_{ij}}{1 - B_1\, C_{ij}}  + \sum^{n_\text{ord}}_{k}B_k\, C_{ij}^k \right] - J_{\text{ee}}^{\infty}
+    f_\text{ee} = \sum_{i,j<i} \left[ \frac{\delta_{ij}^{\uparrow\downarrow} B_0\, C_{ij}}{1 - B_1\, C_{ij}} + \sum^{n_\text{ord}}_{k} B_k\, C_{ij}^k - {J_{\text{ee}}^{\infty}}_{ij} \right] 
   \]
 
   $\delta$ is the spin factor, $B$ is the vector of $b$ parameters,
@@ -2180,8 +2238,10 @@ qmckl_exit_code qmckl_provide_jastrow_factor_ee(qmckl_context context)
     | ~asymp_jasb~           | ~double[2]~                            | in     | Electron-electron distances |
     | ~factor_ee~            | ~double[walk_num]~                     | out    | Electron-electron distances |
 
+#  #+CALL: generate_c_interface(table=qmckl_factor_ee_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+
     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_factor_ee_f(context, walk_num, elec_num, up_num, bord_num,            &
+integer function qmckl_compute_factor_ee_doc_f(context, walk_num, elec_num, up_num, bord_num,            &
                                            b_vector, ee_distance_rescaled, asymp_jasb, factor_ee) &
      result(info)
   use qmckl
@@ -2248,11 +2308,63 @@ integer function qmckl_compute_factor_ee_f(context, walk_num, elec_num, up_num, 
      end do
   end do
 
-end function qmckl_compute_factor_ee_f
+end function qmckl_compute_factor_ee_doc_f
     #+end_src
 
+   #+begin_src f90 :tangle (eval f) :comments org :exports none
+   integer(c_int32_t) function qmckl_compute_factor_ee_doc &
+       (context, walk_num, elec_num, up_num, bord_num, b_vector, ee_distance_rescaled, asymp_jasb, factor_ee) &
+       bind(C) result(info)
+
+     use, intrinsic :: iso_c_binding
+     implicit none
+
+     integer (c_int64_t) , intent(in)  , value :: context
+     integer (c_int64_t) , intent(in)  , value :: walk_num
+     integer (c_int64_t) , intent(in)  , value :: elec_num
+     integer (c_int64_t) , intent(in)  , value :: up_num
+     integer (c_int64_t) , intent(in)  , value :: bord_num
+     real    (c_double ) , intent(in)          :: b_vector(bord_num+1)
+     real    (c_double ) , intent(in)          :: ee_distance_rescaled(elec_num,elec_num,walk_num)
+     real    (c_double ) , intent(in)          :: asymp_jasb(2)
+     real    (c_double ) , intent(out)         :: factor_ee(walk_num)
+
+     integer(c_int32_t), external :: qmckl_compute_factor_ee_doc_f
+     info = qmckl_compute_factor_ee_doc_f &
+            (context, walk_num, elec_num, up_num, bord_num, b_vector, ee_distance_rescaled, asymp_jasb, factor_ee)
+
+   end function qmckl_compute_factor_ee_doc
+   #+end_src
+
+#+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_compute_factor_ee_doc (
+          const qmckl_context context,
+          const int64_t walk_num,
+          const int64_t elec_num,
+          const int64_t up_num,
+          const int64_t bord_num,
+          const double* b_vector,
+          const double* ee_distance_rescaled,
+          const double* asymp_jasb,
+          double* const factor_ee );
+#+end_src
+
+
+#+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_compute_factor_ee_hpc (
+          const qmckl_context context,
+          const int64_t walk_num,
+          const int64_t elec_num,
+          const int64_t up_num,
+          const int64_t bord_num,
+          const double* b_vector,
+          const double* ee_distance_rescaled,
+          const double* asymp_jasb,
+          double* const factor_ee );
+#+end_src
+
 #+begin_src c   :comments org :tangle (eval c) :noweb yes
-qmckl_exit_code qmckl_compute_factor_ee (
+qmckl_exit_code qmckl_compute_factor_ee_hpc (
       const qmckl_context context,
       const int64_t walk_num,
       const int64_t elec_num,
@@ -2317,8 +2429,8 @@ qmckl_exit_code qmckl_compute_factor_ee (
 
 #   #+CALL: generate_c_header(table=qmckl_factor_ee_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
 
-    #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
-    qmckl_exit_code qmckl_compute_factor_ee (
+#+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_compute_factor_ee (
           const qmckl_context context,
           const int64_t walk_num,
           const int64_t elec_num,
@@ -2328,8 +2440,32 @@ qmckl_exit_code qmckl_compute_factor_ee (
           const double* ee_distance_rescaled,
           const double* asymp_jasb,
           double* const factor_ee );
-    #+end_src
+#+end_src
 
+#+begin_src c   :comments org :tangle (eval c) :noweb yes
+qmckl_exit_code
+qmckl_compute_factor_ee (const qmckl_context context,
+                         const int64_t walk_num,
+                         const int64_t elec_num,
+                         const int64_t up_num,
+                         const int64_t bord_num,
+                         const double* b_vector,
+                         const double* ee_distance_rescaled,
+                         const double* asymp_jasb,
+                         double* const factor_ee )
+{
+
+#ifdef HAVE_HPC
+  return qmckl_compute_factor_ee_hpc(context, walk_num, elec_num,
+      up_num, bord_num, b_vector, ee_distance_rescaled, asymp_jasb,
+      factor_ee);
+#else
+  return qmckl_compute_factor_ee_doc(context, walk_num, elec_num,
+      up_num, bord_num, b_vector, ee_distance_rescaled, asymp_jasb,
+      factor_ee);
+#endif
+}
+#+end_src
 *** Test
     #+begin_src python :results output :exports none :noweb yes
 import numpy as np
