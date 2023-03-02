@@ -58,8 +58,8 @@
 (add-hook 'org-babel-after-execute-hook 'org-display-inline-images)
 '(indent-tabs-mode nil)
 
-(require 'evil)
 (setq evil-want-C-i-jump nil)
+(require 'evil)
 (evil-mode 1)
 (global-font-lock-mode t)
 (global-superword-mode 1)

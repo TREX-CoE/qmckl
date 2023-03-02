@@ -32,7 +32,6 @@
      | ~C~       | ~double[n][ldc]~ | out    | Array containing the $m \times n$ matrix $C$  |
      | ~ldc~     | ~int64_t~        | in     | Leading dimension of array ~C~                |
 
-
 *** Fortran-C type conversions
 
     #+NAME:f_of_c
@@ -132,22 +131,36 @@ return template
 
     #+END_SRC
 
-    #+RESULTS: generate_c_header
-    #+begin_src c :tangle (eval h_func) :comments org
-    qmckl_exit_code [] (
-          const qmckl_context context,
-          const char transa,
-          const char transb,
-          const int64_t m,
-          const int64_t n,
-          const double* A,
-          const int64_t lda,
-          const double* B,
-          const int64_t ldb,
-          double* const C,
-          const int64_t ldc );
-    #+end_src
+    #+NAME: generate_private_c_header
+    #+BEGIN_SRC python :var table=test :var rettyp="qmckl_exit_code" :var fname=[] :results drawer :noweb yes :wrap "src c :tangle (eval h_private_func) :comments org"
+<<parse_table>>
 
+results = []
+for d in parse_table(table):
+    name = d["name"]
+    c_type = d["c_type"]
+
+    # Add star for arrays
+    if d["rank"] > 0 or d["inout"] in ["out", "inout"]:
+        c_type += "*"
+
+    if d["inout"] == "out":
+        c_type += " const"
+
+    # Only inputs are const
+    if d["inout"] == "in":
+        const = "const "
+    else:
+        const = ""
+
+    results += [ f"      {const}{c_type} {name}" ]
+
+results=',\n'.join(results)
+template = f"""{rettyp} {fname} (\n{results} ); """
+return template
+
+    #+END_SRC
+    
 *** Generates a C interface to the Fortran function
 
     #+NAME: generate_c_interface
@@ -255,7 +268,54 @@ results='\n'.join(results)
 return results
     #+END_SRC
 
+    #+NAME: generate_private_f_interface
+    #+BEGIN_SRC python :var table=test :var rettyp="integer" :var fname=[] :results value :noweb yes :wrap "src f90 :tangle (eval fh_private_func) :comments org :exports none"
+<<c_of_f>>
+<<f_of_c>>
+<<parse_table>>
+d = parse_table(table)
 
+args = ", ".join([ x["name"] for x in d ])
+
+rettyp_c = ctypeid_d[rettyp.lower()]
+
+results = [ f"interface"
+, f"  {rettyp_c} function {fname} &"
+, f"      ({args}) &"
+,  "      bind(C)"
+,  "    use, intrinsic :: iso_c_binding"
+,  "    import"
+,  "    implicit none"
+,  ""
+]
+
+for d in parse_table(table):
+    f_type = f_of_c_d[d["c_type"]]
+    inout  = "intent("+d["inout"]+")"
+    name = d["name"]
+
+    # Input scalars are passed by value
+    if d["rank"] == 0 and d["inout"] == "in":
+        value = ", value"
+    else:
+        value = "       "
+
+    # Append dimensions to the name
+    if d["rank"] == 0:
+        dims = ""
+    else:
+        d["dims"].reverse()
+        dims = "(" + ",".join(d["dims"]) + ")"
+
+    results += [ f"    {f_type:20}, {inout:12}{value} :: {name}{dims}" ]
+
+results += [ ""
+, f"  end function {fname}"
+, f"end interface"
+]
+results='\n'.join(results)
+return results
+    #+END_SRC
 
 ** Creating provide functions
 
@@ -421,3 +481,4 @@ return msg
       return QMCKL_SUCCESS;
     }
     #+end_src
+    
