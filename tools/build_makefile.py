@@ -135,14 +135,14 @@ def main():
             F_FILES += [F90]
 
             if F90 in DEPS:
-                DEPS[F90] += [tangled, "$(src_qmckl_fo)"]
+                DEPS[F90] += [tangled, "$(qmckl_fo)"]
             else:
-                DEPS[F90]  = [tangled, "$(src_qmckl_fo)"]
+                DEPS[F90]  = [tangled, "$(qmckl_fo)"]
 
             if fo in DEPS:
-                DEPS[fo] += [F90, "$(src_qmckl_fo)"]
+                DEPS[fo] += [F90, "$(qmckl_fo)"]
             else:
-                DEPS[fo]  = [F90, "$(src_qmckl_fo)"]
+                DEPS[fo]  = [F90, "$(qmckl_fo)"]
 
         if "(eval fh_func)" in grep:
             FH_FUNC_FILES += [fh_func]
@@ -232,7 +232,7 @@ def main():
         if DEPS[f][-1].endswith(".tangled"):
             output += [ f + ": " + " ".join(DEPS[f]) ]
     output += [ "endif",
-                "$(src_qmckl_fo): $(src_qmckl_f)" ]
+                "$(qmckl_fo): $(qmckl_f)" ]
     for f in sorted(DEPS.keys()):
         if not DEPS[f][-1].endswith(".tangled"):
             output += [ f + ": include/config.h " + " ".join(DEPS[f]) ]
