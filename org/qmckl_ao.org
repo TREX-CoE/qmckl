@@ -122,25 +122,38 @@ int main() {
    when initializing the library:
 
    #+NAME: constant_data
-   |---------------------+----------------------+----------------------------------------------------------------------|
-   | Variable            | Type                 | Description                                                          |
-   |---------------------+----------------------+----------------------------------------------------------------------|
-   | ~type~              | ~char~               | Gaussian (~'G'~) or Slater (~'S'~)                                   |
-   | ~shell_num~         | ~int64_t~            | Number of shells                                                     |
-   | ~prim_num~          | ~int64_t~            | Total number of primitives                                           |
-   | ~nucleus_index~     | ~int64_t[nucl_num]~  | Index of the first shell of each nucleus                             |
-   | ~nucleus_shell_num~ | ~int64_t[nucl_num]~  | Number of shells per nucleus                                         |
-   | ~shell_ang_mom~     | ~int32_t[shell_num]~ | Angular momentum of each shell                                       |
-   | ~shell_prim_num~    | ~int64_t[shell_num]~ | Number of primitives in each shell                                   |
-   | ~shell_prim_index~  | ~int64_t[shell_num]~ | Address of the first primitive of each shell in the ~EXPONENT~ array |
-   | ~shell_factor~      | ~double[shell_num]~  | Normalization factor for each shell                                  |
-   | ~exponent~          | ~double[prim_num]~   | Array of exponents                                                   |
-   | ~coefficient~       | ~double[prim_num]~   | Array of coefficients                                                |
-   | ~prim_factor~       | ~double[prim_num]~   | Normalization factors of the primtives                               |
-   | ~ao_num~            | ~int64_t~            | Number of AOs                                                        |
-   | ~ao_cartesian~      | ~bool~               | If true, use polynomials. Otherwise, use spherical harmonics         |
-   | ~ao_factor~         | ~double[ao_num]~     | Normalization factor of the AO                                       |
-   |---------------------+----------------------+----------------------------------------------------------------------|
+   |---------------------------+-----------------------+----------------------------------------------------------------------|
+   | Variable                  | Type                  | Description                                                          |
+   |---------------------------+-----------------------+----------------------------------------------------------------------|
+   | ~type~                    | ~char~                | Gaussian (~'G'~) or Slater (~'S'~)                                   |
+   | ~shell_num~               | ~int64_t~             | Number of shells                                                     |
+   | ~prim_num~                | ~int64_t~             | Total number of primitives                                           |
+   | ~nucleus_index~           | ~int64_t[nucl_num]~   | Index of the first shell of each nucleus                             |
+   | ~nucleus_shell_num~       | ~int64_t[nucl_num]~   | Number of shells per nucleus                                         |
+   | ~shell_ang_mom~           | ~int32_t[shell_num]~  | Angular momentum of each shell                                       |
+   | ~shell_prim_num~          | ~int64_t[shell_num]~  | Number of primitives in each shell                                   |
+   | ~shell_prim_index~        | ~int64_t[shell_num]~  | Address of the first primitive of each shell in the ~EXPONENT~ array |
+   | ~shell_factor~            | ~double[shell_num]~   | Normalization factor for each shell                                  |
+   | ~exponent~                | ~double[prim_num]~    | Array of exponents                                                   |
+   | ~coefficient~             | ~double[prim_num]~    | Array of coefficients                                                |
+   | ~prim_factor~             | ~double[prim_num]~    | Normalization factors of the primtives                               |
+   | ~ao_num~                  | ~int64_t~             | Number of AOs                                                        |
+   | ~ao_cartesian~            | ~bool~                | If true, use polynomials. Otherwise, use spherical harmonics         |
+   | ~ao_factor~               | ~double[ao_num]~      | Normalization factor of the AO                                       |
+   |---------------------------+-----------------------+----------------------------------------------------------------------|
+
+   The following data is computed when the basis is finalized:
+
+   |---------------------------+-----------------------+----------------------------------------------------------------------|
+   | Variable                  | Type                  | Description                                                          |
+   |---------------------------+-----------------------+----------------------------------------------------------------------|
+   | ~nucleus_prim_index~      | ~int64_t[nucl_num+1]~ | Index of the first primitive of each nucleus                         |
+   | ~nucleus_max_ang_mom~     | ~int32_t[nucl_num]~   | Maximum angular momentum of each nucleus                             |
+   | ~coefficient_normalized~~ | ~double[prim_num]~    | Normalized array of coefficients                                     |
+   | ~ao_ang_mom~              | ~int32_t[ao_num]~     | Angular momentum of the shell to which the AO belongs                |
+   | ~ao_nucl~                 | ~int64_t[ao_num]~     | Nucleus on which the AO is centered                                  |
+   | ~nucleus_range~           | ~double[nucl_num]~    | Distance beyond which all AOs are zero                               |
+   |---------------------------+-----------------------+----------------------------------------------------------------------|
 
     For H_2 with the following basis set,
 
@@ -289,6 +302,8 @@ typedef struct qmckl_ao_basis_struct {
   double  * restrict coefficient;
   double  * restrict prim_factor;
   double  * restrict ao_factor;
+  int64_t * restrict ao_nucl;
+  int32_t * restrict ao_ang_mom;
 
   int64_t * restrict nucleus_prim_index;
   double  * restrict coefficient_normalized;
@@ -2569,6 +2584,49 @@ qmckl_exit_code qmckl_finalize_basis(qmckl_context context) {
     ctx->ao_basis.nucleus_prim_index[nucl_num] = ctx->ao_basis.prim_num;
   }
 
+  /* ao_ang_mom */
+  {
+    qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+    mem_info.size = ctx->ao_basis.ao_num * sizeof(int64_t);
+
+    ctx->ao_basis.ao_ang_mom = (int32_t*) qmckl_malloc(context, mem_info);
+
+    if (ctx->ao_basis.ao_ang_mom == NULL) {
+      return qmckl_failwith( context,
+                             QMCKL_ALLOCATION_FAILED,
+                             "ao_basis.ao_ang_mom",
+                             NULL);
+    }
+
+    ctx->ao_basis.ao_nucl = (int64_t*) qmckl_malloc(context, mem_info);
+
+    if (ctx->ao_basis.ao_ang_mom == NULL) {
+      return qmckl_failwith( context,
+                             QMCKL_ALLOCATION_FAILED,
+                             "ao_basis.ao_nucl",
+                             NULL);
+    }
+
+    int64_t ao_idx = 0;
+    for (int64_t inucl=0 ; inucl<nucl_num ; ++inucl) {
+      const int64_t ishell_start = ctx->ao_basis.nucleus_index[inucl];
+      const int64_t ishell_end   = ctx->ao_basis.nucleus_index[inucl] + ctx->ao_basis.nucleus_shell_num[inucl];
+      for (int64_t ishell = ishell_start ; ishell < ishell_end ; ++ishell) {
+        const int l = ctx->ao_basis.shell_ang_mom[ishell];
+        const int mmax = l*(l+1)*(l+2)/6;
+        const int64_t iprim_start = ctx->ao_basis.shell_prim_index[ishell];
+        const int64_t iprim_end   = ctx->ao_basis.shell_prim_index[ishell] + ctx->ao_basis.shell_prim_num[ishell];
+        for (int64_t iprim = iprim_start ; iprim < iprim_end ; ++iprim) {
+          for (int m=0 ; m < mmax ; m++) {
+            ctx->ao_basis.ao_ang_mom[ao_idx] = l;
+            ctx->ao_basis.ao_nucl[ao_idx] = inucl;
+            ++ao_idx;
+          }
+        }
+      }
+    }
+  }
+
 
   /* Normalize coefficients */
   {
@@ -3812,36 +3870,6 @@ print ( "[7][4][26] : %e"% lf(a,x,y))
 }
 
 
-    #+end_src
-
-*** Ideas for improvement                                          :noexport:
-
-    #+begin_src c
-// j : electrons
-// l : primitives
-
-k=0;
-for (j=0 ; j<point_num ; ++j) {
-  for (i=0 ; i<nucl_num ; ++i) {
-
-    r2 = nucl_point_dist[i][j];
-
-    if (r2 < nucl_radius2[i]) {
-
-      for (l=0 ; l<prim_num ; ++l) {
-        tmp[k].i   = i;
-        tmp[k].j   = j;
-        tmp[k].m   = m;
-        tmp[k].ar2 = -expo[l] *r2;
-        ++k;
-      }
-    }
-  }
- }
-
-// sort(tmp) in increasing ar2;
-// Identify first ar2 above numerical accuracy threshold
-// Compute vectorized exponentials on significant values
     #+end_src
 
 ** Computation of shells
