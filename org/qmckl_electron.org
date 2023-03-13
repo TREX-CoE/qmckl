@@ -95,7 +95,7 @@ int main() {
   |-------------------------------------+----------------------------------------+----------------------------------------------------------------------|
   | ~ee_distance~                       | ~double[walker.num][num][num]~         | Electron-electron distances                                          |
   | ~ee_distance_date~                  | ~uint64_t~                             | Last modification date of the electron-electron distances            |
-  | ~en_distance~                       | ~double[walker.num][nucl_num][num]~    | Electron-nucleus distances                                           |
+  | ~en_distance~                       | ~double[walker.num][num][nucl_num]~    | Electron-nucleus distances                                           |
   | ~en_distance_date~                  | ~uint64_t~                             | Last modification date of the electron-electron distances            |
   | ~ee_potential~                      | ~double[walker.num]~                   | Electron-electron potential energy                                   |
   | ~ee_potential_date~                 | ~uint64_t~                             | Last modification date of the electron-electron potential            |
@@ -1235,7 +1235,7 @@ qmckl_exit_code qmckl_provide_en_distance(qmckl_context context)
     | ~walk_num~    | ~int64_t~                              | in     | Number of walkers          |
     | ~elec_coord~  | ~double[3][walk_num][elec_num]~        | in     | Electron coordinates       |
     | ~nucl_coord~  | ~double[3][elec_num]~                  | in     | Nuclear coordinates        |
-    | ~en_distance~ | ~double[walk_num][nucl_num][elec_num]~ | out    | Electron-nucleus distances |
+    | ~en_distance~ | ~double[walk_num][elec_num][nucl_num]~ | out    | Electron-nucleus distances |
 
     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
 integer function qmckl_compute_en_distance_f(context, elec_num, nucl_num, walk_num, elec_coord, nucl_coord, en_distance) &
@@ -1248,7 +1248,7 @@ integer function qmckl_compute_en_distance_f(context, elec_num, nucl_num, walk_n
   integer*8             , intent(in)  :: walk_num
   double precision      , intent(in)  :: elec_coord(elec_num,walk_num,3)
   double precision      , intent(in)  :: nucl_coord(nucl_num,3)
-  double precision      , intent(out) :: en_distance(elec_num,nucl_num,walk_num)
+  double precision      , intent(out) :: en_distance(nucl_num,elec_num,walk_num)
 
   integer*8 :: k
 
@@ -1274,15 +1274,10 @@ integer function qmckl_compute_en_distance_f(context, elec_num, nucl_num, walk_n
      return
   endif
 
-  do k=1,walk_num
-     info = qmckl_distance(context, 'T', 'T', elec_num, nucl_num, &
-          elec_coord(1,k,1), elec_num * walk_num, &
+  info = qmckl_distance(context, 'T', 'T', nucl_num, elec_num * walk_num, &
           nucl_coord, nucl_num, &
-          en_distance(1,1,k), elec_num)
-     if (info /= QMCKL_SUCCESS) then
-        exit
-     endif
-  end do
+          elec_coord, elec_num * walk_num, &
+          en_distance, nucl_num)
 
 end function qmckl_compute_en_distance_f
     #+end_src
@@ -1315,7 +1310,7 @@ qmckl_exit_code qmckl_compute_en_distance (
       integer (c_int64_t) , intent(in)  , value :: walk_num
       real    (c_double ) , intent(in)          :: elec_coord(elec_num,walk_num,3)
       real    (c_double ) , intent(in)          :: nucl_coord(elec_num,3)
-      real    (c_double ) , intent(out)         :: en_distance(elec_num,nucl_num,walk_num)
+      real    (c_double ) , intent(out)         :: en_distance(nucl_num,elec_num,walk_num)
 
       integer(c_int32_t), external :: qmckl_compute_en_distance_f
       info = qmckl_compute_en_distance_f &
@@ -1368,7 +1363,7 @@ qmckl_check(context, rc);
 
 assert(qmckl_nucleus_provided(context));
 
-double en_distance[walk_num][nucl_num][elec_num];
+double en_distance[walk_num][elec_num][nucl_num];
 
 rc = qmckl_get_electron_en_distance(context, &(en_distance[0][0][0]));
 qmckl_check(context, rc);
@@ -1378,19 +1373,19 @@ qmckl_check(context, rc);
 assert(fabs(en_distance[0][0][0] - 7.546738741619978) < 1.e-12);
 
 // (1,2,1)
-assert(fabs(en_distance[0][1][0] - 8.77102435246984) < 1.e-12);
+assert(fabs(en_distance[0][0][1] - 8.77102435246984) < 1.e-12);
 
 // (2,1,1)
-assert(fabs(en_distance[0][0][1] - 3.698922010513608) < 1.e-12);
+assert(fabs(en_distance[0][1][0] - 3.698922010513608) < 1.e-12);
 
 // (1,1,2)
 assert(fabs(en_distance[1][0][0] - 5.824059436060509) < 1.e-12);
 
 // (1,2,2)
-assert(fabs(en_distance[1][1][0] - 7.080482110317645) < 1.e-12);
+assert(fabs(en_distance[1][0][1] - 7.080482110317645) < 1.e-12);
 
 // (2,1,2)
-assert(fabs(en_distance[1][0][1] - 3.1804527583077356) < 1.e-12);
+assert(fabs(en_distance[1][1][0] - 3.1804527583077356) < 1.e-12);
 
      #+end_src
 
@@ -1512,7 +1507,7 @@ qmckl_exit_code qmckl_provide_en_potential(qmckl_context context)
     | ~nucl_num~     | ~int64_t~                              | in     | Number of nuclei                     |
     | ~walk_num~     | ~int64_t~                              | in     | Number of walkers                    |
     | ~charge~       | ~double[nucl_num]~                     | in     | charge of nucleus                    |
-    | ~en_distance~  | ~double[walk_num][nucl_num][elec_num]~ | in     | Electron-electron rescaled distances |
+    | ~en_distance~  | ~double[walk_num][elec_num][nucl_num]~ | in     | Electron-electron distances          |
     | ~en_potential~ | ~double[walk_num]~                     | out    | Electron-electron potential          |
 
     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
@@ -1526,7 +1521,7 @@ integer function qmckl_compute_en_potential_f(context, elec_num, nucl_num, walk_
   integer*8             , intent(in)  :: nucl_num
   integer*8             , intent(in)  :: walk_num
   double precision      , intent(in)  :: charge(nucl_num)
-  double precision      , intent(in)  :: en_distance(elec_num,nucl_num,walk_num)
+  double precision      , intent(in)  :: en_distance(nucl_num,elec_num,walk_num)
   double precision      , intent(out) :: en_potential(walk_num)
 
   integer*8 :: nw, i, j
@@ -1550,10 +1545,10 @@ integer function qmckl_compute_en_potential_f(context, elec_num, nucl_num, walk_
 
   en_potential = 0.0d0
   do nw=1,walk_num
-    do j=1,nucl_num
-      do i=1,elec_num
-        if (dabs(en_distance(i,j,nw)) > 1e-5) then
-          en_potential(nw) = en_potential(nw) - charge(j)/(en_distance(i,j,nw))
+    do i=1,elec_num
+      do j=1,nucl_num
+        if (dabs(en_distance(j,i,nw)) > 1.d-6) then
+          en_potential(nw) = en_potential(nw) - charge(j)/(en_distance(j,i,nw))
         endif
       end do
     end do
@@ -1592,7 +1587,7 @@ end function qmckl_compute_en_potential_f
       integer (c_int64_t) , intent(in)  , value :: nucl_num
       integer (c_int64_t) , intent(in)  , value :: walk_num
       real    (c_double ) , intent(in)          :: charge(nucl_num)
-      real    (c_double ) , intent(in)          :: en_distance(elec_num,nucl_num,walk_num)
+      real    (c_double ) , intent(in)          :: en_distance(nucl_num,elec_num,walk_num)
       real    (c_double ) , intent(out)         :: en_potential(walk_num)
 
       integer(c_int32_t), external :: qmckl_compute_en_potential_f
