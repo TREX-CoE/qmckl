@@ -14,6 +14,8 @@ the components is =[ (x,y,z), (x,y,z), ... ]=
 Using the ='T'= flage, it is =[ (x,x,x,...), (y,y,y,...), (z,z,z,...) ]=
 
 # TODO: replace the qmckl_matrix by qmckl_point data structures.
+# TODO: in provide funcions, replace the way to check that dimensions
+# have changed
 
 * Headers                                                          :noexport:
   #+begin_src elisp :noexport :results none
@@ -91,16 +93,16 @@ int main() {
 
   Computed data:
 
-  | Variable                            | Type                                   | Description                                                          |
-  |-------------------------------------+----------------------------------------+----------------------------------------------------------------------|
-  | ~ee_distance~                       | ~double[walker.num][num][num]~         | Electron-electron distances                                          |
-  | ~ee_distance_date~                  | ~uint64_t~                             | Last modification date of the electron-electron distances            |
-  | ~en_distance~                       | ~double[walker.num][num][nucl_num]~    | Electron-nucleus distances                                           |
-  | ~en_distance_date~                  | ~uint64_t~                             | Last modification date of the electron-electron distances            |
-  | ~ee_potential~                      | ~double[walker.num]~                   | Electron-electron potential energy                                   |
-  | ~ee_potential_date~                 | ~uint64_t~                             | Last modification date of the electron-electron potential            |
-  | ~en_potential~                      | ~double[walker.num]~                   | Electron-nucleus potential energy                                    |
-  | ~en_potential_date~                 | ~int64_t~                              | Date when the electron-nucleus potential energy was computed         |
+  | Variable            | Type                           | Description                                                  |
+  |---------------------+--------------------------------+--------------------------------------------------------------|
+  | ~ee_distance~       | ~double[walker.num][num][num]~ | Electron-electron distances                                  |
+  | ~ee_distance_date~  | ~uint64_t~                     | Last modification date of the electron-electron distances    |
+  | ~en_distance~       | ~double[num][nucl_num]~        | Electron-nucleus distances                                   |
+  | ~en_distance_date~  | ~uint64_t~                     | Last modification date of the electron-electron distances    |
+  | ~ee_potential~      | ~double[walker.num]~           | Electron-electron potential energy                           |
+  | ~ee_potential_date~ | ~uint64_t~                     | Last modification date of the electron-electron potential    |
+  | ~en_potential~      | ~double[walker.num]~           | Electron-nucleus potential energy                            |
+  | ~en_potential_date~ | ~int64_t~                      | Date when the electron-nucleus potential energy was computed |
 
 ** Data structure
 
@@ -715,7 +717,7 @@ qmckl_exit_code qmckl_provide_ee_distance(qmckl_context context)
 
 
   /* Compute if necessary */
-  if (ctx->electron.walker.point.date > ctx->electron.ee_distance_date) {
+  if (ctx->point.date > ctx->electron.ee_distance_date) {
 
     if (ctx->electron.walker.num > ctx->electron.walker_old.num) {
       free(ctx->electron.ee_distance);
@@ -965,7 +967,7 @@ qmckl_exit_code qmckl_provide_ee_potential(qmckl_context context)
   if (rc != QMCKL_SUCCESS) return rc;
 
   /* Compute if necessary */
-  if (ctx->electron.walker.point.date > ctx->electron.ee_potential_date) {
+  if (ctx->point.date > ctx->electron.ee_potential_date) {
 
     if (ctx->electron.walker.num > ctx->electron.walker_old.num) {
       free(ctx->electron.ee_potential);
@@ -1144,7 +1146,7 @@ qmckl_exit_code qmckl_get_electron_en_distance(qmckl_context context, double* di
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
-  size_t sze = ctx->electron.num * ctx->nucleus.num * ctx->electron.walker.num;
+  size_t sze = ctx->point.num * ctx->nucleus.num;
   memcpy(distance, ctx->electron.en_distance, sze * sizeof(double));
 
   return QMCKL_SUCCESS;
@@ -1176,19 +1178,28 @@ qmckl_exit_code qmckl_provide_en_distance(qmckl_context context)
   }
 
   /* Compute if necessary */
-  if (ctx->electron.walker.point.date > ctx->electron.en_distance_date) {
+  if (ctx->point.date > ctx->electron.en_distance_date) {
 
-    if (ctx->electron.walker.num > ctx->electron.walker_old.num) {
-      free(ctx->electron.en_distance);
-      ctx->electron.en_distance = NULL;
+    qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+    mem_info.size = ctx->point.num * ctx->nucleus.num * sizeof(double);
+
+    if (ctx->electron.en_distance != NULL) {
+      qmckl_memory_info_struct mem_info_test = qmckl_memory_info_struct_zero;
+      qmckl_exit_code rc = qmckl_get_malloc_info(context, ctx->electron.en_distance, &mem_info_test);
+
+      /* if rc != QMCKL_SUCCESS, we are maybe in an _inplace function because the
+         memory was not allocated with qmckl_malloc */
+
+      if ((rc == QMCKL_SUCCESS) && (mem_info_test.size != mem_info.size)) {
+        rc = qmckl_free(context, ctx->electron.en_distance);
+        assert (rc == QMCKL_SUCCESS);
+        ctx->electron.en_distance = NULL;
+      }
     }
 
     /* Allocate array */
     if (ctx->electron.en_distance == NULL) {
 
-      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-      mem_info.size = ctx->electron.num * ctx->nucleus.num *
-        ctx->electron.walker.num * sizeof(double);
       double* en_distance = (double*) qmckl_malloc(context, mem_info);
 
       if (en_distance == NULL) {
@@ -1202,10 +1213,9 @@ qmckl_exit_code qmckl_provide_en_distance(qmckl_context context)
 
     qmckl_exit_code rc =
       qmckl_compute_en_distance(context,
-                                ctx->electron.num,
+                                ctx->point.num,
                                 ctx->nucleus.num,
-                                ctx->electron.walker.num,
-                                ctx->electron.walker.point.coord.data,
+                                ctx->point.coord.data,
                                 ctx->nucleus.coord.data,
                                 ctx->electron.en_distance);
     if (rc != QMCKL_SUCCESS) {
@@ -1227,28 +1237,26 @@ qmckl_exit_code qmckl_provide_en_distance(qmckl_context context)
    :END:
 
     #+NAME: qmckl_en_distance_args
-    | Variable      | Type                                   | In/Out | Description                |
-    |---------------+----------------------------------------+--------+----------------------------|
-    | ~context~     | ~qmckl_context~                        | in     | Global state               |
-    | ~elec_num~    | ~int64_t~                              | in     | Number of electrons        |
-    | ~nucl_num~    | ~int64_t~                              | in     | Number of nuclei           |
-    | ~walk_num~    | ~int64_t~                              | in     | Number of walkers          |
-    | ~elec_coord~  | ~double[3][walk_num][elec_num]~        | in     | Electron coordinates       |
-    | ~nucl_coord~  | ~double[3][elec_num]~                  | in     | Nuclear coordinates        |
-    | ~en_distance~ | ~double[walk_num][elec_num][nucl_num]~ | out    | Electron-nucleus distances |
+    | Variable      | Type                          | In/Out | Description                |
+    |---------------+-------------------------------+--------+----------------------------|
+    | ~context~     | ~qmckl_context~               | in     | Global state               |
+    | ~point_num~   | ~int64_t~                     | in     | Number of points           |
+    | ~nucl_num~    | ~int64_t~                     | in     | Number of nuclei           |
+    | ~elec_coord~  | ~double[3][point_num]~        | in     | Electron coordinates       |
+    | ~nucl_coord~  | ~double[3][nucl_num]~         | in     | Nuclear coordinates        |
+    | ~en_distance~ | ~double[point_num][nucl_num]~ | out    | Electron-nucleus distances |
 
     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_en_distance_f(context, elec_num, nucl_num, walk_num, elec_coord, nucl_coord, en_distance) &
+integer function qmckl_compute_en_distance_f(context, point_num, nucl_num, elec_coord, nucl_coord, en_distance) &
      result(info)
   use qmckl
   implicit none
   integer(qmckl_context), intent(in)  :: context
-  integer*8             , intent(in)  :: elec_num
+  integer*8             , intent(in)  :: point_num
   integer*8             , intent(in)  :: nucl_num
-  integer*8             , intent(in)  :: walk_num
-  double precision      , intent(in)  :: elec_coord(elec_num,walk_num,3)
+  double precision      , intent(in)  :: elec_coord(point_num,3)
   double precision      , intent(in)  :: nucl_coord(nucl_num,3)
-  double precision      , intent(out) :: en_distance(nucl_num,elec_num,walk_num)
+  double precision      , intent(out) :: en_distance(nucl_num,point_num)
 
   integer*8 :: k
 
@@ -1259,7 +1267,7 @@ integer function qmckl_compute_en_distance_f(context, elec_num, nucl_num, walk_n
      return
   endif
 
-  if (elec_num <= 0) then
+  if (point_num <= 0) then
      info = QMCKL_INVALID_ARG_2
      return
   endif
@@ -1269,14 +1277,9 @@ integer function qmckl_compute_en_distance_f(context, elec_num, nucl_num, walk_n
      return
   endif
 
-  if (walk_num <= 0) then
-     info = QMCKL_INVALID_ARG_4
-     return
-  endif
-
-  info = qmckl_distance(context, 'T', 'T', nucl_num, elec_num * walk_num, &
+  info = qmckl_distance(context, 'T', 'T', nucl_num, point_num, &
           nucl_coord, nucl_num, &
-          elec_coord, elec_num * walk_num, &
+          elec_coord, point_num, &
           en_distance, nucl_num)
 
 end function qmckl_compute_en_distance_f
@@ -1285,9 +1288,8 @@ end function qmckl_compute_en_distance_f
     #+begin_src c :tangle (eval h_private_func) :comments org :exports none
 qmckl_exit_code qmckl_compute_en_distance (
           const qmckl_context context,
-          const int64_t elec_num,
+          const int64_t point_num,
           const int64_t nucl_num,
-          const int64_t walk_num,
           const double* elec_coord,
           const double* nucl_coord,
           double* const en_distance );
@@ -1298,23 +1300,22 @@ qmckl_exit_code qmckl_compute_en_distance (
     #+RESULTS:
     #+begin_src f90 :tangle (eval f) :comments org :exports none
     integer(c_int32_t) function qmckl_compute_en_distance &
-        (context, elec_num, nucl_num, walk_num, elec_coord, nucl_coord, en_distance) &
+        (context, point_num, nucl_num, elec_coord, nucl_coord, en_distance) &
         bind(C) result(info)
 
       use, intrinsic :: iso_c_binding
       implicit none
 
       integer (c_int64_t) , intent(in)  , value :: context
-      integer (c_int64_t) , intent(in)  , value :: elec_num
+      integer (c_int64_t) , intent(in)  , value :: point_num
       integer (c_int64_t) , intent(in)  , value :: nucl_num
-      integer (c_int64_t) , intent(in)  , value :: walk_num
-      real    (c_double ) , intent(in)          :: elec_coord(elec_num,walk_num,3)
-      real    (c_double ) , intent(in)          :: nucl_coord(elec_num,3)
-      real    (c_double ) , intent(out)         :: en_distance(nucl_num,elec_num,walk_num)
+      real    (c_double ) , intent(in)          :: elec_coord(point_num,3)
+      real    (c_double ) , intent(in)          :: nucl_coord(nucl_num,3)
+      real    (c_double ) , intent(out)         :: en_distance(nucl_num,point_num)
 
       integer(c_int32_t), external :: qmckl_compute_en_distance_f
       info = qmckl_compute_en_distance_f &
-             (context, elec_num, nucl_num, walk_num, elec_coord, nucl_coord, en_distance)
+             (context, point_num, nucl_num, elec_coord, nucl_coord, en_distance)
 
     end function qmckl_compute_en_distance
     #+end_src
@@ -1451,7 +1452,7 @@ qmckl_exit_code qmckl_provide_en_potential(qmckl_context context)
   if (rc != QMCKL_SUCCESS) return rc;
 
   /* Compute if necessary */
-  if (ctx->electron.walker.point.date > ctx->electron.en_potential_date) {
+  if (ctx->point.date > ctx->electron.en_potential_date) {
 
     if (ctx->electron.walker.num > ctx->electron.walker_old.num) {
       free(ctx->electron.en_potential);

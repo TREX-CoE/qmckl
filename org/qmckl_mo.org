@@ -157,7 +157,7 @@ typedef struct qmckl_mo_basis_struct {
 
   double * restrict mo_vgl;
   double * restrict mo_value;
-  double * restrict r_cusp_param;
+  qmckl_tensor r_cusp_param;
 
   uint64_t  mo_vgl_date;
   uint64_t  mo_value_date;
@@ -187,6 +187,8 @@ qmckl_exit_code qmckl_init_mo_basis(qmckl_context context) {
 
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
+
+  ctx->mo_basis.r_cusp = NULL;
 
   ctx->mo_basis.uninitialized = (1 << 2) - 1;
 
@@ -252,7 +254,9 @@ qmckl_exit_code qmckl_set_mo_basis_mo_num(qmckl_context context, const int64_t m
 
   return QMCKL_SUCCESS;
 }
+   #+end_src
 
+   #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
 qmckl_exit_code  qmckl_set_mo_basis_coefficient(qmckl_context context,
                                                 const double* coefficient,
                                                 const int64_t size_max)
@@ -292,55 +296,6 @@ qmckl_exit_code  qmckl_set_mo_basis_coefficient(qmckl_context context,
 
   <<post>>
 }
-
-
-qmckl_exit_code
-qmckl_set_mo_basis_r_cusp(qmckl_context context,
-                          const double* r_cusp,
-                          const int64_t size_max)
-{
-  
-  int32_t mask = 0;
-
-  <<pre>>
-
-  if (r_cusp == NULL) {
-      return qmckl_failwith( context, QMCKL_INVALID_ARG_2,
-                             "qmckl_set_mo_basis_r_cusp",
-                             "r_cusp: Null pointer");
-  }
-        
-  if (size_max < ctx->nucleus.num) {
-    return qmckl_failwith( context, QMCKL_INVALID_ARG_3,
-                             "qmckl_set_mo_basis_r_cusp",
-                             "Array too small");
-  }
-  
-
-  if (ctx->mo_basis.r_cusp != NULL) {
-    qmckl_exit_code rc = qmckl_free(context, ctx->mo_basis.r_cusp);
-    if (rc != QMCKL_SUCCESS) {
-      return rc;
-    }
-  }
-
-  qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-  mem_info.size = ctx->nucleus.num * sizeof(double);
-  double* new_array = (double*) qmckl_malloc(context, mem_info);
-  if (new_array == NULL) {
-    return qmckl_failwith( context,
-                           QMCKL_ALLOCATION_FAILED,
-                           "qmckl_set_mo_basis_r_cusp",
-                           NULL);
-  }
-
-  memcpy(new_array, r_cusp, mem_info.size);
-
-  ctx->mo_basis.r_cusp = new_array;
-  return QMCKL_SUCCESS;
-
-}
-
    #+end_src
 
  When the basis set is completely entered, other data structures are
@@ -406,8 +361,244 @@ qmckl_exit_code qmckl_finalize_mo_basis(qmckl_context context) {
     ctx->mo_basis.mo_value = NULL;
     ctx->mo_basis.mo_value_date = 0;
   }
+
   return qmckl_context_touch(context);
 }
+   #+end_src
+
+** Cusp adjsutment functions
+
+   To activate the cusp adjustment, the user must enter the radius of
+   the fitting function for each atom.
+   
+   This function requires the computation of the value and gradients
+   of the $s$ AOs at the distance equal to the radius, and the values
+   of the non-$s$ AOs at the center.
+   
+   #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
+qmckl_exit_code
+qmckl_set_mo_basis_r_cusp(qmckl_context context,
+                          const double* r_cusp,
+                          const int64_t size_max)
+{
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_exit_code rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  
+  if (r_cusp == NULL) {
+      return qmckl_failwith( context, QMCKL_INVALID_ARG_2,
+                             "qmckl_set_mo_basis_r_cusp",
+                             "r_cusp: Null pointer");
+  }
+        
+  if (size_max < ctx->nucleus.num) {
+    return qmckl_failwith( context, QMCKL_INVALID_ARG_3,
+                             "qmckl_set_mo_basis_r_cusp",
+                             "Array too small");
+  }
+  
+
+  // Nullify r_cusp
+  if (ctx->mo_basis.r_cusp != NULL) {
+    rc = qmckl_free(context, ctx->mo_basis.r_cusp);
+    if (rc != QMCKL_SUCCESS) {
+      return rc;
+    }
+    ctx->mo_basis.r_cusp = NULL;
+  }
+
+
+  // Save old points
+  int64_t old_point_num = ctx->point.num;
+  double* old_coord = NULL;
+  if (old_point_num > 0) {
+    qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+    mem_info.size = old_point_num * 3 * sizeof(double);
+    old_coord = (double*) qmckl_malloc(context, mem_info);
+    
+    rc = qmckl_get_point(context, 'T', old_coord,  (old_point_num * 3));
+    if (rc != QMCKL_SUCCESS) {
+      return qmckl_failwith( context,
+                             QMCKL_FAILURE,
+                             "qmckl_set_mo_basis_r_cusp",
+                             "Unable to get old coordinates");
+    }
+  }
+
+  double* coord = (double*) malloc(ctx->nucleus.num * 3 * sizeof(double));
+
+  // Evaluate MO vgl at r_cusp
+  qmckl_tensor mo_vgl_at_r_cusp;
+  {
+    int64_t sze[3] = { ctx->mo_basis.mo_num, 5, ctx->nucleus.num };
+    mo_vgl_at_r_cusp = qmckl_tensor_alloc(context, 3, &(sze[0]));
+    
+    rc = qmckl_double_of_matrix(context, ctx->nucleus.coord, coord, ctx->nucleus.num * 3);
+    if (rc != QMCKL_SUCCESS) return rc;
+
+    int64_t i=0;
+    for (int64_t inucl=0 ; inucl<ctx->nucleus.num ; ++inucl) {
+      coord[i] += r_cusp[inucl];
+      i+=3;
+    }
+      
+    rc = qmckl_set_point(context, 'T', ctx->nucleus.num, coord, (ctx->nucleus.num * 3));
+    if (rc != QMCKL_SUCCESS) {
+      return qmckl_failwith( context,
+                             QMCKL_FAILURE,
+                             "qmckl_set_mo_basis_r_cusp",
+                             "Unable to set coordinates at r_cusp");
+    }
+    
+    rc = qmckl_get_mo_basis_mo_vgl(context,
+                                   &(qmckl_ten3(mo_vgl_at_r_cusp,0,0,0)), 
+                                   ctx->mo_basis.mo_num * 5 * ctx->nucleus.num);
+    if (rc != QMCKL_SUCCESS) return rc;
+    
+  }
+
+  // Set r_cusp
+  {
+    assert (ctx->mo_basis.r_cusp == NULL);
+    qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+    mem_info.size = ctx->nucleus.num * sizeof(double);
+    ctx->mo_basis.r_cusp = (double*) qmckl_malloc(context, mem_info);
+    if (ctx->mo_basis.r_cusp == NULL) {
+      return qmckl_failwith( context,
+                             QMCKL_ALLOCATION_FAILED,
+                             "qmckl_set_mo_basis_r_cusp",
+                             NULL);
+    }
+    memcpy(ctx->mo_basis.r_cusp, r_cusp, mem_info.size);
+  }
+
+
+  
+  // Allocate cusp parameters and set them to zero
+  {
+    if (ctx->mo_basis.r_cusp_param.size[0] != 0) {
+      rc = qmckl_tensor_free(context, &(ctx->mo_basis.r_cusp_param));
+      if (rc != QMCKL_SUCCESS) return rc;
+    }
+    
+    int64_t sze[3] = { 4, ctx->mo_basis.mo_num, ctx->nucleus.num };
+    ctx->mo_basis.r_cusp_param = qmckl_tensor_alloc(context, 3, &(sze[0]));
+    ctx->mo_basis.r_cusp_param = qmckl_tensor_set(ctx->mo_basis.r_cusp_param, 0.);
+  }
+
+  
+  // Evaluate MO value at nucleus without s components
+  qmckl_matrix mo_value_at_nucl_no_s;
+  {
+    mo_value_at_nucl_no_s = qmckl_matrix_alloc(context, ctx->mo_basis.mo_num, ctx->nucleus.num);
+    
+    rc = qmckl_double_of_matrix(context, ctx->nucleus.coord, coord, ctx->nucleus.num * 3);
+    if (rc != QMCKL_SUCCESS) return rc;
+
+    rc = qmckl_set_point(context, 'T', ctx->nucleus.num, coord, (ctx->nucleus.num * 3));
+    if (rc != QMCKL_SUCCESS) {
+      return qmckl_failwith( context,
+                             QMCKL_FAILURE,
+                             "qmckl_set_mo_basis_r_cusp",
+                             "Unable to set coordinates at the nuclei");
+    }
+    
+    rc = qmckl_get_mo_basis_mo_value(context,
+                                     &(qmckl_mat(mo_value_at_nucl_no_s,0,0)), 
+                                     ctx->mo_basis.mo_num * ctx->nucleus.num);
+    if (rc != QMCKL_SUCCESS) return rc;
+  }
+
+  
+  // Evaluate MO vgl at r_cusp without s components
+  qmckl_tensor mo_vgl_at_r_cusp_no_s;
+  {
+    int64_t sze[3] = { ctx->mo_basis.mo_num, 5, ctx->nucleus.num };
+    mo_vgl_at_r_cusp_no_s = qmckl_tensor_alloc(context, 3, &(sze[0]));
+    
+    rc = qmckl_double_of_matrix(context, ctx->nucleus.coord, coord, ctx->nucleus.num * 3);
+    if (rc != QMCKL_SUCCESS) return rc;
+
+    int64_t i=0;
+    for (int64_t inucl=0 ; inucl<ctx->nucleus.num ; ++inucl) {
+      coord[i] += r_cusp[inucl];
+      i+=3;
+    }
+      
+    rc = qmckl_set_point(context, 'T', ctx->nucleus.num, coord, (ctx->nucleus.num * 3));
+    if (rc != QMCKL_SUCCESS) {
+      return qmckl_failwith( context,
+                             QMCKL_FAILURE,
+                             "qmckl_set_mo_basis_r_cusp",
+                             "Unable to set coordinates at r_cusp");
+    }
+    
+    rc = qmckl_get_mo_basis_mo_vgl(context,
+                                   &(qmckl_ten3(mo_vgl_at_r_cusp_no_s,0,0,0)), 
+                                   ctx->mo_basis.mo_num * 5 * ctx->nucleus.num);
+    if (rc != QMCKL_SUCCESS) return rc;
+    
+  }
+
+  // Compute parameters
+  {
+     for (int64_t inucl=0 ; inucl < ctx->nucleus.num ; ++inucl) {
+       const double Z = qmckl_vec(ctx->nucleus.charge,inucl);
+       if (Z < 0.1) continue;  // Avoid dummy atoms
+       const double R = r_cusp[inucl];
+       for (int64_t i=0 ; i<ctx->mo_basis.mo_num ; ++i) {
+         const double phi        = qmckl_ten3(mo_vgl_at_r_cusp,i,0,inucl) - qmckl_ten3(mo_vgl_at_r_cusp_no_s,i,0,inucl);
+         const double grad_phi   = qmckl_ten3(mo_vgl_at_r_cusp,i,1,inucl) - qmckl_ten3(mo_vgl_at_r_cusp_no_s,i,1,inucl);
+         const double lap_phi    = qmckl_ten3(mo_vgl_at_r_cusp,i,4,inucl) - qmckl_ten3(mo_vgl_at_r_cusp_no_s,i,4,inucl);
+         const double eta        = qmckl_mat(mo_value_at_nucl_no_s,i,inucl);
+
+         qmckl_ten3(ctx->mo_basis.r_cusp_param,0,i,inucl) =
+           -(R*(2.*eta*Z-6.*grad_phi)+lap_phi*R*R+6.*phi)/(2.*R*Z-6.);
+
+         qmckl_ten3(ctx->mo_basis.r_cusp_param,1,i,inucl) =
+           (lap_phi*R*R*Z-6.*grad_phi*R*Z+6.*phi*Z+6.*eta*Z)/(2.*R*Z-6.);
+
+         qmckl_ten3(ctx->mo_basis.r_cusp_param,2,i,inucl) =
+           -(R*(-5.*grad_phi*Z-1.5*lap_phi)+lap_phi*R*R*Z+3.*phi*Z+3.*eta*Z+6.*grad_phi)/(R*R*Z-3.*R);
+
+         qmckl_ten3(ctx->mo_basis.r_cusp_param,3,i,inucl) =
+           (R*(-2.*grad_phi*Z-lap_phi)+0.5*lap_phi*R*R*Z+phi*Z+eta*Z+3.*grad_phi)/(R*R*R*Z-3.*R*R);
+
+printf("%ld %ld %f %f %f %f\n",i, inucl, 
+                qmckl_ten3(ctx->mo_basis.r_cusp_param,0,i,inucl),
+                qmckl_ten3(ctx->mo_basis.r_cusp_param,1,i,inucl),
+                qmckl_ten3(ctx->mo_basis.r_cusp_param,2,i,inucl),
+                qmckl_ten3(ctx->mo_basis.r_cusp_param,3,i,inucl));
+       }
+     }
+  }
+  
+  free(coord);
+  qmckl_matrix_free(context, &mo_value_at_nucl_no_s);
+  qmckl_tensor_free(context, &mo_vgl_at_r_cusp_no_s);
+  qmckl_tensor_free(context, &mo_vgl_at_r_cusp);
+  
+  // Restore old points
+  if (old_point_num > 0) {
+    rc = qmckl_set_point(context, 'T', old_point_num, old_coord, (old_point_num * 3));
+    if (rc != QMCKL_SUCCESS) {
+      return qmckl_failwith( context,
+                             QMCKL_FAILURE,
+                             "qmckl_set_mo_basis_r_cusp",
+                             "Unable to set old coordinates");
+    }
+    rc = qmckl_free(context, old_coord);
+    if (rc != QMCKL_SUCCESS) return rc;
+    old_coord = NULL;
+  }
+
+  return QMCKL_SUCCESS;
+}
+
    #+end_src
 
 ** Access functions
@@ -908,10 +1099,11 @@ qmckl_exit_code qmckl_provide_mo_basis_mo_value(qmckl_context context)
       } else {
         rc = qmckl_provide_en_distance(context);
         if (rc != QMCKL_SUCCESS) {
+          return rc;
           return qmckl_failwith( context,
                                  QMCKL_NOT_PROVIDED,
-                                 "qmckl_electron_en_distance",
-                                 NULL);
+                                 "qmckl_provide_mo_basis_mo_value",
+                                 "en_distance");
         }
 
         rc = qmckl_compute_mo_basis_mo_value_cusp(context,
