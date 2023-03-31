@@ -18,8 +18,11 @@ if [[ -z ${top_builddir} ]] ; then
    exit 1
 fi
 
+EXTENSIONS="_f.F90 _fh_func.F90 _fh_type.F90 .c _func.h _type.h _private_type.h _private_func.h"
+
 function tangle()
 {
+    local backup_dir=$(mktemp -d)
     local org_file=$1
     local c_file=${org_file%.org}.c
     local f_file=${org_file%.org}.F90
@@ -29,10 +32,32 @@ function tangle()
     elif [[ ${org_file} -ot ${f_file} ]] ; then
         return
     fi
+
+    local prefix=${top_builddir}/src/$(basename ${org_file})
+    prefix=${prefix%.org}
+    for ext in $EXTENSIONS ; do
+      if [[ -f ${prefix}${ext} ]] ; then
+         mv ${prefix}${ext} ${backup_dir}
+      fi
+    done
+
     ${srcdir}/tools/missing \
         emacs --no-init-file --no-site-lisp --quick --batch ${org_file} \
          --load=${srcdir}/tools/config_tangle.el \
         -f org-babel-tangle
+    
+    for ext in $EXTENSIONS ; do
+      local new_file=${prefix}${ext}
+      local old_file=${backup_dir}/$(basename ${new_file})
+      diff $new_file $old_file &> /dev/null
+      if [[ $? -eq 0 ]] ; then
+         echo "${old_file} unchanged" 
+         mv $old_file $new_file
+      else
+         echo "${old_file}   changed" 
+      fi
+    done
+    rm -rf ${backup_dir}
 }
 
 for i in $@
