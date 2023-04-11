@@ -5540,45 +5540,45 @@ integer function qmckl_compute_een_rescaled_e_doc_f( &
   ! Prepare table of exponentiated distances raised to appropriate power
   een_rescaled_e             = 0.0d0
   do nw = 1, walk_num
-  een_rescaled_e_ij       = 0.0d0
-  een_rescaled_e_ij(:, 1) = 1.0d0
+     een_rescaled_e_ij       = 0.0d0
+     een_rescaled_e_ij(:, 1) = 1.0d0
 
 
-  k = 0
-  do j = 1, elec_num
-    do i = 1, j - 1
-      k = k + 1
-      een_rescaled_e_ij(k, 2) = dexp(-rescale_factor_ee * ee_distance(i, j, nw))
-    end do
-  end do
+     k = 0
+     do j = 1, elec_num
+        do i = 1, j - 1
+           k = k + 1
+           een_rescaled_e_ij(k, 2) = dexp(-rescale_factor_ee * ee_distance(i, j, nw))
+        end do
+     end do
 
 
-  do l = 2, cord_num
-    do k = 1, elec_num * (elec_num - 1)/2
-      een_rescaled_e_ij(k, l + 1) = een_rescaled_e_ij(k, l) * een_rescaled_e_ij(k, 2)
-    end do
-  end do
+     do l = 2, cord_num
+        do k = 1, elec_num * (elec_num - 1)/2
+           een_rescaled_e_ij(k, l + 1) = een_rescaled_e_ij(k, l) * een_rescaled_e_ij(k, 2)
+        end do
+     end do
 
-  ! prepare the actual een table
-  een_rescaled_e(:, :, 0, nw) = 1.0d0
+     ! prepare the actual een table
+     een_rescaled_e(:, :, 0, nw) = 1.0d0
 
-  do l = 1, cord_num
-    k = 0
-    do j = 1, elec_num
-      do i = 1, j - 1
-        k = k + 1
-        x = een_rescaled_e_ij(k, l + 1)
-        een_rescaled_e(i, j, l, nw) = x
-        een_rescaled_e(j, i, l, nw) = x
-      end do
-    end do
-  end do
+     do l = 1, cord_num
+        k = 0
+        do j = 1, elec_num
+           do i = 1, j - 1
+              k = k + 1
+              x = een_rescaled_e_ij(k, l + 1)
+              een_rescaled_e(i, j, l, nw) = x
+              een_rescaled_e(j, i, l, nw) = x
+           end do
+        end do
+     end do
 
-  do l = 0, cord_num
-    do j = 1, elec_num
-      een_rescaled_e(j, j, l, nw) = 0.0d0
-    end do
-  end do
+     do l = 0, cord_num
+        do j = 1, elec_num
+           een_rescaled_e(j, j, l, nw) = 0.0d0
+        end do
+     end do
 
   end do
 
@@ -5654,9 +5654,7 @@ qmckl_exit_code qmckl_compute_een_rescaled_e_hpc (
   // Prepare table of exponentiated distances raised to appropriate power
   // init
 
-  for (int kk = 0; kk < walk_num*(cord_num+1)*elec_num*elec_num; ++kk) {
-    een_rescaled_e[kk]= 0.0;
-  }
+  memset(een_rescaled_e,0,walk_num*(cord_num+1)*elec_num*elec_num*sizeof(double));
 
   const size_t elec_pairs = (size_t) (elec_num * (elec_num - 1)) / 2;
   const size_t len_een_ij = (size_t) elec_pairs * (cord_num + 1);
@@ -5665,41 +5663,43 @@ qmckl_exit_code qmckl_compute_een_rescaled_e_hpc (
   // probably in C is better [cord+1, Ne*(Ne-1)/2]
   // elec_pairs = (elec_num * (elec_num - 1)) / 2;
   // len_een_ij = elec_pairs * (cord_num + 1);
-  qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-  mem_info.size = len_een_ij * sizeof(double);
-  double* const restrict een_rescaled_e_ij = (double*) qmckl_malloc(context, mem_info);
-  if (een_rescaled_e_ij == NULL) {
-    return qmckl_failwith( context,
-                           QMCKL_ALLOCATION_FAILED,
-                           "qmckl_compute_een_rescaled_e_hpc",
-                           NULL);
-  }
-
   const size_t e2 = elec_num*elec_num;
 
 #ifdef HAVE_OPENMP
 #pragma omp parallel for
 #endif
-  for (int nw = 0; nw < walk_num; ++nw) {
+  for (size_t nw = 0; nw < (size_t) walk_num; ++nw) {
 
-    for (int kk = 0; kk < len_een_ij; ++kk) {
-      // this array initialized at 0 except een_rescaled_e_ij(:, 1) = 1.0d0
-      // and the arrangement of indices is [cord_num+1, ne*(ne-1)/2]
-      een_rescaled_e_ij[kk]= ( kk < (elec_pairs) ? 1.0 : 0.0 );
+    double een_rescaled_e_ij[len_een_ij];
+
+    memset(&(een_rescaled_e_ij[0]),0,len_een_ij*sizeof(double));
+    for (size_t kk = 0; kk < elec_pairs ; ++kk) {
+      een_rescaled_e_ij[kk]= 1.0;
     }
 
     size_t kk = 0;
-    for (size_t i = 0; i < elec_num; ++i) {
+    for (size_t i = 0; i < (size_t) elec_num; ++i) {
+#ifdef HAVE_OPENMP
+#pragma omp simd
+#endif
       for (size_t j = 0; j < i; ++j) {
-        // een_rescaled_e_ij(kk, 2) = dexp(-rescale_factor_ee * ee_distance(i, j, nw));
-        een_rescaled_e_ij[kk + elec_pairs] = exp(-rescale_factor_ee * \
-                                                 ee_distance[j + i*elec_num + nw*e2]);
-        kk += 1;
+        een_rescaled_e_ij[j + kk + elec_pairs] = -rescale_factor_ee * ee_distance[j + i*elec_num + nw*e2];
       }
+      kk += i;
+    }
+
+#ifdef HAVE_OPENMP
+#pragma omp simd
+#endif
+    for (size_t k = elec_pairs; k < 2*elec_pairs; ++k) {
+        een_rescaled_e_ij[k] = exp(een_rescaled_e_ij[k]);
     }
 
 
-    for (size_t l = 2; l < (cord_num+1); ++l) {
+    for (size_t l = 2; l < (size_t) (cord_num+1); ++l) {
+#ifdef HAVE_OPENMP
+#pragma omp simd
+#endif
       for (size_t k = 0; k < elec_pairs; ++k) {
         // een_rescaled_e_ij(k, l + 1) = een_rescaled_e_ij(k, l + 1 - 1) * een_rescaled_e_ij(k, 2)
         een_rescaled_e_ij[k+l*elec_pairs] = een_rescaled_e_ij[k + (l - 1)*elec_pairs] * \
@@ -5709,16 +5709,18 @@ qmckl_exit_code qmckl_compute_een_rescaled_e_hpc (
 
     double* const een_rescaled_e_ = &(een_rescaled_e[nw*(cord_num+1)*e2]);
     // prepare the actual een table
+#ifdef HAVE_OPENMP
+#pragma omp simd 
+#endif
     for (size_t i = 0; i < e2; ++i){
         een_rescaled_e_[i] = 1.0;
     }
 
-    // Up to here it should work.
-    for ( size_t l = 1; l < (cord_num+1); ++l) {
+    for ( size_t l = 1; l < (size_t) (cord_num+1); ++l) {
       double* x = een_rescaled_e_ij + l*elec_pairs;
       double* const een_rescaled_e__ = &(een_rescaled_e_[l*e2]);
       double* een_rescaled_e_i = een_rescaled_e__;
-      for (size_t i = 0; i < elec_num; ++i) {
+      for (size_t i = 0; i < (size_t) elec_num; ++i) {
         for (size_t j = 0; j < i; ++j) {
           een_rescaled_e_i[j] = *x;
           een_rescaled_e__[i + j*elec_num] = *x;
@@ -5729,9 +5731,9 @@ qmckl_exit_code qmckl_compute_een_rescaled_e_hpc (
     }
 
     double* const x0 = &(een_rescaled_e[nw*e2*(cord_num+1)]);
-    for (size_t l = 0; l < (cord_num + 1); ++l) {
+    for (size_t l = 0; l < (size_t) (cord_num + 1); ++l) {
       double* x1 = &(x0[l*e2]);
-      for (size_t j = 0; j < elec_num; ++j) {
+      for (size_t j = 0; j < (size_t) elec_num; ++j) {
         ,*x1 = 0.0;
         x1 += 1+elec_num;
       }
@@ -5739,9 +5741,7 @@ qmckl_exit_code qmckl_compute_een_rescaled_e_hpc (
 
   }
 
-  qmckl_exit_code rc = qmckl_free(context,een_rescaled_e_ij);
-
-  return rc;
+  return QMCKL_SUCCESS;
 }
      #+end_src
 
