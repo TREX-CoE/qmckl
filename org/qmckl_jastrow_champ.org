@@ -19,9 +19,9 @@
 
   \[
   J_{\text{eN}}(\mathbf{r},\mathbf{R}) =
-  \sum_{\alpha=1}^{N_\text{nucl}} \sum_{i=1}^{N_\text{elec}}
+  \sum_{\alpha=1}^{N_\text{nucl}} \sum_{i=1}^{N_\text{elec}} - 
   \frac{a_{1\,\alpha}\, f_\alpha(R_{i\alpha})}{1+a_{2\,\alpha}\, f_\alpha(R_{i\alpha})} +
-  \sum_{p=2}^{N_\text{ord}^a} a_{p+1\,\alpha}\, [f_\alpha(R_{i\alpha})]^p - J_{\text{eN}}^{\infty \alpha}
+  \sum_{p=2}^{N_\text{ord}^a} - a_{p+1\,\alpha}\, [f_\alpha(R_{i\alpha})]^p - J_{\text{eN}}^{\infty \alpha}
   \]
 
   $J_{\text{ee}}$ contains electron-electron terms:
@@ -60,6 +60,7 @@
   $J_{\text{ee}}$ and $J_{\text{eN}}$ have an asymptotic value of zero.
 
   The eN and eeN parameters are the same of all identical nuclei.
+  The types of nuclei use zero-based indexing.
   
 * Headers                                                          :noexport:
   #+begin_src elisp :noexport :results none
@@ -281,7 +282,7 @@ aord_num     = 5
 bord_num     = 5
 cord_num     = 5
 dim_c_vector= 23
-type_nucl_vector = [ 1, 1]
+type_nucl_vector = [ 0, 0]
 a_vector = np.array([
 [0.000000000000000E+000],
 [0.000000000000000E+000],
@@ -353,7 +354,7 @@ typedef struct qmckl_jastrow_champ_struct{
   int64_t * restrict lkpm_combined_index;
   int64_t * restrict type_nucl_vector;
   double  * restrict asymp_jasa;
-  double  * restrict asymp_jasb;
+  double             asymp_jasb[2];
   double  * restrict a_vector;
   double  * restrict b_vector;
   double  * restrict c_vector;
@@ -559,7 +560,13 @@ qmckl_set_jastrow_champ_cord_num(qmckl_context context, const int64_t cord_num)
 
   ctx->jastrow_champ.cord_num = cord_num;
   ctx->jastrow_champ.dim_c_vector = dim_c_vector;
-  ctx->jastrow_champ.uninitialized |= (1 << 7);
+
+  // If cord_num == 0, a_vector can't be set
+  if (cord_num > 0) {
+    ctx->jastrow_champ.uninitialized |= (1 << 7);
+  } else {
+    ctx->jastrow_champ.uninitialized &= ~(1 << 7);
+  }
 
   <<post2>>
 }
@@ -1680,8 +1687,8 @@ assert(qmckl_nucleus_provided(context));
 
    Calculate the asymptotic component ~asymp_jasb~ to be substracted from the
    electron-electron jastrow factor \(J_{\text{ee}}\). Two values are
-   computed. The first one is for antiparallel spin pairs, and the
-   second one for parallel spin pairs.
+   computed. The first one is for parallel spin pairs, and the
+   second one for antiparallel spin pairs.
 
    \[
    J_{\text{ee}}^{\infty} = \frac{\frac{1}{2}(1+\delta^{\uparrow \downarrow})\,b_1 \kappa_\text{ee}^{-1}}{1 + b_2\,
@@ -1780,22 +1787,6 @@ qmckl_exit_code qmckl_provide_jastrow_champ_asymp_jasb(qmckl_context context)
   /* Compute if necessary */
   if (ctx->date > ctx->jastrow_champ.asymp_jasb_date) {
 
-    /* Allocate array */
-    if (ctx->jastrow_champ.asymp_jasb == NULL) {
-
-      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-      mem_info.size = 2 * sizeof(double);
-      double* asymp_jasb = (double*) qmckl_malloc(context, mem_info);
-
-      if (asymp_jasb == NULL) {
-        return qmckl_failwith( context,
-                               QMCKL_ALLOCATION_FAILED,
-                               "qmckl_asymp_jasb",
-                               NULL);
-      }
-      ctx->jastrow_champ.asymp_jasb = asymp_jasb;
-    }
-
     rc = qmckl_compute_jastrow_champ_asymp_jasb(context,
                                   ctx->jastrow_champ.bord_num,
                                   ctx->jastrow_champ.b_vector,
@@ -1879,15 +1870,15 @@ integer function qmckl_compute_jastrow_champ_asymp_jasb_doc_f(context, bord_num,
   endif
 
   asym_one = b_vector(1) * kappa_inv / (1.0d0 + b_vector(2) * kappa_inv)
-  asymp_jasb(:) = (/asym_one, 0.5d0 * asym_one/)
+  asymp_jasb(:) = (/0.5d0*asym_one, asym_one/)
 
-  do i = 1, 2
-     x = kappa_inv
-     do p = 2, bord_num
-        x = x * kappa_inv
-        asymp_jasb(i) = asymp_jasb(i) + b_vector(p + 1) * x
-     end do
-  end do
+  x = kappa_inv
+  do p = 2, bord_num
+    x = x * kappa_inv
+    do i = 1, 2
+       asymp_jasb(i) = asymp_jasb(i) + b_vector(p + 1) * x
+    end do
+ end do
 
 end function qmckl_compute_jastrow_champ_asymp_jasb_doc_f
      #+end_src
@@ -1928,16 +1919,16 @@ qmckl_compute_jastrow_champ_asymp_jasb_hpc (const qmckl_context context,
 
   const double kappa_inv = 1.0 / rescale_factor_ee;
   const double asym_one = b_vector[0] * kappa_inv / (1.0 + b_vector[1] * kappa_inv);
-  asymp_jasb[0] = asym_one;
-  asymp_jasb[1] = 0.5 * asym_one;
 
-  for (int i = 0 ; i<2 ; ++i) {
-    double x = kappa_inv;
-    for (int p = 1; p < bord_num; ++p) {
-      x *= kappa_inv;
-      asymp_jasb[i] += b_vector[p+1]*x;
-    }
+  double f = 0.;
+  double x = kappa_inv;
+  for (int k = 2; k <= bord_num; ++k) {
+    x *= kappa_inv;
+    f += b_vector[k]*x;
   }
+
+  asymp_jasb[0] = 0.5 * asym_one + f;
+  asymp_jasb[1] = asym_one + f;
 
   return QMCKL_SUCCESS;
 }
@@ -1977,7 +1968,7 @@ import numpy as np
 <<jastrow_data>>
 
 asym_one = b_vector[0] * kappa_inv / (1.0 + b_vector[1]*kappa_inv)
-asymp_jasb = np.array([asym_one, 0.5 * asym_one])
+asymp_jasb = np.array([0.5*asym_one, asym_one])
 
 for i in range(2):
   x = kappa_inv
@@ -1992,8 +1983,8 @@ print("asymp_jasb[1]    : ", asymp_jasb[1])
 
      #+RESULTS: asymp_jasb
      : asym_one         :  0.43340325572525706
-     : asymp_jasb[0]    :  0.5323750557252571
-     : asymp_jasb[1]    :  0.31567342786262853
+     : asymp_jasb[0]    :  0.31567342786262853
+     : asymp_jasb[1]    :  0.5323750557252571
 
       #+begin_src c :tangle (eval c_test)
 assert(qmckl_electron_provided(context));
@@ -2079,8 +2070,8 @@ double asymp_jasb[2];
 rc = qmckl_get_jastrow_champ_asymp_jasb(context, asymp_jasb,2);
 
 // calculate asymp_jasb
-assert(fabs(asymp_jasb[0]-0.5323750557252571) < 1.e-12);
-assert(fabs(asymp_jasb[1]-0.31567342786262853) < 1.e-12);
+assert(fabs(asymp_jasb[0]-0.31567342786262853) < 1.e-12);
+assert(fabs(asymp_jasb[1]-0.5323750557252571) < 1.e-12);
 
       #+end_src
 
@@ -2091,7 +2082,7 @@ assert(fabs(asymp_jasb[1]-0.31567342786262853) < 1.e-12);
 
    \[
      f_\text{ee} = \sum_{i,j<i} \left[
-     \frac{\delta_{ij}^{\uparrow\downarrow} B_0\, C_{ij}}{1 - B_1\,
+     \frac{\delta_{ij}^{\uparrow\downarrow} B_0\, C_{ij}}{1 + B_1\,
      C_{ij}} + \sum_{k=2}^{n_\text{ord}} B_k\, C_{ij}^k - {J_{\text{ee}}^{\infty}}_{ij} \right]
    \]
 
@@ -2156,7 +2147,7 @@ interface
    end function qmckl_get_jastrow_champ_factor_ee
 end interface
  #+end_src
-
+ 
 **** Provide                                                       :noexport:
      #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
 qmckl_exit_code qmckl_provide_jastrow_champ_factor_ee(qmckl_context context);
@@ -2280,8 +2271,8 @@ integer function qmckl_compute_jastrow_champ_factor_ee_doc_f(context, walk_num, 
   double precision      , intent(in)  :: asymp_jasb(2)
   double precision      , intent(out) :: factor_ee(walk_num)
 
-  integer*8 :: i, j, p, ipar, nw
-  double precision   :: x, power_ser, spin_fact
+  integer*8 :: i, j, k, nw
+  double precision   :: x, xk
 
   info = QMCKL_SUCCESS
 
@@ -2305,34 +2296,27 @@ integer function qmckl_compute_jastrow_champ_factor_ee_doc_f(context, walk_num, 
      return
   endif
 
-  factor_ee = 0.0d0
 
   do nw =1, walk_num
-     do j = 1, elec_num
-        do i = 1, j - 1
+
+     factor_ee(nw) = 0.0d0
+     do j=1,elec_num
+        do i=1,j-1
            x = ee_distance_rescaled(i,j,nw)
-           power_ser = 0.0d0
-           spin_fact = 1.0d0
-           ipar = 1
-
-           do p = 2, bord_num
-              x = x * ee_distance_rescaled(i,j,nw)
-              power_ser = power_ser + b_vector(p + 1) * x
-           end do
-
-           if(j <= up_num .or. i > up_num) then
-              spin_fact = 0.5d0
-              ipar = 2
+           if ( (j <= up_num).or.(i > up_num) ) then
+              factor_ee(nw) = factor_ee(nw) + 0.5d0 * b_vector(1) * x / (1.d0 + b_vector(2) * x) - asymp_jasb(1)
+           else
+              factor_ee(nw) = factor_ee(nw) + b_vector(1) * x / (1.d0 + b_vector(2) * x) - asymp_jasb(2)
            endif
 
-           factor_ee(nw) = factor_ee(nw) + spin_fact * b_vector(1)  * &
-                ee_distance_rescaled(i,j,nw) / &
-                (1.0d0 + b_vector(2) *   &
-                ee_distance_rescaled(i,j,nw))  &
-                + power_ser - asymp_jasb(ipar)
-
+           xk = x
+           do k=2,bord_num
+              xk = xk * x
+              factor_ee(nw) = factor_ee(nw) + b_vector(k+1)* xk
+           end do
         end do
      end do
+
   end do
 
 end function qmckl_compute_jastrow_champ_factor_ee_doc_f
@@ -2418,29 +2402,24 @@ qmckl_exit_code qmckl_compute_jastrow_champ_factor_ee_hpc (
   }
 
   for (int nw = 0; nw < walk_num; ++nw) {
-    factor_ee[nw] = 0.0; // put init array here.
+    factor_ee[nw] = 0.; 
+
     size_t ishift = nw * elec_num * elec_num;
-    for (int i = 0; i < elec_num; ++i ) {
-      for (int j = 0; j < i; ++j) {
-        double x = ee_distance_rescaled[j + i * elec_num + ishift];
-        const double x1 = x;
-        double power_ser = 0.0;
-        double spin_fact = 1.0;
-        int ipar = 0; // index of asymp_jasb
+    for (int j = 0; j < elec_num; ++j ) {
+      for (int i = 0; i < j; ++i) {
+        const double x = ee_distance_rescaled[i + j * elec_num + ishift];
 
-        for (int p = 1; p < bord_num; ++p) {
-          x = x * x1;
-          power_ser += b_vector[p + 1] * x;
+        if(j < up_num || i >= up_num) {
+          factor_ee[nw] += 0.5 * b_vector[0]*x / (1. + b_vector[1]*x) - asymp_jasb[0];
+        } else {
+          factor_ee[nw] += b_vector[0]*x / (1. + b_vector[1]*x) - asymp_jasb[1];
         }
 
-        if(i < up_num || j >= up_num) {
-          spin_fact = 0.5;
-          ipar = 1;
+        double xk = x;
+        for (int k = 2; k <= bord_num; ++k) {
+          xk *= x;
+          factor_ee[nw] += b_vector[k] * xk;
         }
-
-        factor_ee[nw] += spin_fact * b_vector[0]  *
-                                x1 / (1.0 + b_vector[1] * x1)
-                               - asymp_jasb[ipar] + power_ser;
 
       }
     }
@@ -2595,6 +2574,22 @@ qmckl_get_jastrow_champ_factor_ee_deriv_e(qmckl_context context,
 }
      #+end_src
 
+***** Fortran interface
+
+ #+begin_src f90 :tangle (eval fh_func) :comments org
+interface
+   integer(qmckl_exit_code) function qmckl_get_jastrow_champ_factor_ee_deriv_e (context, &
+        factor_ee_deriv_e, size_max) bind(C)
+     use, intrinsic :: iso_c_binding
+     import
+     implicit none
+     integer (qmckl_context) , intent(in), value :: context
+     integer(c_int64_t), intent(in), value       :: size_max
+     double precision, intent(out)               :: factor_ee_deriv_e(size_max)
+   end function qmckl_get_jastrow_champ_factor_ee_deriv_e
+end interface
+ #+end_src
+ 
 **** Provide                                                       :noexport:
      #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
 qmckl_exit_code qmckl_provide_jastrow_champ_factor_ee_deriv_e(qmckl_context context);
@@ -3018,7 +3013,6 @@ integer(c_int32_t) function qmckl_compute_jastrow_champ_factor_ee_deriv_e_doc &
       #endif
 }
      #+end_src
-
 
 
 **** Test
@@ -3647,7 +3641,7 @@ rc = qmckl_get_jastrow_champ_ee_distance_rescaled_deriv_e(context, ee_distance_r
    via the ~a_vector~ and the electron-nucleus rescale factors ~rescale_factor_en~.
 
    \[
-   J_{\text{en}}^{\infty \alpha} = \frac{a_1 \kappa_\alpha^{-1}}{1 + a_2  \kappa_\alpha^{-1}}
+   J_{\text{en}}^{\infty \alpha} = -\frac{a_1 \kappa_\alpha^{-1}}{1 + a_2  \kappa_\alpha^{-1}}
    \]
 
 **** Get
@@ -3808,7 +3802,6 @@ integer function qmckl_compute_jastrow_champ_asymp_jasa_f(context, aord_num, typ
   integer*8 :: i, j, p
   double precision   :: kappa_inv, x, asym_one
 
-
   info = QMCKL_SUCCESS
 
   if (context == QMCKL_NULL_CONTEXT) then
@@ -3825,12 +3818,12 @@ integer function qmckl_compute_jastrow_champ_asymp_jasa_f(context, aord_num, typ
 
      kappa_inv = 1.0d0 / rescale_factor_en(i)
 
-     asymp_jasa(i) = a_vector(1,i) * kappa_inv / (1.0d0 + a_vector(2,i) * kappa_inv)
+     asymp_jasa(i) = - a_vector(1,i) * kappa_inv / (1.0d0 + a_vector(2,i) * kappa_inv)
 
      x = kappa_inv
      do p = 2, aord_num
         x = x * kappa_inv
-        asymp_jasa(i) = asymp_jasa(i) + a_vector(p+1, i) * x
+        asymp_jasa(i) = asymp_jasa(i) - a_vector(p+1, i) * x
      end do
 
   end do
@@ -3883,25 +3876,25 @@ import numpy as np
 
 <<jastrow_data>>
 
-asymp_jasa = a_vector[0] * kappa_inv / (1.0 + a_vector[1]*kappa_inv)
+asymp_jasa = -a_vector[0] * kappa_inv / (1.0 + a_vector[1]*kappa_inv)
 x = kappa_inv
 for p in range(1,aord_num):
   x = x * kappa_inv
-  asymp_jasa += a_vector[p + 1] * x
+  asymp_jasa -= a_vector[p + 1] * x
 print("asymp_jasa[i]    : ", asymp_jasa)
 
      #+end_src
-
+     
      #+RESULTS: asymp_jasa
-     : asymp_jasa[i]    :  [-0.548554]
+     : asymp_jasa[i]    :  [0.548554]
 
       #+begin_src c :tangle (eval c_test)
 double asymp_jasa[2];
 rc = qmckl_get_jastrow_champ_asymp_jasa(context, asymp_jasa, type_nucl_num);
 
 // calculate asymp_jasb
-printf("%e %e\n", asymp_jasa[0], -0.548554);
-assert(fabs(-0.548554 - asymp_jasa[0]) < 1.e-12);
+printf("%e %e\n", asymp_jasa[0], 0.548554);
+assert(fabs(0.548554 - asymp_jasa[0]) < 1.e-12);
 
       #+end_src
 
@@ -3911,7 +3904,7 @@ assert(fabs(-0.548554 - asymp_jasa[0]) < 1.e-12);
    coeffecients and the electron-nucleus rescaled distances ~en_distance_rescaled~.
 
    \[
- f_{\alpha}(R_{i\alpha}) = \sum_{i,j<i} \left\{ \frac{ A_0 C_{ij}}{1 - A_1 C_{ij}} + \sum^{N^\alpha_{\text{ord}}}_{k}A_k C_{ij}^k \right\}
+ f_{\alpha}(R_{i\alpha}) = - \sum_{i,j<i} \left[ \frac{ A_0 C_{ij}}{1 - A_1 C_{ij}} + \sum^{N^\alpha_{\text{ord}}}_{k}A_k C_{ij}^k \right]
    \]
 
 
@@ -4144,12 +4137,12 @@ integer function qmckl_compute_jastrow_champ_factor_en_doc_f( &
         do i = 1, elec_num
            x = en_distance_rescaled(i, a, nw)
 
-           factor_en(nw) = factor_en(nw) + a_vector(1, type_nucl_vector(a)) * x / &
-                (1.0d0 + a_vector(2, type_nucl_vector(a)) * x) - asymp_jasa(type_nucl_vector(a))
+           factor_en(nw) = factor_en(nw) - a_vector(1, type_nucl_vector(a)+1) * x / &
+                (1.0d0 + a_vector(2, type_nucl_vector(a)+1) * x) - asymp_jasa(type_nucl_vector(a)+1)
 
            do p = 2, aord_num
               x = x * en_distance_rescaled(i, a, nw)
-              factor_en(nw) = factor_en(nw) + a_vector(p + 1, type_nucl_vector(a)) * x
+              factor_en(nw) = factor_en(nw) - a_vector(p + 1, type_nucl_vector(a)+1) * x
            end do
 
         end do
@@ -4280,19 +4273,19 @@ for a in range(0,nucl_num):
 
     for p in range(2,aord_num+1):
         x = x * en_distance_rescaled[i][a]
-        pow_ser = pow_ser + a_vector[(p-1) + 1][type_nucl_vector[a]-1] * x
+        pow_ser = pow_ser + a_vector[(p-1) + 1][type_nucl_vector[a]] * x
 
-    factor_en = factor_en + a_vector[0][type_nucl_vector[a]-1] * x \
-                          / (1.0 + a_vector[1][type_nucl_vector[a]-1] * x) \
-                          + pow_ser
-    factor_en -= asymp_jasa[type_nucl_vector[a]-1]
+    factor_en = factor_en - a_vector[0][type_nucl_vector[a]] * x \
+                          / (1.0 + a_vector[1][type_nucl_vector[a]] * x) \
+                          - pow_ser
+    factor_en -= asymp_jasa[type_nucl_vector[a]]
 print("factor_en        :",factor_en)
 
      #+end_src
 
      #+RESULTS:
-     : asymp_jasa[i]    :  [-0.548554]
-     : factor_en        : 5.1052574308112755
+     : asymp_jasa[i]    :  [0.548554]
+     : factor_en        : -5.1052574308112755
 
 
       #+begin_src c :tangle (eval c_test)
@@ -4303,7 +4296,8 @@ double factor_en[walk_num];
 rc = qmckl_get_jastrow_champ_factor_en(context, factor_en,walk_num);
 
 // calculate factor_en
-assert(fabs(5.1052574308112755 - factor_en[0]) < 1.e-12);
+printf("%f %f\n", factor_en[0], -5.1052574308112755);
+assert(fabs(-5.1052574308112755 - factor_en[0]) < 1.e-12);
 
       #+end_src
 
@@ -4522,7 +4516,7 @@ integer function qmckl_compute_jastrow_champ_factor_en_deriv_e_f( &
         x = en_distance_rescaled(i,a,nw)
         if(abs(x) < 1.0d-18) continue
         power_ser_g = 0.0d0
-        den = 1.0d0 + a_vector(2, type_nucl_vector(a)) * x
+        den = 1.0d0 + a_vector(2, type_nucl_vector(a)+1) * x
         invden = 1.0d0 / den
         invden2 = invden * invden
         invden3 = invden2 * invden
@@ -4538,26 +4532,26 @@ integer function qmckl_compute_jastrow_champ_factor_en_deriv_e_f( &
         do ii = 1, 3
           x = en_distance_rescaled(i, a, nw)
           do p = 2, aord_num
-            y = p * a_vector(p + 1, type_nucl_vector(a)) * x
+            y = p * a_vector(p + 1, type_nucl_vector(a)+1) * x
             power_ser_g(ii) = power_ser_g(ii) + y * dx(ii)
             lap1 = lap1 + (p - 1) * y * xinv * dx(ii) * dx(ii)
             lap2 = lap2 + y
             x = x * en_distance_rescaled(i, a, nw)
           end do
 
-          lap3 = lap3 - 2.0d0 * a_vector(2, type_nucl_vector(a)) * dx(ii) * dx(ii)
+          lap3 = lap3 - 2.0d0 * a_vector(2, type_nucl_vector(a)+1) * dx(ii) * dx(ii)
 
-          factor_en_deriv_e(i, ii, nw) = factor_en_deriv_e(i, ii, nw) + a_vector(1, type_nucl_vector(a)) &
+          factor_en_deriv_e(i, ii, nw) = factor_en_deriv_e(i, ii, nw) - a_vector(1, type_nucl_vector(a)+1) &
                                   ,* dx(ii) * invden2                                                        &
-                                  + power_ser_g(ii)
+                                  - power_ser_g(ii)
 
         end do
 
         ii = 4
         lap2 = lap2 * dx(ii) * third
         lap3 = lap3 + den * dx(ii)
-        lap3 = lap3 * a_vector(1, type_nucl_vector(a)) * invden3
-        factor_en_deriv_e(i, ii, nw) = factor_en_deriv_e(i, ii, nw) + lap1 + lap2 + lap3
+        lap3 = lap3 * a_vector(1, type_nucl_vector(a)+1) * invden3
+        factor_en_deriv_e(i, ii, nw) = factor_en_deriv_e(i, ii, nw) - lap1 - lap2 - lap3
 
      end do
   end do
@@ -4680,7 +4674,7 @@ for a in range(nucl_num):
       if abs(x) < 1e-18:
         continue
       pow_ser_g = np.zeros(shape=(3),dtype=float)
-      den         = 1.0 + a_vector[1][type_nucl_vector[a]-1] * x
+      den         = 1.0 + a_vector[1][type_nucl_vector[a]] * x
       invden      = 1.0 / den
       invden2     = invden * invden
       invden3     = invden2 * invden
@@ -4697,22 +4691,22 @@ for a in range(nucl_num):
         if x < 1e-18:
           continue
         for p in range(2,aord_num+1):
-          y = p * a_vector[(p-1) + 1][type_nucl_vector[a]-1] * x
+          y = p * a_vector[(p-1) + 1][type_nucl_vector[a]] * x
           pow_ser_g[ii] = pow_ser_g[ii] + y * dx[ii]
           lap1 = lap1 + (p - 1) * y * xinv * dx[ii] * dx[ii]
           lap2 = lap2 + y
           x = x * en_distance_rescaled[i][a]
 
-        lap3 = lap3 - 2.0 * a_vector[1][type_nucl_vector[a]-1] * dx[ii] * dx[ii]
+        lap3 = lap3 - 2.0 * a_vector[1][type_nucl_vector[a]] * dx[ii] * dx[ii]
 
-        factor_en_deriv_e[ii][i] = factor_en_deriv_e[ii][i] + a_vector[0][type_nucl_vector[a]-1]  * \
-                              dx[ii] * invden2 + pow_ser_g[ii]
+        factor_en_deriv_e[ii][i] = factor_en_deriv_e[ii][i] - a_vector[0][type_nucl_vector[a]]  * \
+                              dx[ii] * invden2 - pow_ser_g[ii]
 
       ii = 3
       lap2 = lap2 * dx[ii] * third
       lap3 = lap3 + den * dx[ii]
-      lap3 = lap3 * (a_vector[0][type_nucl_vector[a]-1] * invden3)
-      factor_en_deriv_e[ii][i] = factor_en_deriv_e[ii][i] + lap1 + lap2 + lap3
+      lap3 = lap3 * (a_vector[0][type_nucl_vector[a]] * invden3)
+      factor_en_deriv_e[ii][i] = factor_en_deriv_e[ii][i] - lap1 - lap2 - lap3
 
 print("factor_en_deriv_e[0][0]:",factor_en_deriv_e[0][0])
 print("factor_en_deriv_e[1][0]:",factor_en_deriv_e[1][0])
@@ -4723,6 +4717,11 @@ print("factor_en_deriv_e[3][0]:",factor_en_deriv_e[3][0])
      #+end_src
 
      #+RESULTS:
+     : factor_en_deriv_e[0][0]: -0.11609919541763383
+     : factor_en_deriv_e[1][0]: 0.23301394780804574
+     : factor_en_deriv_e[2][0]: -0.17548337641865783
+     : factor_en_deriv_e[3][0]: 0.9667363412285741
+
      : factor_en_deriv_e[0][0]: 0.11609919541763383
      : factor_en_deriv_e[1][0]: -0.23301394780804574
      : factor_en_deriv_e[2][0]: 0.17548337641865783
@@ -4738,10 +4737,10 @@ double factor_en_deriv_e[walk_num][4][elec_num];
 rc = qmckl_get_jastrow_champ_factor_en_deriv_e(context, &(factor_en_deriv_e[0][0][0]),walk_num*4*elec_num);
 
 // check factor_en_deriv_e
-assert(fabs(factor_en_deriv_e[0][0][0]-0.11609919541763383) < 1.e-12);
-assert(fabs(factor_en_deriv_e[0][1][0]+0.23301394780804574) < 1.e-12);
-assert(fabs(factor_en_deriv_e[0][2][0]-0.17548337641865783) < 1.e-12);
-assert(fabs(factor_en_deriv_e[0][3][0]+0.9667363412285741 ) < 1.e-12);
+assert(fabs(factor_en_deriv_e[0][0][0]+0.11609919541763383) < 1.e-12);
+assert(fabs(factor_en_deriv_e[0][1][0]-0.23301394780804574) < 1.e-12);
+assert(fabs(factor_en_deriv_e[0][2][0]+0.17548337641865783) < 1.e-12);
+assert(fabs(factor_en_deriv_e[0][3][0]-0.9667363412285741 ) < 1.e-12);
 
       #+end_src
 
@@ -4850,6 +4849,7 @@ qmckl_exit_code qmckl_provide_en_distance_rescaled(qmckl_context context)
                                 ctx->electron.walker.point.coord.data,
                                 ctx->nucleus.coord.data,
                                 ctx->jastrow_champ.en_distance_rescaled);
+
     if (rc != QMCKL_SUCCESS) {
       return rc;
     }
@@ -4928,9 +4928,9 @@ integer function qmckl_compute_en_distance_rescaled_f(context, elec_num, nucl_nu
   do i=1, nucl_num
      coord(1:3) = nucl_coord(i,1:3)
      do k=1,walk_num
-        info = qmckl_distance_rescaled(context, 'T', 'T', elec_num, 1_8, &
-             elec_coord(1,k,1), elec_num*walk_num, coord, 1_8, &
-             en_distance_rescaled(1,i,k), elec_num, rescale_factor_en(type_nucl_vector(i)))
+        info = qmckl_distance_rescaled(context, 'T', 'N', elec_num, 1_8, &
+             elec_coord(1,k,1), elec_num*walk_num, coord, 3_8, &
+             en_distance_rescaled(1,i,k), elec_num, rescale_factor_en(type_nucl_vector(i)+1))
         if (info /= QMCKL_SUCCESS) then
            return
         endif
@@ -5247,7 +5247,7 @@ integer function qmckl_compute_en_distance_rescaled_deriv_e_f(context, elec_num,
      do k=1,walk_num
         info = qmckl_distance_rescaled_deriv_e(context, 'T', 'T', elec_num, 1_8, &
              elec_coord(1,k,1), elec_num*walk_num, coord, 1_8, &
-             en_distance_rescaled_deriv_e(1,1,i,k), elec_num, rescale_factor_en(type_nucl_vector(i)))
+             en_distance_rescaled_deriv_e(1,1,i,k), elec_num, rescale_factor_en(type_nucl_vector(i)+1))
         if (info /= QMCKL_SUCCESS) then
            return
         endif
@@ -6474,7 +6474,7 @@ integer function qmckl_compute_een_rescaled_n_f( &
 
      do a = 1, nucl_num
         do i = 1, elec_num
-           een_rescaled_n(i, a, 1, nw) = dexp(-rescale_factor_en(type_nucl_vector(a)) * en_distance(a, i, nw))
+           een_rescaled_n(i, a, 1, nw) = dexp(-rescale_factor_en(type_nucl_vector(a)+1) * en_distance(a, i, nw))
         end do
      end do
 
@@ -6912,7 +6912,7 @@ integer function qmckl_compute_jastrow_champ_factor_een_rescaled_n_deriv_e_f( &
 
   do l = 0, cord_num
     do a = 1, nucl_num
-      kappa_l = - dble(l) * rescale_factor_en(type_nucl_vector(a))
+      kappa_l = - dble(l) * rescale_factor_en(type_nucl_vector(a)+1)
       do i = 1, elec_num
         een_rescaled_n_deriv_e(i, 1, a, l, nw) = kappa_l * elnuc_dist_deriv_e(1, i, a)
         een_rescaled_n_deriv_e(i, 2, a, l, nw) = kappa_l * elnuc_dist_deriv_e(2, i, a)
@@ -7585,7 +7585,7 @@ integer function qmckl_compute_c_vector_full_doc_f( &
 
 
   do a = 1, nucl_num
-    c_vector_full(a,1:dim_c_vector) = c_vector(type_nucl_vector(a),1:dim_c_vector)
+    c_vector_full(a,1:dim_c_vector) = c_vector(type_nucl_vector(a)+1,1:dim_c_vector)
   end do
 
 end function qmckl_compute_c_vector_full_doc_f
@@ -7645,7 +7645,7 @@ qmckl_exit_code qmckl_compute_c_vector_full_hpc (
 
   for (int i=0; i < dim_c_vector; ++i) {
     for (int a=0; a < nucl_num; ++a){
-      c_vector_full[a + i*nucl_num] = c_vector[(type_nucl_vector[a]-1)+i*type_nucl_num];
+      c_vector_full[a + i*nucl_num] = c_vector[(type_nucl_vector[a])+i*type_nucl_num];
     }
   }
 
@@ -8512,27 +8512,31 @@ qmckl_exit_code qmckl_provide_jastrow_champ_factor_een(qmckl_context context)
 
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
+  
+  if (ctx->jastrow_champ.cord_num > 0) {
 
-  /* Check if en rescaled distance is provided */
-  rc = qmckl_provide_een_rescaled_e(context);
-  if(rc != QMCKL_SUCCESS) return rc;
+    /* Check if en rescaled distance is provided */
+    rc = qmckl_provide_een_rescaled_e(context);
+    if(rc != QMCKL_SUCCESS) return rc;
 
-  /* Check if en rescaled distance derivatives is provided */
-  rc = qmckl_provide_een_rescaled_n(context);
-  if(rc != QMCKL_SUCCESS) return rc;
+    /* Check if en rescaled distance derivatives is provided */
+    rc = qmckl_provide_een_rescaled_n(context);
+    if(rc != QMCKL_SUCCESS) return rc;
 
-  /* Check if en rescaled distance derivatives is provided */
-  rc = qmckl_provide_jastrow_champ_c_vector_full(context);
-  if(rc != QMCKL_SUCCESS) return rc;
+    /* Check if en rescaled distance derivatives is provided */
+    rc = qmckl_provide_jastrow_champ_c_vector_full(context);
+    if(rc != QMCKL_SUCCESS) return rc;
 
-  /* Check if en rescaled distance derivatives is provided */
-  rc = qmckl_provide_lkpm_combined_index(context);
-  if(rc != QMCKL_SUCCESS) return rc;
+    /* Check if en rescaled distance derivatives is provided */
+    rc = qmckl_provide_lkpm_combined_index(context);
+    if(rc != QMCKL_SUCCESS) return rc;
 
-  /* Check if tmp_c is provided */
-  rc = qmckl_provide_tmp_c(context);
-  if(rc != QMCKL_SUCCESS) return rc;
+    /* Check if tmp_c is provided */
+    rc = qmckl_provide_tmp_c(context);
+    if(rc != QMCKL_SUCCESS) return rc;
 
+  }
+  
   /* Compute if necessary */
   if (ctx->date > ctx->jastrow_champ.factor_een_date) {
 
@@ -8565,16 +8569,16 @@ qmckl_exit_code qmckl_provide_jastrow_champ_factor_een(qmckl_context context)
     }
 
     rc = qmckl_compute_jastrow_champ_factor_een(context,
-                                  ctx->electron.walker.num,
-                                  ctx->electron.num,
-                                  ctx->nucleus.num,
-                                  ctx->jastrow_champ.cord_num,
-                                  ctx->jastrow_champ.dim_c_vector,
-                                  ctx->jastrow_champ.c_vector_full,
-                                  ctx->jastrow_champ.lkpm_combined_index,
-                                  ctx->jastrow_champ.tmp_c,
-                                  ctx->jastrow_champ.een_rescaled_n,
-                                  ctx->jastrow_champ.factor_een);
+                                                ctx->electron.walker.num,
+                                                ctx->electron.num,
+                                                ctx->nucleus.num,
+                                                ctx->jastrow_champ.cord_num,
+                                                ctx->jastrow_champ.dim_c_vector,
+                                                ctx->jastrow_champ.c_vector_full,
+                                                ctx->jastrow_champ.lkpm_combined_index,
+                                                ctx->jastrow_champ.tmp_c,
+                                                ctx->jastrow_champ.een_rescaled_n,
+                                                ctx->jastrow_champ.factor_een);
     if (rc != QMCKL_SUCCESS) {
       return rc;
     }
@@ -8823,6 +8827,8 @@ integer function qmckl_compute_jastrow_champ_factor_een_doc_f( &
 
   factor_een = 0.0d0
 
+  if (cord_num == 0) return
+
   do nw =1, walk_num
      do n = 1, dim_c_vector
         l = lkpm_combined_index(n, 1)
@@ -8951,7 +8957,6 @@ qmckl_compute_jastrow_champ_factor_een (const qmckl_context context,
    end function qmckl_compute_jastrow_champ_factor_een_doc
    #+end_src
 
-
 **** Test
      #+begin_src python :results output :exports none :noweb yes
 import numpy as np
@@ -9062,37 +9067,41 @@ qmckl_exit_code qmckl_provide_jastrow_champ_factor_een_deriv_e(qmckl_context con
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
-  /* Check if en rescaled distance is provided */
-  rc = qmckl_provide_een_rescaled_e(context);
-  if(rc != QMCKL_SUCCESS) return rc;
+  if (ctx->jastrow_champ.cord_num > 0) {
 
-  /* Check if en rescaled distance derivatives is provided */
-  rc = qmckl_provide_een_rescaled_n(context);
-  if(rc != QMCKL_SUCCESS) return rc;
+    /* Check if en rescaled distance is provided */
+    rc = qmckl_provide_een_rescaled_e(context);
+    if(rc != QMCKL_SUCCESS) return rc;
 
-  /* Check if en rescaled distance is provided */
-  rc = qmckl_provide_een_rescaled_e_deriv_e(context);
-  if(rc != QMCKL_SUCCESS) return rc;
+    /* Check if en rescaled distance derivatives is provided */
+    rc = qmckl_provide_een_rescaled_n(context);
+    if(rc != QMCKL_SUCCESS) return rc;
 
-  /* Check if en rescaled distance derivatives is provided */
-  rc = qmckl_provide_een_rescaled_n_deriv_e(context);
-  if(rc != QMCKL_SUCCESS) return rc;
+    /* Check if en rescaled distance is provided */
+    rc = qmckl_provide_een_rescaled_e_deriv_e(context);
+    if(rc != QMCKL_SUCCESS) return rc;
 
-  /* Check if en rescaled distance derivatives is provided */
-  rc = qmckl_provide_jastrow_champ_c_vector_full(context);
-  if(rc != QMCKL_SUCCESS) return rc;
+    /* Check if en rescaled distance derivatives is provided */
+    rc = qmckl_provide_een_rescaled_n_deriv_e(context);
+    if(rc != QMCKL_SUCCESS) return rc;
 
-  /* Check if en rescaled distance derivatives is provided */
-  rc = qmckl_provide_lkpm_combined_index(context);
-  if(rc != QMCKL_SUCCESS) return rc;
+    /* Check if en rescaled distance derivatives is provided */
+    rc = qmckl_provide_jastrow_champ_c_vector_full(context);
+    if(rc != QMCKL_SUCCESS) return rc;
 
-  /* Check if tmp_c is provided */
-  rc = qmckl_provide_tmp_c(context);
-  if(rc != QMCKL_SUCCESS) return rc;
+    /* Check if en rescaled distance derivatives is provided */
+    rc = qmckl_provide_lkpm_combined_index(context);
+    if(rc != QMCKL_SUCCESS) return rc;
 
-  /* Check if dtmp_c is provided */
-  rc = qmckl_provide_dtmp_c(context);
-  if(rc != QMCKL_SUCCESS) return rc;
+    /* Check if tmp_c is provided */
+    rc = qmckl_provide_tmp_c(context);
+    if(rc != QMCKL_SUCCESS) return rc;
+
+    /* Check if dtmp_c is provided */
+    rc = qmckl_provide_dtmp_c(context);
+    if(rc != QMCKL_SUCCESS) return rc;
+
+  }
 
   /* Compute if necessary */
   if (ctx->date > ctx->jastrow_champ.factor_een_deriv_e_date) {
@@ -9126,18 +9135,18 @@ qmckl_exit_code qmckl_provide_jastrow_champ_factor_een_deriv_e(qmckl_context con
     }
 
     rc = qmckl_compute_jastrow_champ_factor_een_deriv_e(context,
-                                          ctx->electron.walker.num,
-                                          ctx->electron.num,
-                                          ctx->nucleus.num,
-                                          ctx->jastrow_champ.cord_num,
-                                          ctx->jastrow_champ.dim_c_vector,
-                                          ctx->jastrow_champ.c_vector_full,
-                                          ctx->jastrow_champ.lkpm_combined_index,
-                                          ctx->jastrow_champ.tmp_c,
-                                          ctx->jastrow_champ.dtmp_c,
-                                          ctx->jastrow_champ.een_rescaled_n,
-                                          ctx->jastrow_champ.een_rescaled_n_deriv_e,
-                                          ctx->jastrow_champ.factor_een_deriv_e);
+                                                        ctx->electron.walker.num,
+                                                        ctx->electron.num,
+                                                        ctx->nucleus.num,
+                                                        ctx->jastrow_champ.cord_num,
+                                                        ctx->jastrow_champ.dim_c_vector,
+                                                        ctx->jastrow_champ.c_vector_full,
+                                                        ctx->jastrow_champ.lkpm_combined_index,
+                                                        ctx->jastrow_champ.tmp_c,
+                                                        ctx->jastrow_champ.dtmp_c,
+                                                        ctx->jastrow_champ.een_rescaled_n,
+                                                        ctx->jastrow_champ.een_rescaled_n_deriv_e,
+                                                        ctx->jastrow_champ.factor_een_deriv_e);
     if (rc != QMCKL_SUCCESS) {
       return rc;
     }
@@ -9421,6 +9430,8 @@ integer function qmckl_compute_jastrow_champ_factor_een_deriv_e_doc_f( &
 
   factor_een_deriv_e = 0.0d0
 
+  if (cord_num == 0) return
+
   do nw =1, walk_num
      do n = 1, dim_c_vector
         l = lkpm_combined_index(n, 1)
@@ -9635,6 +9646,8 @@ qmckl_compute_jastrow_champ_factor_een_deriv_e_hpc(const qmckl_context context,
   if (cord_num < 0) return QMCKL_INVALID_ARG_5;
 
   memset(factor_een_deriv_e, 0, elec_num*4*walk_num*sizeof(double));
+
+  if (cord_num == 0) return QMCKL_SUCCESS;
 
   const size_t elec_num2 = elec_num << 1;
   const size_t elec_num3 = elec_num * 3;

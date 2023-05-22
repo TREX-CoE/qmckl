@@ -427,12 +427,12 @@ AC_ARG_ENABLE(debug, [AS_HELP_STRING([--enable-debug],[compile for debugging])],
 AS_IF([test "x$ok" = "xyes"], [
         AS_IF([test "x$GCC" = "xyes"], [
                 CPPFLAGS="-Wdate-time -D_FORTIFY_SOURCE=2"
-	        CFLAGS="$CFLAGS \
--g -Wall -W -Wbad-function-cast -Wcast-qual -Warray-bounds -Wdisabled-optimization \
--fsanitize=address -fno-omit-frame-pointer -fstack-protector-strong -Wformat -Werror=format-security \
+	        CFLAGS="$CFLAGS -g \
+-Wall -W -Wbad-function-cast -Wcast-qual -Warray-bounds -Wdisabled-optimization \
+-fno-omit-frame-pointer -fstack-protector-strong -Wformat -Werror=format-security \
 -Wpointer-arith -Wcast-align -Wpedantic -Wextra -Walloc-zero -Werror \
 "
-		LDFLAGS="$LDFLAGS -fsanitize=address"
+		LDFLAGS="$LDFLAGS"
         ])
         AS_IF([test "x$GFC" = "xyes"], [
 	        FCFLAGS="$FCFLAGS \
