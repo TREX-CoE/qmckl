@@ -2089,6 +2089,11 @@ assert(fabs(asymp_jasb[1]-0.5323750557252571) < 1.e-12);
    $\delta$ is the spin factor, $B$ is the vector of $b$ parameters,
    $C$ is the array of rescaled distances.
 
+   $f_{\text{ee}}$ can be rewritten as:
+
+   \[
+     f_\text{ee} = \frac{1}{2} \left[ \sum_{i,j} \frac{\delta_{ij}^{\uparrow\downarrow} B_0\, C_{ij}}{1 + B_1\, C_{ij}} + \sum_{i,j} \sum_{k=2}^{n_\text{ord}} B_k\, C_{ij}^k \right] - \left[ \frac{n_\uparrow (n_\uparrow-1) + n_\downarrow (n_\downarrow-1)}{2}\, J_{\text{ee}}^{\infty}}_{\uparrow \uparrow} + n_\uparrow\,n_\downarrow\, J_{\text{ee}}^{\infty}}_{\uparrow \downarrow} \right]
+   \]
 
 **** Get
      #+begin_src c :comments org :tangle (eval h_func) :noweb yes
@@ -2401,20 +2406,37 @@ qmckl_exit_code qmckl_compute_jastrow_champ_factor_ee_hpc (
      return QMCKL_INVALID_ARG_4;
   }
 
+  const int64_t dn_num = elec_num - up_num;
+  const double fshift = 0.5 * (double) ((dn_num-1)*dn_num + (up_num-1)*up_num) * asymp_jasb[0] +
+      (float) (up_num*dn_num) * asymp_jasb[1];
   for (int nw = 0; nw < walk_num; ++nw) {
     factor_ee[nw] = 0.; 
 
     size_t ishift = nw * elec_num * elec_num;
-    for (int j = 0; j < elec_num; ++j ) {
-      for (int i = 0; i < j; ++i) {
-        const double x = ee_distance_rescaled[i + j * elec_num + ishift];
+    for (int j = 0; j < up_num; ++j ) {
+      const double* xj = &(ee_distance_rescaled[j * elec_num + ishift]);
+      for (int i = 0; i < j ; ++i) {
+        factor_ee[nw] += 0.5 * b_vector[0]*xj[i] / (1. + b_vector[1]*xj[i]);
+      }
+    }
 
-        if(j < up_num || i >= up_num) {
-          factor_ee[nw] += 0.5 * b_vector[0]*x / (1. + b_vector[1]*x) - asymp_jasb[0];
-        } else {
-          factor_ee[nw] += b_vector[0]*x / (1. + b_vector[1]*x) - asymp_jasb[1];
-        }
+    for (int j = up_num ; j < elec_num; ++j ) {
+      const double* xj = &(ee_distance_rescaled[j * elec_num + ishift]);
+      for (int i = 0; i < up_num; ++i) {
+        factor_ee[nw] += b_vector[0]*xj[i] / (1. + b_vector[1]*xj[i]);
+      }
+      for (int i = up_num ; i < j ; ++i) {
+        factor_ee[nw] += 0.5 * b_vector[0]*xj[i] / (1. + b_vector[1]*xj[i]);
+      }
 
+    }
+
+    factor_ee[nw] -= fshift;
+    
+    for (int j=0; j < elec_num; ++j ) {
+      const double* xj = &(ee_distance_rescaled[j * elec_num + ishift]);
+      for (int i=0; i < j ; ++i) {
+        const double x = xj[i];
         double xk = x;
         for (int k = 2; k <= bord_num; ++k) {
           xk *= x;
