@@ -2550,12 +2550,17 @@ assert(fabs(factor_ee[0]+4.282760865958113) < 1.e-12);
    There are four components, the gradient which has 3 components in the \(x, y, z\)
    directions and the laplacian as the last component.
 
-   \[ \nabla_i f_\text{ee} = \frac{1}{2}\sum_{j}
+   \[ \nabla_i f_\text{ee} = \sum_{j\ne i}
  \left[\frac{\delta_{ij}^{\uparrow\downarrow} B_0\, \nabla_i
- C_{ij}}{(1 - B_1\, C_{ij})^2} + \sum^{n_\text{ord}}_{k=2}
+ C_{ij}}{(1 + B_1\, C_{ij})^2} + \sum^{n_\text{ord}}_{k=2}
  B_k\, k\, C_{ij}^{k-1} \nabla C_{ij} \right] \]
 
- # TODO Formula for Laplacian
+   \[ \Delta_i f_\text{ee} = \sum_{j \ne i}
+ \left[ \delta_{ij}^{\uparrow\downarrow} B_0
+ \left(\frac{ \Delta_i C_{ij}}{(1 + B_1\, C_{ij})^2} -\frac{2\,B_1
+ \left(\nabla_i C_{ij}\right)^2 }{(1 + B_1\, C_{ij})^3} \right) + \sum^{n_\text{ord}}_{k=2}
+ B_k\, k\, \left((k-1)\, C_{ij}^{k-2} \left(\nabla_i C_{ij}\right)^2 + C_{ij}^{k-1} \Delta_i C_{ij} \right) \right] \]
+
 **** Get
      #+begin_src c :comments org :tangle (eval h_func) :noweb yes
 qmckl_exit_code
@@ -2734,12 +2739,11 @@ integer function qmckl_compute_jastrow_champ_factor_ee_deriv_e_doc_f( &
   double precision      , intent(in)  :: ee_distance_rescaled_deriv_e(4,elec_num, elec_num,walk_num)   !TODO
   double precision      , intent(out) :: factor_ee_deriv_e(elec_num,4,walk_num)
 
-  integer*8 :: i, j, p, nw, ii
-  double precision   :: x, spin_fact, y
-  double precision   :: den, invden, invden2, invden3, xinv
-  double precision   :: lap1, lap2, lap3, third
-  double precision, dimension(3) :: pow_ser_g
-  double precision, dimension(4) :: dx
+  integer*8 :: i, j, k, nw, ii
+  double precision   :: x, x1, kf
+  double precision   :: denom, invdenom, invdenom2, f
+  double precision   :: grad_c2
+  double precision   :: dx(4)
 
   info = QMCKL_SUCCESS
 
@@ -2763,60 +2767,56 @@ integer function qmckl_compute_jastrow_champ_factor_ee_deriv_e_doc_f( &
      return
   endif
 
-  factor_ee_deriv_e = 0.0d0
-  third = 1.0d0 / 3.0d0
-
   do nw =1, walk_num
-  do j = 1, elec_num
+     factor_ee_deriv_e(:,:,nw) = 0.0d0
+
      do i = 1, elec_num
-        x = ee_distance_rescaled(i,j,nw)
-        if(abs(x) < 1.0d-18) cycle
-        pow_ser_g   = 0.0d0
-        spin_fact   = 1.0d0
-        den         = 1.0d0 + b_vector(2) * x
-        invden      = 1.0d0 / den
-        invden2     = invden * invden
-        invden3     = invden2 * invden
-        xinv        = 1.0d0 / (x + 1.0d-18)
+        do j = 1, elec_num
+           if (j==i) cycle
 
-        dx(1) = ee_distance_rescaled_deriv_e(1, i, j, nw)
-        dx(2) = ee_distance_rescaled_deriv_e(2, i, j, nw)
-        dx(3) = ee_distance_rescaled_deriv_e(3, i, j, nw)
-        dx(4) = ee_distance_rescaled_deriv_e(4, i, j, nw)
+           x = ee_distance_rescaled(j,i,nw)
 
-        if((i <= up_num .and. j <= up_num ) .OR.  &
-           (i >  up_num .and. j >  up_num)) then
-          spin_fact = 0.5d0
-        endif
+           denom         = 1.0d0 + b_vector(2) * x
+           invdenom      = 1.0d0 / denom
+           invdenom2     = invdenom * invdenom
 
-        lap1 = 0.0d0
-        lap2 = 0.0d0
-        lap3 = 0.0d0
-        do ii = 1, 3
-          x = ee_distance_rescaled(i, j, nw)
-          if(abs(x) < 1.0d-18) cycle
-          do p = 2, bord_num
-            y = p * b_vector(p + 1) * x
-            pow_ser_g(ii) = pow_ser_g(ii) + y * dx(ii)
-            lap1 = lap1 + (p - 1) * y * xinv * dx(ii) * dx(ii)
-            lap2 = lap2 + y
-            x = x * ee_distance_rescaled(i, j, nw)
-          end do
+           dx(1) = ee_distance_rescaled_deriv_e(1, j, i, nw)
+           dx(2) = ee_distance_rescaled_deriv_e(2, j, i, nw)
+           dx(3) = ee_distance_rescaled_deriv_e(3, j, i, nw)
+           dx(4) = ee_distance_rescaled_deriv_e(4, j, i, nw)
 
-          lap3 = lap3 - 2.0d0 * b_vector(2) * dx(ii) * dx(ii)
+           grad_c2 = dx(1)*dx(1) + dx(2)*dx(2) + dx(3)*dx(3)
 
-          factor_ee_deriv_e( j, ii, nw) = factor_ee_deriv_e( j, ii, nw)  &
-               + spin_fact * b_vector(1) * dx(ii) * invden2 + pow_ser_g(ii)
+           if((i <= up_num .and. j <= up_num ) .or. (i >  up_num .and. j >  up_num)) then
+              f = 0.5d0 * b_vector(1) * invdenom2
+           else
+              f = b_vector(1) * invdenom2
+           end if
+
+           factor_ee_deriv_e(i,1,nw) = factor_ee_deriv_e(i,1,nw) + f * dx(1)
+           factor_ee_deriv_e(i,2,nw) = factor_ee_deriv_e(i,2,nw) + f * dx(2)
+           factor_ee_deriv_e(i,3,nw) = factor_ee_deriv_e(i,3,nw) + f * dx(3)
+           factor_ee_deriv_e(i,4,nw) = factor_ee_deriv_e(i,4,nw) &
+                + f * (dx(4) - 2.d0 * b_vector(2) * grad_c2 * invdenom)
+
+           
+           kf = 2.d0
+           x1 = x
+           x = 1.d0
+           do k=2, bord_num
+              f = b_vector(k+1) * kf * x
+              factor_ee_deriv_e(i,1,nw) = factor_ee_deriv_e(i,1,nw) + f * x1 * dx(1)
+              factor_ee_deriv_e(i,2,nw) = factor_ee_deriv_e(i,2,nw) + f * x1 * dx(2)
+              factor_ee_deriv_e(i,3,nw) = factor_ee_deriv_e(i,3,nw) + f * x1 * dx(3)
+              factor_ee_deriv_e(i,4,nw) = factor_ee_deriv_e(i,4,nw) &
+                   + f * (x1 * dx(4) + (kf-1.d0) * grad_c2)
+              x = x*x1
+              kf = kf + 1.d0
+           end do
+
         end do
-
-        ii = 4
-        lap2 = lap2 * dx(ii) * third
-        lap3 = lap3 + den * dx(ii)
-        lap3 = lap3 * (spin_fact * b_vector(1) * invden3)
-        factor_ee_deriv_e( j, ii, nw) = factor_ee_deriv_e( j, ii, nw) + lap1 + lap2 + lap3
-
      end do
-  end do
+
   end do
 
 end function qmckl_compute_jastrow_champ_factor_ee_deriv_e_doc_f
@@ -3036,7 +3036,6 @@ integer(c_int32_t) function qmckl_compute_jastrow_champ_factor_ee_deriv_e_doc &
 }
      #+end_src
 
-
 **** Test
      #+begin_src python :results output :exports none :noweb yes
 import numpy as np
@@ -3046,84 +3045,103 @@ import numpy as np
 <<asymp_jasb>>
 
 kappa = 1.0
+dx = 1.e-3
 
 elec_coord = np.array(elec_coord)[0]
-elec_dist = np.zeros(shape=(elec_num, elec_num),dtype=float)
-for i in range(elec_num):
-  for j in range(elec_num):
-    elec_dist[i, j] = np.linalg.norm(elec_coord[i] - elec_coord[j])
 
-elec_dist_deriv_e = np.zeros(shape=(4,elec_num, elec_num),dtype=float)
-for j in range(elec_num):
-  for i in range(elec_num):
-    rij_inv = 1.0 / elec_dist[i, j]
-    for ii in range(3):
-      elec_dist_deriv_e[ii, i, j] = (elec_coord[j][ii] - elec_coord[i][ii]) * rij_inv
-    elec_dist_deriv_e[3, i, j] = 2.0 * rij_inv
-  elec_dist_deriv_e[:, j, j] = 0.0
+def make_dist(elec_coord):
 
-ee_distance_rescaled_deriv_e = np.zeros(shape=(4,elec_num,elec_num),dtype=float)
-for j in range(elec_num):
-  for i in range(elec_num):
-    f = 1.0 - kappa * ee_distance_rescaled[i][j]
-    for ii in range(4):
-      ee_distance_rescaled_deriv_e[ii][i][j] = elec_dist_deriv_e[ii][i][j]
-    ee_distance_rescaled_deriv_e[3][i][j] = ee_distance_rescaled_deriv_e[3][i][j] + \
-                              (-kappa * ee_distance_rescaled_deriv_e[0][i][j] * ee_distance_rescaled_deriv_e[0][i][j]) + \
-                              (-kappa * ee_distance_rescaled_deriv_e[1][i][j] * ee_distance_rescaled_deriv_e[1][i][j]) + \
-                              (-kappa * ee_distance_rescaled_deriv_e[2][i][j] * ee_distance_rescaled_deriv_e[2][i][j])
-    for ii in range(4):
-      ee_distance_rescaled_deriv_e[ii][i][j] = ee_distance_rescaled_deriv_e[ii][i][j] * f
+    elec_dist = np.zeros(shape=(elec_num, elec_num),dtype=float)
+    for i in range(elec_num):
+      for j in range(elec_num):
+        elec_dist[i, j] = np.linalg.norm(elec_coord[i] - elec_coord[j])
+    return elec_dist
 
-third = 1.0 / 3.0
+
+def make_dist_deriv(elec_coord):
+
+    elec_dist_d = np.zeros(shape=(4, elec_num, elec_num),dtype=float)
+    for i in range(elec_num):
+      for j in range(elec_num):
+        rij = np.linalg.norm(elec_coord[i] - elec_coord[j])
+        rijm = np.linalg.norm(elec_coord[i] - elec_coord[j]+np.array((dx,0.,0.)))
+        rijp = np.linalg.norm(elec_coord[i] - elec_coord[j]-np.array((dx,0.,0.)))
+        elec_dist_d[0, i, j] = (rijp-rijm)/(2.*dx)
+        elec_dist_d[3, i, j] = (rijp+rijm-2.*rij)/(dx**2)
+        rijm = np.linalg.norm(elec_coord[i] - elec_coord[j]+np.array((0.,dx,0.)))
+        rijp = np.linalg.norm(elec_coord[i] - elec_coord[j]-np.array((0.,dx,0.)))
+        elec_dist_d[1, i, j] = (rijp-rijm)/(2.*dx)
+        elec_dist_d[3, i, j] += (rijp+rijm-2.*rij)/(dx**2)
+        rijm = np.linalg.norm(elec_coord[i] - elec_coord[j]+np.array((0.,0.,dx)))
+        rijp = np.linalg.norm(elec_coord[i] - elec_coord[j]-np.array((0.,0.,dx)))
+        elec_dist_d[2, i, j] = (rijp-rijm)/(2.*dx)
+        elec_dist_d[3, i, j] += (rijp+rijm-2.*rij)/(dx**2)
+    return elec_dist_d
+
+def func(elec_coord):
+
+    elec_dist = make_dist(elec_coord)
+    
+    elec_dist_deriv_e = np.zeros(shape=(4,elec_num, elec_num),dtype=float)
+    for j in range(elec_num):
+      for i in range(elec_num):
+        rij_inv = 1.0 / elec_dist[i, j]
+        for ii in range(3):
+          elec_dist_deriv_e[ii, i, j] = (elec_coord[j][ii] - elec_coord[i][ii]) * rij_inv
+        elec_dist_deriv_e[3, i, j] = 2.0 * rij_inv
+      elec_dist_deriv_e[:, j, j] = 6.0
+    
+    ee_distance_rescaled_deriv_e = np.zeros(shape=(4,elec_num,elec_num),dtype=float)
+    for j in range(elec_num):
+      for i in range(elec_num):
+        f = 1.0 - kappa * ee_distance_rescaled[i][j]
+        for ii in range(4):
+          ee_distance_rescaled_deriv_e[ii][i][j] = elec_dist_deriv_e[ii][i][j]
+        ee_distance_rescaled_deriv_e[3][i][j] = ee_distance_rescaled_deriv_e[3][i][j] + \
+                                  (-kappa * ee_distance_rescaled_deriv_e[0][i][j] * ee_distance_rescaled_deriv_e[0][i][j]) + \
+                                  (-kappa * ee_distance_rescaled_deriv_e[1][i][j] * ee_distance_rescaled_deriv_e[1][i][j]) + \
+                                  (-kappa * ee_distance_rescaled_deriv_e[2][i][j] * ee_distance_rescaled_deriv_e[2][i][j])
+        for ii in range(4):
+          ee_distance_rescaled_deriv_e[ii][i][j] = ee_distance_rescaled_deriv_e[ii][i][j] * f
+
+    return ee_distance_rescaled_deriv_e, elec_dist_deriv_e
+
+ee_distance_rescaled_deriv_e, elec_dist_deriv_e =  func(elec_coord)
+
+
+#print(elec_dist_deriv_e[3,:,:])
+#print(make_dist_deriv(elec_coord)[3,:,:])
+
 factor_ee_deriv_e = np.zeros(shape=(4,elec_num),dtype=float)
 dx = np.zeros(shape=(4),dtype=float)
 pow_ser_g = np.zeros(shape=(4),dtype=float)
 for j in range(elec_num):
    for i in range(elec_num):
-      x = ee_distance_rescaled[j][i]
-      if abs(x) < 1e-18:
-        continue
-      pow_ser_g = np.zeros(shape=(4),dtype=float)
-      spin_fact   = 1.0
-      den         = 1.0 + b_vector[1] * ee_distance_rescaled[j][i]
+      if i == j: continue
+      x = ee_distance_rescaled[j,i]
+      den         = 1.0 + b_vector[1] * x
       invden      = 1.0 / den
       invden2     = invden * invden
       invden3     = invden2 * invden
-      xinv        = 1.0 / (ee_distance_rescaled[j][i] + 1.0E-18)
+      xinv        = 1.0 / x
       ipar        = 1
 
-      for ii in range(4):
-        dx[ii] = ee_distance_rescaled_deriv_e[ii][j][i]
+      dx[:] = ee_distance_rescaled_deriv_e[:,j,i]
 
-      if((i <= (up_num-1) and j <= (up_num-1) ) or  \
-         (i >  (up_num-1) and j >  (up_num-1))):
+      if((i <  up_num and j <  up_num) or (i >= up_num and j >= up_num) ):
         spin_fact = 0.5
+      else:
+        spin_fact = 1.0
 
-      lap1 = 0.0
-      lap2 = 0.0
-      lap3 = 0.0
-      for ii in range(3):
-        x = ee_distance_rescaled[j][i]
-        if x < 1e-18:
-          continue
-        for p in range(2,bord_num+1):
-          y = p * b_vector[(p-1) + 1] * x
-          pow_ser_g[ii] = pow_ser_g[ii] + y * dx[ii]
-          lap1 = lap1 + (p - 1) * y * xinv * dx[ii] * dx[ii]
-          lap2 = lap2 + y
-          x = x * ee_distance_rescaled[j][i]
+      factor_ee_deriv_e[:,j] += spin_fact * b_vector[0] * dx[:] * invden2
+      for k in range(2,bord_num+1):
+          factor_ee_deriv_e[:,j] += b_vector[k]*k*x**(k-1)*dx[:]
 
-        lap3 = lap3 - 2.0 * b_vector[1] * dx[ii] * dx[ii]
+      grad_c2 = np.dot(ee_distance_rescaled_deriv_e[:3,j,i], ee_distance_rescaled_deriv_e[:3,j,i])
+      factor_ee_deriv_e[3,j] -= spin_fact * b_vector[0] * 2. * b_vector[1] * grad_c2 * invden3
+      for k in range(2,bord_num+1):
+          factor_ee_deriv_e[3,j] += b_vector[k]*k*(k-1)*x**(k-2)*grad_c2
 
-        factor_ee_deriv_e[ii][j] = factor_ee_deriv_e[ii][j] + spin_fact * b_vector[0]  * \
-                              dx[ii] * invden2 + pow_ser_g[ii]
-
-      ii = 3
-      lap2 = lap2 * dx[ii] * third
-      lap3 = lap3 + den * dx[ii]
-      lap3 = lap3 * (spin_fact * b_vector[0] * invden3)
-      factor_ee_deriv_e[ii][j] = factor_ee_deriv_e[ii][j] + lap1 + lap2 + lap3
 
 print("factor_ee_deriv_e[0][0]:",factor_ee_deriv_e[0][0])
 print("factor_ee_deriv_e[1][0]:",factor_ee_deriv_e[1][0])
@@ -3133,8 +3151,8 @@ print("factor_ee_deriv_e[3][0]:",factor_ee_deriv_e[3][0])
 
      #+RESULTS:
      : asym_one         :  0.43340325572525706
-     : asymp_jasb[0]    :  0.5323750557252571
-     : asymp_jasb[1]    :  0.31567342786262853
+     : asymp_jasb[0]    :  0.31567342786262853
+     : asymp_jasb[1]    :  0.5323750557252571
      : factor_ee_deriv_e[0][0]: 0.16364894652107934
      : factor_ee_deriv_e[1][0]: -0.6927548119830084
      : factor_ee_deriv_e[2][0]: 0.073267755223968
@@ -3150,12 +3168,19 @@ double factor_ee_deriv_e[walk_num][4][elec_num];
 rc = qmckl_get_jastrow_champ_factor_ee_deriv_e(context, &(factor_ee_deriv_e[0][0][0]),walk_num*4*elec_num);
 
 // check factor_ee_deriv_e
+printf("%f  %f\n", factor_ee_deriv_e[0][0][0], 0.16364894652107934);
 assert(fabs(factor_ee_deriv_e[0][0][0]-0.16364894652107934) < 1.e-12);
+
+printf("%f  %f\n", factor_ee_deriv_e[0][1][0],-0.6927548119830084 );
 assert(fabs(factor_ee_deriv_e[0][1][0]+0.6927548119830084 ) < 1.e-12);
+
+printf("%f  %f\n", factor_ee_deriv_e[0][2][0], 0.073267755223968  );
 assert(fabs(factor_ee_deriv_e[0][2][0]-0.073267755223968  ) < 1.e-12);
+
+printf("%f  %f\n", factor_ee_deriv_e[0][3][0], 1.5111672803213185 );
 assert(fabs(factor_ee_deriv_e[0][3][0]-1.5111672803213185 ) < 1.e-12);
       #+end_src
-
+      
 *** Electron-electron rescaled distances
 
     ~ee_distance_rescaled~ stores the matrix of the rescaled distances between all
