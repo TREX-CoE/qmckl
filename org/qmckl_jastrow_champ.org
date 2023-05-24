@@ -2852,74 +2852,54 @@ qmckl_exit_code qmckl_compute_jastrow_champ_factor_ee_gl_hpc(
   }
 
 
-  for (int nw = 0; nw < walk_num; ++nw) {
-    for (int ii = 0; ii < 4; ++ii) {
-      for (int j = 0; j < elec_num; ++j) {
-        factor_ee_gl[j + ii * elec_num + nw * elec_num * 4]  = 0.0;
-      }
-    }
-  }
-
-  const double third = 1.0 / 3.0;
+  memset(factor_ee_gl, 0, elec_num*4*walk_num*sizeof(double));
 
   for (int nw = 0; nw < walk_num; ++nw) {
     for (int i = 0; i < elec_num; ++i) {
+      const double* dxj = &ee_distance_rescaled_gl[4*elec_num*(i+nw*elec_num)];
+      const double*  xj = &ee_distance_rescaled   [  elec_num*(i+nw*elec_num)];
+
       for (int j = 0; j < elec_num; ++j) {
-        const double x0 = ee_distance_rescaled[j + i * elec_num + nw * elec_num * elec_num];
-        if (fabs(x0) < 1.0e-18) continue;
-        double spin_fact      = 1.0;
-        const double den      = 1.0 + b_vector[1] * x0;
-        const double invden   = 1.0 / den;
-        const double invden2  = invden * invden;
-        const double invden3  = invden2 * invden;
-        const double xinv     = 1.0 / (x0 + 1.0e-18);
+        if (j == i) continue;
+        
+        double x = xj[j];
 
-        double dx[4];
-        dx[0] = ee_distance_rescaled_gl[0 \
-                                           + j * 4 + i * 4 * elec_num \
-                                           + nw * 4 * elec_num * elec_num];
-        dx[1] = ee_distance_rescaled_gl[1  \
-                                           + j * 4 + i * 4 * elec_num \
-                                           + nw * 4 * elec_num * elec_num];
-        dx[2] = ee_distance_rescaled_gl[2  \
-                                           + j * 4 + i * 4 * elec_num \
-                                           + nw * 4 * elec_num * elec_num];
-        dx[3] = ee_distance_rescaled_gl[3  \
-                                           + j * 4 + i * 4 * elec_num \
-                                           + nw * 4 * elec_num * elec_num];
+        const double denom      = 1.0 + b_vector[1]*x;
+        const double invdenom   = 1.0 / denom;
+        const double invdenom2  = invdenom * invdenom;
 
-        if((i <= (up_num-1) && j <= (up_num-1) ) || (i > (up_num-1) && j > (up_num-1))) {
-          spin_fact = 0.5;
+        const double* restrict dx = dxj + 4*j;
+
+        const double grad_c2 = dx[0]*dx[0] + dx[1]*dx[1] + dx[2]*dx[2];
+
+        double f =
+         (i < up_num && j < up_num ) || (i >= up_num && j >= up_num) ?
+         0.5 * b_vector[0] * invdenom2 : b_vector[0] * invdenom2;
+
+        
+        double * restrict factor_ee_gl_0 = &(factor_ee_gl[nw*elec_num*4]);
+        double * restrict factor_ee_gl_1 = factor_ee_gl_0 + elec_num;
+        double * restrict factor_ee_gl_2 = factor_ee_gl_1 + elec_num;
+        double * restrict factor_ee_gl_3 = factor_ee_gl_2 + elec_num;
+
+        factor_ee_gl_0[i] += f*dx[0];
+        factor_ee_gl_1[i] += f*dx[1];
+        factor_ee_gl_2[i] += f*dx[2];
+        factor_ee_gl_3[i] += f*(dx[3] - 2.*b_vector[1]*grad_c2*invdenom);
+
+        double kf=2.0;
+        double x1 = x;
+        x = 1.0;
+
+        for (int k=2 ; k<= bord_num ; ++k) {
+          f = b_vector[k] * kf * x;
+          factor_ee_gl_0[i] += f*x1*dx[0];
+          factor_ee_gl_1[i] += f*x1*dx[1];
+          factor_ee_gl_2[i] += f*x1*dx[2];
+          factor_ee_gl_3[i] += f*(x1*dx[3] + (kf-1.)*grad_c2);
+          x *= x1;
+          kf += 1.;
         }
-
-        double lap1 = 0.0;
-        double lap2 = 0.0;
-        double lap3 = 0.0;
-        double  pow_ser_g[3] = {0., 0., 0.};
-        for (int ii = 0; ii < 3; ++ii) {
-          double x = x0;
-          if (fabs(x) < 1.0e-18) continue;
-          for (int p = 2; p < bord_num+1; ++p) {
-            const double y = p * b_vector[(p-1) + 1] * x;
-            pow_ser_g[ii] = pow_ser_g[ii] + y * dx[ii];
-            lap1 = lap1 + (p - 1) * y * xinv * dx[ii] * dx[ii];
-            lap2 = lap2 + y;
-            x = x * ee_distance_rescaled[j + i * elec_num + nw * elec_num * elec_num];
-          }
-
-          lap3 = lap3 - 2.0 * b_vector[1] * dx[ii] * dx[ii];
-
-          factor_ee_gl[i  + ii * elec_num  + nw * elec_num * 4 ] +=              \
-                                       + spin_fact * b_vector[0] * dx[ii] * invden2 \
-                                       + pow_ser_g[ii] ;
-        }
-
-        int ii = 3;
-        lap2 = lap2 * dx[ii] * third;
-        lap3 = lap3 + den * dx[ii];
-        lap3 = lap3 * (spin_fact * b_vector[0] * invden3);
-        factor_ee_gl[i + ii*elec_num + nw * elec_num * 4] += lap1 + lap2 + lap3;
-
       }
     }
   }
