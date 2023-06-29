@@ -315,6 +315,18 @@ AC_ARG_ENABLE([hpc],
 AS_IF([test "x$enable_hpc" = "xyes"],
       [AC_DEFINE([HAVE_HPC], [1], [Activate HPC routines])])
 
+
+AC_ARG_ENABLE([fpe],
+              [AS_HELP_STRING([--enable-fpe],
+                              [Enable floating-point exceptions])],
+              [enable_fpe=$enableval],
+              [enable_fpe=no])
+
+AS_IF([test "x$enable_fpe" = "xyes"],
+      [AC_DEFINE([HAVE_FPE], [1], [Activate floating-point exceptions])])
+
+
+
 AC_ARG_ENABLE([doc],
             [AS_HELP_STRING([--disable-doc],
                             [Disable documentation])],
