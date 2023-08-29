@@ -165,6 +165,223 @@ print (overlap)
       1.18264754e-09  8.97215950e-01]]
    #+end_example
 
+* C
+** Check numerically that MOs are orthonormal, with cusp fitting
+
+   In this example, we will compute numerically the overlap
+   between the molecular orbitals:
+   
+   \[
+      S_{ij} = \int \phi_i(\mathbf{r}) \phi_j(\mathbf{r})
+   \text{d}\mathbf{r} \sim \sum_{k=1}^{N} \phi_i(\mathbf{r}_k)
+   \phi_j(\mathbf{r}_k) \delta \mathbf{r} 
+   \]
+   \[
+      S_{ij} = \langle \phi_i | \phi_j \rangle 
+   \sim \sum_{k=1}^{N} \langle \phi_i | \mathbf{r}_k \rangle
+   \langle \mathbf{r}_k | \phi_j \rangle
+   \]
+   
+   We apply the cusp fitting procedure, so the MOs might deviate
+   slightly from orthonormality.
+
+   #+begin_src c :exports code
+#include <qmckl.h>
+#include <stdio.h>
+
+int main(int argc, char** argv)
+{
+  const char* trexio_filename = "..//share/qmckl/test_data/h2o_5z.h5";
+  qmckl_exit_code rc = QMCKL_SUCCESS;
+   #+end_src
+
+   First, we create a context for the QMCkl calculation, and load the
+   wave function stored in =h2o_5z.h5= inside it. It is a Hartree-Fock
+   determinant for the water molecule in the cc-pV5Z basis set.
+   
+   #+begin_src c :exports code
+  qmckl_context context = qmckl_context_create();
+  if (context == NULL) {
+    fprintf(stderr, "Error creating context\n");
+    exit(1);
+  }
+
+  rc = qmckl_trexio_read(context, trexio_filename, strlen(trexio_filename));
+
+  if (rc != QMCKL_SUCCESS) {
+    fprintf(stderr, "Error reading TREXIO file:\n%s\n", qmckl_string_of_error(rc));
+    exit(1);
+  }
+
+   #+end_src
+
+   We impose the electron-nucleus cusp fitting to occur when the
+   electrons are close to the nuclei. The critical distance
+   is 0.5 atomic units for hydrogens and 0.1 for the oxygen.
+   To identify which atom is an oxygen and which are hydrogens, we
+   fetch the nuclear charges from the context.
+
+   #+begin_src python :exports code
+  int64_t nucl_num;
+
+  rc = qmckl_get_nucleus_num(context, &nucl_num);
+
+  if (rc != QMCKL_SUCCESS) {
+    fprintf(stderr, "Error getting nucl_num:\n%s\n", qmckl_string_of_error(rc));
+    exit(1);
+  }
+
+
+  double nucl_charge[nucl_num];
+
+  rc = qmckl_get_nucleus_charge(context, &(nucl_charge[0]));
+
+  if (rc != QMCKL_SUCCESS) {
+    fprintf(stderr, "Error getting nucl_charge:\n%s\n", qmckl_string_of_error(rc));
+    exit(1);
+  }
+
+
+  double r_c[nucl_num];
+
+  for (size_t i=0 ; i<nucl_num ; ++i) {
+
+          switch ((int) nucl_charge[i]) {
+              case 1:
+              nucl_charge[i] = 0.5;
+              break;
+
+              case 8:
+              nucl_charge[i] = 0.1;
+              break;
+          }
+
+  }
+             
+   #+end_src
+
+   #+begin_src python :exports code
+  double nucl_coord[nucl_num][3];
+
+  rc = qmckl_get_nucleus_coord(context, 'N', &(nucl_coord[0][0]), nucl_num*3)
+
+  if (rc != QMCKL_SUCCESS) {
+    fprintf(stderr, "Error getting nucl_coord:\n%s\n", qmckl_string_of_error(rc));
+    exit(1);
+  }
+
+  for (size_t i=0 ; i<nucl_num ; ++i) {
+    printf("%d  %+f %+f %+f\n", (int32_t) nucl_charge[i],
+                                nucl_coord[i][0],
+                                nucl_coord[i][1],
+                                nucl_coord[i][2]) );
+   #+end_src
+
+   #+begin_example
+8  +0.000000 +0.000000 +0.000000
+1  -1.430429 +0.000000 -1.107157
+1  +1.430429 +0.000000 -1.107157
+   #+end_example
+
+   
+   We now define the grid points $\mathbf{r}_k$ as a regular grid around the
+   molecule.
+   We fetch the nuclear coordinates from the context,
+   
+   and compute the coordinates of the grid points:
+   
+   #+begin_src python :exports code
+nx = ( 120, 120, 120 )
+shift = np.array([5.,5.,5.])
+point_num = nx[0] * nx[1] * nx[2]
+
+rmin  = np.array( list([ np.min(nucl_coord[:,a]) for a in range(3) ]) )
+rmax  = np.array( list([ np.max(nucl_coord[:,a]) for a in range(3) ]) )
+
+
+linspace = [ None for i in range(3) ]
+step     = [ None for i in range(3) ]
+for a in range(3):
+    linspace[a], step[a] = np.linspace(rmin[a]-shift[a],
+                                       rmax[a]+shift[a],
+                                       num=nx[a],
+                                       retstep=True)
+
+dr = step[0] * step[1] * step[2]
+   #+end_src
+
+   #+RESULTS:
+   
+   Now the grid is ready, we can create the list of grid points
+   $\mathbf{r}_k$ on which the MOs $\phi_i$ will be evaluated, and
+   transfer them to the QMCkl context:
+
+   #+begin_src python :exports code
+point = []
+for x in linspace[0]:
+    for y in linspace[1]:
+        for z in linspace[2]:
+            point += [ [x, y, z] ]
+
+point = np.array(point)
+point_num = len(point)
+qmckl.set_point(context, 'N', point_num, np.reshape(point, (point_num*3)))
+   #+end_src
+
+   #+RESULTS:
+   : None
+   
+   Then, we evaluate all the MOs at the grid points (and time the execution),
+   and thus obtain the matrix $M_{ki} = \langle \mathbf{r}_k | \phi_i \rangle =
+   \phi_i(\mathbf{r}_k)$.
+
+   #+begin_src python :exports code
+import time
+
+mo_num = qmckl.get_mo_basis_mo_num(context)
+
+before   = time.time()
+mo_value = qmckl.get_mo_basis_mo_value(context, point_num*mo_num)
+after    = time.time()
+
+mo_value = np.reshape( mo_value, (point_num, mo_num) )
+
+print("Number of MOs: ", mo_num)
+print("Number of grid points: ", point_num)
+print("Execution time : ", (after - before), "seconds")
+
+   #+end_src
+
+   #+begin_example
+Number of MOs:  201
+Number of grid points:  1728000
+Execution time :  3.511528968811035 seconds
+   #+end_example
+
+   and finally we compute the overlap between all the MOs as
+   $M^\dagger M$.
+
+   #+begin_src python :exports code
+overlap = mo_value.T @ mo_value * dr
+print (overlap)
+   #+end_src
+
+   #+begin_example
+   [[ 9.88693941e-01  2.34719693e-03 -1.50518232e-08 ...  3.12084178e-09
+     -5.81064929e-10  3.70130091e-02]
+    [ 2.34719693e-03  9.99509628e-01  3.18930040e-09 ... -2.46888958e-10
+     -1.06064273e-09 -7.65567973e-03]
+    [-1.50518232e-08  3.18930040e-09  9.99995073e-01 ... -5.84882580e-06
+     -1.21598117e-06  4.59036468e-08]
+    ...
+    [ 3.12084178e-09 -2.46888958e-10 -5.84882580e-06 ...  1.00019107e+00
+     -2.03342837e-04 -1.36954855e-08]
+    [-5.81064929e-10 -1.06064273e-09 -1.21598117e-06 ... -2.03342837e-04
+      9.99262427e-01  1.18264754e-09]
+    [ 3.70130091e-02 -7.65567973e-03  4.59036468e-08 ... -1.36954855e-08
+      1.18264754e-09  8.97215950e-01]]
+   #+end_example
+
 * Fortran
 ** Checking errors
 
