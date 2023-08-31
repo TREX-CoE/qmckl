@@ -8,6 +8,9 @@ in a [[https://github.com/TREX-CoE/trexio][TREXIO]] file.
 
 * Python
 ** Check numerically that MOs are orthonormal
+   :PROPERTIES:
+   :header-args: :tangle mo_ortho.py
+   :END:
 
    In this example, we will compute numerically the overlap
    between the molecular orbitals:
@@ -127,7 +130,7 @@ before   = time.time()
 mo_value = qmckl.get_mo_basis_mo_value(context, point_num*mo_num)
 after    = time.time()
 
-mo_value = np.reshape( mo_value, (point_num, mo_num) )
+mo_value = np.reshape( mo_value, (point_num, mo_num) ).T   # Transpose to get mo_num x point_num
 
 print("Number of MOs: ", mo_num)
 print("Number of grid points: ", point_num)
@@ -138,14 +141,14 @@ print("Execution time : ", (after - before), "seconds")
    #+begin_example
 Number of MOs:  201
 Number of grid points:  1728000
-Execution time :  3.511528968811035 seconds
+Execution time :  5.577778577804565 seconds
    #+end_example
 
    and finally we compute the overlap between all the MOs as
-   $M^\dagger M$.
+   $M.M^\dagger$.
 
    #+begin_src python :exports code
-overlap = mo_value.T @ mo_value * dr
+overlap = mo_value @ mo_value.T * dr
 print (overlap)
    #+end_src
 
@@ -167,6 +170,9 @@ print (overlap)
 
 * C
 ** Check numerically that MOs are orthonormal, with cusp fitting
+   :PROPERTIES:
+   :header-args: :tangle mo_ortho.c
+   :END:
 
    In this example, we will compute numerically the overlap
    between the molecular orbitals:
@@ -188,6 +194,9 @@ print (overlap)
    #+begin_src c :exports code
 #include <qmckl.h>
 #include <stdio.h>
+#include <string.h>
+//#include <time.h>
+#include <sys/time.h>
 
 int main(int argc, char** argv)
 {
@@ -201,10 +210,6 @@ int main(int argc, char** argv)
    
    #+begin_src c :exports code
   qmckl_context context = qmckl_context_create();
-  if (context == NULL) {
-    fprintf(stderr, "Error creating context\n");
-    exit(1);
-  }
 
   rc = qmckl_trexio_read(context, trexio_filename, strlen(trexio_filename));
 
@@ -221,7 +226,7 @@ int main(int argc, char** argv)
    To identify which atom is an oxygen and which are hydrogens, we
    fetch the nuclear charges from the context.
 
-   #+begin_src python :exports code
+   #+begin_src c :exports code
   int64_t nucl_num;
 
   rc = qmckl_get_nucleus_num(context, &nucl_num);
@@ -234,7 +239,7 @@ int main(int argc, char** argv)
 
   double nucl_charge[nucl_num];
 
-  rc = qmckl_get_nucleus_charge(context, &(nucl_charge[0]));
+  rc = qmckl_get_nucleus_charge(context, &(nucl_charge[0]), nucl_num);
 
   if (rc != QMCKL_SUCCESS) {
     fprintf(stderr, "Error getting nucl_charge:\n%s\n", qmckl_string_of_error(rc));
@@ -242,28 +247,43 @@ int main(int argc, char** argv)
   }
 
 
-  double r_c[nucl_num];
+  double r_cusp[nucl_num];
 
   for (size_t i=0 ; i<nucl_num ; ++i) {
 
-          switch ((int) nucl_charge[i]) {
-              case 1:
-              nucl_charge[i] = 0.5;
-              break;
-
-              case 8:
-              nucl_charge[i] = 0.1;
-              break;
-          }
-
+    switch ((int) nucl_charge[i]) {
+      
+    case 1:
+      r_cusp[i] = 0.5;
+      break;
+      
+    case 8:
+      r_cusp[i] = 0.1;
+      break;
+    }
+    
   }
              
+
+  rc = qmckl_set_mo_basis_r_cusp(context, &(r_cusp[0]), nucl_num);
+
+  if (rc != QMCKL_SUCCESS) {
+    fprintf(stderr, "Error setting r_cusp:\n%s\n", qmckl_string_of_error(rc));
+    exit(1);
+  }
+
+  
    #+end_src
 
-   #+begin_src python :exports code
+
+   We now define the grid points $\mathbf{r}_k$ as a regular grid around the
+   molecule.
+   We fetch the nuclear coordinates from the context,
+
+   #+begin_src c :exports code
   double nucl_coord[nucl_num][3];
 
-  rc = qmckl_get_nucleus_coord(context, 'N', &(nucl_coord[0][0]), nucl_num*3)
+  rc = qmckl_get_nucleus_coord(context, 'N', &(nucl_coord[0][0]), nucl_num*3);
 
   if (rc != QMCKL_SUCCESS) {
     fprintf(stderr, "Error getting nucl_coord:\n%s\n", qmckl_string_of_error(rc));
@@ -271,10 +291,12 @@ int main(int argc, char** argv)
   }
 
   for (size_t i=0 ; i<nucl_num ; ++i) {
-    printf("%d  %+f %+f %+f\n", (int32_t) nucl_charge[i],
-                                nucl_coord[i][0],
-                                nucl_coord[i][1],
-                                nucl_coord[i][2]) );
+    printf("%d  %+f %+f %+f\n",
+           (int32_t) nucl_charge[i],
+           nucl_coord[i][0],
+           nucl_coord[i][1],
+           nucl_coord[i][2]);
+  }
    #+end_src
 
    #+begin_example
@@ -283,103 +305,157 @@ int main(int argc, char** argv)
 1  +1.430429 +0.000000 -1.107157
    #+end_example
 
-   
-   We now define the grid points $\mathbf{r}_k$ as a regular grid around the
-   molecule.
-   We fetch the nuclear coordinates from the context,
-   
    and compute the coordinates of the grid points:
    
-   #+begin_src python :exports code
-nx = ( 120, 120, 120 )
-shift = np.array([5.,5.,5.])
-point_num = nx[0] * nx[1] * nx[2]
+   #+begin_src c :exports code
+  size_t nx[3] = { 120, 120, 120 };
+  double shift[3] = {5.,5.,5.};
+  int64_t point_num = nx[0] * nx[1] * nx[2];
 
-rmin  = np.array( list([ np.min(nucl_coord[:,a]) for a in range(3) ]) )
-rmax  = np.array( list([ np.max(nucl_coord[:,a]) for a in range(3) ]) )
+  double rmin[3] = { nucl_coord[0][0], nucl_coord[0][1], nucl_coord[0][2] } ;
+  double rmax[3] = { nucl_coord[0][0], nucl_coord[0][1], nucl_coord[0][2] } ;
 
+  for (size_t i=0 ; i<nucl_num ; ++i) {
+    for (int j=0 ; j<3 ; ++j) {
+      rmin[j] = nucl_coord[i][j] < rmin[j] ? nucl_coord[i][j] : rmin[j]; 
+      rmax[j] = nucl_coord[i][j] > rmax[j] ? nucl_coord[i][j] : rmax[j]; 
+    }
+  }
 
-linspace = [ None for i in range(3) ]
-step     = [ None for i in range(3) ]
-for a in range(3):
-    linspace[a], step[a] = np.linspace(rmin[a]-shift[a],
-                                       rmax[a]+shift[a],
-                                       num=nx[a],
-                                       retstep=True)
+  rmin[0] -= shift[0]; rmin[1] -= shift[1]; rmin[2] -= shift[2];
+  rmax[0] += shift[0]; rmax[1] += shift[1]; rmax[2] += shift[2];
 
-dr = step[0] * step[1] * step[2]
+  double step[3];
+
+  double* linspace[3];
+  for (int i=0 ; i<3 ; ++i) {
+
+    linspace[i] = (double*) calloc( sizeof(double), nx[i] );
+
+    if (linspace[i] == NULL) {
+      fprintf(stderr, "Allocation failed (linspace)\n");
+      exit(1);
+    }
+          
+    step[i] = (rmax[i] - rmin[i]) / ((double) (nx[i]-1));
+
+    for (size_t j=0 ; j<nx[i] ; ++j) {
+      linspace[i][j] = rmin[i] + j*step[i];
+    }
+
+  }
+                  
+  double dr = step[0] * step[1] * step[2];
    #+end_src
 
-   #+RESULTS:
-   
    Now the grid is ready, we can create the list of grid points
    $\mathbf{r}_k$ on which the MOs $\phi_i$ will be evaluated, and
    transfer them to the QMCkl context:
 
-   #+begin_src python :exports code
-point = []
-for x in linspace[0]:
-    for y in linspace[1]:
-        for z in linspace[2]:
-            point += [ [x, y, z] ]
+   #+begin_src c :exports code
+  double* point = (double*) calloc(sizeof(double), 3*point_num);
 
-point = np.array(point)
-point_num = len(point)
-qmckl.set_point(context, 'N', point_num, np.reshape(point, (point_num*3)))
+  if (point == NULL) {
+    fprintf(stderr, "Allocation failed (point)\n");
+    exit(1);
+  }
+
+  size_t m = 0;
+  for (size_t i=0 ; i<nx[0] ; ++i) {
+    for (size_t j=0 ; j<nx[1] ; ++j) {
+      for (size_t k=0 ; k<nx[2] ; ++k) {
+        
+        point[m] = linspace[0][i];
+        m++;
+
+        point[m] = linspace[1][j];
+        m++;
+
+        point[m] = linspace[2][k];
+        m++;
+        
+      }
+    }
+  }
+
+  rc = qmckl_set_point(context, 'N', point_num, point, (point_num*3));
+
+  if (rc != QMCKL_SUCCESS) {
+    fprintf(stderr, "Error setting points:\n%s\n", qmckl_string_of_error(rc));
+    exit(1);
+  }
    #+end_src
 
    #+RESULTS:
    : None
    
    Then, we evaluate all the MOs at the grid points (and time the execution),
-   and thus obtain the matrix $M_{ki} = \langle \mathbf{r}_k | \phi_i \rangle =
-   \phi_i(\mathbf{r}_k)$.
+   and thus obtain the matrix $M_{ki} = \langle \mathbf{r}_k | \phi_i
+   \rangle = \phi_i(\mathbf{r}_k)$.
 
-   #+begin_src python :exports code
-import time
+   #+begin_src c :exports code
 
-mo_num = qmckl.get_mo_basis_mo_num(context)
+  int64_t mo_num;
+  rc = qmckl_get_mo_basis_mo_num(context, &mo_num);
 
-before   = time.time()
-mo_value = qmckl.get_mo_basis_mo_value(context, point_num*mo_num)
-after    = time.time()
+  long before, after;
+  struct timeval timecheck;
 
-mo_value = np.reshape( mo_value, (point_num, mo_num) )
+  double* mo_value = (double*) calloc(sizeof(double), point_num*mo_num);
+  if (mo_value == NULL) {
+    fprintf(stderr, "Allocation failed (mo_value)\n");
+    exit(1);
+  }
+  
+  gettimeofday(&timecheck, NULL);
+  before = (long)timecheck.tv_sec * 1000 + (long)timecheck.tv_usec / 1000;
 
-print("Number of MOs: ", mo_num)
-print("Number of grid points: ", point_num)
-print("Execution time : ", (after - before), "seconds")
+  rc = qmckl_get_mo_basis_mo_value(context, mo_value, point_num*mo_num);
+  if (rc != QMCKL_SUCCESS) {
+    fprintf(stderr, "Error getting mo_value)\n");
+    exit(1);
+  }
+
+  gettimeofday(&timecheck, NULL);
+  after = (long)timecheck.tv_sec * 1000 + (long)timecheck.tv_usec / 1000;
+
+  printf("Number of MOs: %ld\n", mo_num);
+  printf("Number of grid points: %ld\n", point_num);
+  printf("Execution time : %f seconds\n", (after - before)*1.e-3);
 
    #+end_src
 
    #+begin_example
 Number of MOs:  201
 Number of grid points:  1728000
-Execution time :  3.511528968811035 seconds
+Execution time :  5.608000 seconds
    #+end_example
 
    and finally we compute the overlap between all the MOs as
-   $M^\dagger M$.
+   $M.M^\dagger$.
 
-   #+begin_src python :exports code
-overlap = mo_value.T @ mo_value * dr
-print (overlap)
+   #+begin_src c :exports code
+  double* overlap = (double*) malloc (mo_num*mo_num*sizeof(double));
+
+  rc = qmckl_dgemm(context, 'N', 'T', mo_num, mo_num, point_num, dr,
+                   mo_value, mo_num, mo_value, mo_num, 0.0,
+                   overlap, mo_num);
+  
+  for (size_t i=0 ; i<mo_num ; ++i) {
+    printf("%4ld", i);
+    for (size_t j=0 ; j<mo_num ; ++j) {
+      printf(" %f", overlap[i*mo_num+j]);
+    }
+    printf("\n");
+  }
+
+}
    #+end_src
 
    #+begin_example
-   [[ 9.88693941e-01  2.34719693e-03 -1.50518232e-08 ...  3.12084178e-09
-     -5.81064929e-10  3.70130091e-02]
-    [ 2.34719693e-03  9.99509628e-01  3.18930040e-09 ... -2.46888958e-10
-     -1.06064273e-09 -7.65567973e-03]
-    [-1.50518232e-08  3.18930040e-09  9.99995073e-01 ... -5.84882580e-06
-     -1.21598117e-06  4.59036468e-08]
-    ...
-    [ 3.12084178e-09 -2.46888958e-10 -5.84882580e-06 ...  1.00019107e+00
-     -2.03342837e-04 -1.36954855e-08]
-    [-5.81064929e-10 -1.06064273e-09 -1.21598117e-06 ... -2.03342837e-04
-      9.99262427e-01  1.18264754e-09]
-    [ 3.70130091e-02 -7.65567973e-03  4.59036468e-08 ... -1.36954855e-08
-      1.18264754e-09  8.97215950e-01]]
+   0 0.988765 0.002336 0.000000 -0.000734 0.000000 0.000530 0.000000 0.000446 0.000000 -0.000000 -0.000511 -0.000000 -0.000267 0.000000 0.000000 0.001007 0.000000 0.000168 -0.000000 -0.000000 -0.000670 -0.000000 0.000000 -0.000251 -0.000261 -0.000000 -0.000000 -0.000000 -0.000397 -0.000000 -0.000810 0.000000 0.000231 -0.000000 -0.000000 0.000000 -0.000000 
+   ...
+ 200 0.039017 -0.013066 -0.000000 -0.001935 -0.000000 -0.003829 -0.000000 0.000996 -0.000000 0.000000 -0.003733 0.000000 0.000065 -0.000000 -0.000000 -0.002220 -0.000000 -0.001961 0.000000 0.000000 -0.004182 0.000000 -0.000000 -0.000165 -0.002445 0.000000 -0.000000 0.000000 0.001985 0.000000 0.001685 -0.000000 -0.002899 0.000000 0.000000 0.000000 -0.000000 0.002591 0.000000 -0.000000 0.000000 0.002385 0.000000 -0.011086 0.000000 -0.003885 0.000000 -0.000000 0.003602 -0.000000 0.000000 -0.003241 0.000000 0.000000 0.002613 -0.007344 -0.000000 -0.000000 0.000000 0.000017 0.000000 0.000000 0.000000 -0.008719 0.000000 -0.001358 -0.003233 0.000000 -0.000000 -0.000000 -0.000000 0.000000 0.003778 0.000000 0.000000 -0.000000 0.000000 0.000000 -0.001190 0.000000 0.000000 -0.000000 0.005578 -0.000000 -0.001502 0.003899 -0.000000 -0.000000 0.000000 -0.003291 -0.001775 -0.000000 -0.002374 0.000000 -0.000000 -0.000000 -0.000000 -0.001290 -0.000000 0.002178 0.000000 0.000000 0.000000 -0.001252 0.000000 -0.000000 -0.000926 0.000000 -0.000000 -0.013130 -0.000000 0.012124 0.000000 -0.000000 -0.000000 -0.000000 0.000000 0.025194 0.000343 -0.000000 0.000000 -0.000000 -0.004421 0.000000 0.000000 -0.000599 -0.000000 0.005289 0.000000 -0.000000 0.012826 -0.000000 0.000000 0.006190 0.000000 0.000000 -0.000000 0.000000 -0.000321 0.000000 -0.000000 -0.000000 0.000000 -0.000000 0.001499 -0.006629 0.000000 0.000000 0.000000 -0.000000 0.008737 -0.000000 0.006880 0.000000 -0.001851 -0.000000 -0.000000 0.000000 -0.007464 0.000000 0.010298 -0.000000 -0.000000 -0.000000 -0.000000 -0.000000 0.000000 0.000540 0.000000 -0.006616 -0.000000 0.000000 -0.002927 -0.000000 0.000000 0.010352 0.000000 -0.003103 -0.000000 -0.007640 -0.000000 -0.000000 0.005302 0.000000 0.000000 -0.000000 -0.000000 -0.010181 0.000000 -0.001108 0.000000 0.000000 -0.000000 0.000000 0.000000 -0.000998 -0.009754 0.013562 0.000000 -0.000000 0.887510
    #+end_example
 
 * Fortran
