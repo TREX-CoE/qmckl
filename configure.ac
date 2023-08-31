@@ -356,62 +356,6 @@ AS_IF([test "$FC" = "verificarlo-f"], [
   FCFLAGS="-Mpreprocess $FCFLAGS"
 ])
 
-## Enable GPU offloading
-
-# GPU offloading
-AC_ARG_ENABLE(gpu, [AS_HELP_STRING([--enable-gpu],[openmp|openacc : Use GPU-offloaded functions])], enable_gpu=$enableval, enable_gpu=no)
-AS_IF([test "x$enable_gpu" = "xyes"], [enable_gpu="openmp"])
-
-# OpenMP offloading
-HAVE_OPENMP_OFFLOAD="no"
-AS_IF([test "x$enable_gpu" = "xopenmp"], [
-  AC_DEFINE([HAVE_OPENMP_OFFLOAD], [1], [If defined, activate OpenMP-offloaded routines])
-  HAVE_OPENMP_OFFLOAD="yes"
-  AS_CASE([$CC],
-    [*gcc*], [CFLAGS="$CFLAGS -fopenmp"],
-    [*nvc*], [CFLAGS="$CFLAGS -mp=gpu"],
-    [])
-  AS_CASE([$FC],
-    [*gfortran*],  [FCFLAGS="$FCFLAGS -fopenmp"],
-    [*nvfortran*], [FCFLAGS="$FCFLAGS -mp=gpu"],
-    [])
-  ]
-)
-
-# OpenMP offloading
-HAVE_OPENACC_OFFLOAD="no"
-AS_IF([test "x$enable_gpu" = "xopenacc"], [
-  AC_DEFINE([HAVE_OPENACC_OFFLOAD], [1], [If defined, activate OpenACC-offloaded routines])
-  HAVE_OPENACC_OFFLOAD="yes"
-  AS_CASE([$CC],
-    [*gcc*], [CFLAGS="$CFLAGS -fopenacc"],
-    [*nvc*], [CFLAGS="$CFLAGS -acc=gpu"],
-    [])
-  AS_CASE([$FC],
-    [*gfortran*],  [FCFLAGS="$FCFLAGS -fopenacc"],
-    [*nvfortran*], [FCFLAGS="$FCFLAGS -acc=gpu"],
-    [])
-  ]
-
-])
-
-# cuBLAS offloading
-AC_ARG_WITH(cublas, [AS_HELP_STRING([--with-cublas],[Use cuBLAS-offloaded functions])], HAVE_CUBLAS_OFFLOAD=$withval, HAVE_CUBLAS_OFFLOAD=no)
-AS_IF([test "x$HAVE_CUBLAS_OFFLOAD" = "xyes"], [
-  AC_DEFINE([HAVE_CUBLAS_OFFLOAD], [1], [If defined, activate cuBLAS-offloaded routines])
-  HAVE_OPENACC_OFFLOAD="yes"
-  AS_CASE([$CC],
-    [*gcc*], [CFLAGS="$CFLAGS -fopenmp"
-              LDFLAGS="-lcublas"],
-    [*nvc*], [CFLAGS="$CFLAGS -mp=gpu -cudalib=cublas"],
-    [])
-  AS_CASE([$FC],
-    [*gfortran*],  [FCFLAGS="$FCFLAGS -fopenmp"],
-    [*nvfortran*], [FCFLAGS="$FCFLAGS -mp=gpu -cudalib=cublas"],
-    [])
-  ]
-])
-
 AC_ARG_ENABLE(malloc-trace, [AS_HELP_STRING([--enable-malloc-trace],[use debug malloc/free])], ok=$enableval, ok=no)
 AS_IF([test "x$ok" = "xyes"], [
 	AC_DEFINE(MALLOC_TRACE,"malloc_trace.dat",[Define to use debugging malloc/free])
