@@ -1,31 +1,72 @@
 #+TITLE: Code examples
 #+SETUPFILE: ../tools/theme.setup
 #+INCLUDE: ../tools/lib.org
-  
-In this section, we present examples of usage of QMCkl.
-For simplicity, we assume that the wave function parameters are stored
-in a [[https://github.com/TREX-CoE/trexio][TREXIO]] file.
 
-* Python
-** Check numerically that MOs are orthonormal
+In this section, we provide hands-on examples to demonstrate the capabilities
+of the QMCkl library.  We furnish code samples in C, Fortran, and Python,
+serving as exhaustive tutorials for effectively leveraging QMCkl.
+For simplicity, we assume that the wave function parameters are stored in a
+[[https://github.com/TREX-CoE/trexio][TREXIO]] file.
+
+* Overlap matrix in the MO basis
+
+The focal point of this example is the numerical evaluation of the overlap
+matrix in the MO basis. Utilizing QMCkl, we approximate the MOs at
+discrete grid points to compute the overlap matrix \( S_{ij} \) as follows:
+\[
+S_{ij} = \int \phi_i(\mathbf{r})\, \phi_j(\mathbf{r}) \text{d}\mathbf{r} \approx
+         \sum_k \phi_i(\mathbf{r}_k)\, \phi_j(\mathbf{r}_k) \delta\mathbf{r}
+\]
+
+
+The code starts by reading a wave function from a TREXIO file.  This is
+accomplished using the ~qmckl_trexio_read~ function, which populates a
+~qmckl_context~ with the necessary wave function parameters.  The context
+serves as the primary interface for interacting with the QMCkl library,
+encapsulating the state and configurations of the system.
+Subsequently, the code retrieves various attributes such as the number of
+nuclei ~nucl_num~ and coordinates ~nucl_coord~.
+These attributes are essential for setting up the integration grid.
+
+The core of the example lies in the numerical computation of the overlap
+matrix. To achieve this, the code employs a regular grid in three-dimensional
+space, and the grid points are then populated into the ~qmckl_context~ using
+the ~qmckl_set_point~ function.
+
+The MO values at these grid points are computed using the
+~qmckl_get_mo_basis_mo_value~ function.  These values are then used to
+calculate the overlap matrix through a matrix multiplication operation
+facilitated by the ~qmckl_dgemm~ function.
+
+The code is also instrumented to measure the execution time for the MO
+value computation, providing an empirical assessment of the computational
+efficiency. Error handling is robustly implemented at each stage to ensure the
+reliability of the simulation.
+
+In summary, this example serves as a holistic guide for leveraging the QMCkl
+library, demonstrating its ease of use. It provides a concrete starting point
+for researchers and developers interested in integrating QMCkl into their QMC
+code.
+
+** Python
    :PROPERTIES:
    :header-args: :tangle mo_ortho.py
    :END:
 
    In this example, we will compute numerically the overlap
    between the molecular orbitals:
-   
+
    \[
       S_{ij} = \int \phi_i(\mathbf{r}) \phi_j(\mathbf{r})
    \text{d}\mathbf{r} \sim \sum_{k=1}^{N} \phi_i(\mathbf{r}_k)
-   \phi_j(\mathbf{r}_k) \delta \mathbf{r} 
+   \phi_j(\mathbf{r}_k) \delta \mathbf{r}
    \]
    \[
-      S_{ij} = \langle \phi_i | \phi_j \rangle 
+      S_{ij} = \langle \phi_i | \phi_j \rangle
    \sim \sum_{k=1}^{N} \langle \phi_i | \mathbf{r}_k \rangle
    \langle \mathbf{r}_k | \phi_j \rangle
    \]
-   
+
 
    #+begin_src python :exports code
 import numpy as np
@@ -33,11 +74,11 @@ import qmckl
    #+end_src
 
    #+RESULTS:
-   
+
    First, we create a context for the QMCkl calculation, and load the
    wave function stored in =h2o_5z.h5= inside it. It is a Hartree-Fock
    determinant for the water molecule in the cc-pV5Z basis set.
-   
+
    #+begin_src python :exports code
 trexio_filename = "..//share/qmckl/test_data/h2o_5z.h5"
 
@@ -52,7 +93,7 @@ qmckl.trexio_read(context, trexio_filename)
    molecule.
 
    We fetch the nuclear coordinates from the context,
-   
+
    #+begin_src python :exports code
 nucl_num = qmckl.get_nucleus_num(context)
 
@@ -75,7 +116,7 @@ for i in range(nucl_num):
    #+end_example
 
    and compute the coordinates of the grid points:
-   
+
    #+begin_src python :exports code
 nx = ( 120, 120, 120 )
 shift = np.array([5.,5.,5.])
@@ -97,7 +138,7 @@ dr = step[0] * step[1] * step[2]
    #+end_src
 
    #+RESULTS:
-   
+
    Now the grid is ready, we can create the list of grid points
    $\mathbf{r}_k$ on which the MOs $\phi_i$ will be evaluated, and
    transfer them to the QMCkl context:
@@ -116,7 +157,7 @@ qmckl.set_point(context, 'N', point_num, np.reshape(point, (point_num*3)))
 
    #+RESULTS:
    : None
-   
+
    Then, we evaluate all the MOs at the grid points (and time the execution),
    and thus obtain the matrix $M_{ki} = \langle \mathbf{r}_k | \phi_i \rangle =
    \phi_i(\mathbf{r}_k)$.
@@ -168,26 +209,27 @@ print (overlap)
       1.18264754e-09  8.97215950e-01]]
    #+end_example
 
-* C
-** Check numerically that MOs are orthonormal, with cusp fitting
+** C
+   In this example, electron-nucleus cusp fitting is added.
+
    :PROPERTIES:
    :header-args: :tangle mo_ortho.c
    :END:
 
    In this example, we will compute numerically the overlap
    between the molecular orbitals:
-   
+
    \[
       S_{ij} = \int \phi_i(\mathbf{r}) \phi_j(\mathbf{r})
    \text{d}\mathbf{r} \sim \sum_{k=1}^{N} \phi_i(\mathbf{r}_k)
-   \phi_j(\mathbf{r}_k) \delta \mathbf{r} 
+   \phi_j(\mathbf{r}_k) \delta \mathbf{r}
    \]
    \[
-      S_{ij} = \langle \phi_i | \phi_j \rangle 
+      S_{ij} = \langle \phi_i | \phi_j \rangle
    \sim \sum_{k=1}^{N} \langle \phi_i | \mathbf{r}_k \rangle
    \langle \mathbf{r}_k | \phi_j \rangle
    \]
-   
+
    We apply the cusp fitting procedure, so the MOs might deviate
    slightly from orthonormality.
 
@@ -206,7 +248,7 @@ int main(int argc, char** argv)
    First, we create a context for the QMCkl calculation, and load the
    wave function stored in =h2o_5z.h5= inside it. It is a Hartree-Fock
    determinant for the water molecule in the cc-pV5Z basis set.
-   
+
    #+begin_src c :exports code
   qmckl_context context = qmckl_context_create();
 
@@ -251,18 +293,18 @@ int main(int argc, char** argv)
   for (size_t i=0 ; i<nucl_num ; ++i) {
 
     switch ((int) nucl_charge[i]) {
-      
+
     case 1:
       r_cusp[i] = 0.5;
       break;
-      
+
     case 8:
       r_cusp[i] = 0.1;
       break;
     }
-    
+
   }
-             
+
 
   rc = qmckl_set_mo_basis_r_cusp(context, &(r_cusp[0]), nucl_num);
 
@@ -271,7 +313,7 @@ int main(int argc, char** argv)
     exit(1);
   }
 
-  
+
    #+end_src
 
 
@@ -305,7 +347,7 @@ int main(int argc, char** argv)
    #+end_example
 
    and compute the coordinates of the grid points:
-   
+
    #+begin_src c :exports code
   size_t nx[3] = { 120, 120, 120 };
   double shift[3] = {5.,5.,5.};
@@ -316,8 +358,8 @@ int main(int argc, char** argv)
 
   for (size_t i=0 ; i<nucl_num ; ++i) {
     for (int j=0 ; j<3 ; ++j) {
-      rmin[j] = nucl_coord[i][j] < rmin[j] ? nucl_coord[i][j] : rmin[j]; 
-      rmax[j] = nucl_coord[i][j] > rmax[j] ? nucl_coord[i][j] : rmax[j]; 
+      rmin[j] = nucl_coord[i][j] < rmin[j] ? nucl_coord[i][j] : rmin[j];
+      rmax[j] = nucl_coord[i][j] > rmax[j] ? nucl_coord[i][j] : rmax[j];
     }
   }
 
@@ -335,7 +377,7 @@ int main(int argc, char** argv)
       fprintf(stderr, "Allocation failed (linspace)\n");
       exit(1);
     }
-          
+
     step[i] = (rmax[i] - rmin[i]) / ((double) (nx[i]-1));
 
     for (size_t j=0 ; j<nx[i] ; ++j) {
@@ -343,7 +385,7 @@ int main(int argc, char** argv)
     }
 
   }
-                  
+
   double dr = step[0] * step[1] * step[2];
    #+end_src
 
@@ -363,7 +405,7 @@ int main(int argc, char** argv)
   for (size_t i=0 ; i<nx[0] ; ++i) {
     for (size_t j=0 ; j<nx[1] ; ++j) {
       for (size_t k=0 ; k<nx[2] ; ++k) {
-        
+
         point[m] = linspace[0][i];
         m++;
 
@@ -372,7 +414,7 @@ int main(int argc, char** argv)
 
         point[m] = linspace[2][k];
         m++;
-        
+
       }
     }
   }
@@ -387,7 +429,7 @@ int main(int argc, char** argv)
 
    #+RESULTS:
    : None
-   
+
    Then, we evaluate all the MOs at the grid points (and time the execution),
    and thus obtain the matrix $M_{ki} = \langle \mathbf{r}_k | \phi_i
    \rangle = \phi_i(\mathbf{r}_k)$.
@@ -405,7 +447,7 @@ int main(int argc, char** argv)
     fprintf(stderr, "Allocation failed (mo_value)\n");
     exit(1);
   }
-  
+
   gettimeofday(&timecheck, NULL);
   before = (long)timecheck.tv_sec * 1000 + (long)timecheck.tv_usec / 1000;
 
@@ -439,7 +481,7 @@ Execution time :  5.608000 seconds
   rc = qmckl_dgemm(context, 'N', 'T', mo_num, mo_num, point_num, dr,
                    mo_value, mo_num, mo_value, mo_num, 0.0,
                    overlap, mo_num);
-  
+
   for (size_t i=0 ; i<mo_num ; ++i) {
     printf("%4ld", i);
     for (size_t j=0 ; j<mo_num ; ++j) {
@@ -452,7 +494,7 @@ Execution time :  5.608000 seconds
    #+end_src
 
    #+begin_example
-   0 0.988765 0.002336 0.000000 -0.000734 0.000000 0.000530 0.000000 0.000446 0.000000 -0.000000 -0.000511 -0.000000 -0.000267 0.000000 0.000000 0.001007 0.000000 0.000168 -0.000000 -0.000000 -0.000670 -0.000000 0.000000 -0.000251 -0.000261 -0.000000 -0.000000 -0.000000 -0.000397 -0.000000 -0.000810 0.000000 0.000231 -0.000000 -0.000000 0.000000 -0.000000 
+   0 0.988765 0.002336 0.000000 -0.000734 0.000000 0.000530 0.000000 0.000446 0.000000 -0.000000 -0.000511 -0.000000 -0.000267 0.000000 0.000000 0.001007 0.000000 0.000168 -0.000000 -0.000000 -0.000670 -0.000000 0.000000 -0.000251 -0.000261 -0.000000 -0.000000 -0.000000 -0.000397 -0.000000 -0.000810 0.000000 0.000231 -0.000000 -0.000000 0.000000 -0.000000
    ...
  200 0.039017 -0.013066 -0.000000 -0.001935 -0.000000 -0.003829 -0.000000 0.000996 -0.000000 0.000000 -0.003733 0.000000 0.000065 -0.000000 -0.000000 -0.002220 -0.000000 -0.001961 0.000000 0.000000 -0.004182 0.000000 -0.000000 -0.000165 -0.002445 0.000000 -0.000000 0.000000 0.001985 0.000000 0.001685 -0.000000 -0.002899 0.000000 0.000000 0.000000 -0.000000 0.002591 0.000000 -0.000000 0.000000 0.002385 0.000000 -0.011086 0.000000 -0.003885 0.000000 -0.000000 0.003602 -0.000000 0.000000 -0.003241 0.000000 0.000000 0.002613 -0.007344 -0.000000 -0.000000 0.000000 0.000017 0.000000 0.000000 0.000000 -0.008719 0.000000 -0.001358 -0.003233 0.000000 -0.000000 -0.000000 -0.000000 0.000000 0.003778 0.000000 0.000000 -0.000000 0.000000 0.000000 -0.001190 0.000000 0.000000 -0.000000 0.005578 -0.000000 -0.001502 0.003899 -0.000000 -0.000000 0.000000 -0.003291 -0.001775 -0.000000 -0.002374 0.000000 -0.000000 -0.000000 -0.000000 -0.001290 -0.000000 0.002178 0.000000 0.000000 0.000000 -0.001252 0.000000 -0.000000 -0.000926 0.000000 -0.000000 -0.013130 -0.000000 0.012124 0.000000 -0.000000 -0.000000 -0.000000 0.000000 0.025194 0.000343 -0.000000 0.000000 -0.000000 -0.004421 0.000000 0.000000 -0.000599 -0.000000 0.005289 0.000000 -0.000000 0.012826 -0.000000 0.000000 0.006190 0.000000 0.000000 -0.000000 0.000000 -0.000321 0.000000 -0.000000 -0.000000 0.000000 -0.000000 0.001499 -0.006629 0.000000 0.000000 0.000000 -0.000000 0.008737 -0.000000 0.006880 0.000000 -0.001851 -0.000000 -0.000000 0.000000 -0.007464 0.000000 0.010298 -0.000000 -0.000000 -0.000000 -0.000000 -0.000000 0.000000 0.000540 0.000000 -0.006616 -0.000000 0.000000 -0.002927 -0.000000 0.000000 0.010352 0.000000 -0.003103 -0.000000 -0.007640 -0.000000 -0.000000 0.005302 0.000000 0.000000 -0.000000 -0.000000 -0.010181 0.000000 -0.001108 0.000000 0.000000 -0.000000 0.000000 0.000000 -0.000998 -0.009754 0.013562 0.000000 -0.000000 0.887510
    #+end_example
@@ -465,7 +507,7 @@ Execution time :  5.608000 seconds
    error in text format and exits the program.
 
    #+NAME: qmckl_check_error
-   #+begin_src f90 
+   #+begin_src f90
 subroutine qmckl_check_error(rc, message)
   use qmckl
   implicit none
@@ -480,7 +522,7 @@ subroutine qmckl_check_error(rc, message)
   end if
 end subroutine qmckl_check_error
    #+end_src
-  
+
 ** Computing an atomic orbital on a grid
    :PROPERTIES:
    :header-args: :tangle ao_grid.f90
@@ -492,14 +534,14 @@ end subroutine qmckl_check_error
    atomic units in the borders.
 
    This program uses the ~qmckl_check_error~ function defined above.
-  
+
    To use this program, run
-  
+
    #+begin_src bash :tangle no :exports code
 $ ao_grid <trexio_file> <AO_id> <point_num>
    #+end_src
 
-  
+
    #+begin_src f90  :noweb yes
 <<qmckl_check_error>>
 
@@ -529,7 +571,7 @@ program ao_grid
 
    Start by fetching the command-line arguments:
 
-   #+begin_src f90 
+   #+begin_src f90
   if (iargc() /= 3) then
      print *, 'Syntax: ao_grid <trexio_file> <AO_id> <point_num>'
      call exit(-1)
@@ -549,7 +591,7 @@ program ao_grid
    Create the QMCkl context and initialize it with the wave function
    present in the TREXIO file:
 
-   #+begin_src f90 
+   #+begin_src f90
   qmckl_ctx = qmckl_context_create()
   rc  = qmckl_trexio_read(qmckl_ctx, trexio_filename, 1_8*len(trim(trexio_filename)))
   call qmckl_check_error(rc, 'Read TREXIO')
@@ -557,8 +599,8 @@ program ao_grid
 
    We need to check that ~ao_id~ is in the range, so we get the total
    number of AOs from QMCkl:
-  
-   #+begin_src f90 
+
+   #+begin_src f90
   rc = qmckl_get_ao_basis_ao_num(qmckl_ctx, ao_num)
   call qmckl_check_error(rc, 'Getting ao_num')
 
@@ -571,7 +613,7 @@ program ao_grid
    Now we will compute the limits of the box in which the molecule fits.
    For that, we first need to ask QMCkl the coordinates of nuclei.
 
-   #+begin_src f90 
+   #+begin_src f90
   rc = qmckl_get_nucleus_num(qmckl_ctx, nucl_num)
   call qmckl_check_error(rc, 'Get nucleus num')
 
@@ -583,11 +625,11 @@ program ao_grid
    We now compute the coordinates of opposite points of the box, and
    the distance between points along the 3 directions:
 
-   #+begin_src f90 
+   #+begin_src f90
   rmin(1) = minval( nucl_coord(1,:) ) - 5.d0
   rmin(2) = minval( nucl_coord(2,:) ) - 5.d0
   rmin(3) = minval( nucl_coord(3,:) ) - 5.d0
-     
+
   rmax(1) = maxval( nucl_coord(1,:) ) + 5.d0
   rmax(2) = maxval( nucl_coord(2,:) ) + 5.d0
   rmax(3) = maxval( nucl_coord(3,:) ) + 5.d0
@@ -597,8 +639,8 @@ program ao_grid
 
    We now produce the list of point coordinates where the AO will be
    evaluated:
-  
-   #+begin_src f90 
+
+   #+begin_src f90
   point_num = point_num_x**3
   allocate( points(point_num, 3) )
   ipoint=0
@@ -619,19 +661,19 @@ program ao_grid
      z = z + dr(3)
   end do
    #+end_src
-  
+
    We give the points to QMCkl:
 
-   #+begin_src f90 
+   #+begin_src f90
   rc = qmckl_set_point(qmckl_ctx, 'T', point_num, points, size(points)*1_8 )
   call qmckl_check_error(rc, 'Setting points')
    #+end_src
 
    We allocate the space required to retrieve the values, gradients and
    Laplacian of all AOs, and ask to retrieve the values of the
-   AOs computed at the point positions. 
-  
-   #+begin_src f90 
+   AOs computed at the point positions.
+
+   #+begin_src f90
   allocate( ao_vgl(ao_num, 5, point_num) )
   rc = qmckl_get_ao_basis_ao_vgl(qmckl_ctx, ao_vgl, ao_num*5_8*point_num)
   call qmckl_check_error(rc, 'Setting points')
@@ -639,13 +681,13 @@ program ao_grid
 
    We finally print the value and Laplacian of the AO:
 
-   #+begin_src f90 
+   #+begin_src f90
   do ipoint=1, point_num
      print '(3(F10.6,X),2(E20.10,X))', points(ipoint, 1:3), ao_vgl(ao_id,1,ipoint), ao_vgl(ao_id,5,ipoint)
   end do
    #+end_src
 
-   #+begin_src f90 
+   #+begin_src f90
   deallocate( nucl_coord, points, ao_vgl )
 end program ao_grid
    #+end_src
