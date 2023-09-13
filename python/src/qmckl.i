@@ -58,6 +58,11 @@ import_array();
 %apply ( double* ARGOUT_ARRAY1 , int64_t DIM1 ) { ( double* const C, const int64_t size_max_C) };
 %apply ( double* ARGOUT_ARRAY1 , int64_t DIM1 ) { ( double* const B, const int64_t size_max_B) };
 
+%apply ( int64_t* IN_ARRAY1 , int64_t DIM1 ) { ( const int64_t* A, const int64_t size_max_A) };
+%apply ( int64_t* IN_ARRAY1 , int64_t DIM1 ) { ( const int64_t* B, const int64_t size_max_B) };
+%apply ( int64_t* ARGOUT_ARRAY1 , int64_t DIM1 ) { ( int64_t* const C, const int64_t size_max_C) };
+%apply ( int64_t* ARGOUT_ARRAY1 , int64_t DIM1 ) { ( int64_t* const B, const int64_t size_max_B) };
+
 /* Handle properly get_point */
 
 
