@@ -246,6 +246,94 @@ int simd=1;
 AC_MSG_RESULT([$SIMD_LENGTH])
 AC_DEFINE_UNQUOTED([SIMD_LENGTH], [$SIMD_LENGTH], [Length of SIMD vectors])
 
+# Checking IVDEP
+ivdep=""
+AC_MSG_CHECKING([for ivdep pragma])
+AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
+    #include <stdio.h>
+]], [[
+    int main() {
+        #pragma ivdep
+        for (int i = 0; i < 10; ++i) {
+            printf("Testing: %d\n", i);
+        }
+        return 0;
+    }
+]])],
+    [ivdep='_Pragma("ivdep")'], [
+])
+
+AS_IF([test "x$ivdep" = "x"], [
+  AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
+      #include <stdio.h>
+  ]], [[
+      int main() {
+          #pragma clang loop vectorize(enable)
+          for (int i = 0; i < 10; ++i) {
+              printf("Testing: %d\n", i);
+          }
+          return 0;
+      }
+  ]])],
+      [ivdep='_Pragma("clang loop vectorize(enable)")'], [
+  ])
+])
+
+AS_IF([test "x$ivdep" = "x"], [
+  AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
+      #include <stdio.h>
+  ]], [[
+      int main() {
+          #pragma GCC ivdep
+          for (int i = 0; i < 10; ++i) {
+              printf("Testing: %d\n", i);
+          }
+          return 0;
+      }
+  ]])],
+      [ivdep='_Pragma("GCC ivdep")'], [
+  ])
+])
+
+AC_DEFINE_UNQUOTED([IVDEP], [$ivdep], [IVDEP pragma])
+AS_IF([test "x$ivdep" = "x"], [
+  ivdep="no"
+])
+AC_MSG_RESULT([$ivdep])
+
+
+# Checking ALIGNED
+
+AC_CHECK_FUNCS([aligned_alloc], [have_aligned_alloc=yes], [have_aligned_alloc=no])
+AS_IF([test "x$have_aligned_alloc" = "xyes"], [
+  AC_DEFINE([HAVE_ALIGNED_ALLOC], [1], [Define to 1 if you have the aligned_alloc function.])
+])
+
+aligned=""
+AC_MSG_CHECKING([for vector aligned pragma])
+AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
+]], [[
+    int main() {
+        double __attribute__((aligned(8))) a[10] ;
+        #pragma vector aligned
+        for (int i = 0; i < 10; ++i) {
+            a[i] = (double) i;
+        }
+        return 0;
+    }
+]])],
+    [aligned='_Pragma("vector aligned")'], [
+])
+
+AS_IF([test "x$have_aligned_alloc" = "xno"], [
+  aligned=""
+])
+
+AC_DEFINE_UNQUOTED([ALIGNED], [$aligned], [VECTOR ALIGNED pragma])
+AS_IF([test "x$aligned" = "x"], [
+  aligned="no"
+])
+AC_MSG_RESULT([$aligned])
 
 
 # QMCKLDGEMM
