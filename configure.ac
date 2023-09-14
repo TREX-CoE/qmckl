@@ -304,10 +304,21 @@ AC_MSG_RESULT([$ivdep])
 
 # Checking ALIGNED
 
-AC_CHECK_FUNCS([aligned_alloc], [have_aligned_alloc=yes], [have_aligned_alloc=no])
+AC_MSG_CHECKING([for aligned_alloc])
+AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
+]], [[
+    int main() {
+        void * pointer = aligned_alloc(64, 100);
+        free(pointer);
+        return 0;
+    }
+]])],
+    [have_aligned_alloc=yes], [have_aligned_alloc=no
+])
 AS_IF([test "x$have_aligned_alloc" = "xyes"], [
   AC_DEFINE([HAVE_ALIGNED_ALLOC], [1], [Define to 1 if you have the aligned_alloc function.])
 ])
+AC_MSG_RESULT([$have_aligned_alloc])
 
 aligned=""
 AC_MSG_CHECKING([for vector aligned pragma])
