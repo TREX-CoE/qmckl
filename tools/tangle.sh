@@ -18,6 +18,8 @@ if [[ -z ${top_builddir} ]] ; then
    exit 1
 fi
 
+EMACS="${VARIABLE:=emacs}" 
+
 EXTENSIONS="_f.F90 _fh_func.F90 _fh_type.F90 .c _func.h _type.h _private_type.h _private_func.h"
 
 function tangle()
@@ -42,7 +44,7 @@ function tangle()
     done
 
     ${srcdir}/tools/missing \
-        emacs --no-init-file --no-site-lisp --quick --batch ${org_file} \
+        $EMACS --no-init-file --no-site-lisp --quick --batch ${org_file} \
          --load=${srcdir}/tools/config_tangle.el \
         -f org-babel-tangle
     
