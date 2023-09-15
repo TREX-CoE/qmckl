@@ -215,138 +215,6 @@ PKG_CFLAGS2="$PKG_CFLAGS2 $TREXIO_CFLAGS"
 PKG_LIBS2="$PKG_LIBS2 $TREXIO_LIBS"
 
 
-# Checking SIMD
-AC_MSG_CHECKING([for SIMD length])
-SIMD_LENGTH=1
-AC_RUN_IFELSE(
-    [AC_LANG_PROGRAM([],[
-int simd=1;
-#if defined(__AVX512F__)
-   simd=8;
-#elif defined(__AVX2__)
-   simd=4;
-#elif defined(__AVX__)
-   simd=4;
-#elif defined(__SSE2__)
-   simd=2;
-#elif defined(__ARM_NEON__)
-   simd=2;
-#endif
-  return simd;
-])], [SIMD_LENGTH=1],
-[ AS_CASE([$?],
-  [1], [SIMD_LENGTH=1],
-  [2], [SIMD_LENGTH=2],
-  [4], [SIMD_LENGTH=4],
-  [8], [SIMD_LENGTH=8],
-  [16], [SIMD_LENGTH=16],
-  [SIMD_LENGTH=1])],
-  [SIMD_LENGTH=1]
-)
-AC_MSG_RESULT([$SIMD_LENGTH])
-AC_DEFINE_UNQUOTED([SIMD_LENGTH], [$SIMD_LENGTH], [Length of SIMD vectors])
-
-# Checking IVDEP
-ivdep=""
-AC_MSG_CHECKING([for ivdep pragma])
-AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
-    #include <stdio.h>
-]], [[
-    int main() {
-        #pragma ivdep
-        for (int i = 0; i < 10; ++i) {
-            printf("Testing: %d\n", i);
-        }
-        return 0;
-    }
-]])],
-    [ivdep='_Pragma("ivdep")'], [
-])
-
-AS_IF([test "x$ivdep" = "x"], [
-  AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
-      #include <stdio.h>
-  ]], [[
-      int main() {
-          #pragma clang loop vectorize(enable)
-          for (int i = 0; i < 10; ++i) {
-              printf("Testing: %d\n", i);
-          }
-          return 0;
-      }
-  ]])],
-      [ivdep='_Pragma("clang loop vectorize(enable)")'], [
-  ])
-])
-
-AS_IF([test "x$ivdep" = "x"], [
-  AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
-      #include <stdio.h>
-  ]], [[
-      int main() {
-          #pragma GCC ivdep
-          for (int i = 0; i < 10; ++i) {
-              printf("Testing: %d\n", i);
-          }
-          return 0;
-      }
-  ]])],
-      [ivdep='_Pragma("GCC ivdep")'], [
-  ])
-])
-
-AC_DEFINE_UNQUOTED([IVDEP], [$ivdep], [IVDEP pragma])
-AS_IF([test "x$ivdep" = "x"], [
-  ivdep="no"
-])
-AC_MSG_RESULT([$ivdep])
-
-
-# Checking ALIGNED
-
-AC_MSG_CHECKING([for aligned_alloc])
-AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
-]], [[
-    int main() {
-        void * pointer = aligned_alloc(64, 100);
-        free(pointer);
-        return 0;
-    }
-]])],
-    [have_aligned_alloc=yes], [have_aligned_alloc=no
-])
-AS_IF([test "x$have_aligned_alloc" = "xyes"], [
-  AC_DEFINE([HAVE_ALIGNED_ALLOC], [1], [Define to 1 if you have the aligned_alloc function.])
-])
-AC_MSG_RESULT([$have_aligned_alloc])
-
-aligned=""
-AC_MSG_CHECKING([for vector aligned pragma])
-AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
-]], [[
-    int main() {
-        double __attribute__((aligned(8))) a[10] ;
-        #pragma vector aligned
-        for (int i = 0; i < 10; ++i) {
-            a[i] = (double) i;
-        }
-        return 0;
-    }
-]])],
-    [aligned='_Pragma("vector aligned")'], [
-])
-
-AS_IF([test "x$have_aligned_alloc" = "xno"], [
-  aligned=""
-])
-
-AC_DEFINE_UNQUOTED([ALIGNED], [$aligned], [VECTOR ALIGNED pragma])
-AS_IF([test "x$aligned" = "x"], [
-  aligned="no"
-])
-AC_MSG_RESULT([$aligned])
-
-
 # QMCKLDGEMM
 AC_ARG_WITH([qmckldgemm],
             [AS_HELP_STRING([--with-qmckldgemm],
@@ -560,6 +428,138 @@ AS_IF([test "x${QMCKL_DEVEL}" != "x"], [
     AX_PKG_SWIG(4.0.0, [], AC_MSG_WARN([SWIG is required to build Python API.]) )
   ] )
 ])
+
+# Checking SIMD
+AC_MSG_CHECKING([for SIMD length])
+SIMD_LENGTH=1
+AC_RUN_IFELSE(
+    [AC_LANG_PROGRAM([],[
+int simd=1;
+#if defined(__AVX512F__)
+   simd=8;
+#elif defined(__AVX2__)
+   simd=4;
+#elif defined(__AVX__)
+   simd=4;
+#elif defined(__SSE2__)
+   simd=2;
+#elif defined(__ARM_NEON__)
+   simd=2;
+#endif
+  return simd;
+])], [SIMD_LENGTH=1],
+[ AS_CASE([$?],
+  [1], [SIMD_LENGTH=1],
+  [2], [SIMD_LENGTH=2],
+  [4], [SIMD_LENGTH=4],
+  [8], [SIMD_LENGTH=8],
+  [16], [SIMD_LENGTH=16],
+  [SIMD_LENGTH=1])],
+  [SIMD_LENGTH=1]
+)
+AC_MSG_RESULT([$SIMD_LENGTH])
+AC_DEFINE_UNQUOTED([SIMD_LENGTH], [$SIMD_LENGTH], [Length of SIMD vectors])
+
+# Checking IVDEP
+ivdep=""
+AC_MSG_CHECKING([for ivdep pragma])
+AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
+    #include <stdio.h>
+]], [[
+    int main() {
+        #pragma ivdep
+        for (int i = 0; i < 10; ++i) {
+            printf("Testing: %d\n", i);
+        }
+        return 0;
+    }
+]])],
+    [ivdep='_Pragma("ivdep")'], [
+])
+
+AS_IF([test "x$ivdep" = "x"], [
+  AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
+      #include <stdio.h>
+  ]], [[
+      int main() {
+          #pragma clang loop vectorize(enable)
+          for (int i = 0; i < 10; ++i) {
+              printf("Testing: %d\n", i);
+          }
+          return 0;
+      }
+  ]])],
+      [ivdep='_Pragma("clang loop vectorize(enable)")'], [
+  ])
+])
+
+AS_IF([test "x$ivdep" = "x"], [
+  AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
+      #include <stdio.h>
+  ]], [[
+      int main() {
+          #pragma GCC ivdep
+          for (int i = 0; i < 10; ++i) {
+              printf("Testing: %d\n", i);
+          }
+          return 0;
+      }
+  ]])],
+      [ivdep='_Pragma("GCC ivdep")'], [
+  ])
+])
+
+AC_DEFINE_UNQUOTED([IVDEP], [$ivdep], [IVDEP pragma])
+AS_IF([test "x$ivdep" = "x"], [
+  ivdep="no"
+])
+AC_MSG_RESULT([$ivdep])
+
+
+# Checking ALIGNED
+
+AC_MSG_CHECKING([for aligned_alloc])
+AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
+]], [[
+    int main() {
+        void * pointer = aligned_alloc(64, 100);
+        free(pointer);
+        return 0;
+    }
+]])],
+    [have_aligned_alloc=yes], [have_aligned_alloc=no
+])
+AS_IF([test "x$have_aligned_alloc" = "xyes"], [
+  AC_DEFINE([HAVE_ALIGNED_ALLOC], [1], [Define to 1 if you have the aligned_alloc function.])
+])
+AC_MSG_RESULT([$have_aligned_alloc])
+
+aligned=""
+AC_MSG_CHECKING([for vector aligned pragma])
+AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
+]], [[
+    int main() {
+        double __attribute__((aligned(8))) a[10] ;
+        #pragma vector aligned
+        for (int i = 0; i < 10; ++i) {
+            a[i] = (double) i;
+        }
+        return 0;
+    }
+]])],
+    [aligned='_Pragma("vector aligned")'], [
+])
+
+AS_IF([test "x$have_aligned_alloc" = "xno"], [
+  aligned=""
+])
+
+AC_DEFINE_UNQUOTED([ALIGNED], [$aligned], [VECTOR ALIGNED pragma])
+AS_IF([test "x$aligned" = "x"], [
+  aligned="no"
+])
+AC_MSG_RESULT([$aligned])
+
 
 
 #PKG-CONFIG
