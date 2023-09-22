@@ -76,7 +76,7 @@ cat << EOF > ${qmckl_f}
 !    
 !    
 !
-module qmckl
+module qmckl_constants
   use, intrinsic :: iso_c_binding
 EOF
 
@@ -84,6 +84,14 @@ for i in ${HEADERS_TYPE}
 do
     cat $i >> ${qmckl_f}
 done
+
+cat << EOF >> ${qmckl_f}
+end module qmckl_constants
+
+module qmckl
+  use, intrinsic :: iso_c_binding
+  use qmckl_constants
+EOF
 
 for i in ${HEADERS}
 do
