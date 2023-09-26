@@ -178,14 +178,14 @@ def main():
             F_TEST_FILES += [f_test]
 
             if f_test in DEPS:
-                DEPS_TEST[f_test] += [tangled, "$(test_qmckl_fo)"]
+                DEPS_TEST[f_test] += [tangled]
             else:
-                DEPS_TEST[f_test]  = [tangled, "$(test_qmckl_fo)"]
+                DEPS_TEST[f_test]  = [tangled]
 
             if c_test_x in TESTS:
-                TESTS[c_test_x] += [f_test, "$(test_qmckl_fo)"]
+                TESTS[c_test_x] += [f_test]
             else:
-                TESTS[c_test_x]  = [f_test, "$(test_qmckl_fo)"]
+                TESTS[c_test_x]  = [f_test]
 
     output = ["",
               "## Source files",
@@ -240,8 +240,7 @@ def main():
     output+= ["",
               "## Test files",
               "",
-              "$(header_tests): $(TANGLED_FILES)",
-              "$(test_qmckl_fo): $(test_qmckl_f)"]
+              "$(header_tests): $(TANGLED_FILES)" ]
     output += ["",
                 "check_PROGRAMS = $(TESTS)" ]
     for f in sorted(TESTS.keys()):

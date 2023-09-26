@@ -46,6 +46,7 @@ pkgconfig_DATA = pkgconfig/qmckl.pc
 
 qmckl_h = include/qmckl.h
 qmckl_f = include/qmckl_f.F90
+qmckl_fo = include/qmckl_f.o
 include_HEADERS = $(qmckl_h) $(qmckl_f)
 
 header_tests  = tests/chbrclf.h tests/n2.h
@@ -61,7 +62,7 @@ lib_LTLIBRARIES = src/libqmckl.la
 src_libqmckl_la_SOURCES = $(qmckl_h) $(qmckl_f) $(C_FILES) $(F_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES)
 src_libqmckl_la_LDFLAGS = $(LDFLAGS)
 
-CLEANFILES+=$(test_qmckl_fo) $(qmckl_fo) $(test_qmckl_o) $(FH_TYPE_FILES) $(FH_FUNC_FILES)
+CLEANFILES+=$(qmckl_fo) $(test_qmckl_o) $(FH_TYPE_FILES) $(FH_FUNC_FILES)
 
 
 include generated.mk
