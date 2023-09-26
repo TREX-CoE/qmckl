@@ -38,7 +38,7 @@ VERSION_MINOR   = @VERSION_MINOR@
 VERSION_PATCH   = @VERSION_PATCH@
 
 SUBDIRS =
-CLEANFILES = qmckl.mod qmckl_verificarlo_f.mod
+CLEANFILES = qmckl.mod qmckl_verificarlo_f.mod qmckl_constants.mod
 EXTRA_DIST =
 
 pkgconfigdir = $(libdir)/pkgconfig
