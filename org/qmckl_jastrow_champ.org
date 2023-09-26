@@ -86,6 +86,7 @@
 #include "config.h"
 #endif
 
+#include <stdbool.h>
 #include <stdio.h>
 #include "n2.h"
 #include "qmckl_jastrow_champ_private_func.h"
@@ -134,19 +135,21 @@ int main() {
   The following data stored in the context:
 
   #+NAME: qmckl_jastrow_args
-    | Variable                  | Type                                  | Description                                                       |
-    |---------------------------+---------------------------------------+-------------------------------------------------------------------|
-    | ~uninitialized~           | ~int32_t~                             | Keeps bits set for uninitialized data                             |
-    | ~rescale_factor_ee~       | ~double~                              | The distance scaling factor                                       |
-    | ~rescale_factor_en~       | ~double[type_nucl_num]~               | The distance scaling factor                                       |
-    | ~aord_num~                | ~int64_t~                             | The number of a coeffecients                                      |
-    | ~bord_num~                | ~int64_t~                             | The number of b coeffecients                                      |
-    | ~cord_num~                | ~int64_t~                             | The number of c coeffecients                                      |
-    | ~type_nucl_num~           | ~int64_t~                             | Number of Nuclei types                                            |
-    | ~type_nucl_vector~        | ~int64_t[nucl_num]~                   | IDs of types of Nuclei. These use 0-based indexing as in C.       |
-    | ~a_vector~                | ~double[aord_num + 1][type_nucl_num]~ | a polynomial coefficients                                         |
-    | ~b_vector~                | ~double[bord_num + 1]~                | b polynomial coefficients                                         |
-    | ~c_vector~                | ~double[dim_c_vector][type_nucl_num]~ | c polynomial coefficients                                         |
+    | Variable            | Type                                  | Description                                                       |
+    |---------------------+---------------------------------------+-------------------------------------------------------------------|
+    | ~uninitialized~     | ~int32_t~                             | Keeps bits set for uninitialized data                             |
+    | ~rescale_factor_ee~ | ~double~                              | The distance scaling factor                                       |
+    | ~rescale_factor_en~ | ~double[type_nucl_num]~               | The distance scaling factor                                       |
+    | ~aord_num~          | ~int64_t~                             | The number of a coeffecients                                      |
+    | ~bord_num~          | ~int64_t~                             | The number of b coeffecients                                      |
+    | ~cord_num~          | ~int64_t~                             | The number of c coeffecients                                      |
+    | ~type_nucl_num~     | ~int64_t~                             | Number of Nuclei types                                            |
+    | ~type_nucl_vector~  | ~int64_t[nucl_num]~                   | IDs of types of Nuclei. These use 0-based indexing as in C.       |
+    | ~a_vector~          | ~double[aord_num + 1][type_nucl_num]~ | a polynomial coefficients                                         |
+    | ~b_vector~          | ~double[bord_num + 1]~                | b polynomial coefficients                                         |
+    | ~c_vector~          | ~double[dim_c_vector][type_nucl_num]~ | c polynomial coefficients                                         |
+    | ~c_vector~          | ~double[dim_c_vector][type_nucl_num]~ | c polynomial coefficients                                         |
+    | ~spin_independent~  | ~bool~                                | If true, use same parameters for parallel and anti-parallel pairs |
 
   Computed data:
 
@@ -368,6 +371,7 @@ typedef struct qmckl_jastrow_champ_struct{
   uint64_t  gl_date;
   double    rescale_factor_ee;
   int32_t   uninitialized;
+  bool      spin_independent;
   bool      provided;
 
 } qmckl_jastrow_champ_struct;
@@ -394,17 +398,15 @@ qmckl_exit_code qmckl_init_jastrow_champ(qmckl_context context) {
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
-  ctx->jastrow_champ.uninitialized = (1 << 10) - 1;
+  ctx->jastrow_champ.uninitialized = (1 << 11) - 1;
 
   /* Default values */
   ctx->jastrow_champ.aord_num = -1;
-
   ctx->jastrow_champ.bord_num = -1;
-
-  ctx->jastrow_champ.dim_c_vector = -1;
   ctx->jastrow_champ.cord_num = -1;
-
+  ctx->jastrow_champ.dim_c_vector = -1;
   ctx->jastrow_champ.type_nucl_num = -1;
+  ctx->jastrow_champ.spin_independent = false;
 
   return QMCKL_SUCCESS;
 }
@@ -426,12 +428,13 @@ qmckl_exit_code  qmckl_set_jastrow_champ_type_nucl_vector  (qmckl_context contex
 qmckl_exit_code  qmckl_set_jastrow_champ_a_vector          (qmckl_context context, const double * a_vector, const int64_t size_max);
 qmckl_exit_code  qmckl_set_jastrow_champ_b_vector          (qmckl_context context, const double * b_vector, const int64_t size_max);
 qmckl_exit_code  qmckl_set_jastrow_champ_c_vector          (qmckl_context context, const double * c_vector, const int64_t size_max);
+qmckl_exit_code  qmckl_set_jastrow_champ_spin_independent  (qmckl_context context, const bool spin_independent);
    #+end_src
 
    #+NAME:pre2
    #+begin_src c  :exports none
 if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-  return QMCKL_NULL_CONTEXT;
+  return QMCKL_INVALID_CONTEXT;
  }
 
 qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
@@ -463,20 +466,20 @@ qmckl_set_jastrow_champ_aord_num(qmckl_context context, const int64_t aord_num)
 
   int32_t mask = 1 << 0;
 
-<<pre2>>
+  <<pre2>>
 
-  if (aord_num < 0) {
-    return qmckl_failwith( context,
-                           QMCKL_INVALID_ARG_2,
-                           "qmckl_set_jastrow_champ_aord_num",
-                           "aord_num < 0");
-  }
+      if (aord_num < 0) {
+        return qmckl_failwith( context,
+                               QMCKL_INVALID_ARG_2,
+                               "qmckl_set_jastrow_champ_aord_num",
+                               "aord_num < 0");
+      }
 
   ctx->jastrow_champ.aord_num = aord_num;
   ctx->jastrow_champ.uninitialized |= (1 << 5);
 
   <<post2>>
-}
+      }
 
 qmckl_exit_code
 qmckl_set_jastrow_champ_bord_num(qmckl_context context, const int64_t bord_num)
@@ -484,20 +487,20 @@ qmckl_set_jastrow_champ_bord_num(qmckl_context context, const int64_t bord_num)
 
   int32_t mask = 1 << 1;
 
-<<pre2>>
+  <<pre2>>
 
-  if (bord_num < 0) {
-    return qmckl_failwith( context,
-                           QMCKL_INVALID_ARG_2,
-                           "qmckl_set_jastrow_champ_bord_num",
-                           "bord_num < 0");
-  }
+      if (bord_num < 0) {
+        return qmckl_failwith( context,
+                               QMCKL_INVALID_ARG_2,
+                               "qmckl_set_jastrow_champ_bord_num",
+                               "bord_num < 0");
+      }
 
   ctx->jastrow_champ.bord_num = bord_num;
   ctx->jastrow_champ.uninitialized |= (1 << 6);
 
   <<post2>>
-}
+      }
 
 qmckl_exit_code
 qmckl_set_jastrow_champ_cord_num(qmckl_context context, const int64_t cord_num)
@@ -505,14 +508,14 @@ qmckl_set_jastrow_champ_cord_num(qmckl_context context, const int64_t cord_num)
 
   int32_t mask = 1 << 2;
 
-<<pre2>>
+  <<pre2>>
 
-  if (cord_num < 0) {
-    return qmckl_failwith( context,
-                           QMCKL_INVALID_ARG_2,
-                           "qmckl_set_jastrow_champ_cord_num",
-                           "cord_num < 0");
-  }
+      if (cord_num < 0) {
+        return qmckl_failwith( context,
+                               QMCKL_INVALID_ARG_2,
+                               "qmckl_set_jastrow_champ_cord_num",
+                               "cord_num < 0");
+      }
 
   int64_t dim_c_vector = -1;
   qmckl_exit_code rc = qmckl_compute_dim_c_vector(context, cord_num, &dim_c_vector);
@@ -529,7 +532,7 @@ qmckl_set_jastrow_champ_cord_num(qmckl_context context, const int64_t cord_num)
   }
 
   <<post2>>
-}
+           }
 
 
 qmckl_exit_code
@@ -537,32 +540,32 @@ qmckl_set_jastrow_champ_type_nucl_num(qmckl_context context, const int64_t type_
 {
   int32_t mask = 1 << 3;
 
-<<pre2>>
+  <<pre2>>
 
-  if (type_nucl_num <= 0) {
-    return qmckl_failwith( context,
-                           QMCKL_INVALID_ARG_2,
-                           "qmckl_set_jastrow_champ_type_nucl_num",
-                           "type_nucl_num < 0");
-  }
+      if (type_nucl_num <= 0) {
+        return qmckl_failwith( context,
+                               QMCKL_INVALID_ARG_2,
+                               "qmckl_set_jastrow_champ_type_nucl_num",
+                               "type_nucl_num < 0");
+      }
 
   ctx->jastrow_champ.type_nucl_num = type_nucl_num;
 
   <<post2>>
-}
+      }
 
 
 qmckl_exit_code
 qmckl_set_jastrow_champ_type_nucl_vector(qmckl_context context,
-                                   int64_t const * type_nucl_vector,
-                                   const int64_t nucl_num)
+                                         int64_t const * type_nucl_vector,
+                                         const int64_t nucl_num)
 {
 
   int32_t mask = 1 << 4;
 
-<<pre2>>
+  <<pre2>>
 
-  int64_t type_nucl_num = ctx->jastrow_champ.type_nucl_num;
+      int64_t type_nucl_num = ctx->jastrow_champ.type_nucl_num;
 
   if (type_nucl_num <= 0) {
     return qmckl_failwith( context,
@@ -616,19 +619,19 @@ qmckl_set_jastrow_champ_type_nucl_vector(qmckl_context context,
   ctx->jastrow_champ.type_nucl_vector = new_array;
 
   <<post2>>
-}
+      }
 
 
 qmckl_exit_code
 qmckl_set_jastrow_champ_a_vector(qmckl_context context,
-                              double const * a_vector,
-                              const int64_t size_max)
+                                 double const * a_vector,
+                                 const int64_t size_max)
 {
   int32_t mask = 1 << 5;
 
-<<pre2>>
+  <<pre2>>
 
-  int64_t aord_num = ctx->jastrow_champ.aord_num;
+      int64_t aord_num = ctx->jastrow_champ.aord_num;
   if (aord_num < 0) {
     return qmckl_failwith( context,
                            QMCKL_NOT_PROVIDED,
@@ -685,19 +688,19 @@ qmckl_set_jastrow_champ_a_vector(qmckl_context context,
   ctx->jastrow_champ.a_vector = new_array;
 
   <<post2>>
-}
+      }
 
 
 qmckl_exit_code
 qmckl_set_jastrow_champ_b_vector(qmckl_context context,
-                              double const * b_vector,
-                              const int64_t size_max)
+                                 double const * b_vector,
+                                 const int64_t size_max)
 {
   int32_t mask = 1 << 6;
 
-<<pre2>>
+  <<pre2>>
 
-    int64_t bord_num = ctx->jastrow_champ.bord_num;
+      int64_t bord_num = ctx->jastrow_champ.bord_num;
   if (bord_num < 0) {
     return qmckl_failwith( context,
                            QMCKL_NOT_PROVIDED,
@@ -745,19 +748,19 @@ qmckl_set_jastrow_champ_b_vector(qmckl_context context,
   ctx->jastrow_champ.b_vector = new_array;
 
   <<post2>>
-}
+      }
 
 
 qmckl_exit_code
 qmckl_set_jastrow_champ_c_vector(qmckl_context context,
-                              double const * c_vector,
-                              const int64_t size_max)
+                                 double const * c_vector,
+                                 const int64_t size_max)
 {
   int32_t mask = 1 << 7;
 
-<<pre2>>
+  <<pre2>>
 
-  int64_t type_nucl_num = ctx->jastrow_champ.type_nucl_num;
+      int64_t type_nucl_num = ctx->jastrow_champ.type_nucl_num;
   if (type_nucl_num <= 0) {
     return qmckl_failwith( context,
                            QMCKL_NOT_PROVIDED,
@@ -816,33 +819,33 @@ qmckl_set_jastrow_champ_c_vector(qmckl_context context,
   ctx->jastrow_champ.c_vector = new_array;
 
   <<post2>>
-}
+      }
 
 qmckl_exit_code
 qmckl_set_jastrow_champ_rescale_factor_ee(qmckl_context context,
-                const double rescale_factor_ee) {
+                                          const double rescale_factor_ee) {
 
   int32_t mask = 1 << 8;
 
   <<pre2>>
 
-  if (rescale_factor_ee <= 0.0) {
-    return qmckl_failwith( context,
-                           QMCKL_INVALID_ARG_2,
-                           "qmckl_set_jastrow_champ_rescale_factor_ee",
-                           "rescale_factor_ee <= 0.0");
-  }
+      if (rescale_factor_ee <= 0.0) {
+        return qmckl_failwith( context,
+                               QMCKL_INVALID_ARG_2,
+                               "qmckl_set_jastrow_champ_rescale_factor_ee",
+                               "rescale_factor_ee <= 0.0");
+      }
 
   ctx->jastrow_champ.rescale_factor_ee = rescale_factor_ee;
 
   <<post2>>
-}
+      }
 
 
 qmckl_exit_code
 qmckl_set_jastrow_champ_rescale_factor_en(qmckl_context context,
-                                     const double* rescale_factor_en,
-                                     const int64_t size_max) {
+                                          const double* rescale_factor_en,
+                                          const int64_t size_max) {
 
   int32_t mask = 1 << 9;
 
@@ -856,44 +859,58 @@ qmckl_set_jastrow_champ_rescale_factor_en(qmckl_context context,
       }
 
 
-      if (rescale_factor_en == NULL) {
-        return qmckl_failwith( context,
-                               QMCKL_INVALID_ARG_2,
-                               "qmckl_set_jastrow_champ_rescale_factor_en",
-                               "Null pointer");
-      }
+  if (rescale_factor_en == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_set_jastrow_champ_rescale_factor_en",
+                           "Null pointer");
+  }
 
-      if (size_max < ctx->jastrow_champ.type_nucl_num) {
-        return qmckl_failwith( context,
-                               QMCKL_INVALID_ARG_3,
-                               "qmckl_set_jastrow_champ_rescale_factor_en",
-                               "Array too small");
-      }
+  if (size_max < ctx->jastrow_champ.type_nucl_num) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_3,
+                           "qmckl_set_jastrow_champ_rescale_factor_en",
+                           "Array too small");
+  }
 
 
-      if (ctx->jastrow_champ.rescale_factor_en != NULL) {
-        return qmckl_failwith( context,
-                               QMCKL_INVALID_ARG_3,
-                               "qmckl_set_jastrow_champ_rescale_factor_en",
-                               "Already set");
-      }
+  if (ctx->jastrow_champ.rescale_factor_en != NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_3,
+                           "qmckl_set_jastrow_champ_rescale_factor_en",
+                           "Already set");
+  }
 
-      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-      mem_info.size = ctx->jastrow_champ.type_nucl_num * sizeof(double);
-      ctx->jastrow_champ.rescale_factor_en = (double*) qmckl_malloc(context, mem_info);
+  qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+  mem_info.size = ctx->jastrow_champ.type_nucl_num * sizeof(double);
+  ctx->jastrow_champ.rescale_factor_en = (double*) qmckl_malloc(context, mem_info);
 
-      for (int64_t i=0 ; i<ctx->jastrow_champ.type_nucl_num ; ++i) {
-        if (rescale_factor_en[i] <= 0.0) {
-          return qmckl_failwith( context,
-                                 QMCKL_INVALID_ARG_2,
-                                 "qmckl_set_jastrow_champ_rescale_factor_en",
-                                 "rescale_factor_en <= 0.0");
-        }
-        ctx->jastrow_champ.rescale_factor_en[i] = rescale_factor_en[i];
-      }
+  for (int64_t i=0 ; i<ctx->jastrow_champ.type_nucl_num ; ++i) {
+    if (rescale_factor_en[i] <= 0.0) {
+      return qmckl_failwith( context,
+                             QMCKL_INVALID_ARG_2,
+                             "qmckl_set_jastrow_champ_rescale_factor_en",
+                             "rescale_factor_en <= 0.0");
+    }
+    ctx->jastrow_champ.rescale_factor_en[i] = rescale_factor_en[i];
+  }
 
   <<post2>>
 }
+
+qmckl_exit_code
+qmckl_set_jastrow_champ_spin_independent(qmckl_context context, const bool spin_independent)
+{
+  int32_t mask = 1 << 10;
+
+  <<pre2>>
+
+  ctx->jastrow_champ.spin_independent = spin_independent;
+
+  <<post2>>
+}
+
+
    #+end_src
 
  When the required information is completely entered, other data structures are
@@ -908,7 +925,10 @@ qmckl_exit_code qmckl_finalize_jastrow_champ(qmckl_context context);
 qmckl_exit_code qmckl_finalize_jastrow_champ(qmckl_context context) {
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return QMCKL_INVALID_CONTEXT;
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_finalize_jastrow_champ",
+                           NULL);
   }
 
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
@@ -950,103 +970,112 @@ qmckl_exit_code qmckl_finalize_jastrow_champ(qmckl_context context) {
 **** Fortran interface
 
 #+begin_src f90 :tangle (eval fh_func) :comments org
-interface
-   integer(qmckl_exit_code) function qmckl_set_jastrow_champ_rescale_factor_ee (context, &
-        kappa_ee) bind(C)
-     use, intrinsic :: iso_c_binding
-     import
-     implicit none
-     integer (qmckl_context) , intent(in)  , value :: context
-     real(c_double),   intent(in), value  :: kappa_ee
-   end function qmckl_set_jastrow_champ_rescale_factor_ee
+  interface
+     integer(qmckl_exit_code) function qmckl_set_jastrow_champ_rescale_factor_ee (context, &
+          kappa_ee) bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       implicit none
+       integer (qmckl_context) , intent(in)  , value :: context
+       real(c_double),   intent(in), value  :: kappa_ee
+     end function qmckl_set_jastrow_champ_rescale_factor_ee
 
-   integer(qmckl_exit_code) function qmckl_set_jastrow_champ_rescale_factor_en (context, &
-        kappa_en, size_max) bind(C)
-     use, intrinsic :: iso_c_binding
-     import
-     implicit none
-     integer (qmckl_context) , intent(in)  , value :: context
-     integer(c_int64_t), intent(in), value  :: size_max
-     real(c_double),   intent(in) :: kappa_en(size_max)
-   end function qmckl_set_jastrow_champ_rescale_factor_en
+     integer(qmckl_exit_code) function qmckl_set_jastrow_champ_rescale_factor_en (context, &
+          kappa_en, size_max) bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       implicit none
+       integer (qmckl_context) , intent(in)  , value :: context
+       integer(c_int64_t), intent(in), value  :: size_max
+       real(c_double),   intent(in) :: kappa_en(size_max)
+     end function qmckl_set_jastrow_champ_rescale_factor_en
 
-   integer(qmckl_exit_code) function qmckl_set_jastrow_champ_aord_num (context, &
-        aord_num) bind(C)
-     use, intrinsic :: iso_c_binding
-     import
-     implicit none
-     integer (qmckl_context) , intent(in)  , value :: context
-     integer(c_int64_t), intent(in), value  :: aord_num
-   end function qmckl_set_jastrow_champ_aord_num
+     integer(qmckl_exit_code) function qmckl_set_jastrow_champ_aord_num (context, &
+          aord_num) bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       implicit none
+       integer (qmckl_context) , intent(in)  , value :: context
+       integer(c_int64_t), intent(in), value  :: aord_num
+     end function qmckl_set_jastrow_champ_aord_num
 
-   integer(qmckl_exit_code) function qmckl_set_jastrow_champ_bord_num (context, &
-        bord_num) bind(C)
-     use, intrinsic :: iso_c_binding
-     import
-     implicit none
-     integer (qmckl_context) , intent(in)  , value :: context
-     integer(c_int64_t), intent(in), value  :: bord_num
-   end function qmckl_set_jastrow_champ_bord_num
+     integer(qmckl_exit_code) function qmckl_set_jastrow_champ_bord_num (context, &
+          bord_num) bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       implicit none
+       integer (qmckl_context) , intent(in)  , value :: context
+       integer(c_int64_t), intent(in), value  :: bord_num
+     end function qmckl_set_jastrow_champ_bord_num
 
-   integer(qmckl_exit_code) function qmckl_set_jastrow_champ_cord_num (context, &
-        cord_num) bind(C)
-     use, intrinsic :: iso_c_binding
-     import
-     implicit none
-     integer (qmckl_context) , intent(in)  , value :: context
-     integer(c_int64_t), intent(in), value  :: cord_num
-   end function qmckl_set_jastrow_champ_cord_num
+     integer(qmckl_exit_code) function qmckl_set_jastrow_champ_cord_num (context, &
+          cord_num) bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       implicit none
+       integer (qmckl_context) , intent(in)  , value :: context
+       integer(c_int64_t), intent(in), value  :: cord_num
+     end function qmckl_set_jastrow_champ_cord_num
 
-   integer(qmckl_exit_code) function qmckl_set_jastrow_champ_type_nucl_num (context, &
-        type_nucl_num) bind(C)
-     use, intrinsic :: iso_c_binding
-     import
-     implicit none
-     integer (qmckl_context) , intent(in)  , value :: context
-     integer(c_int64_t), intent(in), value  :: type_nucl_num
-   end function qmckl_set_jastrow_champ_type_nucl_num
+     integer(qmckl_exit_code) function qmckl_set_jastrow_champ_type_nucl_num (context, &
+          type_nucl_num) bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       implicit none
+       integer (qmckl_context) , intent(in)  , value :: context
+       integer(c_int64_t), intent(in), value  :: type_nucl_num
+     end function qmckl_set_jastrow_champ_type_nucl_num
 
-   integer(qmckl_exit_code) function qmckl_set_jastrow_champ_type_nucl_vector (context, &
-        type_nucl_vector, size_max) bind(C)
-     use, intrinsic :: iso_c_binding
-     import
-     implicit none
-     integer (qmckl_context) , intent(in)  , value :: context
-     integer(c_int64_t), intent(in), value  :: size_max
-     integer(c_int64_t), intent(in) :: type_nucl_vector(size_max)
-   end function qmckl_set_jastrow_champ_type_nucl_vector
+     integer(qmckl_exit_code) function qmckl_set_jastrow_champ_type_nucl_vector (context, &
+          type_nucl_vector, size_max) bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       implicit none
+       integer (qmckl_context) , intent(in)  , value :: context
+       integer(c_int64_t), intent(in), value  :: size_max
+       integer(c_int64_t), intent(in) :: type_nucl_vector(size_max)
+     end function qmckl_set_jastrow_champ_type_nucl_vector
 
-   integer(qmckl_exit_code) function qmckl_set_jastrow_champ_a_vector(context, &
-        a_vector, size_max) bind(C)
-     use, intrinsic :: iso_c_binding
-     import
-     implicit none
-     integer (qmckl_context) , intent(in)  , value :: context
-     integer(c_int64_t), intent(in), value  :: size_max
-     real(c_double),   intent(in) :: a_vector(size_max)
-   end function qmckl_set_jastrow_champ_a_vector
+     integer(qmckl_exit_code) function qmckl_set_jastrow_champ_a_vector(context, &
+          a_vector, size_max) bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       implicit none
+       integer (qmckl_context) , intent(in)  , value :: context
+       integer(c_int64_t), intent(in), value  :: size_max
+       real(c_double),   intent(in) :: a_vector(size_max)
+     end function qmckl_set_jastrow_champ_a_vector
 
-   integer(qmckl_exit_code) function qmckl_set_jastrow_champ_b_vector(context, &
-        b_vector, size_max) bind(C)
-     use, intrinsic :: iso_c_binding
-     import
-     implicit none
-     integer (qmckl_context) , intent(in)  , value :: context
-     integer(c_int64_t), intent(in), value  :: size_max
-     real(c_double),   intent(in) :: b_vector(size_max)
-   end function qmckl_set_jastrow_champ_b_vector
+     integer(qmckl_exit_code) function qmckl_set_jastrow_champ_b_vector(context, &
+          b_vector, size_max) bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       implicit none
+       integer (qmckl_context) , intent(in)  , value :: context
+       integer(c_int64_t), intent(in), value  :: size_max
+       real(c_double),   intent(in) :: b_vector(size_max)
+     end function qmckl_set_jastrow_champ_b_vector
 
-   integer(qmckl_exit_code) function qmckl_set_jastrow_champ_c_vector(context, &
-        c_vector, size_max) bind(C)
-     use, intrinsic :: iso_c_binding
-     import
-     implicit none
-     integer (qmckl_context) , intent(in)  , value :: context
-     integer(c_int64_t), intent(in), value  :: size_max
-     real(c_double),   intent(in) :: c_vector(size_max)
-   end function qmckl_set_jastrow_champ_c_vector
+     integer(qmckl_exit_code) function qmckl_set_jastrow_champ_c_vector(context, &
+          c_vector, size_max) bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       implicit none
+       integer (qmckl_context) , intent(in)  , value :: context
+       integer(c_int64_t), intent(in), value  :: size_max
+       real(c_double),   intent(in) :: c_vector(size_max)
+     end function qmckl_set_jastrow_champ_c_vector
 
-end interface
+     integer(qmckl_exit_code) function qmckl_set_jastrow_champ_spin_independent(context, &
+          spin_independent) bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       implicit none
+       integer (qmckl_context) , intent(in)  , value :: context
+       logical(c_bool),    intent(in), value  :: spin_independent
+     end function qmckl_set_jastrow_champ_spin_independent
+
+  end interface
 #+end_src
 
 ** Access functions
@@ -1063,6 +1092,7 @@ qmckl_exit_code  qmckl_get_jastrow_champ_c_vector          (qmckl_context contex
 qmckl_exit_code  qmckl_get_jastrow_champ_rescale_factor_ee (const qmckl_context context, double* const rescale_factor_ee);
 qmckl_exit_code  qmckl_get_jastrow_champ_rescale_factor_en (const qmckl_context context, double* const rescale_factor_en, const int64_t size_max);
 qmckl_exit_code  qmckl_get_jastrow_champ_dim_c_vector      (qmckl_context context, int64_t* const dim_c_vector);
+qmckl_exit_code  qmckl_get_jastrow_champ_spin_independent  (qmckl_context context, bool* const spin_independent);
       #+end_src
 
 
@@ -1095,7 +1125,10 @@ bool qmckl_jastrow_champ_provided(const qmckl_context context) {
 qmckl_exit_code qmckl_get_jastrow_champ_aord_num (const qmckl_context context, int64_t* const aord_num) {
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return (char) 0;
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_get_jastrow_champ_aord_num",
+                           NULL);
   }
 
   if (aord_num == NULL) {
@@ -1122,7 +1155,10 @@ qmckl_exit_code qmckl_get_jastrow_champ_aord_num (const qmckl_context context, i
 qmckl_exit_code qmckl_get_jastrow_champ_bord_num (const qmckl_context context, int64_t* const bord_num) {
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return (char) 0;
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_get_jastrow_champ_bord_num",
+                           NULL);
   }
 
   if (bord_num == NULL) {
@@ -1149,7 +1185,10 @@ qmckl_exit_code qmckl_get_jastrow_champ_bord_num (const qmckl_context context, i
 qmckl_exit_code qmckl_get_jastrow_champ_cord_num (const qmckl_context context, int64_t* const cord_num) {
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return (char) 0;
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_get_jastrow_champ_cord_num",
+                           NULL);
   }
 
   if (cord_num == NULL) {
@@ -1176,7 +1215,10 @@ qmckl_exit_code qmckl_get_jastrow_champ_cord_num (const qmckl_context context, i
 qmckl_exit_code qmckl_get_jastrow_champ_type_nucl_num (const qmckl_context context, int64_t* const type_nucl_num) {
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return (char) 0;
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_get_jastrow_champ_type_nucl_num",
+                           NULL);
   }
 
   if (type_nucl_num == NULL) {
@@ -1207,7 +1249,10 @@ qmckl_get_jastrow_champ_type_nucl_vector (const qmckl_context context,
 {
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return (char) 0;
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_get_jastrow_champ_type_nucl_vector",
+                           NULL);
   }
 
   if (type_nucl_vector == NULL) {
@@ -1244,7 +1289,10 @@ qmckl_get_jastrow_champ_a_vector (const qmckl_context context,
                                const int64_t size_max) {
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return (char) 0;
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_get_jastrow_champ_a_vector",
+                           NULL);
   }
 
   if (a_vector == NULL) {
@@ -1281,7 +1329,10 @@ qmckl_get_jastrow_champ_b_vector (const qmckl_context context,
                                const int64_t size_max) {
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return (char) 0;
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_get_jastrow_champ_b_vector",
+                           NULL);
   }
 
   if (b_vector == NULL) {
@@ -1318,7 +1369,10 @@ qmckl_get_jastrow_champ_c_vector (const qmckl_context context,
                                const int64_t size_max) {
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return (char) 0;
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_get_jastrow_champ_c_vector",
+                           NULL);
   }
 
   if (c_vector == NULL) {
@@ -1359,7 +1413,10 @@ qmckl_get_jastrow_champ_rescale_factor_ee (const qmckl_context context,
                                       double* const rescale_factor_ee) {
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return QMCKL_INVALID_CONTEXT;
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_get_jastrow_champ_rescale_factor_ee",
+                           NULL);
   }
 
   if (rescale_factor_ee == NULL) {
@@ -1389,7 +1446,10 @@ qmckl_get_jastrow_champ_rescale_factor_en (const qmckl_context context,
                                       double* const rescale_factor_en,
                                       const int64_t size_max) {
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return QMCKL_INVALID_CONTEXT;
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_get_jastrow_champ_rescale_factor_en",
+                           NULL);
   }
 
   if (rescale_factor_en == NULL) {
@@ -1426,7 +1486,10 @@ qmckl_get_jastrow_champ_rescale_factor_en (const qmckl_context context,
 qmckl_exit_code qmckl_get_jastrow_champ_dim_c_vector(qmckl_context context, int64_t* const dim_c_vector)
 {
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return QMCKL_NULL_CONTEXT;
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_get_jastrow_champ_dim_c_vector",
+                           NULL);
   }
 
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
@@ -1437,108 +1500,146 @@ qmckl_exit_code qmckl_get_jastrow_champ_dim_c_vector(qmckl_context context, int6
   return QMCKL_SUCCESS;
 }
 
+qmckl_exit_code qmckl_get_jastrow_champ_spin_independent(const qmckl_context context, bool* const spin_independent) {
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_get_jastrow_champ_spin_independent",
+                           NULL);
+  }
+
+  if (spin_independent == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_get_jastrow_champ_spin_independent",
+                           "spin_independent is a null pointer");
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  int32_t mask = 1 << 10;
+
+  if ( (ctx->jastrow_champ.uninitialized & mask) != 0) {
+    return QMCKL_NOT_PROVIDED;
+  }
+
+  ,*spin_independent = ctx->jastrow_champ.spin_independent ;
+  return QMCKL_SUCCESS;
+}
+
       #+end_src
 
 **** Fortran interface
 
 #+begin_src f90 :tangle (eval fh_func) :comments org
-interface
-   integer(qmckl_exit_code) function qmckl_get_jastrow_champ_rescale_factor_ee (context, &
-        kappa_ee) bind(C)
-     use, intrinsic :: iso_c_binding
-     import
-     implicit none
-     integer (qmckl_context) , intent(in)  , value :: context
-     real(c_double),   intent(out) :: kappa_ee
-   end function qmckl_get_jastrow_champ_rescale_factor_ee
+  interface
+     integer(qmckl_exit_code) function qmckl_get_jastrow_champ_rescale_factor_ee (context, &
+          kappa_ee) bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       implicit none
+       integer (qmckl_context) , intent(in)  , value :: context
+       real(c_double),   intent(out) :: kappa_ee
+     end function qmckl_get_jastrow_champ_rescale_factor_ee
 
-   integer(qmckl_exit_code) function qmckl_get_jastrow_champ_rescale_factor_en (context, &
-        kappa_en, size_max) bind(C)
-     use, intrinsic :: iso_c_binding
-     import
-     implicit none
-     integer (qmckl_context) , intent(in), value :: context
-     integer(c_int64_t), intent(in), value       :: size_max
-     real(c_double),   intent(out)               :: kappa_en(size_max)
-   end function qmckl_get_jastrow_champ_rescale_factor_en
+     integer(qmckl_exit_code) function qmckl_get_jastrow_champ_rescale_factor_en (context, &
+          kappa_en, size_max) bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       implicit none
+       integer (qmckl_context) , intent(in), value :: context
+       integer(c_int64_t), intent(in), value       :: size_max
+       real(c_double),   intent(out)               :: kappa_en(size_max)
+     end function qmckl_get_jastrow_champ_rescale_factor_en
 
-   integer(qmckl_exit_code) function qmckl_get_jastrow_champ_aord_num (context, &
-        aord_num) bind(C)
-     use, intrinsic :: iso_c_binding
-     import
-     implicit none
-     integer (qmckl_context) , intent(in), value :: context
-     integer(c_int64_t), intent(out)             :: aord_num
-   end function qmckl_get_jastrow_champ_aord_num
+     integer(qmckl_exit_code) function qmckl_get_jastrow_champ_aord_num (context, &
+          aord_num) bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       implicit none
+       integer (qmckl_context) , intent(in), value :: context
+       integer(c_int64_t), intent(out)             :: aord_num
+     end function qmckl_get_jastrow_champ_aord_num
 
-   integer(qmckl_exit_code) function qmckl_get_jastrow_champ_bord_num (context, &
-        bord_num) bind(C)
-     use, intrinsic :: iso_c_binding
-     import
-     implicit none
-     integer (qmckl_context) , intent(in), value :: context
-     integer(c_int64_t), intent(out)             :: bord_num
-   end function qmckl_get_jastrow_champ_bord_num
+     integer(qmckl_exit_code) function qmckl_get_jastrow_champ_bord_num (context, &
+          bord_num) bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       implicit none
+       integer (qmckl_context) , intent(in), value :: context
+       integer(c_int64_t), intent(out)             :: bord_num
+     end function qmckl_get_jastrow_champ_bord_num
 
-   integer(qmckl_exit_code) function qmckl_get_jastrow_champ_cord_num (context, &
-        cord_num) bind(C)
-     use, intrinsic :: iso_c_binding
-     import
-     implicit none
-     integer (qmckl_context) , intent(in), value :: context
-     integer(c_int64_t), intent(out)             :: cord_num
-   end function qmckl_get_jastrow_champ_cord_num
+     integer(qmckl_exit_code) function qmckl_get_jastrow_champ_cord_num (context, &
+          cord_num) bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       implicit none
+       integer (qmckl_context) , intent(in), value :: context
+       integer(c_int64_t), intent(out)             :: cord_num
+     end function qmckl_get_jastrow_champ_cord_num
 
-   integer(qmckl_exit_code) function qmckl_get_jastrow_champ_type_nucl_num (context, &
-        type_nucl_num) bind(C)
-     use, intrinsic :: iso_c_binding
-     import
-     implicit none
-     integer (qmckl_context) , intent(in), value :: context
-     integer(c_int64_t), intent(out)              :: type_nucl_num
-   end function qmckl_get_jastrow_champ_type_nucl_num
+     integer(qmckl_exit_code) function qmckl_get_jastrow_champ_type_nucl_num (context, &
+          type_nucl_num) bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       implicit none
+       integer (qmckl_context) , intent(in), value :: context
+       integer(c_int64_t), intent(out)              :: type_nucl_num
+     end function qmckl_get_jastrow_champ_type_nucl_num
 
-   integer(qmckl_exit_code) function qmckl_get_jastrow_champ_type_nucl_vector (context, &
-        type_nucl_vector, size_max) bind(C)
-     use, intrinsic :: iso_c_binding
-     import
-     implicit none
-     integer (qmckl_context), intent(in), value :: context
-     integer(c_int64_t), intent(in), value      :: size_max
-     integer(c_int64_t), intent(out)            :: type_nucl_vector(size_max)
-   end function qmckl_get_jastrow_champ_type_nucl_vector
+     integer(qmckl_exit_code) function qmckl_get_jastrow_champ_type_nucl_vector (context, &
+          type_nucl_vector, size_max) bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       implicit none
+       integer (qmckl_context), intent(in), value :: context
+       integer(c_int64_t), intent(in), value      :: size_max
+       integer(c_int64_t), intent(out)            :: type_nucl_vector(size_max)
+     end function qmckl_get_jastrow_champ_type_nucl_vector
 
-   integer(qmckl_exit_code) function qmckl_get_jastrow_champ_a_vector(context, &
-        a_vector, size_max) bind(C)
-     use, intrinsic :: iso_c_binding
-     import
-     implicit none
-     integer (qmckl_context) , intent(in), value :: context
-     integer(c_int64_t), intent(in), value       :: size_max
-     real(c_double),   intent(out)               :: a_vector(size_max)
-   end function qmckl_get_jastrow_champ_a_vector
+     integer(qmckl_exit_code) function qmckl_get_jastrow_champ_a_vector(context, &
+          a_vector, size_max) bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       implicit none
+       integer (qmckl_context) , intent(in), value :: context
+       integer(c_int64_t), intent(in), value       :: size_max
+       real(c_double),   intent(out)               :: a_vector(size_max)
+     end function qmckl_get_jastrow_champ_a_vector
 
-   integer(qmckl_exit_code) function qmckl_get_jastrow_champ_b_vector(context, &
-        b_vector, size_max) bind(C)
-     use, intrinsic :: iso_c_binding
-     import
-     implicit none
-     integer (qmckl_context) , intent(in)  , value :: context
-     integer(c_int64_t), intent(in), value         :: size_max
-     real(c_double),   intent(out)                 :: b_vector(size_max)
-   end function qmckl_get_jastrow_champ_b_vector
+     integer(qmckl_exit_code) function qmckl_get_jastrow_champ_b_vector(context, &
+          b_vector, size_max) bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       implicit none
+       integer (qmckl_context) , intent(in)  , value :: context
+       integer(c_int64_t), intent(in), value         :: size_max
+       real(c_double),   intent(out)                 :: b_vector(size_max)
+     end function qmckl_get_jastrow_champ_b_vector
 
-   integer(qmckl_exit_code) function qmckl_get_jastrow_champ_c_vector(context, &
-        c_vector, size_max) bind(C)
-     use, intrinsic :: iso_c_binding
-     import
-     implicit none
-     integer (qmckl_context) , intent(in)  , value :: context
-     integer(c_int64_t), intent(in), value         :: size_max
-     real(c_double),   intent(out)                 :: c_vector(size_max)
-   end function qmckl_get_jastrow_champ_c_vector
+     integer(qmckl_exit_code) function qmckl_get_jastrow_champ_c_vector(context, &
+          c_vector, size_max) bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       implicit none
+       integer (qmckl_context) , intent(in)  , value :: context
+       integer(c_int64_t), intent(in), value         :: size_max
+       real(c_double),   intent(out)                 :: c_vector(size_max)
+     end function qmckl_get_jastrow_champ_c_vector
 
-end interface
+     integer(qmckl_exit_code) function qmckl_get_jastrow_champ_spin_independent(context, &
+          spin_independent) bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       implicit none
+       integer (qmckl_context) , intent(in)  , value :: context
+       logical(c_bool),   intent(out)                :: spin_independent
+     end function qmckl_get_jastrow_champ_spin_independent
+
+  end interface
 #+end_src
 
 ** Test
@@ -1660,10 +1761,12 @@ assert(qmckl_nucleus_provided(context));
 ** Electron-electron component
 *** Asymptotic component
 
-   Calculate the asymptotic component ~asymp_jasb~ to be substracted from the
+   Calculate the asymptotic component ~asymp_jasb~ to be subtracted from the
    electron-electron jastrow factor \(J_{\text{ee}}\). Two values are
    computed. The first one is for parallel spin pairs, and the
    second one for antiparallel spin pairs.
+   If the ~spin_independent~ variable is set to ~true~, then
+   $\delta^{\uparrow \downarrow}$ is always equal to one.
 
    \[
    J_{\text{ee}}^{\infty} = \frac{\frac{1}{2}(1+\delta^{\uparrow \downarrow})\,b_1 \kappa_\text{ee}^{-1}}{1 + b_2\,
@@ -1766,6 +1869,7 @@ qmckl_exit_code qmckl_provide_jastrow_champ_asymp_jasb(qmckl_context context)
                                   ctx->jastrow_champ.bord_num,
                                   ctx->jastrow_champ.b_vector,
                                   ctx->jastrow_champ.rescale_factor_ee,
+                                  ctx->jastrow_champ.spin_independent,
                                   ctx->jastrow_champ.asymp_jasb);
     if (rc != QMCKL_SUCCESS) {
       return rc;
@@ -1786,27 +1890,29 @@ qmckl_exit_code qmckl_provide_jastrow_champ_asymp_jasb(qmckl_context context)
      :END:
 
      #+NAME: qmckl_asymp_jasb_args
-     | Variable            | Type                 | In/Out | Description             |
-     |---------------------+----------------------+--------+-------------------------|
-     | ~context~           | ~qmckl_context~      | in     | Global state            |
-     | ~bord_num~          | ~int64_t~            | in     | Order of the polynomial |
-     | ~b_vector~          | ~double[bord_num+1]~ | in     | Values of b             |
-     | ~rescale_factor_ee~ | ~double~             | in     | Electron coordinates    |
-     | ~asymp_jasb~        | ~double[2]~          | out    | Asymptotic value        |
+     | Variable            | Type                 | In/Out | Description                                                   |
+     |---------------------+----------------------+--------+---------------------------------------------------------------|
+     | ~context~           | ~qmckl_context~      | in     | Global state                                                  |
+     | ~bord_num~          | ~int64_t~            | in     | Order of the polynomial                                       |
+     | ~b_vector~          | ~double[bord_num+1]~ | in     | Values of b                                                   |
+     | ~rescale_factor_ee~ | ~double~             | in     | Electron coordinates                                          |
+     | ~spin_independent~  | ~bool~               | in     | If true, same parameters for parallel and anti-parallel pairs |
+     | ~asymp_jasb~        | ~double[2]~          | out    | Asymptotic value                                              |
 
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
 function qmckl_compute_jastrow_champ_asymp_jasb_doc(context, &
-     bord_num, b_vector, rescale_factor_ee, asymp_jasb) &
+     bord_num, b_vector, rescale_factor_ee, spin_independent, asymp_jasb) &
      bind(C) result(info)
   use, intrinsic :: iso_c_binding
 
   use qmckl
   implicit none
-  
+
   integer (qmckl_context) , intent(in)  , value :: context
   integer (c_int64_t) , intent(in)  , value :: bord_num
   real    (c_double ) , intent(in)          :: b_vector(bord_num+1)
   real    (c_double ) , intent(in)  , value :: rescale_factor_ee
+  logical (c_bool   ) , intent(in)  , value :: spin_independent
   real    (c_double ) , intent(out)         :: asymp_jasb(2)
   integer(qmckl_exit_code)                  :: info
 
@@ -1827,43 +1933,50 @@ function qmckl_compute_jastrow_champ_asymp_jasb_doc(context, &
   endif
 
   asym_one = b_vector(1) * kappa_inv / (1.0d0 + b_vector(2) * kappa_inv)
-  asymp_jasb(:) = (/0.5d0*asym_one, asym_one/)
+  if (spin_independent) then
+     asymp_jasb(:) = (/asym_one, asym_one/)
+  else
+     asymp_jasb(:) = (/0.5d0*asym_one, asym_one/)
+  end if
 
   x = kappa_inv
   do p = 2, bord_num
-    x = x * kappa_inv
-    do i = 1, 2
-       asymp_jasb(i) = asymp_jasb(i) + b_vector(p + 1) * x
-    end do
- end do
+     x = x * kappa_inv
+     do i = 1, 2
+        asymp_jasb(i) = asymp_jasb(i) + b_vector(p + 1) * x
+     end do
+  end do
 
 end function qmckl_compute_jastrow_champ_asymp_jasb_doc
      #+end_src
 
  #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
 qmckl_exit_code qmckl_compute_jastrow_champ_asymp_jasb_doc (const qmckl_context context,
-                                                      const int64_t bord_num,
-                                                      const double* b_vector,
-                                                      const double rescale_factor_ee,
-                                                      double* const asymp_jasb );
+                                                            const int64_t bord_num,
+                                                            const double* b_vector,
+                                                            const double rescale_factor_ee,
+                                                            const bool spin_independent, 
+                                                            double* const asymp_jasb);
  #+end_src
 
 
  #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
 qmckl_exit_code qmckl_compute_jastrow_champ_asymp_jasb_hpc (const qmckl_context context,
-                                                      const int64_t bord_num,
-                                                      const double* b_vector,
-                                                      const double rescale_factor_ee,
-                                                      double* const asymp_jasb );
+                                                            const int64_t bord_num,
+                                                            const double* b_vector,
+                                                            const double rescale_factor_ee,
+                                                            const bool spin_independent, 
+                                                            double* const asymp_jasb );
  #+end_src
 
      #+begin_src c :comments org :tangle (eval c) :noweb yes
 qmckl_exit_code
 qmckl_compute_jastrow_champ_asymp_jasb_hpc (const qmckl_context context,
-                                      const int64_t bord_num,
-                                      const double* b_vector,
-                                      const double rescale_factor_ee,
-                                      double* const asymp_jasb )
+                                            const int64_t bord_num,
+                                            const double* b_vector,
+                                            const double rescale_factor_ee,
+                                            const bool spin_independent, 
+                                            double* const asymp_jasb )
 {
 
   if (context == QMCKL_NULL_CONTEXT) {
@@ -1884,7 +1997,7 @@ qmckl_compute_jastrow_champ_asymp_jasb_hpc (const qmckl_context context,
     f += b_vector[k]*x;
   }
 
-  asymp_jasb[0] = 0.5 * asym_one + f;
+  asymp_jasb[0] = spin_independent ? asym_one + f : 0.5 * asym_one + f;
   asymp_jasb[1] = asym_one + f;
 
   return QMCKL_SUCCESS;
@@ -1894,26 +2007,27 @@ qmckl_compute_jastrow_champ_asymp_jasb_hpc (const qmckl_context context,
 
  #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
 qmckl_exit_code qmckl_compute_jastrow_champ_asymp_jasb (const qmckl_context context,
-                                                  const int64_t bord_num,
-                                                  const double* b_vector,
-                                                  const double rescale_factor_ee,
-                                                  double* const asymp_jasb );
+                                                        const int64_t bord_num,
+                                                        const double* b_vector,
+                                                        const double rescale_factor_ee,
+                                                        const bool spin_independent, 
+                                                        double* const asymp_jasb );
  #+end_src
 
  #+begin_src c :comments org :tangle (eval c) :noweb yes
-qmckl_exit_code qmckl_compute_jastrow_champ_asymp_jasb (
-	  const qmckl_context context,
-	  const int64_t bord_num,
-	  const double* b_vector,
-	  const double rescale_factor_ee,
-	  double* const asymp_jasb )
+qmckl_exit_code qmckl_compute_jastrow_champ_asymp_jasb (const qmckl_context context,
+                                                        const int64_t bord_num,
+                                                        const double* b_vector,
+                                                        const double rescale_factor_ee,
+                                                        const bool spin_independent, 
+                                                        double* const asymp_jasb )
 {
 #ifdef HAVE_HPC
   return qmckl_compute_jastrow_champ_asymp_jasb_hpc
 #else
-  return qmckl_compute_jastrow_champ_asymp_jasb_doc
+    return qmckl_compute_jastrow_champ_asymp_jasb_doc
 #endif
-    (context, bord_num, b_vector, rescale_factor_ee, asymp_jasb);
+    (context, bord_num, b_vector, rescale_factor_ee, spin_independent, asymp_jasb);
 }
  #+end_src
 **** Test
@@ -1958,6 +2072,10 @@ int64_t dim_c_vector=0;
 assert(!qmckl_jastrow_champ_provided(context));
 
 /* Set the data */
+rc = qmckl_check(context,
+                 qmckl_set_jastrow_champ_spin_independent(context, false)
+                 );
+
 rc = qmckl_check(context,
                  qmckl_set_jastrow_champ_aord_num(context, aord_num)
                  );
@@ -2023,7 +2141,9 @@ for (int i=0 ; i<type_nucl_num ; ++i) {
 assert(qmckl_jastrow_champ_provided(context));
 
 double asymp_jasb[2];
-rc = qmckl_get_jastrow_champ_asymp_jasb(context, asymp_jasb,2);
+rc = qmckl_check(context,
+                 qmckl_get_jastrow_champ_asymp_jasb(context, asymp_jasb,2)
+                 );
 
 // calculate asymp_jasb
 assert(fabs(asymp_jasb[0]-0.7115733522582638) < 1.e-12);
@@ -2035,6 +2155,8 @@ assert(fabs(asymp_jasb[1]-1.043287918508297 ) < 1.e-12);
 
    Calculate the electron-electron jastrow component ~factor_ee~ using the ~asymp_jasb~
    component and the electron-electron rescaled distances ~ee_distance_rescaled~.
+   If the ~spin_independent~ variable is set to ~true~, then
+   $\delta^{\uparrow \downarrow}$ is always equal to one.
 
    \[
      f_\text{ee} = \sum_{i,j<i} \left[
@@ -2185,6 +2307,7 @@ qmckl_exit_code qmckl_provide_jastrow_champ_factor_ee(qmckl_context context)
                                  ctx->jastrow_champ.b_vector,
                                  ctx->jastrow_champ.ee_distance_rescaled,
                                  ctx->jastrow_champ.asymp_jasb,
+                                 ctx->jastrow_champ.spin_independent,
                                  ctx->jastrow_champ.factor_ee);
     if (rc != QMCKL_SUCCESS) {
       return rc;
@@ -2221,8 +2344,8 @@ qmckl_exit_code qmckl_provide_jastrow_champ_factor_ee(qmckl_context context)
 
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
 function qmckl_compute_jastrow_champ_factor_ee_doc(context, &
-     walk_num, elec_num, up_num, bord_num,            &
-     b_vector, ee_distance_rescaled, asymp_jasb, factor_ee) &
+     walk_num, elec_num, up_num, bord_num, b_vector, &
+     ee_distance_rescaled, asymp_jasb, spin_independent, factor_ee) &
      bind(C) result(info)
   use, intrinsic :: iso_c_binding
 
@@ -2237,6 +2360,7 @@ function qmckl_compute_jastrow_champ_factor_ee_doc(context, &
   real    (c_double )    , intent(in)        :: b_vector(bord_num+1)
   real    (c_double )    , intent(in)        :: ee_distance_rescaled(elec_num,elec_num,walk_num)
   real    (c_double )    , intent(in)        :: asymp_jasb(2)
+  logical (c_bool   )    , intent(in), value :: spin_independent
   real    (c_double )    , intent(out)       :: factor_ee(walk_num)
   integer(qmckl_exit_code)                   :: info
 
@@ -2266,16 +2390,21 @@ function qmckl_compute_jastrow_champ_factor_ee_doc(context, &
   endif
 
 
+
   do nw =1, walk_num
 
      factor_ee(nw) = 0.0d0
      do j=1,elec_num
         do i=1,j-1
            x = ee_distance_rescaled(i,j,nw)
-           if ( (j <= up_num).or.(i > up_num) ) then
-              factor_ee(nw) = factor_ee(nw) + 0.5d0 * b_vector(1) * x / (1.d0 + b_vector(2) * x) - asymp_jasb(1)
-           else
+           if (spin_independent) then
               factor_ee(nw) = factor_ee(nw) + b_vector(1) * x / (1.d0 + b_vector(2) * x) - asymp_jasb(2)
+           else
+              if ( (j <= up_num).or.(i > up_num) ) then
+                 factor_ee(nw) = factor_ee(nw) + 0.5d0 * b_vector(1) * x / (1.d0 + b_vector(2) * x) - asymp_jasb(1)
+              else
+                 factor_ee(nw) = factor_ee(nw) + b_vector(1) * x / (1.d0 + b_vector(2) * x) - asymp_jasb(2)
+              endif
            endif
 
            xk = x
@@ -2292,82 +2421,99 @@ end function qmckl_compute_jastrow_champ_factor_ee_doc
      #+end_src
 
  #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
-qmckl_exit_code qmckl_compute_jastrow_champ_factor_ee_doc (
-          const qmckl_context context,
-          const int64_t walk_num,
-          const int64_t elec_num,
-          const int64_t up_num,
-          const int64_t bord_num,
-          const double* b_vector,
-          const double* ee_distance_rescaled,
-          const double* asymp_jasb,
-          double* const factor_ee );
+qmckl_exit_code
+qmckl_compute_jastrow_champ_factor_ee_doc (const qmckl_context context,
+                                           const int64_t walk_num,
+                                           const int64_t elec_num,
+                                           const int64_t up_num,
+                                           const int64_t bord_num,
+                                           const double* b_vector,
+                                           const double* ee_distance_rescaled,
+                                           const double* asymp_jasb,
+                                           const bool spin_independent,
+                                           double* const factor_ee );
  #+end_src
 
  #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
-qmckl_exit_code qmckl_compute_jastrow_champ_factor_ee_hpc (
-          const qmckl_context context,
-          const int64_t walk_num,
-          const int64_t elec_num,
-          const int64_t up_num,
-          const int64_t bord_num,
-          const double* b_vector,
-          const double* ee_distance_rescaled,
-          const double* asymp_jasb,
-          double* const factor_ee );
+qmckl_exit_code
+qmckl_compute_jastrow_champ_factor_ee_hpc (const qmckl_context context,
+                                           const int64_t walk_num,
+                                           const int64_t elec_num,
+                                           const int64_t up_num,
+                                           const int64_t bord_num,
+                                           const double* b_vector,
+                                           const double* ee_distance_rescaled,
+                                           const double* asymp_jasb,
+                                           const bool spin_independent,
+                                           double* const factor_ee );
  #+end_src
 
  #+begin_src c   :comments org :tangle (eval c) :noweb yes
-qmckl_exit_code qmckl_compute_jastrow_champ_factor_ee_hpc (
-      const qmckl_context context,
-      const int64_t walk_num,
-      const int64_t elec_num,
-      const int64_t up_num,
-      const int64_t bord_num,
-      const double* b_vector,
-      const double* ee_distance_rescaled,
-      const double* asymp_jasb,
-      double* const factor_ee ) {
+qmckl_exit_code
+qmckl_compute_jastrow_champ_factor_ee_hpc (const qmckl_context context,
+                                           const int64_t walk_num,
+                                           const int64_t elec_num,
+                                           const int64_t up_num,
+                                           const int64_t bord_num,
+                                           const double* b_vector,
+                                           const double* ee_distance_rescaled,
+                                           const double* asymp_jasb,
+                                           const bool spin_independent,
+                                           double* const factor_ee )
+{
 
   if (context == QMCKL_NULL_CONTEXT) {
-     return QMCKL_INVALID_CONTEXT;
+    return QMCKL_INVALID_CONTEXT;
   }
 
   if (walk_num <= 0) {
-     return QMCKL_INVALID_ARG_2;
+    return QMCKL_INVALID_ARG_2;
   }
 
   if (elec_num <= 0) {
-     return QMCKL_INVALID_ARG_3;
+    return QMCKL_INVALID_ARG_3;
   }
 
   if (bord_num < 0) {
-     return QMCKL_INVALID_ARG_4;
+    return QMCKL_INVALID_ARG_4;
   }
 
   const int64_t dn_num = elec_num - up_num;
   const double fshift = 0.5 * (double) ((dn_num-1)*dn_num + (up_num-1)*up_num) * asymp_jasb[0] +
-      (float) (up_num*dn_num) * asymp_jasb[1];
+    (float) (up_num*dn_num) * asymp_jasb[1];
   for (int nw = 0; nw < walk_num; ++nw) {
     factor_ee[nw] = 0.;
 
     size_t ishift = nw * elec_num * elec_num;
-    for (int j = 0; j < up_num; ++j ) {
-      const double* xj = &(ee_distance_rescaled[j * elec_num + ishift]);
-      for (int i = 0; i < j ; ++i) {
-        factor_ee[nw] += 0.5 * b_vector[0]*xj[i] / (1. + b_vector[1]*xj[i]);
-      }
-    }
 
-    for (int j = up_num ; j < elec_num; ++j ) {
-      const double* xj = &(ee_distance_rescaled[j * elec_num + ishift]);
-      for (int i = 0; i < up_num; ++i) {
-        factor_ee[nw] += b_vector[0]*xj[i] / (1. + b_vector[1]*xj[i]);
-      }
-      for (int i = up_num ; i < j ; ++i) {
-        factor_ee[nw] += 0.5 * b_vector[0]*xj[i] / (1. + b_vector[1]*xj[i]);
+    if (spin_independent) {
+
+      for (int j = 0; j < elec_num; ++j ) {
+        const double* xj = &(ee_distance_rescaled[j * elec_num + ishift]);
+        for (int i = 0; i < j ; ++i) {
+          factor_ee[nw] += b_vector[0]*xj[i] / (1. + b_vector[1]*xj[i]);
+        }
       }
 
+    } else {
+      
+      for (int j = 0; j < up_num; ++j ) {
+        const double* xj = &(ee_distance_rescaled[j * elec_num + ishift]);
+        for (int i = 0; i < j ; ++i) {
+          factor_ee[nw] += 0.5 * b_vector[0]*xj[i] / (1. + b_vector[1]*xj[i]);
+        }
+      }
+
+      for (int j = up_num ; j < elec_num; ++j ) {
+        const double* xj = &(ee_distance_rescaled[j * elec_num + ishift]);
+        for (int i = 0; i < up_num; ++i) {
+          factor_ee[nw] += b_vector[0]*xj[i] / (1. + b_vector[1]*xj[i]);
+        }
+        for (int i = up_num ; i < j ; ++i) {
+          factor_ee[nw] += 0.5 * b_vector[0]*xj[i] / (1. + b_vector[1]*xj[i]);
+        }
+
+      }
     }
 
     factor_ee[nw] -= fshift;
@@ -2393,29 +2539,31 @@ qmckl_exit_code qmckl_compute_jastrow_champ_factor_ee_hpc (
  #   #+CALL: generate_c_header(table=qmckl_factor_ee_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
 
  #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
-qmckl_exit_code qmckl_compute_jastrow_champ_factor_ee (
-          const qmckl_context context,
-          const int64_t walk_num,
-          const int64_t elec_num,
-          const int64_t up_num,
-          const int64_t bord_num,
-          const double* b_vector,
-          const double* ee_distance_rescaled,
-          const double* asymp_jasb,
-          double* const factor_ee );
+qmckl_exit_code
+qmckl_compute_jastrow_champ_factor_ee (const qmckl_context context,
+                                       const int64_t walk_num,
+                                       const int64_t elec_num,
+                                       const int64_t up_num,
+                                       const int64_t bord_num,
+                                       const double* b_vector,
+                                       const double* ee_distance_rescaled,
+                                       const double* asymp_jasb,
+                                       const bool spin_independent,
+                                       double* const factor_ee );
  #+end_src
 
  #+begin_src c   :comments org :tangle (eval c) :noweb yes
 qmckl_exit_code
 qmckl_compute_jastrow_champ_factor_ee (const qmckl_context context,
-                         const int64_t walk_num,
-                         const int64_t elec_num,
-                         const int64_t up_num,
-                         const int64_t bord_num,
-                         const double* b_vector,
-                         const double* ee_distance_rescaled,
-                         const double* asymp_jasb,
-                         double* const factor_ee )
+                                       const int64_t walk_num,
+                                       const int64_t elec_num,
+                                       const int64_t up_num,
+                                       const int64_t bord_num,
+                                       const double* b_vector,
+                                       const double* ee_distance_rescaled,
+                                       const double* asymp_jasb,
+                                       const bool spin_independent,
+                                       double* const factor_ee )
 {
 
 #ifdef HAVE_HPC
@@ -2424,7 +2572,7 @@ qmckl_compute_jastrow_champ_factor_ee (const qmckl_context context,
   return qmckl_compute_jastrow_champ_factor_ee_doc
 #endif
     (context, walk_num, elec_num, up_num, bord_num, b_vector,
-     ee_distance_rescaled, asymp_jasb, factor_ee);
+     ee_distance_rescaled, asymp_jasb, spin_independent, factor_ee);
 }
  #+end_src
 **** Test
@@ -3686,7 +3834,7 @@ rc = qmckl_get_jastrow_champ_ee_distance_rescaled_gl(context, ee_distance_rescal
 ** Electron-nucleus component
 *** Asymptotic component for
 
-   Calculate the asymptotic component ~asymp_jasa~ to be substracted from the final
+   Calculate the asymptotic component ~asymp_jasa~ to be subtracted from the final
    electron-nucleus jastrow factor \(J_{\text{eN}}\). The asymptotic component is calculated
    via the ~a_vector~ and the electron-nucleus rescale factors ~rescale_factor_en~.
 
