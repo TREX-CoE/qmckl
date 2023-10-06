@@ -518,21 +518,27 @@ AC_MSG_RESULT([$ivdep])
 
 # Checking ALIGNED
 
-AC_MSG_CHECKING([for aligned_alloc])
+AC_MSG_CHECKING([for posix_memalign])
 AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
+#include <stdlib.h>
+#include <stdio.h>
 ]], [[
     int main() {
-        void * pointer = aligned_alloc(64, 100);
-        free(pointer);
-        return 0;
+      void *ptr;
+      int ret = posix_memalign(&ptr, 64, 1024);
+      if (ret != 0) {
+        return EXIT_FAILURE;
+      }
+      free(ptr);
+      return 0;
     }
 ]])],
-    [have_aligned_alloc=yes], [have_aligned_alloc=no
+    [have_posix_memalign=yes], [have_posix_memalign=no
 ])
-AS_IF([test "x$have_aligned_alloc" = "xyes"], [
-  AC_DEFINE([HAVE_ALIGNED_ALLOC], [1], [Define to 1 if you have the aligned_alloc function.])
+AS_IF([test "x$have_posix_memalign" = "xyes"], [
+  AC_DEFINE([HAVE_POSIX_MEMALIGN], [1], [Define to 1 if you have the posix_memalign function.])
 ])
-AC_MSG_RESULT([$have_aligned_alloc])
+AC_MSG_RESULT([$have_posix_memalign])
 
 aligned=""
 AC_MSG_CHECKING([for vector aligned pragma])
@@ -550,7 +556,7 @@ AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
     [aligned='_Pragma("vector aligned")'], [
 ])
 
-AS_IF([test "x$have_aligned_alloc" = "xno"], [
+AS_IF([test "x$have_posix_memalign" = "xno"], [
   aligned=""
 ])
 
