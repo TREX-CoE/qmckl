@@ -58,6 +58,22 @@ AS_IF([test "x$with_ifort" = "xyes"], [
   FCFLAGS="-march=native -ip -Ofast -ftz -finline -g -mkl=sequential" ])
 
 # Intel C compiler
+AC_ARG_WITH([icx],
+            [AS_HELP_STRING([--with-icx],
+                            [Use Intel C compiler])],
+            [with_icx=$withval],
+            [with_icx=no])
+
+AS_IF([test "x$with_icx" = "xyes"], [
+  CC=icx
+  CFLAGS="-march=native -ip -Ofast -ftz -finline -g -mkl=sequential" ])
+
+AS_IF([test "x$with_icx.$with_ifort" = "xyes.yes"], [
+  ax_blas_ok="yes"
+  ax_lapack_ok="yes"
+  BLAS_LIBS=""
+  LAPACK_LIBS=""])
+
 AC_ARG_WITH([icc],
             [AS_HELP_STRING([--with-icc],
                             [Use Intel C compiler])],
