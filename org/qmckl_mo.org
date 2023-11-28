@@ -1270,6 +1270,117 @@ qmckl_compute_mo_basis_mo_value_hpc (const qmckl_context context,
     #+begin_src c :tangle (eval c) :comments org
 #ifdef HAVE_HPC
 qmckl_exit_code
+qmckl_compute_mo_basis_mo_value_hpc_sp (const qmckl_context context,
+                                        const int64_t ao_num,
+                                        const int64_t mo_num,
+                                        const int64_t point_num,
+                                        const double* restrict coefficient_t,
+                                        const double* restrict ao_value,
+                                        double* restrict const mo_value )
+{
+  assert (context != QMCKL_NULL_CONTEXT);
+
+  float* coefficient_t_sp = calloc(mo_num, sizeof(float));
+  if (coefficient_t_sp == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_ALLOCATION_FAILED,
+                           "qmckl_compute_mo_basis_mo_vgl_hpc_sp",
+                           "coefficient_t_sp");
+  };
+  
+  IVDEP
+#ifdef HAVE_OPENMP
+#pragma omp simd
+#endif
+    for (int64_t i=0 ; i<mo_num*ao_num ; ++i) {
+      coefficient_t_sp[i] = (float) coefficient_t[i];
+    }
+
+#ifdef HAVE_OPENMP
+#pragma omp parallel 
+#endif
+  {
+    int64_t* idx = calloc(ao_num, sizeof(int64_t));
+    float*   av1 = calloc(ao_num, sizeof(float));
+    float*   vgl_sp = calloc(mo_num, sizeof(float));
+    assert (idx != NULL);
+    assert (av1 != NULL);
+    assert (vgl_sp != NULL);
+
+#ifdef HAVE_OPENMP
+#pragma omp for
+#endif
+    for (int64_t ipoint=0 ; ipoint < point_num ; ++ipoint) {
+      double* restrict const vgl1  = &(mo_value[ipoint*mo_num]);
+      const double* restrict avgl1 = &(ao_value[ipoint*ao_num]);
+      
+      memset(vgl_sp, 0, mo_num*sizeof(float));
+      
+      int64_t nidx=0;
+      for (int64_t k=0 ; k<ao_num ; ++k) {
+        if (avgl1[k] != 0.) {
+          idx[nidx] = k;
+          av1[nidx] = (float) avgl1[k];
+          ++nidx;
+        }
+      }
+
+      int64_t n=0;
+      
+      for (n=0 ; n < nidx-4 ; n+=4) {
+        const float* restrict ck1 = coefficient_t_sp + idx[n  ]*mo_num;
+        const float* restrict ck2 = coefficient_t_sp + idx[n+1]*mo_num;
+        const float* restrict ck3 = coefficient_t_sp + idx[n+2]*mo_num;
+        const float* restrict ck4 = coefficient_t_sp + idx[n+3]*mo_num;
+
+        const float a11 = av1[n  ];
+        const float a21 = av1[n+1];
+        const float a31 = av1[n+2];
+        const float a41 = av1[n+3];
+
+        IVDEP
+#ifdef HAVE_OPENMP
+#pragma omp simd
+#endif
+          for (int64_t i=0 ; i<mo_num ; ++i) {
+            vgl_sp[i] += ck1[i] * a11 + ck2[i] * a21 + ck3[i] * a31 + ck4[i] * a41;
+          }
+      }
+
+      for (int64_t m=n ; m < nidx ; m+=1) {
+        const float* restrict ck = coefficient_t_sp + idx[m]*mo_num;
+        const float a1 = av1[m];
+
+        IVDEP
+#ifdef HAVE_OPENMP
+#pragma omp simd
+#endif
+          for (int64_t i=0 ; i<mo_num ; ++i) {
+            vgl_sp[i] += ck[i] * a1;
+          }
+      }
+
+      IVDEP
+#ifdef HAVE_OPENMP
+#pragma omp simd
+#endif
+      for (int64_t i=0 ; i<mo_num ; ++i) {
+        vgl1[i] = (double) vgl_sp[i];
+      }
+    }
+    free(av1);
+    free(idx);
+    free(vgl_sp);
+  }
+  free(coefficient_t_sp);
+  return QMCKL_SUCCESS;
+}
+#endif
+    #+end_src
+
+    #+begin_src c :tangle (eval c) :comments org
+#ifdef HAVE_HPC
+qmckl_exit_code
 qmckl_compute_mo_basis_mo_value_hpc (const qmckl_context context,
                                      const int64_t ao_num,
                                      const int64_t mo_num,
@@ -1279,6 +1390,22 @@ qmckl_compute_mo_basis_mo_value_hpc (const qmckl_context context,
                                      double* restrict const mo_value )
 {
   assert (context != QMCKL_NULL_CONTEXT);
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  /* Don't compute polynomials when the radial part is zero. */
+  const int precision = ctx->numprec.precision;
+  const bool single_precision = precision <= 23;
+
+  if (single_precision) {
+    return qmckl_compute_mo_basis_mo_value_hpc_sp (context,
+                                                   ao_num,
+                                                   mo_num,
+                                                   point_num,
+                                                   coefficient_t,
+                                                   ao_value,
+                                                   mo_value );
+  }
 
 #ifdef HAVE_OPENMP
   #pragma omp parallel for
