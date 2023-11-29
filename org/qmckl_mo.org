@@ -1264,10 +1264,22 @@ qmckl_compute_mo_basis_mo_value_hpc (const qmckl_context context,
                                      const double* coefficient_t,
                                      const double* ao_value,
                                      double* const mo_value );
+
+qmckl_exit_code
+qmckl_compute_mo_basis_mo_value_hpc_sp (const qmckl_context context,
+                                        const int64_t ao_num,
+                                        const int64_t mo_num,
+                                        const int64_t point_num,
+                                        const double* coefficient_t,
+                                        const double* ao_value,
+                                        double* const mo_value );
 #endif
     #+end_src
 
-    #+begin_src c :tangle (eval c) :comments org
+
+**** Single-precision
+
+     #+begin_src c :tangle (eval c) :comments org
 #ifdef HAVE_HPC
 qmckl_exit_code
 qmckl_compute_mo_basis_mo_value_hpc_sp (const qmckl_context context,
@@ -1280,14 +1292,14 @@ qmckl_compute_mo_basis_mo_value_hpc_sp (const qmckl_context context,
 {
   assert (context != QMCKL_NULL_CONTEXT);
 
-  float* coefficient_t_sp = calloc(mo_num, sizeof(float));
+  float* __attribute__((aligned(64))) coefficient_t_sp = calloc(ao_num*mo_num, sizeof(float));
   if (coefficient_t_sp == NULL) {
     return qmckl_failwith( context,
                            QMCKL_ALLOCATION_FAILED,
-                           "qmckl_compute_mo_basis_mo_vgl_hpc_sp",
+                           "qmckl_compute_mo_basis_mo_value_hpc_sp",
                            "coefficient_t_sp");
   };
-  
+
   IVDEP
 #ifdef HAVE_OPENMP
 #pragma omp simd
@@ -1297,25 +1309,20 @@ qmckl_compute_mo_basis_mo_value_hpc_sp (const qmckl_context context,
     }
 
 #ifdef HAVE_OPENMP
-#pragma omp parallel 
-#endif
-  {
-    int64_t* idx = calloc(ao_num, sizeof(int64_t));
-    float*   av1 = calloc(ao_num, sizeof(float));
-    float*   vgl_sp = calloc(mo_num, sizeof(float));
-    assert (idx != NULL);
-    assert (av1 != NULL);
-    assert (vgl_sp != NULL);
-
-#ifdef HAVE_OPENMP
-#pragma omp for
+#pragma omp parallel for
 #endif
     for (int64_t ipoint=0 ; ipoint < point_num ; ++ipoint) {
       double* restrict const vgl1  = &(mo_value[ipoint*mo_num]);
       const double* restrict avgl1 = &(ao_value[ipoint*ao_num]);
-      
-      memset(vgl_sp, 0, mo_num*sizeof(float));
-      
+
+    //  memset(vgl_sp, 0, mo_num*sizeof(float));
+      int64_t* __attribute__((aligned(64))) idx = calloc((size_t) ao_num, sizeof(int64_t));
+      float*   __attribute__((aligned(64))) av1 = calloc((size_t) ao_num, sizeof(float));
+      float*   __attribute__((aligned(64))) vgl_sp = calloc((size_t) mo_num, sizeof(float));
+      assert (idx != NULL);
+      assert (av1 != NULL);
+      assert (vgl_sp != NULL);
+
       int64_t nidx=0;
       for (int64_t k=0 ; k<ao_num ; ++k) {
         if (avgl1[k] != 0.) {
@@ -1326,7 +1333,7 @@ qmckl_compute_mo_basis_mo_value_hpc_sp (const qmckl_context context,
       }
 
       int64_t n=0;
-      
+
       for (n=0 ; n < nidx-4 ; n+=4) {
         const float* restrict ck1 = coefficient_t_sp + idx[n  ]*mo_num;
         const float* restrict ck2 = coefficient_t_sp + idx[n+1]*mo_num;
@@ -1367,18 +1374,19 @@ qmckl_compute_mo_basis_mo_value_hpc_sp (const qmckl_context context,
       for (int64_t i=0 ; i<mo_num ; ++i) {
         vgl1[i] = (double) vgl_sp[i];
       }
-    }
-    free(av1);
-    free(idx);
-    free(vgl_sp);
+      free(av1);
+      free(idx);
+      free(vgl_sp);
   }
   free(coefficient_t_sp);
   return QMCKL_SUCCESS;
 }
 #endif
-    #+end_src
+     #+end_src
 
-    #+begin_src c :tangle (eval c) :comments org
+**** Double-precision
+
+     #+begin_src c :tangle (eval c) :comments org
 #ifdef HAVE_HPC
 qmckl_exit_code
 qmckl_compute_mo_basis_mo_value_hpc (const qmckl_context context,
@@ -1408,64 +1416,76 @@ qmckl_compute_mo_basis_mo_value_hpc (const qmckl_context context,
   }
 
 #ifdef HAVE_OPENMP
-  #pragma omp parallel for
+#pragma omp parallel
 #endif
-  for (int64_t ipoint=0 ; ipoint < point_num ; ++ipoint) {
-    double* restrict const vgl1  = &(mo_value[ipoint*mo_num]);
-    const double* restrict avgl1 = &(ao_value[ipoint*ao_num]);
+  {
+    int64_t* __attribute__((aligned(64))) idx = calloc(ao_num, sizeof(int64_t));
+    double*  __attribute__((aligned(64))) av1 = calloc(ao_num, sizeof(double));
+    assert (idx != NULL);
+    assert (av1 != NULL);
 
-    for (int64_t i=0 ; i<mo_num ; ++i) {
-      vgl1[i] = 0.;
-    }
+#ifdef HAVE_OPENMP
+#pragma omp for
+#endif
+    for (int64_t ipoint=0 ; ipoint < point_num ; ++ipoint) {
+      double* restrict const vgl1  = &(mo_value[ipoint*mo_num]);
+      const double* restrict avgl1 = &(ao_value[ipoint*ao_num]);
 
-    int64_t nidx=0;
-    int64_t idx[ao_num];
-    double  av1[ao_num];
-    for (int64_t k=0 ; k<ao_num ; ++k) {
-      if (avgl1[k] != 0.) {
-        idx[nidx] = k;
-        av1[nidx] = avgl1[k];
-        ++nidx;
+      memset(vgl1, 0, mo_num*sizeof(double));
+
+      int64_t nidx=0;
+      int64_t idx[ao_num];
+      double  av1[ao_num];
+      for (int64_t k=0 ; k<ao_num ; ++k) {
+        if (avgl1[k] != 0.) {
+          idx[nidx] = k;
+          av1[nidx] = avgl1[k];
+          ++nidx;
+        }
       }
-    }
 
-    int64_t n=0;
+      int64_t n=0;
 
-    for (n=0 ; n < nidx-4 ; n+=4) {
-      const double* restrict ck1 = coefficient_t + idx[n  ]*mo_num;
-      const double* restrict ck2 = coefficient_t + idx[n+1]*mo_num;
-      const double* restrict ck3 = coefficient_t + idx[n+2]*mo_num;
-      const double* restrict ck4 = coefficient_t + idx[n+3]*mo_num;
+      for (n=0 ; n < nidx-4 ; n+=4) {
+        const double* restrict ck1 = coefficient_t + idx[n  ]*mo_num;
+        const double* restrict ck2 = coefficient_t + idx[n+1]*mo_num;
+        const double* restrict ck3 = coefficient_t + idx[n+2]*mo_num;
+        const double* restrict ck4 = coefficient_t + idx[n+3]*mo_num;
 
-      const double a11 = av1[n  ];
-      const double a21 = av1[n+1];
-      const double a31 = av1[n+2];
-      const double a41 = av1[n+3];
+        const double a11 = av1[n  ];
+        const double a21 = av1[n+1];
+        const double a31 = av1[n+2];
+        const double a41 = av1[n+3];
 
+        IVDEP
 #ifdef HAVE_OPENMP
 #pragma omp simd
 #endif
-      for (int64_t i=0 ; i<mo_num ; ++i) {
-        vgl1[i] = vgl1[i] + ck1[i] * a11 + ck2[i] * a21 + ck3[i] * a31 + ck4[i] * a41;
+          for (int64_t i=0 ; i<mo_num ; ++i) {
+            vgl1[i] += ck1[i] * a11 + ck2[i] * a21 + ck3[i] * a31 + ck4[i] * a41;
+          }
       }
-    }
 
-    for (int64_t m=n ; m < nidx ; m+=1) {
-      const double* restrict ck = coefficient_t + idx[m]*mo_num;
-      const double a1 = av1[m];
+      for (int64_t m=n ; m < nidx ; m+=1) {
+        const double* restrict ck = coefficient_t + idx[m]*mo_num;
+        const double a1 = av1[m];
 
+        IVDEP
 #ifdef HAVE_OPENMP
-  #pragma omp simd
+#pragma omp simd
 #endif
-      for (int64_t i=0 ; i<mo_num ; ++i) {
-        vgl1[i] += ck[i] * a1;
+          for (int64_t i=0 ; i<mo_num ; ++i) {
+            vgl1[i] += ck[i] * a1;
+          }
       }
     }
+    free(av1);
+    free(idx);
   }
   return QMCKL_SUCCESS;
 }
 #endif
-    #+end_src
+     #+end_src
 
 ** Computation of MOs: values, gradient, Laplacian
 
@@ -1864,8 +1884,9 @@ qmckl_compute_mo_basis_mo_vgl (const qmckl_context context,
 }
     #+end_src
 
-*** HPC version
+*** HPC version                                                    :noexport:
 
+**** Double precision
 
     #+begin_src c :tangle (eval h_private_func) :comments org
 #ifdef HAVE_HPC
@@ -1880,7 +1901,7 @@ qmckl_compute_mo_basis_mo_vgl_hpc (const qmckl_context context,
 #endif
     #+end_src
 
-    #+begin_src c :tangle (eval c) :comments org
+     #+begin_src c :tangle (eval c) :comments org
 #ifdef HAVE_HPC
 qmckl_exit_code
 qmckl_compute_mo_basis_mo_vgl_hpc (const qmckl_context context,
@@ -1892,9 +1913,42 @@ qmckl_compute_mo_basis_mo_vgl_hpc (const qmckl_context context,
                                    double* restrict const mo_vgl )
 {
   assert (context != QMCKL_NULL_CONTEXT);
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  /* Don't compute polynomials when the radial part is zero. */
+  const int precision = ctx->numprec.precision;
+  const bool single_precision = precision <= 23;
+
+  if (single_precision) {
+    return qmckl_compute_mo_basis_mo_vgl_hpc_sp (context,
+                                                 ao_num,
+                                                 mo_num,
+                                                 point_num,
+                                                 coefficient_t,
+                                                 ao_vgl,
+                                                 mo_vgl );
+  }
 
 #ifdef HAVE_OPENMP
-  #pragma omp parallel for
+#pragma omp parallel
+#endif
+  {
+    int64_t* __attribute__((aligned(64))) idx = calloc(ao_num, sizeof(int64_t));
+    double*  __attribute__((aligned(64))) av1 = calloc(ao_num, sizeof(double));
+    double*  __attribute__((aligned(64))) av2 = calloc(ao_num, sizeof(double));
+    double*  __attribute__((aligned(64))) av3 = calloc(ao_num, sizeof(double));
+    double*  __attribute__((aligned(64))) av4 = calloc(ao_num, sizeof(double));
+    double*  __attribute__((aligned(64))) av5 = calloc(ao_num, sizeof(double));
+    assert (idx != NULL);
+    assert (av1 != NULL);
+    assert (av2 != NULL);
+    assert (av3 != NULL);
+    assert (av4 != NULL);
+    assert (av5 != NULL);
+
+#ifdef HAVE_OPENMP
+#pragma omp for
 #endif
   for (int64_t ipoint=0 ; ipoint < point_num ; ++ipoint) {
     double* restrict const vgl1 = &(mo_vgl[ipoint*5*mo_num]);
@@ -1909,22 +1963,9 @@ qmckl_compute_mo_basis_mo_vgl_hpc (const qmckl_context context,
     const double* restrict avgl4 = avgl1 + (ao_num << 1) + ao_num;
     const double* restrict avgl5 = avgl1 + (ao_num << 2);
 
-IVDEP
-    for (int64_t i=0 ; i<mo_num ; ++i) {
-      vgl1[i] = 0.;
-      vgl2[i] = 0.;
-      vgl3[i] = 0.;
-      vgl4[i] = 0.;
-      vgl5[i] = 0.;
-    }
+    memset(vgl1,0,5*mo_num*sizeof(double));
 
     int64_t nidx=0;
-    int64_t idx[ao_num];
-    double  av1[ao_num];
-    double  av2[ao_num];
-    double  av3[ao_num];
-    double  av4[ao_num];
-    double  av5[ao_num];
     for (int64_t k=0 ; k<ao_num ; ++k) {
       if (avgl1[k] != 0.) {
         idx[nidx] = k;
@@ -2004,10 +2045,214 @@ IVDEP
       }
     }
   }
+  free(idx);
+  free(av1);
+  free(av2);
+  free(av3);
+  free(av4);
+  free(av5);
+  }
   return QMCKL_SUCCESS;
 }
 #endif
+     #+end_src
+
+**** Single precision
+
+    #+begin_src c :tangle (eval h_private_func) :comments org
+#ifdef HAVE_HPC
+qmckl_exit_code
+qmckl_compute_mo_basis_mo_vgl_hpc_sp (const qmckl_context context,
+                                      const int64_t ao_num,
+                                      const int64_t mo_num,
+                                      const int64_t point_num,
+                                      const double* coefficient_t,
+                                      const double* ao_vgl,
+                                      double* const mo_vgl );
+#endif
     #+end_src
+
+     #+begin_src c :tangle (eval c) :comments org
+#ifdef HAVE_HPC
+qmckl_exit_code
+qmckl_compute_mo_basis_mo_vgl_hpc_sp (const qmckl_context context,
+                                      const int64_t ao_num,
+                                      const int64_t mo_num,
+                                      const int64_t point_num,
+                                      const double* restrict coefficient_t,
+                                      const double* restrict ao_vgl,
+                                      double* restrict const mo_vgl )
+{
+  assert (context != QMCKL_NULL_CONTEXT);
+
+  float* __attribute__((aligned(64))) coefficient_t_sp = calloc(ao_num*mo_num, sizeof(float));
+  if (coefficient_t_sp == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_ALLOCATION_FAILED,
+                           "qmckl_compute_mo_basis_mo_vgl_hpc_sp",
+                           "coefficient_t_sp");
+  };
+
+  IVDEP
+#ifdef HAVE_OPENMP
+#pragma omp simd
+#endif
+    for (int64_t i=0 ; i<mo_num*ao_num ; ++i) {
+      coefficient_t_sp[i] = (float) coefficient_t[i];
+    }
+
+
+#ifdef HAVE_OPENMP
+#pragma omp parallel
+#endif
+  {
+    int64_t* __attribute__((aligned(64))) idx = calloc(ao_num, sizeof(int64_t));
+    float*  __attribute__((aligned(64))) av1 = calloc(ao_num, sizeof(double));
+    float*  __attribute__((aligned(64))) av2 = calloc(ao_num, sizeof(double));
+    float*  __attribute__((aligned(64))) av3 = calloc(ao_num, sizeof(double));
+    float*  __attribute__((aligned(64))) av4 = calloc(ao_num, sizeof(double));
+    float*  __attribute__((aligned(64))) av5 = calloc(ao_num, sizeof(double));
+    assert (idx != NULL);
+    assert (av1 != NULL);
+    assert (av2 != NULL);
+    assert (av3 != NULL);
+    assert (av4 != NULL);
+    assert (av5 != NULL);
+
+#ifdef HAVE_OPENMP
+#pragma omp for
+#endif
+    for (int64_t ipoint=0 ; ipoint < point_num ; ++ipoint) {
+      float* __attribute__((aligned(64))) vgl_sp1 = calloc(mo_num, sizeof(float));
+      float* __attribute__((aligned(64))) vgl_sp2 = calloc(mo_num, sizeof(float));
+      float* __attribute__((aligned(64))) vgl_sp3 = calloc(mo_num, sizeof(float));
+      float* __attribute__((aligned(64))) vgl_sp4 = calloc(mo_num, sizeof(float));
+      float* __attribute__((aligned(64))) vgl_sp5 = calloc(mo_num, sizeof(float));
+      assert (vgl_sp1 != NULL);
+      assert (vgl_sp2 != NULL);
+      assert (vgl_sp3 != NULL);
+      assert (vgl_sp4 != NULL);
+      assert (vgl_sp5 != NULL);
+
+      double* restrict const vgl1 = &(mo_vgl[ipoint*5*mo_num]);
+      double* restrict const vgl2 =  vgl1 + mo_num;
+      double* restrict const vgl3 =  vgl1 + (mo_num << 1);
+      double* restrict const vgl4 =  vgl1 + (mo_num << 1) + mo_num;
+      double* restrict const vgl5 =  vgl1 + (mo_num << 2);
+
+      const double* restrict avgl1 = &(ao_vgl[ipoint*5*ao_num]);
+      const double* restrict avgl2 = avgl1 + ao_num;
+      const double* restrict avgl3 = avgl1 + (ao_num << 1);
+      const double* restrict avgl4 = avgl1 + (ao_num << 1) + ao_num;
+      const double* restrict avgl5 = avgl1 + (ao_num << 2);
+
+      int64_t nidx=0;
+      for (int64_t k=0 ; k<ao_num ; ++k) {
+        if (avgl1[k] != 0.) {
+          idx[nidx] = k;
+          av1[nidx] = (float) avgl1[k];
+          av2[nidx] = (float) avgl2[k];
+          av3[nidx] = (float) avgl3[k];
+          av4[nidx] = (float) avgl4[k];
+          av5[nidx] = (float) avgl5[k];
+          ++nidx;
+        }
+      }
+
+      int64_t n=0;
+
+      for (n=0 ; n < nidx-4 ; n+=4) {
+        const float* restrict ck1 = coefficient_t_sp + idx[n  ]*mo_num;
+        const float* restrict ck2 = coefficient_t_sp + idx[n+1]*mo_num;
+        const float* restrict ck3 = coefficient_t_sp + idx[n+2]*mo_num;
+        const float* restrict ck4 = coefficient_t_sp + idx[n+3]*mo_num;
+
+        const float a11 = av1[n  ];
+        const float a21 = av1[n+1];
+        const float a31 = av1[n+2];
+        const float a41 = av1[n+3];
+
+        const float a12 = av2[n  ];
+        const float a22 = av2[n+1];
+        const float a32 = av2[n+2];
+        const float a42 = av2[n+3];
+
+        const float a13 = av3[n  ];
+        const float a23 = av3[n+1];
+        const float a33 = av3[n+2];
+        const float a43 = av3[n+3];
+
+        const float a14 = av4[n  ];
+        const float a24 = av4[n+1];
+        const float a34 = av4[n+2];
+        const float a44 = av4[n+3];
+
+        const float a15 = av5[n  ];
+        const float a25 = av5[n+1];
+        const float a35 = av5[n+2];
+        const float a45 = av5[n+3];
+
+        IVDEP
+#ifdef HAVE_OPENMP
+#pragma omp simd
+#endif
+          for (int64_t i=0 ; i<mo_num ; ++i) {
+            vgl_sp1[i] += ck1[i] * a11 + ck2[i] * a21 + ck3[i] * a31 + ck4[i] * a41;
+            vgl_sp2[i] += ck1[i] * a12 + ck2[i] * a22 + ck3[i] * a32 + ck4[i] * a42;
+            vgl_sp3[i] += ck1[i] * a13 + ck2[i] * a23 + ck3[i] * a33 + ck4[i] * a43;
+            vgl_sp4[i] += ck1[i] * a14 + ck2[i] * a24 + ck3[i] * a34 + ck4[i] * a44;
+            vgl_sp5[i] += ck1[i] * a15 + ck2[i] * a25 + ck3[i] * a35 + ck4[i] * a45;
+          }
+      }
+
+      for (int64_t m=n ; m < nidx ; m+=1) {
+        const float* restrict ck = coefficient_t_sp + idx[m]*mo_num;
+        const float a1 = av1[m];
+        const float a2 = av2[m];
+        const float a3 = av3[m];
+        const float a4 = av4[m];
+        const float a5 = av5[m];
+
+        IVDEP
+#ifdef HAVE_OPENMP
+#pragma omp simd
+#endif
+          for (int64_t i=0 ; i<mo_num ; ++i) {
+            vgl_sp1[i] += ck[i] * a1;
+            vgl_sp2[i] += ck[i] * a2;
+            vgl_sp3[i] += ck[i] * a3;
+            vgl_sp4[i] += ck[i] * a4;
+            vgl_sp5[i] += ck[i] * a5;
+          }
+      }
+      IVDEP
+#ifdef HAVE_OPENMP
+#pragma omp simd
+#endif
+      for (int64_t i=0 ; i<mo_num ; ++i) {
+        vgl1[i] = (double) vgl_sp1[i];
+        vgl2[i] = (double) vgl_sp2[i];
+        vgl3[i] = (double) vgl_sp3[i];
+        vgl4[i] = (double) vgl_sp4[i];
+        vgl5[i] = (double) vgl_sp5[i];
+      }
+      free(vgl_sp1);
+      free(vgl_sp2);
+      free(vgl_sp3);
+      free(vgl_sp4);
+      free(vgl_sp5);
+    }
+    free(idx);
+    free(av1);
+    free(av2);
+    free(av3);
+    free(av4);
+    free(av5);
+  }
+  return QMCKL_SUCCESS;
+}
+#endif
+     #+end_src
 
 ** Computation of cusp-corrected MOs: values only
 
@@ -2218,7 +2463,6 @@ qmckl_compute_mo_basis_mo_value_cusp (const qmckl_context context,
 
 *** HPC version
 
-
     #+begin_src c :tangle (eval h_private_func) :comments org
 #ifdef HAVE_HPC
 qmckl_exit_code
@@ -2235,6 +2479,21 @@ qmckl_compute_mo_basis_mo_value_cusp_hpc (const qmckl_context context,
                                           const double* coefficient_t,
                                           const double* ao_value,
                                           double* const mo_value );
+
+qmckl_exit_code
+qmckl_compute_mo_basis_mo_value_cusp_hpc_sp (const qmckl_context context,
+                                             const int64_t nucl_num,
+                                             const int64_t ao_num,
+                                             const int64_t mo_num,
+                                             const int64_t point_num,
+                                             const int64_t* ao_nucl,
+                                             const int32_t* ao_ang_mom,
+                                             const double* en_distance,
+                                             const double* r_cusp,
+                                             const qmckl_tensor cusp_param,
+                                             const double* coefficient_t,
+                                             const double* ao_value,
+                                             double* const mo_value );
 #endif
     #+end_src
 
@@ -2937,251 +3196,260 @@ print ( "[4][1][15][14] : %25.15e"% lf(a,x,y))
 #define shell_num chbrclf_shell_num
 #define ao_num chbrclf_ao_num
 
-int64_t elec_up_num   = chbrclf_elec_up_num;
-int64_t elec_dn_num   = chbrclf_elec_dn_num;
-double* elec_coord    = &(chbrclf_elec_coord[0][0][0]);
-int64_t   nucl_num      = chbrclf_nucl_num;
-const double*   nucl_charge   = chbrclf_charge;
-const double*   nucl_coord    = &(chbrclf_nucl_coord[0][0]);
+  int64_t elec_up_num   = chbrclf_elec_up_num;
+  int64_t elec_dn_num   = chbrclf_elec_dn_num;
+  double* elec_coord    = &(chbrclf_elec_coord[0][0][0]);
+  int64_t   nucl_num      = chbrclf_nucl_num;
+  const double*   nucl_charge   = chbrclf_charge;
+  const double*   nucl_coord    = &(chbrclf_nucl_coord[0][0]);
 
-int64_t point_num = walk_num*elec_num;
+  int64_t point_num = walk_num*elec_num;
 
-rc = qmckl_set_electron_num (context, elec_up_num, elec_dn_num);
-assert (rc == QMCKL_SUCCESS);
+  rc = qmckl_set_electron_num (context, elec_up_num, elec_dn_num);
+  assert (rc == QMCKL_SUCCESS);
 
-assert(qmckl_electron_provided(context));
+  assert(qmckl_electron_provided(context));
 
-rc = qmckl_set_point(context, 'N', point_num, elec_coord, point_num*3);
-assert(rc == QMCKL_SUCCESS);
+  rc = qmckl_set_point(context, 'N', point_num, elec_coord, point_num*3);
+  assert(rc == QMCKL_SUCCESS);
 
-rc = qmckl_set_nucleus_num (context, nucl_num);
-assert(rc == QMCKL_SUCCESS);
+  rc = qmckl_set_nucleus_num (context, nucl_num);
+  assert(rc == QMCKL_SUCCESS);
 
-rc = qmckl_set_nucleus_coord (context, 'T', &(nucl_coord[0]), nucl_num*3);
-assert(rc == QMCKL_SUCCESS);
+  rc = qmckl_set_nucleus_coord (context, 'T', &(nucl_coord[0]), nucl_num*3);
+  assert(rc == QMCKL_SUCCESS);
 
-rc = qmckl_set_nucleus_charge(context, nucl_charge, nucl_num);
-assert(rc == QMCKL_SUCCESS);
+  rc = qmckl_set_nucleus_charge(context, nucl_charge, nucl_num);
+  assert(rc == QMCKL_SUCCESS);
 
-assert(qmckl_nucleus_provided(context));
+  assert(qmckl_nucleus_provided(context));
 
-const int64_t *  nucleus_index     =  &(chbrclf_basis_nucleus_index[0]);
-const int64_t *  nucleus_shell_num =  &(chbrclf_basis_nucleus_shell_num[0]);
-const int32_t *  shell_ang_mom     =  &(chbrclf_basis_shell_ang_mom[0]);
-const int64_t *  shell_prim_num    =  &(chbrclf_basis_shell_prim_num[0]);
-const int64_t *  shell_prim_index  =  &(chbrclf_basis_shell_prim_index[0]);
-const double  *  shell_factor      =  &(chbrclf_basis_shell_factor[0]);
-const double  *  exponent          =  &(chbrclf_basis_exponent[0]);
-const double  *  coefficient       =  &(chbrclf_basis_coefficient[0]);
-const double  *  prim_factor       =  &(chbrclf_basis_prim_factor[0]);
-const double  *  ao_factor         =  &(chbrclf_basis_ao_factor[0]);
+  const int64_t *  nucleus_index     =  &(chbrclf_basis_nucleus_index[0]);
+  const int64_t *  nucleus_shell_num =  &(chbrclf_basis_nucleus_shell_num[0]);
+  const int32_t *  shell_ang_mom     =  &(chbrclf_basis_shell_ang_mom[0]);
+  const int64_t *  shell_prim_num    =  &(chbrclf_basis_shell_prim_num[0]);
+  const int64_t *  shell_prim_index  =  &(chbrclf_basis_shell_prim_index[0]);
+  const double  *  shell_factor      =  &(chbrclf_basis_shell_factor[0]);
+  const double  *  exponent          =  &(chbrclf_basis_exponent[0]);
+  const double  *  coefficient       =  &(chbrclf_basis_coefficient[0]);
+  const double  *  prim_factor       =  &(chbrclf_basis_prim_factor[0]);
+  const double  *  ao_factor         =  &(chbrclf_basis_ao_factor[0]);
 
-const char typ = 'G';
+  const char typ = 'G';
 
-assert(!qmckl_ao_basis_provided(context));
+  assert(!qmckl_ao_basis_provided(context));
 
-rc = qmckl_set_ao_basis_type (context, typ);
-assert(rc == QMCKL_SUCCESS);
-assert(!qmckl_ao_basis_provided(context));
+  rc = qmckl_set_ao_basis_type (context, typ);
+  assert(rc == QMCKL_SUCCESS);
+  assert(!qmckl_ao_basis_provided(context));
 
-rc = qmckl_set_ao_basis_shell_num (context, chbrclf_shell_num);
-assert(rc == QMCKL_SUCCESS);
-assert(!qmckl_ao_basis_provided(context));
+  rc = qmckl_set_ao_basis_shell_num (context, chbrclf_shell_num);
+  assert(rc == QMCKL_SUCCESS);
+  assert(!qmckl_ao_basis_provided(context));
 
-rc = qmckl_set_ao_basis_prim_num (context, chbrclf_prim_num);
-assert(rc == QMCKL_SUCCESS);
-assert(!qmckl_ao_basis_provided(context));
+  rc = qmckl_set_ao_basis_prim_num (context, chbrclf_prim_num);
+  assert(rc == QMCKL_SUCCESS);
+  assert(!qmckl_ao_basis_provided(context));
 
-rc = qmckl_set_ao_basis_nucleus_index (context, nucleus_index, nucl_num);
-assert(rc == QMCKL_SUCCESS);
-assert(!qmckl_ao_basis_provided(context));
+  rc = qmckl_set_ao_basis_nucleus_index (context, nucleus_index, nucl_num);
+  assert(rc == QMCKL_SUCCESS);
+  assert(!qmckl_ao_basis_provided(context));
 
-rc = qmckl_set_ao_basis_nucleus_shell_num (context, nucleus_shell_num, nucl_num);
-assert(rc == QMCKL_SUCCESS);
-assert(!qmckl_ao_basis_provided(context));
+  rc = qmckl_set_ao_basis_nucleus_shell_num (context, nucleus_shell_num, nucl_num);
+  assert(rc == QMCKL_SUCCESS);
+  assert(!qmckl_ao_basis_provided(context));
 
-rc = qmckl_set_ao_basis_shell_ang_mom (context, shell_ang_mom, chbrclf_shell_num);
-assert(rc == QMCKL_SUCCESS);
-assert(!qmckl_ao_basis_provided(context));
+  rc = qmckl_set_ao_basis_shell_ang_mom (context, shell_ang_mom, chbrclf_shell_num);
+  assert(rc == QMCKL_SUCCESS);
+  assert(!qmckl_ao_basis_provided(context));
 
-rc = qmckl_set_ao_basis_shell_factor  (context, shell_factor, chbrclf_shell_num);
-assert(rc == QMCKL_SUCCESS);
-assert(!qmckl_ao_basis_provided(context));
+  rc = qmckl_set_ao_basis_shell_factor  (context, shell_factor, chbrclf_shell_num);
+  assert(rc == QMCKL_SUCCESS);
+  assert(!qmckl_ao_basis_provided(context));
 
-rc = qmckl_set_ao_basis_shell_prim_num (context, shell_prim_num, chbrclf_shell_num);
-assert(rc == QMCKL_SUCCESS);
-assert(!qmckl_ao_basis_provided(context));
+  rc = qmckl_set_ao_basis_shell_prim_num (context, shell_prim_num, chbrclf_shell_num);
+  assert(rc == QMCKL_SUCCESS);
+  assert(!qmckl_ao_basis_provided(context));
 
-rc = qmckl_set_ao_basis_shell_prim_index (context, shell_prim_index, chbrclf_shell_num);
-assert(rc == QMCKL_SUCCESS);
-assert(!qmckl_ao_basis_provided(context));
+  rc = qmckl_set_ao_basis_shell_prim_index (context, shell_prim_index, chbrclf_shell_num);
+  assert(rc == QMCKL_SUCCESS);
+  assert(!qmckl_ao_basis_provided(context));
 
-rc = qmckl_set_ao_basis_exponent      (context, exponent, chbrclf_prim_num);
-assert(rc == QMCKL_SUCCESS);
-assert(!qmckl_ao_basis_provided(context));
+  rc = qmckl_set_ao_basis_exponent      (context, exponent, chbrclf_prim_num);
+  assert(rc == QMCKL_SUCCESS);
+  assert(!qmckl_ao_basis_provided(context));
 
-rc = qmckl_set_ao_basis_coefficient   (context, coefficient, chbrclf_prim_num);
-assert(rc == QMCKL_SUCCESS);
-assert(!qmckl_ao_basis_provided(context));
+  rc = qmckl_set_ao_basis_coefficient   (context, coefficient, chbrclf_prim_num);
+  assert(rc == QMCKL_SUCCESS);
+  assert(!qmckl_ao_basis_provided(context));
 
-rc = qmckl_set_ao_basis_prim_factor (context, prim_factor, chbrclf_prim_num);
-assert(rc == QMCKL_SUCCESS);
+  rc = qmckl_set_ao_basis_prim_factor (context, prim_factor, chbrclf_prim_num);
+  assert(rc == QMCKL_SUCCESS);
 
-rc = qmckl_set_ao_basis_ao_num(context, chbrclf_ao_num);
-assert(rc == QMCKL_SUCCESS);
+  rc = qmckl_set_ao_basis_ao_num(context, chbrclf_ao_num);
+  assert(rc == QMCKL_SUCCESS);
 
-rc = qmckl_set_ao_basis_ao_factor (context, ao_factor, chbrclf_ao_num);
-assert(rc == QMCKL_SUCCESS);
+  rc = qmckl_set_ao_basis_ao_factor (context, ao_factor, chbrclf_ao_num);
+  assert(rc == QMCKL_SUCCESS);
 
-assert(qmckl_ao_basis_provided(context));
+  assert(qmckl_ao_basis_provided(context));
 
 
-double ao_vgl[point_num][5][chbrclf_ao_num];
+  double ao_vgl[point_num][5][chbrclf_ao_num];
 
-rc = qmckl_get_ao_basis_ao_vgl(context, &(ao_vgl[0][0][0]),
-     (int64_t) 5*point_num*chbrclf_ao_num);
-assert (rc == QMCKL_SUCCESS);
+  rc = qmckl_get_ao_basis_ao_vgl(context, &(ao_vgl[0][0][0]),
+                                 (int64_t) 5*point_num*chbrclf_ao_num);
+  assert (rc == QMCKL_SUCCESS);
 
-/* Set up MO data */
-int64_t mo_num = chbrclf_mo_num;
-rc = qmckl_set_mo_basis_mo_num(context, mo_num);
-assert (rc == QMCKL_SUCCESS);
+  /* Set up MO data */
+  int64_t mo_num = chbrclf_mo_num;
+  rc = qmckl_set_mo_basis_mo_num(context, mo_num);
+  assert (rc == QMCKL_SUCCESS);
 
-const double  * mo_coefficient          =  &(chbrclf_mo_coef[0]);
+  const double  * mo_coefficient          =  &(chbrclf_mo_coef[0]);
 
-rc = qmckl_set_mo_basis_coefficient(context, mo_coefficient, chbrclf_mo_num*chbrclf_ao_num);
-assert (rc == QMCKL_SUCCESS);
+  rc = qmckl_set_mo_basis_coefficient(context, mo_coefficient, chbrclf_mo_num*chbrclf_ao_num);
+  assert (rc == QMCKL_SUCCESS);
 
-assert(qmckl_mo_basis_provided(context));
+  assert(qmckl_mo_basis_provided(context));
 
-rc = qmckl_context_touch(context);
-assert (rc == QMCKL_SUCCESS);
+  rc = qmckl_context_touch(context);
+  assert (rc == QMCKL_SUCCESS);
 
-double mo_value[point_num][chbrclf_mo_num];
-rc = qmckl_get_mo_basis_mo_value(context, &(mo_value[0][0]), point_num*chbrclf_mo_num);
-assert (rc == QMCKL_SUCCESS);
+  double mo_value[point_num][chbrclf_mo_num];
+  rc = qmckl_get_mo_basis_mo_value(context, &(mo_value[0][0]), point_num*chbrclf_mo_num);
+  assert (rc == QMCKL_SUCCESS);
 
-double mo_vgl[point_num][5][chbrclf_mo_num];
-rc = qmckl_get_mo_basis_mo_vgl(context, &(mo_vgl[0][0][0]), point_num*5*chbrclf_mo_num);
-assert (rc == QMCKL_SUCCESS);
+  double mo_vgl[point_num][5][chbrclf_mo_num];
+  rc = qmckl_get_mo_basis_mo_vgl(context, &(mo_vgl[0][0][0]), point_num*5*chbrclf_mo_num);
+  assert (rc == QMCKL_SUCCESS);
 
-for (int i=0 ; i< point_num; ++i) {
-  for (int k=0 ; k< chbrclf_mo_num ; ++k) {
-    assert(fabs(mo_vgl[i][0][k] - mo_value[i][k]) < 1.e-12) ;
+  for (int i=0 ; i< point_num; ++i) {
+    for (int k=0 ; k< chbrclf_mo_num ; ++k) {
+      assert(fabs(mo_vgl[i][0][k] - mo_value[i][k]) < 1.e-12) ;
+    }
   }
- }
 
-rc = qmckl_context_touch(context);
-assert (rc == QMCKL_SUCCESS);
+  rc = qmckl_context_touch(context);
+  assert (rc == QMCKL_SUCCESS);
 
-rc = qmckl_get_mo_basis_mo_value(context, &(mo_value[0][0]), point_num*chbrclf_mo_num);
-assert (rc == QMCKL_SUCCESS);
+  rc = qmckl_get_mo_basis_mo_value(context, &(mo_value[0][0]), point_num*chbrclf_mo_num);
+  assert (rc == QMCKL_SUCCESS);
 
-for (int i=0 ; i< point_num; ++i) {
-  for (int k=0 ; k< chbrclf_mo_num ; ++k) {
-    assert(fabs(mo_vgl[i][0][k] - mo_value[i][k]) < 1.e-12) ;
+  for (int i=0 ; i< point_num; ++i) {
+    for (int k=0 ; k< chbrclf_mo_num ; ++k) {
+      assert(fabs(mo_vgl[i][0][k] - mo_value[i][k]) < 1.e-12) ;
+    }
   }
- }
 
-rc = qmckl_mo_basis_rescale(context, 0.);
-assert (rc != QMCKL_SUCCESS);
+  rc = qmckl_mo_basis_rescale(context, 0.);
+  assert (rc != QMCKL_SUCCESS);
 
-rc = qmckl_mo_basis_rescale(context, 2.);
-assert (rc == QMCKL_SUCCESS);
+  rc = qmckl_mo_basis_rescale(context, 2.);
+  assert (rc == QMCKL_SUCCESS);
 
 
-rc = qmckl_get_mo_basis_mo_value(context, &(mo_value[0][0]), point_num*chbrclf_mo_num);
-assert (rc == QMCKL_SUCCESS);
+  rc = qmckl_get_mo_basis_mo_value(context, &(mo_value[0][0]), point_num*chbrclf_mo_num);
+  assert (rc == QMCKL_SUCCESS);
 
-for (int i=0 ; i< point_num; ++i) {
-  for (int k=0 ; k< chbrclf_mo_num ; ++k) {
-   assert(fabs(2.*mo_vgl[i][0][k] - mo_value[i][k]) < 1.e-12) ;
+  for (int i=0 ; i< point_num; ++i) {
+    for (int k=0 ; k< chbrclf_mo_num ; ++k) {
+      assert(fabs(2.*mo_vgl[i][0][k] - mo_value[i][k]) < 1.e-12) ;
+    }
   }
- }
 
-rc = qmckl_mo_basis_rescale(context, 0.5);
-assert (rc == QMCKL_SUCCESS);
-
-
-// Test overlap of MO
-//double point_x[10];
-//double point_y[10];
-//double point_z[10];
-//int32_t npoints=10;
-//// obtain points
-//double dr = 20./(npoints-1);
-//double dr3 = dr*dr*dr;
-//
-//for (int i=0;i<npoints;++i) {
-//  point_x[i] = -10. + dr*i;
-//  point_y[i] = -10. + dr*i;
-//  point_z[i] = -10. + dr*i;
-//}
-//
-//double ovlmo1 = 0.0;
-//// Calculate overlap
-//for (int i=0;i<npoints;++i) {
-//  fflush(stdout);
-//  for (int j=0;j<npoints;++j) {
-//  printf(" .. ");
-//    for (int k=0;k<npoints;++k) {
-//  printf(" . ");
-//      // Set point
-//      elec_coord[0] = point_x[i];
-//      elec_coord[1] = point_y[j];
-//      elec_coord[2] = point_z[k];
-//      rc = qmckl_set_electron_coord (context, 'N', elec_coord);
-//      assert(rc == QMCKL_SUCCESS);
-//
-//      // Calculate value of MO (1st electron)
-//      double mo_vgl[5][point_num][chbrclf_mo_num];
-//      rc = qmckl_get_mo_basis_mo_vgl(context, &(mo_vgl[0][0][0][0]));
-//      assert (rc == QMCKL_SUCCESS);
-//      ovlmo1 += mo_vgl[0][0][0][0]*mo_vgl[0][0][0][0]*dr3;
-//    }
-//  }
-//}
-//printf("OVL MO1 = %10.15f\n",ovlmo1);
+  rc = qmckl_mo_basis_rescale(context, 0.5);
+  assert (rc == QMCKL_SUCCESS);
 
 
-printf("\n");
-printf(" mo_vgl mo_vgl[0][26][219] %25.15e\n", mo_vgl[2][0][3]);
-printf(" mo_vgl mo_vgl[1][26][219] %25.15e\n", mo_vgl[2][1][3]);
-printf(" mo_vgl mo_vgl[0][26][220] %25.15e\n", mo_vgl[2][0][3]);
-printf(" mo_vgl mo_vgl[1][26][220] %25.15e\n", mo_vgl[2][1][3]);
-printf(" mo_vgl mo_vgl[0][26][221] %25.15e\n", mo_vgl[2][0][3]);
-printf(" mo_vgl mo_vgl[1][26][221] %25.15e\n", mo_vgl[2][1][3]);
-printf(" mo_vgl mo_vgl[0][26][222] %25.15e\n", mo_vgl[2][0][3]);
-printf(" mo_vgl mo_vgl[1][26][222] %25.15e\n", mo_vgl[2][1][3]);
-printf(" mo_vgl mo_vgl[0][26][223] %25.15e\n", mo_vgl[2][0][3]);
-printf(" mo_vgl mo_vgl[1][26][223] %25.15e\n", mo_vgl[2][1][3]);
-printf(" mo_vgl mo_vgl[0][26][224] %25.15e\n", mo_vgl[2][0][3]);
-printf(" mo_vgl mo_vgl[1][26][224] %25.15e\n", mo_vgl[2][1][3]);
-printf("\n");
+  printf("\n");
+  printf(" mo_vgl mo_vgl[0][26][219] %25.15e\n", mo_vgl[2][0][3]);
+  printf(" mo_vgl mo_vgl[1][26][219] %25.15e\n", mo_vgl[2][1][3]);
+  printf(" mo_vgl mo_vgl[0][26][220] %25.15e\n", mo_vgl[2][0][3]);
+  printf(" mo_vgl mo_vgl[1][26][220] %25.15e\n", mo_vgl[2][1][3]);
+  printf(" mo_vgl mo_vgl[0][26][221] %25.15e\n", mo_vgl[2][0][3]);
+  printf(" mo_vgl mo_vgl[1][26][221] %25.15e\n", mo_vgl[2][1][3]);
+  printf(" mo_vgl mo_vgl[0][26][222] %25.15e\n", mo_vgl[2][0][3]);
+  printf(" mo_vgl mo_vgl[1][26][222] %25.15e\n", mo_vgl[2][1][3]);
+  printf(" mo_vgl mo_vgl[0][26][223] %25.15e\n", mo_vgl[2][0][3]);
+  printf(" mo_vgl mo_vgl[1][26][223] %25.15e\n", mo_vgl[2][1][3]);
+  printf(" mo_vgl mo_vgl[0][26][224] %25.15e\n", mo_vgl[2][0][3]);
+  printf(" mo_vgl mo_vgl[1][26][224] %25.15e\n", mo_vgl[2][1][3]);
+  printf("\n");
+
+  /* Check single precision */
+  rc = qmckl_set_numprec_precision(context,23);
+  rc = qmckl_context_touch(context);
+  assert (rc == QMCKL_SUCCESS);
+
+  rc = qmckl_get_mo_basis_mo_value(context, &(mo_value[0][0]), point_num*chbrclf_mo_num);
+  assert (rc == QMCKL_SUCCESS);
+
+  rc = qmckl_get_mo_basis_mo_vgl(context, &(mo_vgl[0][0][0]), point_num*5*chbrclf_mo_num);
+  assert (rc == QMCKL_SUCCESS);
+
+  rc = qmckl_set_numprec_precision(context,24);
+  rc = qmckl_context_touch(context);
+  assert (rc == QMCKL_SUCCESS);
+
+  double mo_value_sp[point_num][chbrclf_mo_num];
+  rc = qmckl_get_mo_basis_mo_value(context, &(mo_value_sp[0][0]), point_num*chbrclf_mo_num);
+  assert (rc == QMCKL_SUCCESS);
+
+  double mo_vgl_sp[point_num][5][chbrclf_mo_num];
+  rc = qmckl_get_mo_basis_mo_vgl(context, &(mo_vgl_sp[0][0][0]), point_num*5*chbrclf_mo_num);
+  assert (rc == QMCKL_SUCCESS);
 
 
-/* Check selection of MOs */
+  for (int i=0 ; i< point_num; ++i) {
+    for (int k=0 ; k< chbrclf_mo_num ; ++k) {
+      printf("%d %d %e %e\n", i, k, mo_value_sp[i][k], mo_value[i][k]);
+      assert(fabs((mo_value_sp[i][k] - mo_value[i][k])) < 1.e-4) ;
+    }
+    printf("\n");
+  }
 
- int32_t keep[mo_num];
- for (int i=0 ; i<mo_num ; ++i) {
-   keep[i] = 0;
- }
- keep[2] = 1;
- keep[5] = 1;
+  for (int i=0 ; i< point_num; ++i) {
+    for (int k=0 ; k< chbrclf_mo_num ; ++k) {
+      printf("%d %d\n", i, k);
+      printf("%e %e\n", mo_vgl_sp[i][0][k], mo_vgl[i][0][k]);
+      printf("%e %e\n", mo_vgl_sp[i][1][k], mo_vgl[i][1][k]);
+      printf("%e %e\n", mo_vgl_sp[i][2][k], mo_vgl[i][2][k]);
+      printf("%e %e\n", mo_vgl_sp[i][3][k], mo_vgl[i][3][k]);
+      printf("%e %e\n", mo_vgl_sp[i][4][k], mo_vgl[i][4][k]);
+      assert(fabs((mo_vgl_sp[i][0][k] - mo_vgl[i][0][k])) < 1.e-4) ;
+      assert(fabs((mo_vgl_sp[i][1][k] - mo_vgl[i][1][k])) < 1.e-3) ;
+      assert(fabs((mo_vgl_sp[i][2][k] - mo_vgl[i][2][k])) < 1.e-3) ;
+      assert(fabs((mo_vgl_sp[i][3][k] - mo_vgl[i][3][k])) < 1.e-3) ;
+      assert(fabs((mo_vgl_sp[i][4][k] - mo_vgl[i][4][k])) < 1.e-2) ;
+      printf("\n");
+    }
+  }
+  rc = qmckl_set_numprec_precision(context,53);
 
- rc = qmckl_mo_basis_select_mo(context, &(keep[0]), mo_num);
- assert (rc == QMCKL_SUCCESS);
 
- rc = qmckl_get_mo_basis_mo_num(context, &mo_num);
- printf(" mo_num: %ld\n", (long) mo_num);
- assert(mo_num == 2);
+  /* Check selection of MOs */
 
- double mo_coefficient_new[mo_num][ao_num];
- rc = qmckl_get_mo_basis_coefficient (context, &(mo_coefficient_new[0][0]), mo_num*ao_num);
- for (int i=0 ; i<ao_num ; ++i) {
+  int32_t keep[mo_num];
+  for (int i=0 ; i<mo_num ; ++i) {
+    keep[i] = 0;
+  }
+  keep[2] = 1;
+  keep[5] = 1;
+
+  rc = qmckl_mo_basis_select_mo(context, &(keep[0]), mo_num);
+  assert (rc == QMCKL_SUCCESS);
+
+  rc = qmckl_get_mo_basis_mo_num(context, &mo_num);
+  printf(" mo_num: %ld\n", (long) mo_num);
+  assert(mo_num == 2);
+
+  double mo_coefficient_new[mo_num][ao_num];
+  rc = qmckl_get_mo_basis_coefficient (context, &(mo_coefficient_new[0][0]), mo_num*ao_num);
+  for (int i=0 ; i<ao_num ; ++i) {
     assert(mo_coefficient_new[0][i] == mo_coefficient[i + ao_num*2]);
     assert(mo_coefficient_new[1][i] == mo_coefficient[i + ao_num*5]);
- }
+  }
 
 
 }
