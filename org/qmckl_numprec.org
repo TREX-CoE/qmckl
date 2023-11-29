@@ -329,23 +329,28 @@ int qmckl_get_numprec_range(const qmckl_context context) {
 
 * Helper functions
 
-  ~qmckl_get_numprec_epsilon~ returns $\epsilon = 2^{1-n}$ where ~n~ is the precision.
-  We need to remove the sign bit from the precision.
+** Epsilon
+   
+   ~qmckl_get_numprec_epsilon~ returns $\epsilon = 2^{1-n}$ where ~n~ is the precision.
+   We need to remove the sign bit from the precision.
 
-  #+begin_src c :comments org :tangle (eval h_func) :exports none
+   #+begin_src c :comments org :tangle (eval h_func) :exports none
 double qmckl_get_numprec_epsilon(const qmckl_context context);
-  #+end_src
+   #+end_src
 
-  # Source
-  #+begin_src c :tangle (eval c)
+   # Source
+   #+begin_src c :tangle (eval c)
 double qmckl_get_numprec_epsilon(const qmckl_context context) {
-  const int precision = qmckl_get_numprec_precision(context);
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT)
+    return QMCKL_INVALID_CONTEXT;
+  const qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  const int precision = ctx->numprec.precision;
   return 1. /  (double) ( ((uint64_t) 1) << (precision-2));
 }
-  #+end_src
+   #+end_src
 
-  # Fortran interface
-  #+begin_src f90 :tangle (eval fh_func) :exports none
+   # Fortran interface
+   #+begin_src f90 :tangle (eval fh_func) :exports none
   interface
      real (c_double) function qmckl_get_numprec_epsilon(context) bind(C)
        use, intrinsic :: iso_c_binding
@@ -353,8 +358,90 @@ double qmckl_get_numprec_epsilon(const qmckl_context context) {
        integer (qmckl_context), intent(in), value :: context
      end function qmckl_get_numprec_epsilon
   end interface
-  #+end_src
+   #+end_src
 
+** Testing the number of unchanged bits
+
+   To test that a given approximation keeps a given number of bits
+   unchanged, we need a function that returns the number of unchanged
+   bits in the range, and in the precision.
+
+   #+begin_src c :comments org :tangle (eval h_func) :exports none
+int32_t qmckl_test_precision_64(double a, double b);
+int32_t qmckl_test_precision_32(float a, float b);
+   #+end_src
+
+   #+begin_src c :tangle (eval c)
+int32_t qmckl_test_precision_64(double a, double b) {
+
+  union int_or_float {
+    int64_t i;
+    double f;
+  } x, y;
+
+  x.f = a;
+  y.f = b;
+
+  uint64_t diff = x.i > y.i ? x.i - y.i : y.i - x.i;
+
+  if (diff == 0) return 64;
+
+  int32_t result = 0;
+
+  while (!(diff & 1)) {
+    diff >>= 1;
+    result++;
+  }
+
+  return result;
+}
+   #+end_src
+
+
+   #+begin_src c :tangle (eval c)
+int32_t qmckl_test_precision_32(float a, float b) {
+
+  union int_or_float {
+    int32_t i;
+    float   f;
+  } x, y;
+
+  x.f = a;
+  y.f = b;
+
+  uint32_t diff = x.i > y.i ? x.i - y.i : y.i - x.i;
+
+  if (diff == 0) return 32;
+
+  int32_t result = 0;
+
+  while (!(diff & 1)) {
+    diff >>= 1;
+    result++;
+  }
+
+  return result;
+}
+   #+end_src
+
+   #+begin_src f90 :tangle (eval fh_func) :exports none
+  interface
+     integer (c_int) function qmckl_test_precision_32(a,b) bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       real (c_float), intent(in), value :: a, b
+     end function qmckl_test_precision_32
+  end interface
+
+  interface
+     integer (c_int) function qmckl_test_precision_64(a,b) bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       real (c_double), intent(in), value :: a, b
+     end function qmckl_test_precision_64
+  end interface
+   #+end_src
+   
 * Approximate functions
   
 ** Exponential
