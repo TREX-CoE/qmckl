@@ -1,4 +1,4 @@
-#+TITLE: Numerical precision
+3+TITLE: Numerical precision
 #+SETUPFILE: ../tools/theme.setup
 #+INCLUDE: ../tools/lib.org
 
@@ -330,7 +330,7 @@ int qmckl_get_numprec_range(const qmckl_context context) {
 * Helper functions
 
 ** Epsilon
-   
+
    ~qmckl_get_numprec_epsilon~ returns $\epsilon = 2^{1-n}$ where ~n~ is the precision.
    We need to remove the sign bit from the precision.
 
@@ -366,13 +366,11 @@ double qmckl_get_numprec_epsilon(const qmckl_context context) {
    unchanged, we need a function that returns the number of unchanged
    bits in the range, and in the precision.
 
-   #+begin_src c :comments org :tangle (eval h_func) :exports none
-int32_t qmckl_test_precision_64(double a, double b);
-int32_t qmckl_test_precision_32(float a, float b);
-   #+end_src
+   For this, we first count by how many units in the last place (ulps) two
+   numbers differ.
 
    #+begin_src c :tangle (eval c)
-int32_t qmckl_test_precision_64(double a, double b) {
+int64_t countUlpDifference_64(double a, double b) {
 
   union int_or_float {
     int64_t i;
@@ -382,15 +380,38 @@ int32_t qmckl_test_precision_64(double a, double b) {
   x.f = a;
   y.f = b;
 
-  uint64_t diff = x.i > y.i ? x.i - y.i : y.i - x.i;
+  // Handle sign bit discontinuity: if the signs are different and either value is not zero
+  if ((x.i < 0) != (y.i < 0) && (x.f != 0.0) && (y.f != 0.0)) {
+    // Use the absolute values and add the distance to zero for both numbers
+    int64_t distanceToZeroForX = x.i < 0 ? INT64_MAX + x.i : INT64_MAX - x.i;
+    int64_t distanceToZeroForY = y.i < 0 ? INT64_MAX + y.i : INT64_MAX - y.i;
+    return distanceToZeroForX + distanceToZeroForY;
+  }
 
-  if (diff == 0) return 64;
+  // Calculate the difference in their binary representations
+  int64_t result = x.i - y.i;
+  result = result > 0 ? result : -result;
+  return result;
+}
+   #+end_src
 
-  int32_t result = 0;
+   #+begin_src c :comments org :tangle (eval h_func) :exports none
+int32_t qmckl_test_precision_64(double a, double b);
+int32_t qmckl_test_precision_32(float a, float b);
+   #+end_src
 
-  while (!(diff & 1)) {
+   #+begin_src c :tangle (eval c)
+int32_t qmckl_test_precision_64(double a, double b) {
+
+  int64_t diff = countUlpDifference_64(a,b);
+
+  if (diff == 0) return 53;
+
+  int32_t result = 53;
+
+  for (int i=0 ; i<53 && diff != 0 ; ++i) {
     diff >>= 1;
-    result++;
+    result--;
   }
 
   return result;
@@ -400,27 +421,7 @@ int32_t qmckl_test_precision_64(double a, double b) {
 
    #+begin_src c :tangle (eval c)
 int32_t qmckl_test_precision_32(float a, float b) {
-
-  union int_or_float {
-    int32_t i;
-    float   f;
-  } x, y;
-
-  x.f = a;
-  y.f = b;
-
-  uint32_t diff = x.i > y.i ? x.i - y.i : y.i - x.i;
-
-  if (diff == 0) return 32;
-
-  int32_t result = 0;
-
-  while (!(diff & 1)) {
-    diff >>= 1;
-    result++;
-  }
-
-  return result;
+  return qmckl_test_precision_64( (double) a, (double) b );
 }
    #+end_src
 
@@ -441,9 +442,9 @@ int32_t qmckl_test_precision_32(float a, float b) {
      end function qmckl_test_precision_64
   end interface
    #+end_src
-   
+
 * Approximate functions
-  
+
 ** Exponential
 
    Fast exponential function, adapted from Johan Rade's implementation
@@ -453,19 +454,19 @@ int32_t qmckl_test_precision_32(float a, float b) {
         N. Schraudolph, "A Fast, Compact Approximation of the Exponential Function",
         /Neural Computation/ *11*, 853–862 (1999).
         (available at https://nic.schraudolph.org/pubs/Schraudolph99.pdf)
-   
+
    #+begin_src c :tangle (eval c)
 float fastExpf(float x)
 {
   const float a = 12102203.0;
   const float b = 1064986816.0;
   x = a * x + b;
-  
+
   const float c = 8388608.0;
   const float d = 2139095040.0;
   if (x < c || x > d)
     x = (x < c) ? 0.0f : d;
-  
+
   uint32_t n = (uint32_t) x;
   memcpy(&x, &n, 4);
   return x;
@@ -482,7 +483,7 @@ double fastExp(double x)
   const double d = 9218868437227405312.0;
   if (x < c || x > d)
     x = (x < c) ? 0.0 : d;
-  
+
   uint64_t n = (uint64_t) x;
   memcpy(&x, &n, 8);
   return x;
