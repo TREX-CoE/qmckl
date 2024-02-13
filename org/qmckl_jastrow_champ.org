@@ -2481,8 +2481,12 @@ qmckl_compute_jastrow_champ_factor_ee_hpc (const qmckl_context context,
   const int64_t dn_num = elec_num - up_num;
   const double fshift = 0.5 * (double) ((dn_num-1)*dn_num + (up_num-1)*up_num) * asymp_jasb[0] +
     (float) (up_num*dn_num) * asymp_jasb[1];
+
+#ifdef HAVE_OPENMP
+  #pragma omp parallel
+#endif
   for (int nw = 0; nw < walk_num; ++nw) {
-    factor_ee[nw] = 0.;
+    double result = 0.;
 
     size_t ishift = nw * elec_num * elec_num;
 
@@ -2491,7 +2495,7 @@ qmckl_compute_jastrow_champ_factor_ee_hpc (const qmckl_context context,
       for (int j = 0; j < elec_num; ++j ) {
         const double* xj = &(ee_distance_rescaled[j * elec_num + ishift]);
         for (int i = 0; i < j ; ++i) {
-          factor_ee[nw] = factor_ee[nw] + b_vector[0]*xj[i] / (1. + b_vector[1]*xj[i]);
+          result = result + b_vector[0]*xj[i] / (1. + b_vector[1]*xj[i]);
         }
       }
 
@@ -2500,23 +2504,23 @@ qmckl_compute_jastrow_champ_factor_ee_hpc (const qmckl_context context,
       for (int j = 0; j < up_num; ++j ) {
         const double* xj = &(ee_distance_rescaled[j * elec_num + ishift]);
         for (int i = 0; i < j ; ++i) {
-          factor_ee[nw] = factor_ee[nw] + 0.5 * b_vector[0]*xj[i] / (1. + b_vector[1]*xj[i]);
+          result = result + 0.5 * b_vector[0]*xj[i] / (1. + b_vector[1]*xj[i]);
         }
       }
 
       for (int j = up_num ; j < elec_num; ++j ) {
         const double* xj = &(ee_distance_rescaled[j * elec_num + ishift]);
         for (int i = 0; i < up_num; ++i) {
-          factor_ee[nw] = factor_ee[nw] + b_vector[0]*xj[i] / (1. + b_vector[1]*xj[i]);
+          result = result + b_vector[0]*xj[i] / (1. + b_vector[1]*xj[i]);
         }
         for (int i = up_num ; i < j ; ++i) {
-          factor_ee[nw] = factor_ee[nw] + 0.5 * b_vector[0]*xj[i] / (1. + b_vector[1]*xj[i]);
+          result = result + 0.5 * b_vector[0]*xj[i] / (1. + b_vector[1]*xj[i]);
         }
 
       }
     }
 
-    factor_ee[nw] = factor_ee[nw] - fshift;
+    result = result - fshift;
 
     for (int j=0; j < elec_num; ++j ) {
       const double* xj = &(ee_distance_rescaled[j * elec_num + ishift]);
@@ -2525,11 +2529,12 @@ qmckl_compute_jastrow_champ_factor_ee_hpc (const qmckl_context context,
         double xk = x;
         for (int k = 2; k <= bord_num; ++k) {
           xk *= x;
-          factor_ee[nw] = factor_ee[nw] + b_vector[k] * xk;
+          result = result + b_vector[k] * xk;
         }
 
       }
     }
+    factor_ee[nw] = result;
   }
 
   return QMCKL_SUCCESS;
@@ -2958,8 +2963,11 @@ qmckl_compute_jastrow_champ_factor_ee_gl_hpc(const qmckl_context context,
     kf[k] = (double) k;
   }
 
+#ifdef HAVE_OPENMP
 #pragma omp parallel for
+#endif
   for (int nw = 0; nw < walk_num; ++nw) {
+    double xk[bord_num+1];
     memset(&(factor_ee_gl[nw*4*elec_num]), 0, elec_num*4*sizeof(double));
 
     for (int j = 0; j < elec_num; ++j) {
@@ -2998,7 +3006,6 @@ qmckl_compute_jastrow_champ_factor_ee_gl_hpc(const qmckl_context context,
         factor_ee_gl_3[i] = factor_ee_gl_3[i] - f*grad_c2*invdenom*2.0 * b_vector[1];
 
 
-        double xk[bord_num+1];  // Nvidia C 23.1-0 compiler crashes here (skylake avx512) nvc nvfoftran --enable-hpc
         xk[0] = 1.0;
         for (int k=1 ; k<= bord_num ; ++k) {
           xk[k] = xk[k-1]*x;
@@ -3471,8 +3478,10 @@ qmckl_exit_code qmckl_compute_ee_distance_rescaled_hpc (
 
 
   qmckl_exit_code result = QMCKL_SUCCESS;
+#ifdef HAVE_OPENMP
   #pragma omp parallel
   {
+#endif
     qmckl_exit_code rc = QMCKL_SUCCESS;
     #pragma omp for
     for (int64_t k=0 ; k<walk_num ; ++k)
@@ -3483,7 +3492,9 @@ qmckl_exit_code qmckl_compute_ee_distance_rescaled_hpc (
     }
     #pragma omp critical
     result |= rc;
+#ifdef HAVE_OPENMP
   }
+#endif
   return result;
 }
      #+end_src
@@ -6152,8 +6163,6 @@ qmckl_exit_code qmckl_compute_een_rescaled_e_hpc (
   // Prepare table of exponentiated distances raised to appropriate power
   // init
 
-  memset(een_rescaled_e,0,walk_num*(cord_num+1)*elec_num*elec_num*sizeof(double));
-
   const size_t elec_pairs = (size_t) (elec_num * (elec_num - 1)) / 2;
   const size_t len_een_ij = (size_t) elec_pairs * (cord_num + 1);
 
@@ -6168,7 +6177,9 @@ qmckl_exit_code qmckl_compute_een_rescaled_e_hpc (
 #endif
   for (size_t nw = 0; nw < (size_t) walk_num; ++nw) {
 
-    double* een_rescaled_e_ij = malloc(len_een_ij*sizeof(double));
+    memset(&een_rescaled_e[nw*(cord_num+1)*elec_num*elec_num],0,(cord_num+1)*elec_num*elec_num*sizeof(double));
+
+    double* restrict een_rescaled_e_ij = malloc(len_een_ij*sizeof(double));
 
     memset(&(een_rescaled_e_ij[0]),0,len_een_ij*sizeof(double));
     for (size_t kk = 0; kk < elec_pairs ; ++kk) {
@@ -6177,11 +6188,14 @@ qmckl_exit_code qmckl_compute_een_rescaled_e_hpc (
 
     size_t kk = 0;
     for (size_t i = 0; i < (size_t) elec_num; ++i) {
+      double* restrict ee1 = &een_rescaled_e_ij[kk + elec_pairs];
+      const double* restrict ee2 = &ee_distance[i*elec_num + nw*e2];
 #ifdef HAVE_OPENMP
 #pragma omp simd
 #endif
       for (size_t j = 0; j < i; ++j) {
-        een_rescaled_e_ij[j + kk + elec_pairs] = -rescale_factor_ee * ee_distance[j + i*elec_num + nw*e2];
+//        een_rescaled_e_ij[j + kk + elec_pairs] = -rescale_factor_ee * ee_distance[j + i*elec_num + nw*e2];
+        ee1[j] = -rescale_factor_ee * ee2[j];
       }
       kk += i;
     }
@@ -6194,18 +6208,20 @@ qmckl_exit_code qmckl_compute_een_rescaled_e_hpc (
     }
 
 
+    const double* const ee3 = &een_rescaled_e_ij[elec_pairs];
     for (size_t l = 2; l < (size_t) (cord_num+1); ++l) {
-#ifdef HAVE_OPENMP
-#pragma omp simd
-#endif
+      double* restrict ee1 = &een_rescaled_e_ij[l*elec_pairs];
+      const double* restrict ee2 = &een_rescaled_e_ij[(l-1)*elec_pairs];
       for (size_t k = 0; k < elec_pairs; ++k) {
         // een_rescaled_e_ij(k, l + 1) = een_rescaled_e_ij(k, l + 1 - 1) * een_rescaled_e_ij(k, 2)
-        een_rescaled_e_ij[k+l*elec_pairs] = een_rescaled_e_ij[k + (l - 1)*elec_pairs] * \
-          een_rescaled_e_ij[k + elec_pairs];
+
+        // een_rescaled_e_ij[k+l*elec_pairs] = een_rescaled_e_ij[k + (l - 1)*elec_pairs] * 
+        //  een_rescaled_e_ij[k + elec_pairs];
+        ee1[k] = ee2[k] * ee3[k];
       }
     }
 
-    double* const een_rescaled_e_ = &(een_rescaled_e[nw*(cord_num+1)*e2]);
+    double* restrict const een_rescaled_e_ = &(een_rescaled_e[nw*(cord_num+1)*e2]);
     // prepare the actual een table
 #ifdef HAVE_OPENMP
 #pragma omp simd
@@ -10146,17 +10162,25 @@ qmckl_compute_jastrow_champ_factor_een_gl_hpc(const qmckl_context context,
   if (nucl_num <= 0)                 return QMCKL_INVALID_ARG_4;
   if (cord_num <  0)                 return QMCKL_INVALID_ARG_5;
 
-  memset(factor_een_gl, 0, elec_num*4*walk_num*sizeof(double));
 
-  if (cord_num == 0) return QMCKL_SUCCESS;
+  if (cord_num == 0) {
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
+    for (size_t nw = 0; nw < (size_t) walk_num; ++nw) {
+      memset(&factor_een_gl[elec_num*4*nw], 0, elec_num*4*sizeof(double));
+    }
+    return QMCKL_SUCCESS;
+  }
 
   const size_t elec_num2 = elec_num << 1;
   const size_t elec_num3 = elec_num * 3;
 
 #ifdef HAVE_OPENMP
-#pragma omp parallel for schedule(dynamic)
+#pragma omp parallel for
 #endif
   for (size_t nw = 0; nw < (size_t) walk_num; ++nw) {
+    memset(&factor_een_gl[elec_num*4*nw], 0, elec_num*4*sizeof(double));
     double* const restrict factor_een_gl_0nw = &(factor_een_gl[elec_num*4*nw]);
     for (size_t n = 0; n < (size_t) dim_c_vector; ++n) {
       const size_t l = lkpm_combined_index[n];
@@ -10213,46 +10237,48 @@ qmckl_compute_jastrow_champ_factor_een_gl_hpc(const qmckl_context context,
 
         double tmp3[elec_num];
 
+#ifdef HAVE_OPENMP
+#pragma omp simd
+#endif
         for (size_t j = 0; j < (size_t) elec_num; ++j) {
-          factor_een_gl_0nw[j] = factor_een_gl_0nw[j] + cn *
-            (tmp_c_amkn[j] * een_rescaled_n_gl_0amlnw[j] +
-             dtmp_c_0amknw[j] * een_rescaled_n_amlnw[j]       +
-             dtmp_c_0amlknw[j] * een_rescaled_n_amnw[j]       +
-             tmp_c_amlkn[j] * een_rescaled_n_gl_0amnw[j]);
+
+          const double v1 =
+             tmp_c_amkn[j] * een_rescaled_n_gl_0amlnw[j] +
+             dtmp_c_0amknw[j] * een_rescaled_n_amlnw[j]  +
+             dtmp_c_0amlknw[j] * een_rescaled_n_amnw[j]  +
+             tmp_c_amlkn[j] * een_rescaled_n_gl_0amnw[j];
+
+          const double v2 =
+             tmp_c_amkn[j] * een_rescaled_n_gl_1amlnw[j] +
+             dtmp_c_1amknw[j] * een_rescaled_n_amlnw[j]  +
+             dtmp_c_1amlknw[j] * een_rescaled_n_amnw[j]  +
+             tmp_c_amlkn[j] * een_rescaled_n_gl_1amnw[j];
+
+          const double v3 =
+             tmp_c_amkn[j] * een_rescaled_n_gl_2amlnw[j] +
+             dtmp_c_2amknw[j] * een_rescaled_n_amlnw[j]  +
+             dtmp_c_2amlknw[j] * een_rescaled_n_amnw[j]  +
+             tmp_c_amlkn[j] * een_rescaled_n_gl_2amnw[j];
+
           tmp3[j] =
             dtmp_c_0amknw[j]  * een_rescaled_n_gl_0amlnw[j] +
-            dtmp_c_0amlknw[j]  * een_rescaled_n_gl_0amnw[j];
-          }
-
-        for (size_t j = 0; j < (size_t) elec_num; ++j) {
-          factor_een_gl_1nw[j] = factor_een_gl_1nw[j] + cn *
-            (tmp_c_amkn[j] * een_rescaled_n_gl_1amlnw[j] +
-             dtmp_c_1amknw[j] * een_rescaled_n_amlnw[j]       +
-             dtmp_c_1amlknw[j] * een_rescaled_n_amnw[j]       +
-             tmp_c_amlkn[j] * een_rescaled_n_gl_1amnw[j]);
-          tmp3[j] = tmp3[j] +
+            dtmp_c_0amlknw[j] * een_rescaled_n_gl_0amnw[j]  +
             dtmp_c_1amknw[j]  * een_rescaled_n_gl_1amlnw[j] +
-            dtmp_c_1amlknw[j]  * een_rescaled_n_gl_1amnw[j];
-        }
-
-        for (size_t j = 0; j < (size_t) elec_num; ++j) {
-          factor_een_gl_2nw[j] = factor_een_gl_2nw[j] + cn *
-            (tmp_c_amkn[j] * een_rescaled_n_gl_2amlnw[j] +
-             dtmp_c_2amknw[j] * een_rescaled_n_amlnw[j]       +
-             dtmp_c_2amlknw[j] * een_rescaled_n_amnw[j]       +
-             tmp_c_amlkn[j] * een_rescaled_n_gl_2amnw[j]);
-          tmp3[j] = tmp3[j] +
+            dtmp_c_1amlknw[j] * een_rescaled_n_gl_1amnw[j]  +
             dtmp_c_2amknw[j]  * een_rescaled_n_gl_2amlnw[j] +
-            dtmp_c_2amlknw[j]  * een_rescaled_n_gl_2amnw[j];
-        }
+            dtmp_c_2amlknw[j] * een_rescaled_n_gl_2amnw[j];
 
-        for (size_t j = 0; j < (size_t) elec_num; ++j) {
-          factor_een_gl_3nw[j] = factor_een_gl_3nw[j] + cn *
-            (tmp_c_amkn[j] * een_rescaled_n_gl_3amlnw[j] +
-             dtmp_c_3amknw[j] * een_rescaled_n_amlnw[j]       +
-             dtmp_c_3amlknw[j] * een_rescaled_n_amnw[j]       +
+          const double v4 =
+             tmp_c_amkn[j] * een_rescaled_n_gl_3amlnw[j] +
+             dtmp_c_3amknw[j] * een_rescaled_n_amlnw[j]  +
+             dtmp_c_3amlknw[j] * een_rescaled_n_amnw[j]  +
              tmp_c_amlkn[j] * een_rescaled_n_gl_3amnw[j] +
-             tmp3[j]*2.0);
+             tmp3[j]*2.0;
+
+          factor_een_gl_0nw[j] = factor_een_gl_0nw[j] + cn * v1;
+          factor_een_gl_1nw[j] = factor_een_gl_1nw[j] + cn * v2;
+          factor_een_gl_2nw[j] = factor_een_gl_2nw[j] + cn * v3;
+          factor_een_gl_3nw[j] = factor_een_gl_3nw[j] + cn * v4;
         }
 
       }
