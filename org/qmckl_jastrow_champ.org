@@ -4485,7 +4485,9 @@ qmckl_exit_code qmckl_compute_jastrow_champ_factor_en_hpc (
   if (factor_en == NULL) return QMCKL_INVALID_ARG_11;
 
   const double de = (double) elec_num;
+#ifdef HAVE_OPENMP
   #pragma omp parallel for
+#endif
   for (int64_t nw=0 ; nw<walk_num ; ++nw) {
     factor_en[nw] = 0.;
     const double* en_distance_rescaled_ = &(en_distance_rescaled[nw*elec_num*nucl_num]);
@@ -4863,7 +4865,9 @@ qmckl_compute_jastrow_champ_factor_en_gl_hpc (const qmckl_context context,
     kf[k] = (double) k;
   }
 
+#ifdef HAVE_OPENMP
 #pragma omp parallel for
+#endif
   for (int64_t nw = 0; nw < walk_num; ++nw) {
     memset(&(factor_en_gl[nw*4*elec_num]), 0, elec_num*4*sizeof(double));
 
@@ -6579,7 +6583,6 @@ integer function qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl_f( &
   endif
 
   ! Prepare table of exponentiated distances raised to appropriate power
-!$OMP PARALLEL DO
   do nw = 1, walk_num
     een_rescaled_e_gl(:,:,:,:,nw) = 0.d0
     do j = 1, elec_num
@@ -6625,7 +6628,6 @@ integer function qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl_f( &
       end do
     end do
   end do
-!$OMP END PARALLEL DO
 
 end function qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl_f
      #+end_src
@@ -6650,7 +6652,7 @@ end function qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl_f
 
      #+RESULTS:
      #+begin_src f90 :tangle (eval f) :comments org :exports none
-    integer(c_int32_t) function qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl &
+    integer(c_int32_t) function qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl_doc &
         (context, &
          walk_num, &
          elec_num, &
@@ -6687,9 +6689,103 @@ end function qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl_f
          een_rescaled_e, &
          een_rescaled_e_gl)
 
-    end function qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl
+    end function qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl_doc
      #+end_src
 
+ #+begin_src c :comments org :tangle (eval c) :noweb yes
+qmckl_exit_code qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl_hpc (
+         const qmckl_context context,
+         const int64_t walk_num,
+         const int64_t elec_num,
+         const int64_t cord_num,
+         const double rescale_factor_ee,
+         const double* coord_ee,
+         const double* ee_distance,
+         const double* een_rescaled_e,
+         double* const een_rescaled_e_gl )
+{
+    if (context == QMCKL_NULL_CONTEXT) return QMCKL_INVALID_CONTEXT;
+    if (walk_num <= 0) return QMCKL_INVALID_ARG_2;
+    if (elec_num <= 0) return QMCKL_INVALID_ARG_3;
+    if (cord_num < 0) return QMCKL_INVALID_ARG_4;
+
+    double* restrict elec_dist_gl = (double*) calloc(elec_num * 4 * elec_num, sizeof(double));
+    assert (elec_dist_gl != NULL);
+
+    #pragma omp parallel for
+    for (int64_t nw = 0; nw < walk_num; ++nw) {
+        for (int64_t j = 0; j < elec_num; ++j) {
+            for (int64_t i = 0; i < j ; ++i) {
+              double rij_inv = 1.0 / ee_distance[i + j * elec_num + nw * elec_num * elec_num];
+              for (int64_t ii = 0; ii < 3; ++ii) {
+                elec_dist_gl[i + ii * elec_num + j * 4 * elec_num] =
+                  (coord_ee[i + ii * elec_num + nw * elec_num * 3] - coord_ee[j + ii * elec_num + nw * elec_num * 3]) * rij_inv;
+              }
+              elec_dist_gl[i + 3 * elec_num + j * 4 * elec_num] = 2.0 * rij_inv;
+            }
+            for (int64_t i = j+1; i < elec_num; ++i) {
+              double rij_inv = 1.0 / ee_distance[i + j * elec_num + nw * elec_num * elec_num];
+              for (int64_t ii = 0; ii < 3; ++ii) {
+                elec_dist_gl[i + ii * elec_num + j * 4 * elec_num] =
+                  (coord_ee[i + ii * elec_num + nw * elec_num * 3] - coord_ee[j + ii * elec_num + nw * elec_num * 3]) * rij_inv;
+              }
+              elec_dist_gl[i + 3 * elec_num + j * 4 * elec_num] = 2.0 * rij_inv;
+            }
+        }
+
+        for (int64_t l = 1; l <= cord_num; ++l) {
+            double kappa_l = - (double)l * rescale_factor_ee;
+            for (int64_t j = 0; j < elec_num; ++j) {
+              double* restrict eegl = &een_rescaled_e_gl[ elec_num * 4 * (j + elec_num * (l + (cord_num + 1) * nw))]; 
+              const double* restrict ee   = &een_rescaled_e   [ elec_num *     (j + elec_num * (l + (cord_num + 1) * nw))]; 
+              for (int64_t k = 0; k < 4; ++k) {
+                for (int64_t i = 0; i < elec_num; ++i) {
+                  eegl[i + elec_num * k] = kappa_l * elec_dist_gl[i + k * elec_num + j * 4 * elec_num];
+                }
+              }
+              for (int64_t i = 0; i < elec_num; ++i) {
+                eegl[i + elec_num*3] = eegl[i + elec_num*3] +
+                  eegl[i] * eegl[i] +
+                  eegl[i + elec_num*1] * eegl[i + elec_num*1] +
+                  eegl[i + elec_num*2] * eegl[i + elec_num*2];
+              }
+              for (int64_t i = 0; i < elec_num; ++i) {
+                  eegl[i               ] *= ee[i];
+                  eegl[i + elec_num * 1] *= ee[i];
+                  eegl[i + elec_num * 2] *= ee[i];
+                  eegl[i + elec_num * 3] *= ee[i];
+                }
+            }
+        }
+    }
+
+    free(elec_dist_gl);
+
+    return QMCKL_SUCCESS;
+}
+ #+end_src
+ 
+ #+begin_src c :comments org :tangle (eval c) :noweb yes
+qmckl_exit_code qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl (
+         const qmckl_context context,
+         const int64_t walk_num,
+         const int64_t elec_num,
+         const int64_t cord_num,
+         const double rescale_factor_ee,
+         const double* coord_ee,
+         const double* ee_distance,
+         const double* een_rescaled_e,
+         double* const een_rescaled_e_gl )
+{
+#ifdef HAVE_HPC
+  return qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl_hpc 
+#else
+  return qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl_doc
+#endif
+    (context, walk_num, elec_num, cord_num, rescale_factor_ee,
+    coord_ee, ee_distance, een_rescaled_e, een_rescaled_e_gl );
+}
+    #+end_src
 **** Test
  #+name: een_e_gl
      #+begin_src python :results output :exports none :noweb yes
