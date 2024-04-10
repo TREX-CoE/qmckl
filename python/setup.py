@@ -46,7 +46,7 @@ qmckl_module   =  Extension(name                 = "._" + MODULE_NAME,
 
 
 setup(name             = MODULE_NAME,
-      version          = "0.5.4",
+      version          = "1.0.0",
       author           = "TREX-CoE",
       author_email     = "posenitskiy@irsamc.ups-tlse.fr",
       description      = """Python API of the QMCkl library""",
