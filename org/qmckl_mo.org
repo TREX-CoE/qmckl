@@ -544,6 +544,10 @@ qmckl_set_mo_basis_r_cusp(qmckl_context context,
        const double Z = qmckl_vec(ctx->nucleus.charge,inucl);
        if (Z < 0.1) continue;  // Avoid dummy atoms
        const double R = r_cusp[inucl];
+       assert (R != 0.);
+       assert (fabs(2.*R*Z-6.) > 1.e-6);
+       assert (fabs(R*R*Z-3.*R) > 1.e-6);
+       assert (fabs(R*R*R*Z-3.*R*R) > 1.e-6);
        for (int64_t i=0 ; i<ctx->mo_basis.mo_num ; ++i) {
          const double phi        = qmckl_ten3(mo_vgl_at_r_cusp_s,i,0,inucl);
          const double grad_phi   = qmckl_ten3(mo_vgl_at_r_cusp_s,i,1,inucl);
@@ -551,16 +555,16 @@ qmckl_set_mo_basis_r_cusp(qmckl_context context,
          const double eta        = qmckl_mat(mo_value_at_nucl_no_s,i,inucl);
 
          qmckl_ten3(ctx->mo_basis.cusp_param,i,0,inucl) =
-           -(R*(2.*eta*Z-6.*grad_phi)+lap_phi*R*R+6.*phi)/(2.*R*Z-6.+1.e-12);
+           -(R*(2.*eta*Z-6.*grad_phi)+lap_phi*R*R+6.*phi)/(2.*R*Z-6.);
 
          qmckl_ten3(ctx->mo_basis.cusp_param,i,1,inucl) =
-           (lap_phi*R*R*Z-6.*grad_phi*R*Z+6.*phi*Z+6.*eta*Z)/(2.*R*Z-6.+1.e-12);
+           (lap_phi*R*R*Z-6.*grad_phi*R*Z+6.*phi*Z+6.*eta*Z)/(2.*R*Z-6.);
 
          qmckl_ten3(ctx->mo_basis.cusp_param,i,2,inucl) =
-           -(R*(-5.*grad_phi*Z-1.5*lap_phi)+lap_phi*R*R*Z+3.*phi*Z+3.*eta*Z+6.*grad_phi)/(R*R*Z-3.*R+1.e-12);
+           -(R*(-5.*grad_phi*Z-1.5*lap_phi)+lap_phi*R*R*Z+3.*phi*Z+3.*eta*Z+6.*grad_phi)/(R*R*Z-3.*R);
 
          qmckl_ten3(ctx->mo_basis.cusp_param,i,3,inucl) =
-           (R*(-2.*grad_phi*Z-lap_phi)+0.5*lap_phi*R*R*Z+phi*Z+eta*Z+3.*grad_phi)/(R*R*R*Z-3.*R*R+1.e-12);
+           (R*(-2.*grad_phi*Z-lap_phi)+0.5*lap_phi*R*R*Z+phi*Z+eta*Z+3.*grad_phi)/(R*R*R*Z-3.*R*R);
 
        }
      }
@@ -772,6 +776,7 @@ qmckl_mo_basis_select_mo (const qmckl_context context,
                           const int32_t* keep,
                           const int64_t size_max)
 {
+
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return qmckl_failwith( context,
                            QMCKL_INVALID_CONTEXT,
@@ -806,6 +811,15 @@ qmckl_mo_basis_select_mo (const qmckl_context context,
                            "Array too small: expected mo_num.");
   }
 
+/*
+  if (ctx->mo_basis.r_cusp != NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_ALREADY_SET,
+                           "qmckl_get_mo_basis_select_mo",
+                           "r_cusp is already set. Please set it only after selecting MOs.");
+  }
+*/
+
   int64_t mo_num_new = 0;
   for (int64_t i=0 ; i<mo_num ; ++i) {
     if (keep[i] != 0) ++mo_num_new;
@@ -829,15 +843,17 @@ qmckl_mo_basis_select_mo (const qmckl_context context,
   ctx->mo_basis.coefficient = coefficient;
   ctx->mo_basis.mo_num = mo_num_new;
 
+  rc = qmckl_finalize_mo_basis(context);
+
   if (ctx->mo_basis.r_cusp != NULL) {
-    double * r_cusp_old = calloc(ctx->nucleus.num, sizeof(double));
-    assert (r_cusp_old != NULL);
-    memcpy(r_cusp_old, ctx->mo_basis.r_cusp, ctx->nucleus.num*sizeof(double));
-    qmckl_set_mo_basis_r_cusp(context, r_cusp_old, ctx->nucleus.num);
-    free(r_cusp_old);
+    double * tmp = (double*) calloc (ctx->nucleus.num, sizeof(double));
+    assert(tmp != NULL);
+    memcpy(tmp, ctx->mo_basis.r_cusp, ctx->nucleus.num * sizeof(double));
+    rc = qmckl_set_mo_basis_r_cusp(context, tmp, 
+        mo_num_new * 4 * ctx->nucleus.num);
+    free(tmp);
   }
 
-  rc = qmckl_finalize_mo_basis(context);
   return rc;
 }
 
