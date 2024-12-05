@@ -108,6 +108,14 @@ typedef struct qmckl_jastrow_champ_single_struct{
     uint64_t       delta_p_gl_date;
     double*        delta_een_gl;
     uint64_t       delta_een_gl_date;
+    double*        ee_rescaled_single_gl;
+    uint64_t       ee_rescaled_single_gl_date;
+    double*        en_rescaled_single_gl;
+    uint64_t       en_rescaled_single_gl_date;
+    double*        delta_en_gl;
+    uint64_t       delta_en_gl_date;
+    double*        delta_ee_gl;
+    uint64_t       delta_ee_gl_date;
 
 } qmckl_jastrow_champ_single_struct;
     #+end_src
@@ -3054,8 +3062,8 @@ qmckl_exit_code qmckl_provide_een_rescaled_single_n_gl(qmckl_context context)
                                                      ctx->jastrow_champ.type_nucl_vector,
                                                      ctx->jastrow_champ.cord_num,
                                                      ctx->jastrow_champ.rescale_factor_en,
-                                                     ctx->electron.walker.point.coord.data,
                                                      ctx->single_point.coord.data,
+                                                     ctx->nucleus.coord.data,
                                                      ctx->single_point.single_en_distance,
                                                      ctx->single_point.een_rescaled_single_n,
                                                      ctx->single_point.een_rescaled_single_n_gl);
@@ -3374,7 +3382,7 @@ qmckl_exit_code qmckl_provide_een_rescaled_single_e_gl(qmckl_context context)
 }
      #+end_src
 
-**** Compute
+** Compute
      :PROPERTIES:
      :Name:     qmckl_compute_een_rescaled_single_e_gl
      :CRetType: qmckl_exit_code
@@ -3458,10 +3466,10 @@ integer function qmckl_compute_een_rescaled_single_e_gl_f( &
     do l = 1, cord_num
       kappa_l = - dble(l) * rescale_factor_ee
       do i = 1, elec_num
-          een_rescaled_single_e_gl(1, i, l, nw) = kappa_l * elec_dist_gl(1, j)
-          een_rescaled_single_e_gl(2, i, l, nw) = kappa_l * elec_dist_gl(2, j)
-          een_rescaled_single_e_gl(3, i, l, nw) = kappa_l * elec_dist_gl(3, j)
-          een_rescaled_single_e_gl(4, i, l, nw) = kappa_l * elec_dist_gl(4, j)
+          een_rescaled_single_e_gl(1, i, l, nw) = kappa_l * elec_dist_gl(1, i)
+          een_rescaled_single_e_gl(2, i, l, nw) = kappa_l * elec_dist_gl(2, i)
+          een_rescaled_single_e_gl(3, i, l, nw) = kappa_l * elec_dist_gl(3, i)
+          een_rescaled_single_e_gl(4, i, l, nw) = kappa_l * elec_dist_gl(4, i)
 
           een_rescaled_single_e_gl(4, i, l, nw) = een_rescaled_single_e_gl(4, i, l, nw)              &
                     + een_rescaled_single_e_gl(1, i, l, nw) * een_rescaled_single_e_gl(1, i, l, nw)  &
@@ -3650,7 +3658,7 @@ qmckl_exit_code qmckl_provide_jastrow_champ_delta_p_gl(qmckl_context context)
       ctx->single_point.delta_p_gl = delta_p_gl;
     }
 
-    rc = qmckl_compute_jastrow_champ_delta_p_gl_doc(context,
+    rc = qmckl_compute_jastrow_champ_delta_p_gl(context,
                                                 ctx->single_point.num,
                                                 ctx->electron.walker.num,
                                                 ctx->electron.num,
@@ -3725,8 +3733,11 @@ integer function qmckl_compute_jastrow_champ_delta_p_gl_doc_f( &
   double precision        :: delta_e_gl(4, elec_num, 0:cord_num, walk_num)
   double precision        :: delta_n_gl(4, nucl_num, 0:cord_num, walk_num)
 
-  double precision        :: delta_c(4, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
-  double precision        :: delta_c2(4,elec_num, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
+  double precision        :: delta_e_gl_2(elec_num, 0:cord_num, walk_num)
+  double precision        :: een_rescaled_e_gl_2(elec_num, elec_num, 0:cord_num, walk_num)
+
+  double precision        :: delta_c(nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
+  double precision        :: delta_c2(elec_num, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
 
   
 
@@ -3743,7 +3754,6 @@ integer function qmckl_compute_jastrow_champ_delta_p_gl_doc_f( &
   if (cord_num <  0)                 info = QMCKL_INVALID_ARG_6
   if (info /= QMCKL_SUCCESS)         return
 
-  print *, 'reached delta_p_gl'
 
   if (cord_num == 0) return
 
@@ -3751,46 +3761,53 @@ integer function qmckl_compute_jastrow_champ_delta_p_gl_doc_f( &
   delta_n_gl(:,:,:,:) = een_rescaled_delta_n_gl(:,:,:,:) - een_rescaled_n_gl(num, :, :, :, :)
   delta_e_gl(:, num, :, :) = 0.0d0
 
+
+
   ! First calculate delta p
   do nw=1, walk_num
   do i=0, cord_num-1 
-  info = qmckl_dgemm(context, 'T', 'N', 4, nucl_num * (cord_num+1), elec_num, 1.0d0,     &
-                     delta_e_gl(:,:,i,nw),4*elec_num,                     &
-                     een_rescaled_n(:,:,0,nw),elec_num,                     &
+  do k = 1, 4
+  delta_e_gl_2(:,:,:) = delta_e_gl(k, :,:,:)
+  een_rescaled_e_gl_2(:,:,:,:) = een_rescaled_e_gl(:,k, :,:,:)
+
+  info = qmckl_dgemm(context, 'T', 'N', 1, nucl_num * (cord_num+1), elec_num, 1.0d0,     &
+                     delta_e_gl_2(1,i,nw),elec_num,                     &
+                     een_rescaled_n(1,1,0,nw),elec_num,                     &
                      0.0d0,                                       &
-                     delta_c(:, :,:,i,nw),4)
+                     delta_c(1,0,i,nw),1)
 
-  info = qmckl_dgemm(context, 'N', 'N', 4*elec_num, nucl_num * (cord_num+1), 1, 1.0d0,     &
-                     delta_e_gl(:,:,i,nw),4*elec_num,                     &
-                     een_rescaled_n(num,:,:,nw),elec_num,                     &
+  info = qmckl_dgemm(context, 'N', 'N', elec_num, nucl_num * (cord_num+1), 1, 1.0d0,     &
+                     delta_e_gl_2(1,i,nw),elec_num,                     &
+                     een_rescaled_n(num,1,0,nw),elec_num,                     &
                      0.0d0,                                       &
-                     delta_c2(:,:,:,:,i,nw),4*elec_num)
+                     delta_c2(1,1,0,i,nw),elec_num)
 
-  delta_c2(:,num,:,:,i,nw) = delta_c2(:,num,:,:,i,nw) + delta_c(:,:,:,i,nw)        
-  delta_p_gl(:,:,:,:,i,nw) = delta_c2(:,:,:,:,i,nw)
+  delta_c2(num,:,:,i,nw) = delta_c2(num,:,:,i,nw) + delta_c(:,:,i,nw)        
+  delta_p_gl(k,:,:,:,i,nw) = delta_c2(:,:,:,i,nw)
 
-  info = qmckl_dgemm(context, 'N', 'T', 4*elec_num, nucl_num * (cord_num+1), 1, 1.0d0,     &
-                     een_rescaled_e_gl(num,:,:,i,nw),4*elec_num,                     &
-                     een_rescaled_delta_n(:,:,nw),nucl_num* (cord_num+1),                     &
+
+  info = qmckl_dgemm(context, 'N', 'T', elec_num, nucl_num * (cord_num+1), 1, 1.0d0,     &
+                     een_rescaled_e_gl_2(1,num,i,nw),elec_num,                     &
+                     een_rescaled_delta_n(1,0,nw),nucl_num* (cord_num+1),                     &
                      0.0d0,                                       &
-                     delta_c2(:,:,:,:,i,nw),4*elec_num)
+                     delta_c2(1,1,0,i,nw),elec_num)
 
 
-  delta_p_gl(:,:,:,:,i,nw) = delta_p_gl(:,:,:,:,i,nw) + delta_c2(:,:,:,:,i,nw)
 
-  info = qmckl_dgemm(context, 'N', 'T', 4*elec_num, nucl_num * (cord_num+1), 1, 1.0d0,     &
-                     een_rescaled_delta_e_gl(:,:,i,nw),4*elec_num,                     &
-                     een_rescaled_delta_n(:,:,nw),nucl_num* (cord_num+1),                     &
+  delta_p_gl(k,:,:,:,i,nw) = delta_p_gl(k,:,:,:,i,nw) + delta_c2(:,:,:,i,nw)
+
+  info = qmckl_dgemm(context, 'N', 'T', elec_num, nucl_num * (cord_num+1), 1, 1.0d0,     &
+                     delta_e_gl_2(1,i,nw),elec_num,                     &
+                     een_rescaled_delta_n(1,0,nw),nucl_num* (cord_num+1),                     &
                      0.0d0,                                       &
-                     delta_c2(:,:,:,:,i,nw),4*elec_num)
+                     delta_c2(1,1,0,i,nw),elec_num)
 
-  delta_p_gl(:,:,:,:,i,nw) = delta_p_gl(:,:,:,:,i,nw) + delta_c2(:,:,:,:,i,nw)
+  delta_p_gl(k,:,:,:,i,nw) = delta_p_gl(k,:,:,:,i,nw) + delta_c2(:,:,:,i,nw)
 
-
+ end do
   end do
   end do
 
- print *, 'after delta_p_gl'
 
 end function qmckl_compute_jastrow_champ_delta_p_gl_doc_f
      #+end_src
@@ -4152,22 +4169,18 @@ integer function qmckl_compute_jastrow_champ_factor_single_een_gl_doc_f( &
            if(cn == 0.d0) cycle
         do kk = 1, 4
         do i = 1, elec_num
-        delta_een_gl(kk,i,nw) = delta_een_gl(kk,i,nw) + (          &
-                      delta_p(i,a,m,k,nw)       * een_rescaled_n_gl(i,kk,a,m+l,nw) + &
-                      (delta_p_gl(kk,i, a,m,k,nw))   * een_rescaled_n(i,a,m+l,nw)          + &
-                      (delta_p_gl(kk,i,a,m+l,k,nw)) * een_rescaled_n(i,a,m  ,nw)          + &
-                      delta_p(i,a,m+l,k,nw)     * een_rescaled_n_gl(i,kk,a,m,nw)     &
+        delta_een_gl(kk,i,nw) = delta_een_gl(kk,i,nw) + ( &
+                      delta_p(i,a,m,k,nw) * een_rescaled_n_gl(i,kk,a,m+l,nw) + &
+                      (delta_p_gl(kk,i,a,m,k,nw)) * een_rescaled_n(i,a,m+l,nw) + &
+                      (delta_p_gl(kk,i,a,m+l,k,nw)) * een_rescaled_n(i,a,m,nw) + &
+                      delta_p(i,a,m+l,k,nw) * een_rescaled_n_gl(i,kk,a,m,nw)  &
                       ) * cn
         end do
-        delta_een_gl(kk,i,nw) = delta_een_gl(kk,i,nw) + ( &
-            tmp_c(num,a,m,k,nw)       * (een_rescaled_delta_n_gl(kk,a,m+l,nw) - een_rescaled_n_gl(num,kk,a,m+l,nw)) + &
-            delta_p(num,a,m,k,nw)       * (een_rescaled_delta_n_gl(kk,a,m+l,nw) - een_rescaled_n_gl(num,kk,a,m+l,nw)) + &
-            (dtmp_c(num,kk,a,m,k,nw))   * een_rescaled_delta_n(a,m+l,nw)          + &
-            (delta_p_gl(kk,num, a,m,k,nw))   * een_rescaled_delta_n(a,m+l,nw)          + &
-            (dtmp_c(num,kk,a,m+l,k,nw)) * een_rescaled_delta_n(a,m  ,nw)          + &
-            (delta_p_gl(kk,num,a,m+l,k,nw)) * een_rescaled_delta_n(a,m ,nw)          + &
-            tmp_c(num,a,m+l,k,nw)     * (een_rescaled_delta_n_gl(kk,a,m,nw) - een_rescaled_n_gl(num,kk,a,m,nw))  +  &
-            delta_p(num,a,m+l,k,nw)    *  (een_rescaled_delta_n_gl(kk,a,m,nw)    - een_rescaled_n_gl(num,kk,a,m,nw))   &
+        delta_een_gl(kk,num,nw) = delta_een_gl(kk,num,nw) + ( &
+            (tmp_c(num,a,m,k,nw) + delta_p(num,a,m,k,nw)) * (een_rescaled_delta_n_gl(kk,a,m+l,nw) - een_rescaled_n_gl(num,kk,a,m+l,nw)) + &
+            (dtmp_c(num,kk,a,m,k,nw) + delta_p_gl(kk,num, a,m,k,nw)) * een_rescaled_delta_n(a,m+l,nw) + &
+            (dtmp_c(num,kk,a,m+l,k,nw) + delta_p_gl(kk,num,a,m+l,k,nw)) * een_rescaled_delta_n(a,m  ,nw) + &
+            (tmp_c(num,a,m+l,k,nw) + delta_p(num,a,m+l,k,nw)) * (een_rescaled_delta_n_gl(kk,a,m,nw) - een_rescaled_n_gl(num,kk,a,m,nw)) &
         ) * cn
         end do
         end do
@@ -4323,6 +4336,1311 @@ qmckl_compute_jastrow_champ_factor_single_een_gl (const qmckl_context context,
 
    end function qmckl_compute_jastrow_champ_factor_single_een_gl_doc
    #+end_src
+
+* ee distance rescaled single point gl
+
+** Get
+
+     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
+qmckl_exit_code qmckl_get_ee_rescaled_single_gl(qmckl_context context, double* const distance_rescaled_gl);
+     #+end_src
+
+     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code qmckl_get_ee_rescaled_single_gl(qmckl_context context, double* const distance_rescaled_gl)
+{
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_exit_code rc;
+
+  rc = qmckl_provide_ee_rescaled_single_gl(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  size_t sze = 4 * ctx->electron.num  * ctx->electron.walker.num;
+  memcpy(distance_rescaled_gl, ctx->single_point.ee_rescaled_single_gl, sze * sizeof(double));
+
+  return QMCKL_SUCCESS;
+}
+     #+end_src
+
+** Provide                                                       :noexport:
+
+     #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_provide_ee_rescaled_single_gl(qmckl_context context);
+     #+end_src
+
+     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code qmckl_provide_ee_rescaled_single_gl(qmckl_context context)
+{
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  qmckl_exit_code rc = qmckl_provide_single_ee_distance(context);
+  if(rc != QMCKL_SUCCESS) return rc;
+
+
+  /* Compute if necessary */
+  if (ctx->single_point.date > ctx->single_point.ee_rescaled_single_gl_date) {
+
+    if (ctx->electron.walker.num > ctx->electron.walker_old.num) {
+      if (ctx->single_point.ee_rescaled_single_gl != NULL) {
+        rc = qmckl_free(context, ctx->single_point.ee_rescaled_single_gl);
+        if (rc != QMCKL_SUCCESS) {
+          return qmckl_failwith( context, rc,
+                                 "qmckl_provide_ee_rescaled_single_gl",
+                                 "Unable to free ctx->single_point.ee_rescaled_single_gl");
+        }
+        ctx->single_point.ee_rescaled_single_gl = NULL;
+      }
+    }
+
+    /* Allocate array */
+    if (ctx->single_point.ee_rescaled_single_gl == NULL) {
+
+      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+      mem_info.size = 4  * ctx->electron.num * ctx->electron.walker.num * sizeof(double);
+      double* ee_rescaled_single_gl = (double*) qmckl_malloc(context, mem_info);
+
+      if (ee_rescaled_single_gl == NULL) {
+        return qmckl_failwith( context,
+                               QMCKL_ALLOCATION_FAILED,
+                               "qmckl_provide_ee_rescaled_single_gl",
+                               NULL);
+      }
+      ctx->single_point.ee_rescaled_single_gl = ee_rescaled_single_gl;
+    }
+
+    qmckl_exit_code rc =
+      qmckl_compute_ee_rescaled_single_gl(context,
+                                ctx->single_point.num,
+                                ctx->electron.num,
+                                ctx->jastrow_champ.rescale_factor_ee,
+                                ctx->electron.walker.num,
+                                ctx->single_point.single_ee_distance,
+                                ctx->electron.walker.point.coord.data,
+                                ctx->single_point.coord.data,
+                                ctx->single_point.ee_rescaled_single_gl);
+    if (rc != QMCKL_SUCCESS) {
+      return rc;
+    }
+
+    ctx->single_point.ee_rescaled_single_gl_date = ctx->single_point.date;
+  }
+
+  return QMCKL_SUCCESS;
+}
+     #+end_src
+
+** Compute
+     :PROPERTIES:
+     :Name:     qmckl_compute_ee_rescaled_single_gl
+     :CRetType: qmckl_exit_code
+     :FRetType: qmckl_exit_code
+     :END:
+
+     #+NAME: qmckl_ee_rescaled_single_gl_args
+     | Variable                  | Type                                      | In/Out | Description                                     |
+     |---------------------------+-------------------------------------------+--------+-------------------------------------------------|
+     | ~context~                 | ~qmckl_context~                           | in     | Global state                                    |
+     | ~num~                | ~int64_t~                                 | in     | Number of electrons                             |
+     | ~elec_num~                | ~int64_t~                                 | in     | Number of electrons                             |
+     | ~rescale_factor_ee~       | ~double~                                  | in     | Factor to rescale ee distances                  |
+     | ~walk_num~                | ~int64_t~                                 | in     | Number of walkers                               |
+      | ~single_ee_distance~                   | ~double[elec_num][walk_num]~           | in     | Electron coordinates                            |
+     | ~elec_coord~                   | ~double[3][walk_num][elec_num]~           | in     | Electron coordinates                            |
+     | ~coord~                   | ~double[3]~           | in     | Electron coordinates                            |   
+     | ~ee_rescaled_single_gl~ | ~double[walk_num][elec_num][4]~ | out    | Electron-electron rescaled distance derivatives |
+
+     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+function qmckl_compute_ee_rescaled_single_gl_doc(context, num,  &
+     elec_num, rescale_factor_ee, walk_num, single_ee_distance, elec_coord, coord, ee_rescaled_single_gl) &
+     bind(C) result(info)
+  use qmckl
+  implicit none
+
+  integer(qmckl_context), intent(in), value :: context
+   integer (c_int64_t) , intent(in)  , value :: num
+  integer (c_int64_t) , intent(in)  , value :: elec_num
+  real    (c_double ) , intent(in)  , value :: rescale_factor_ee
+  integer (c_int64_t) , intent(in)  , value :: walk_num
+  real    (c_double ) , intent(in)          :: single_ee_distance(elec_num,walk_num)
+  real    (c_double ) , intent(in)          :: elec_coord(elec_num,walk_num,3)
+  real    (c_double ) , intent(in)          :: coord(3)
+  real    (c_double ) , intent(out)         :: ee_rescaled_single_gl(4,elec_num,walk_num)
+  integer(qmckl_exit_code)                  :: info
+
+  integer*8 :: nw, i, ii
+  double precision :: rij_inv, elel_dist_gl(4, elec_num), kappa_l
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (elec_num <= 0) then
+     info = QMCKL_INVALID_ARG_2
+     return
+  endif
+
+  if (walk_num <= 0) then
+     info = QMCKL_INVALID_ARG_3
+     return
+  endif
+
+
+  ee_rescaled_single_gl = 0.0d0
+  do nw = 1, walk_num
+
+     ! prepare the actual een table
+     do i = 1, elec_num
+        rij_inv = 1.0d0 / single_ee_distance(i, nw)
+        do ii = 1, 3
+          elel_dist_gl(ii, i) = (elec_coord(i,nw, ii) - coord(ii)) * rij_inv
+        end do
+        elel_dist_gl(4, i) = 2.0d0 * rij_inv
+     end do
+
+      do i = 1, elec_num
+        kappa_l = -1 * rescale_factor_ee
+        ee_rescaled_single_gl(1, i, nw) = elel_dist_gl(1, i)
+        ee_rescaled_single_gl(2, i, nw) = elel_dist_gl(2, i) 
+        ee_rescaled_single_gl(3, i, nw) = elel_dist_gl(3, i)
+        ee_rescaled_single_gl(4, i, nw) = elel_dist_gl(4, i) 
+
+        ee_rescaled_single_gl(4, i, nw) = ee_rescaled_single_gl(4, i, nw) &
+              + ee_rescaled_single_gl(1, i, nw) * ee_rescaled_single_gl(1, i, nw) * kappa_l &
+              + ee_rescaled_single_gl(2, i, nw) * ee_rescaled_single_gl(2, i, nw) * kappa_l &
+              + ee_rescaled_single_gl(3, i, nw) * ee_rescaled_single_gl(3, i, nw) * kappa_l
+
+        ee_rescaled_single_gl(1, i, nw) = ee_rescaled_single_gl(1, i, nw)  * dexp(kappa_l * single_ee_distance(i,nw)) 
+        ee_rescaled_single_gl(2, i, nw) = ee_rescaled_single_gl(2, i, nw)  * dexp(kappa_l * single_ee_distance(i,nw))  
+        ee_rescaled_single_gl(3, i, nw) = ee_rescaled_single_gl(3, i, nw)  * dexp(kappa_l * single_ee_distance(i,nw)) 
+        ee_rescaled_single_gl(4, i, nw) = ee_rescaled_single_gl(4, i, nw)  * dexp(kappa_l * single_ee_distance(i,nw)) 
+     end do
+
+     ee_rescaled_single_gl(1, num, nw) = 0.0d0
+     ee_rescaled_single_gl(2, num, nw) = 0.0d0
+     ee_rescaled_single_gl(3, num, nw) = 0.0d0
+     ee_rescaled_single_gl(4, num, nw) = 0.0d0
+  end do
+
+
+end function qmckl_compute_ee_rescaled_single_gl_doc
+     #+end_src
+
+     #+begin_src c :tangle (eval h_private_func) :comments org :exports none
+qmckl_exit_code qmckl_compute_ee_rescaled_single_gl_doc (
+          const qmckl_context context,
+          const int64_t num,
+          const int64_t elec_num,
+          const double rescale_factor_ee,
+          const int64_t walk_num,
+          const double* single_ee_distance,
+          const double* elec_coord,
+          const double* coord,
+          double* const ee_rescaled_single_gl );
+
+
+qmckl_exit_code qmckl_compute_ee_rescaled_single_gl (
+          const qmckl_context context,
+          const int64_t num,
+          const int64_t elec_num,
+          const double rescale_factor_ee,
+          const int64_t walk_num,
+          const double* single_ee_distance,
+          const double* elec_coord,
+          const double* coord,
+          double* const ee_rescaled_single_gl );
+     #+end_src
+
+
+     #+begin_src c :tangle (eval c) :comments org :exports none
+qmckl_exit_code qmckl_compute_ee_rescaled_single_gl (
+          const qmckl_context context,
+          const int64_t num,
+          const int64_t elec_num,
+          const double rescale_factor_ee,
+          const int64_t walk_num,
+          const double* single_ee_distance,
+          const double* elec_coord,
+          const double* coord,
+          double* const ee_rescaled_single_gl )
+{
+#ifdef HAVE_HPC
+  return qmckl_compute_ee_rescaled_single_gl_doc
+#else
+  return qmckl_compute_ee_rescaled_single_gl_doc
+#endif
+   (context, num, elec_num, rescale_factor_ee, walk_num, single_ee_distance, elec_coord, coord,
+   ee_rescaled_single_gl);
+}
+     #+end_src
+
+* en distance rescaled single point gl
+
+** Get
+
+     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
+qmckl_exit_code qmckl_get_en_rescaled_single_gl(qmckl_context context, double* distance_rescaled_gl);
+     #+end_src
+
+     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code qmckl_get_en_rescaled_single_gl(qmckl_context context, double* distance_rescaled_gl)
+{
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_exit_code rc;
+
+  rc = qmckl_provide_en_rescaled_single_gl(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  size_t sze = 4 * ctx->nucleus.num * ctx->electron.walker.num;
+  memcpy(distance_rescaled_gl, ctx->single_point.en_rescaled_single_gl, sze * sizeof(double));
+
+  return QMCKL_SUCCESS;
+}
+     #+end_src
+
+** Provide
+
+     #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_provide_en_rescaled_single_gl(qmckl_context context);
+     #+end_src
+
+     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code qmckl_provide_en_rescaled_single_gl(qmckl_context context)
+{
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  if (!(ctx->nucleus.provided)) {
+    return QMCKL_NOT_PROVIDED;
+  }
+
+  qmckl_exit_code rc = qmckl_provide_single_en_distance(context);
+  if(rc != QMCKL_SUCCESS) return rc;
+
+  /* Compute if necessary */
+  if (ctx->single_point.date > ctx->single_point.en_rescaled_single_gl_date) {
+
+    if (ctx->electron.walker.num > ctx->electron.walker_old.num) {
+      if (ctx->single_point.en_rescaled_single_gl != NULL) {
+        rc = qmckl_free(context, ctx->single_point.en_rescaled_single_gl);
+        if (rc != QMCKL_SUCCESS) {
+          return qmckl_failwith( context, rc,
+                                 "qmckl_provide_en_rescaled_single_gl",
+                                 "Unable to free ctx->single_point.en_rescaled_single_gl");
+        }
+        ctx->single_point.en_rescaled_single_gl = NULL;
+      }
+    }
+
+    /* Allocate array */
+    if (ctx->single_point.en_rescaled_single_gl == NULL) {
+
+      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+      mem_info.size = 4 * ctx->nucleus.num * ctx->electron.walker.num * sizeof(double);
+      double* en_rescaled_single_gl = (double*) qmckl_malloc(context, mem_info);
+
+      if (en_rescaled_single_gl == NULL) {
+        return qmckl_failwith( context,
+                               QMCKL_ALLOCATION_FAILED,
+                               "qmckl_provide_en_rescaled_single_gl",
+                               NULL);
+      }
+      ctx->single_point.en_rescaled_single_gl = en_rescaled_single_gl;
+    }
+
+    qmckl_exit_code rc =
+      qmckl_compute_en_rescaled_single_gl(context,
+                                ctx->nucleus.num,
+                                ctx->jastrow_champ.type_nucl_num,
+                                ctx->jastrow_champ.type_nucl_vector,
+                                ctx->jastrow_champ.rescale_factor_en,
+                                ctx->electron.walker.num,
+                                ctx->single_point.single_en_distance,
+                                ctx->single_point.coord.data,
+                                ctx->nucleus.coord.data,
+                                ctx->single_point.en_rescaled_single_gl);
+    if (rc != QMCKL_SUCCESS) {
+      return rc;
+    }
+
+    ctx->single_point.en_rescaled_single_gl_date = ctx->single_point.date;
+  }
+
+  return QMCKL_SUCCESS;
+}
+     #+end_src
+
+** Compute
+     :PROPERTIES:
+     :Name:     qmckl_compute_en_rescaled_single_gl
+     :CRetType: qmckl_exit_code
+     :FRetType: qmckl_exit_code
+     :END:
+
+     #+NAME: qmckl_en_rescaled_single_gl_args
+     | Variable                       | Type                                      | In/Out | Description                           |
+     |--------------------------------+-------------------------------------------+--------+---------------------------------------|
+     | ~context~                      | ~qmckl_context~                           | in     | Global state                          |
+     | ~nucl_num~                     | ~int64_t~                                 | in     | Number of nuclei                      |
+     | ~type_nucl_num~                | ~int64_t~                                 | in     | Number of nucleus types               |
+     | ~type_nucl_vector~             | ~int64_t[nucl_num]~                       | in     | Array of nucleus types                |
+     | ~rescale_factor_en~            | ~double[nucl_num]~                        | in     | The factors for rescaled distances    |
+     | ~walk_num~                     | ~int64_t~                                 | in     | Number of walkers                     |
+     | ~single_en_distance~                   | ~double[walk_num][nucl_num]~           | in     | Electron coordinates                  |
+     | ~coord~                   | ~double[3]~           | in     | Electron coordinates                  |
+     | ~nucl_coord~                   | ~double[3][nucl_num]~           | in     | Electron coordinates                  |
+     | ~en_rescaled_single_gl~ | ~double[walk_num][nucl_num][4]~ | out    | Electron-nucleus distance derivatives |
+
+     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+integer function qmckl_compute_en_rescaled_single_gl_doc_f(context, nucl_num, &
+     type_nucl_num, type_nucl_vector, rescale_factor_en, walk_num, &
+     single_en_distance, coord, nucl_coord, en_rescaled_single_gl) &
+     result(info)
+  use qmckl
+  implicit none
+  integer(qmckl_context), intent(in)  :: context
+  integer*8             , intent(in)  :: nucl_num
+  integer*8             , intent(in)  :: type_nucl_num
+  integer*8             , intent(in)  :: type_nucl_vector(nucl_num)
+  double precision      , intent(in)  :: rescale_factor_en(nucl_num)
+  integer*8             , intent(in)  :: walk_num
+  double precision      , intent(in)  :: single_en_distance(nucl_num, walk_num)
+  double precision      , intent(in)  :: coord(3)
+  double precision      , intent(in)  :: nucl_coord(nucl_num,3)
+  double precision      , intent(out) :: en_rescaled_single_gl(4,nucl_num,walk_num)
+
+  integer*8 :: nw, a, ii
+  double precision :: ria_inv, elnuc_dist_gl(4, nucl_num), kappa_l
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+
+  if (nucl_num <= 0) then
+     info = QMCKL_INVALID_ARG_2
+     return
+  endif
+
+  if (walk_num <= 0) then
+     info = QMCKL_INVALID_ARG_4
+     return
+  endif
+
+
+  en_rescaled_single_gl = 0.0d0
+  do nw = 1, walk_num
+
+     ! prepare the actual een table
+     do a = 1, nucl_num
+        ria_inv = 1.0d0 / single_en_distance(a, nw)
+        do ii = 1, 3
+          elnuc_dist_gl(ii, a) = (coord(ii) - nucl_coord(a, ii)) * ria_inv
+        end do
+        elnuc_dist_gl(4, a) = 2.0d0 * ria_inv
+     end do
+
+      do a = 1, nucl_num
+        kappa_l = -1 * rescale_factor_en(type_nucl_vector(a)+1)
+        en_rescaled_single_gl(1, a, nw) = elnuc_dist_gl(1, a)
+        en_rescaled_single_gl(2, a, nw) = elnuc_dist_gl(2, a)
+        en_rescaled_single_gl(3, a, nw) = elnuc_dist_gl(3, a)
+        en_rescaled_single_gl(4, a, nw) = elnuc_dist_gl(4, a)
+
+        en_rescaled_single_gl(4, a, nw) = en_rescaled_single_gl(4, a, nw)           &
+              + en_rescaled_single_gl(1, a, nw) * en_rescaled_single_gl(1, a, nw) * kappa_l &
+              + en_rescaled_single_gl(2, a, nw) * en_rescaled_single_gl(2, a, nw) * kappa_l &
+              + en_rescaled_single_gl(3, a, nw) * en_rescaled_single_gl(3, a, nw) * kappa_l
+
+        en_rescaled_single_gl(1, a, nw) = en_rescaled_single_gl(1, a, nw)  * dexp(kappa_l * single_en_distance(a,nw)) 
+        en_rescaled_single_gl(2, a, nw) = en_rescaled_single_gl(2, a, nw)  * dexp(kappa_l * single_en_distance(a,nw))  
+        en_rescaled_single_gl(3, a, nw) = en_rescaled_single_gl(3, a, nw)  * dexp(kappa_l * single_en_distance(a,nw)) 
+        en_rescaled_single_gl(4, a, nw) = en_rescaled_single_gl(4, a, nw)  * dexp(kappa_l * single_en_distance(a,nw)) 
+     end do
+
+  end do
+
+
+end function qmckl_compute_en_rescaled_single_gl_doc_f
+     #+end_src
+
+     #+begin_src c :tangle (eval h_private_func) :comments org :exports none
+qmckl_exit_code qmckl_compute_en_rescaled_single_gl_doc (
+          const qmckl_context context,
+          const int64_t nucl_num,
+          const int64_t type_nucl_num,
+          int64_t* const type_nucl_vector,
+          const double*  rescale_factor_en,
+          const int64_t walk_num,
+          const double* single_en_distance,
+          const double* coord,
+          const double* nucl_coord,
+          double* const en_rescaled_single_gl );
+
+qmckl_exit_code qmckl_compute_en_rescaled_single_gl (
+          const qmckl_context context,
+          const int64_t nucl_num,
+          const int64_t type_nucl_num,
+          int64_t* const type_nucl_vector,
+          const double*  rescale_factor_en,
+          const int64_t walk_num,
+          const double* single_en_distance,
+          const double* coord,
+          const double* nucl_coord,
+          double* const en_rescaled_single_gl );
+     #+end_src
+
+     #+begin_src c :tangle (eval c) :comments org :exports none
+qmckl_exit_code qmckl_compute_en_rescaled_single_gl (
+          const qmckl_context context,
+          const int64_t nucl_num,
+          const int64_t type_nucl_num,
+          int64_t* const type_nucl_vector,
+          const double*  rescale_factor_en,
+          const int64_t walk_num,
+          const double* single_en_distance,
+          const double* coord,
+          const double* nucl_coord,
+          double* const en_rescaled_single_gl )
+{
+#ifdef HAVE_HPC
+  return qmckl_compute_en_rescaled_single_gl_doc
+#else
+  return qmckl_compute_en_rescaled_single_gl_doc
+#endif
+    (context, nucl_num, type_nucl_num, type_nucl_vector, rescale_factor_en,
+     walk_num, single_en_distance, coord, nucl_coord, en_rescaled_single_gl );
+}
+     #+end_src
+     #+CALL: generate_c_interface(table=qmckl_en_rescaled_single_gl_args,rettyp=get_value("CRetType"),fname="qmckl_compute_en_rescaled_single_gl_doc")
+
+     #+RESULTS:
+     #+begin_src f90 :tangle (eval f) :comments org :exports none
+     integer(c_int32_t) function qmckl_compute_en_rescaled_single_gl_doc &
+         (context, &
+          nucl_num, &
+          type_nucl_num, &
+          type_nucl_vector, &
+          rescale_factor_en, &
+          walk_num, &
+          single_en_distance, &
+          coord, &
+          nucl_coord, &
+          en_rescaled_single_gl) &
+         bind(C) result(info)
+
+       use, intrinsic :: iso_c_binding
+       implicit none
+
+       integer (c_int64_t) , intent(in)  , value :: context
+       integer (c_int64_t) , intent(in)  , value :: nucl_num
+       integer (c_int64_t) , intent(in)  , value :: type_nucl_num
+       integer (c_int64_t) , intent(in)          :: type_nucl_vector(nucl_num)
+       real    (c_double ) , intent(in)          :: rescale_factor_en(nucl_num)
+       integer (c_int64_t) , intent(in)  , value :: walk_num
+       real    (c_double ) , intent(in)          :: single_en_distance(nucl_num,walk_num)
+       real    (c_double ) , intent(in)          :: coord(3)
+       real    (c_double ) , intent(in)          :: nucl_coord(nucl_num,3)
+       real    (c_double ) , intent(out)         :: en_rescaled_single_gl(4,nucl_num,walk_num)
+
+       integer(c_int32_t), external :: qmckl_compute_en_rescaled_single_gl_doc_f
+       info = qmckl_compute_en_rescaled_single_gl_doc_f &
+              (context, &
+          nucl_num, &
+          type_nucl_num, &
+          type_nucl_vector, &
+          rescale_factor_en, &
+          walk_num, &
+          single_en_distance, &
+          coord, &
+          nucl_coord, &
+          en_rescaled_single_gl)
+
+     end function qmckl_compute_en_rescaled_single_gl_doc
+     #+end_src
+
+* Delta ee gl
+
+** Get
+
+     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
+qmckl_exit_code
+qmckl_get_jastrow_champ_single_ee_gl(qmckl_context context,
+                                    double* const delta_ee_gl,
+                                    const int64_t size_max);
+     #+end_src
+
+     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code
+qmckl_get_jastrow_champ_single_ee_gl(qmckl_context context,
+                                    double* const delta_ee_gl,
+                                    const int64_t size_max)
+{
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_exit_code rc;
+
+  rc = qmckl_provide_jastrow_champ_single_ee_gl(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  int64_t sze = ctx->electron.walker.num * 4 * ctx->electron.num;
+  if (size_max < sze) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_3,
+                           "qmckl_get_jastrow_champ_single_ee_gl",
+                           "Array too small. Expected 4*walk_num*elec_num");
+  }
+
+  memcpy(delta_ee_gl, ctx->single_point.delta_ee_gl, sze * sizeof(double));
+
+  return QMCKL_SUCCESS;
+}
+     #+end_src
+
+
+ #+begin_src f90 :tangle (eval fh_func) :comments org
+interface
+   integer(qmckl_exit_code) function qmckl_get_jastrow_champ_single_ee_gl (context, &
+        delta_ee_gl, size_max) bind(C)
+     use, intrinsic :: iso_c_binding
+     import
+     implicit none
+     integer (qmckl_context) , intent(in), value :: context
+     integer(c_int64_t), intent(in), value       :: size_max
+     real(c_double),   intent(out)               :: delta_ee_gl(size_max)
+   end function qmckl_get_jastrow_champ_single_ee_gl
+end interface
+ #+end_src
+
+** Provide                                                       :noexport:
+     #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_provide_jastrow_champ_single_ee_gl(qmckl_context context);
+     #+end_src
+
+     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code qmckl_provide_jastrow_champ_single_ee_gl(qmckl_context context)
+{
+
+  qmckl_exit_code rc;
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_provide_jastrow_champ_single_ee_gl",
+                           NULL);
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  if (!ctx->jastrow_champ.provided) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_provide_jastrow_champ_single_ee_gl",
+                           NULL);
+  }
+
+  /* Check if ee rescaled distance is provided */
+  rc = qmckl_provide_ee_distance_rescaled(context);
+  if(rc != QMCKL_SUCCESS) return rc;
+
+  /* Check if ee rescaled distance deriv e is provided */
+  rc = qmckl_provide_ee_distance_rescaled_gl(context);
+  if(rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_ee_rescaled_single(context);
+  if(rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_ee_rescaled_single_gl(context);
+  if(rc != QMCKL_SUCCESS) return rc;
+
+  /* Compute if necessary */
+  if (ctx->single_point.date > ctx->single_point.delta_ee_gl_date) {
+
+    if (ctx->electron.walker.num > ctx->electron.walker_old.num) {
+      if (ctx->single_point.delta_ee_gl != NULL) {
+        rc = qmckl_free(context, ctx->single_point.delta_ee_gl);
+        if (rc != QMCKL_SUCCESS) {
+          return qmckl_failwith( context, rc,
+                                 "qmckl_provide_jastrow_champ_single_ee_gl",
+                                 "Unable to free ctx->single_point.delta_ee_gl");
+        }
+        ctx->single_point.delta_ee_gl = NULL;
+      }
+    }
+
+    /* Allocate array */
+    if (ctx->single_point.delta_ee_gl == NULL) {
+
+      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+      mem_info.size = ctx->electron.walker.num * 4 * ctx->electron.num * sizeof(double);
+      double* delta_ee_gl = (double*) qmckl_malloc(context, mem_info);
+
+      if (delta_ee_gl == NULL) {
+        return qmckl_failwith( context,
+                               QMCKL_ALLOCATION_FAILED,
+                               "qmckl_provide_jastrow_champ_single_ee_gl",
+                               NULL);
+      }
+      ctx->single_point.delta_ee_gl = delta_ee_gl;
+    }
+
+    rc = qmckl_compute_jastrow_champ_single_ee_gl(context,
+                                                  ctx->single_point.num,
+                                                  ctx->electron.walker.num,
+                                                  ctx->electron.num,
+                                                  ctx->electron.up_num,
+                                                  ctx->jastrow_champ.bord_num,
+                                                  ctx->jastrow_champ.b_vector,
+                                                  ctx->jastrow_champ.ee_distance_rescaled,
+                                                  ctx->jastrow_champ.ee_distance_rescaled_gl,
+                                                  ctx->single_point.ee_rescaled_single,
+                                                  ctx->single_point.ee_rescaled_single_gl,
+                                                  ctx->jastrow_champ.spin_independent,
+                                                  ctx->single_point.delta_ee_gl);
+    if (rc != QMCKL_SUCCESS) {
+      return rc;
+    }
+
+    ctx->single_point.delta_ee_gl_date = ctx->single_point.date;
+  }
+
+  return QMCKL_SUCCESS;
+}
+     #+end_src
+
+** Compute
+     :PROPERTIES:
+     :Name:     qmckl_compute_jastrow_champ_single_ee_gl
+     :CRetType: qmckl_exit_code
+     :FRetType: qmckl_exit_code
+     :END:
+
+     #+NAME: qmckl_single_ee_gl_args
+     | Variable                  | Type                                      | In/Out | Description                                               |
+     |---------------------------+-------------------------------------------+--------+-----------------------------------------------------------|
+     | ~context~                 | ~qmckl_context~                           | in     | Global state                                              |
+     | ~num~                | ~int64_t~                                 | in     | Number of walkers                                         |
+     | ~walk_num~                | ~int64_t~                                 | in     | Number of walkers                                         |
+     | ~elec_num~                | ~int64_t~                                 | in     | Number of electrons                                       |
+     | ~up_num~                  | ~int64_t~                                 | in     | Number of alpha electrons                                 |
+     | ~bord_num~                | ~int64_t~                                 | in     | Number of coefficients                                    |
+     | ~b_vector~                | ~double[bord_num+1]~                      | in     | List of coefficients                                      |
+     | ~ee_distance_rescaled~    | ~double[walk_num][elec_num][elec_num]~    | in     | Electron-electron distances                               |
+     | ~ee_distance_rescaled_gl~ | ~double[walk_num][4][elec_num][elec_num]~ | in     | Electron-electron distances                               |
+     | ~ee_rescaled_single~    | ~double[walk_num][elec_num]~    | in     | Electron-electron distances                               |
+     | ~ee_rescaled_single_gl~ | ~double[walk_num][4][elec_num]~ | in     | Electron-electron distances                               | 
+     | ~spin_independent~        | ~int32_t~                                 | in     | If 1, same parameters for parallel and antiparallel spins |
+     | ~delta_ee_gl~            | ~double[walk_num][elec_num][4]~           | out    | Electron-electron distances                               |
+
+     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+function qmckl_compute_jastrow_champ_single_ee_gl_doc( &
+     context, num, walk_num, elec_num, up_num, bord_num, &
+     b_vector, ee_distance_rescaled, ee_distance_rescaled_gl,  &
+     ee_rescaled_single, ee_rescaled_single_gl,  &
+     spin_independent, delta_ee_gl) &
+     bind(C) result(info)
+  use qmckl
+  implicit none
+
+  integer (qmckl_context), intent(in), value :: context
+  integer (c_int64_t) , intent(in)  , value :: num
+  integer (c_int64_t) , intent(in)  , value :: walk_num
+  integer (c_int64_t) , intent(in)  , value :: elec_num
+  integer (c_int64_t) , intent(in)  , value :: up_num
+  integer (c_int64_t) , intent(in)  , value :: bord_num
+  real    (c_double ) , intent(in)          :: b_vector(bord_num+1)
+  real    (c_double ) , intent(in)          :: ee_distance_rescaled(elec_num,elec_num,walk_num)
+  real    (c_double ) , intent(in)          :: ee_distance_rescaled_gl(4,elec_num,elec_num,walk_num)
+  real    (c_double ) , intent(in)          :: ee_rescaled_single(elec_num,walk_num)
+  real    (c_double ) , intent(in)          :: ee_rescaled_single_gl(4,elec_num,walk_num)
+  integer (c_int32_t) , intent(in)  , value :: spin_independent
+  real    (c_double ) , intent(out)         :: delta_ee_gl(4,elec_num,walk_num)
+  integer(qmckl_exit_code)                  :: info
+
+  integer*8 :: i, j, k, nw, ii
+  double precision   :: x, x1, kf, x_old, x1_old
+  double precision   :: denom, invdenom, invdenom2, f
+  double precision   :: denom_old, invdenom_old, invdenom2_old, f_old
+  double precision   :: grad_c2, grad_c2_old
+  double precision   :: dx(4), dx_old(4)
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (walk_num <= 0) then
+     info = QMCKL_INVALID_ARG_3
+     return
+  endif
+
+  if (elec_num <= 0) then
+     info = QMCKL_INVALID_ARG_4
+     return
+  endif
+
+  if (bord_num < 0) then
+     info = QMCKL_INVALID_ARG_5
+     return
+  endif
+
+  if ((spin_independent < 0).or.(spin_independent > 1)) then
+     info = QMCKL_INVALID_ARG_8
+     return
+  endif
+
+  do nw =1, walk_num
+     delta_ee_gl(:,:,nw) = 0.0d0
+
+        do i = 1, elec_num
+           if (i == num) cycle
+
+           x = ee_rescaled_single(i,nw)
+           x_old = ee_distance_rescaled(i,num,nw)
+
+           denom         = 1.0d0 + b_vector(2) * x
+           invdenom      = 1.0d0 / denom
+           invdenom2     = invdenom * invdenom
+
+           denom_old         = 1.0d0 + b_vector(2) * x_old
+           invdenom_old      = 1.0d0 / denom_old
+           invdenom2_old     = invdenom_old * invdenom_old
+
+           dx(1) = ee_rescaled_single_gl(1, i, nw)
+           dx(2) = ee_rescaled_single_gl(2, i, nw)
+           dx(3) = ee_rescaled_single_gl(3, i, nw)
+           dx(4) = ee_rescaled_single_gl(4, i, nw)
+
+           dx_old(1) = ee_distance_rescaled_gl(1, i, num, nw)
+           dx_old(2) = ee_distance_rescaled_gl(2, i, num, nw)
+           dx_old(3) = ee_distance_rescaled_gl(3, i, num, nw)
+           dx_old(4) = ee_distance_rescaled_gl(4, i, num, nw)
+
+           grad_c2 = dx(1)*dx(1) + dx(2)*dx(2) + dx(3)*dx(3)
+           grad_c2_old = dx_old(1)*dx_old(1) + dx_old(2)*dx_old(2) + dx_old(3)*dx_old(3)
+
+           if (spin_independent == 1) then
+              f = b_vector(1) * invdenom2
+              f_old = b_vector(1) * invdenom2_old
+           else
+              if((i <= up_num .and. num <= up_num ) .or. (i >  up_num .and. num >  up_num)) then
+                 f = 0.5d0 * b_vector(1) * invdenom2
+                 f_old = 0.5d0 * b_vector(1) * invdenom2_old
+              else
+                 f = b_vector(1) * invdenom2
+                 f_old = b_vector(1) * invdenom2_old
+              end if
+           end if
+
+           delta_ee_gl(1,i,nw) = delta_ee_gl(1,i,nw) + f * dx(1) - f_old * dx_old(1)
+           delta_ee_gl(2,i,nw) = delta_ee_gl(2,i,nw) + f * dx(2) - f_old * dx_old(2)
+           delta_ee_gl(3,i,nw) = delta_ee_gl(3,i,nw) + f * dx(3) - f_old * dx_old(3)
+           delta_ee_gl(4,i,nw) = delta_ee_gl(4,i,nw) &
+                + f * (dx(4) - 2.d0 * b_vector(2) * grad_c2 * invdenom) &
+                - f_old * (dx_old(4) - 2.d0 * b_vector(2) * grad_c2_old * invdenom_old)
+
+
+           kf = 2.d0
+           x1 = x
+           x1_old = x_old
+           x = 1.d0
+           x_old = 1.d0
+           do k=2, bord_num
+              f = b_vector(k+1) * kf * x
+              f_old = b_vector(k+1) * kf * x_old
+              delta_ee_gl(1,i,nw) = delta_ee_gl(1,i,nw) + f * x1 * dx(1) - f_old * x1_old * dx_old(1)
+              delta_ee_gl(2,i,nw) = delta_ee_gl(2,i,nw) + f * x1 * dx(2) - f_old * x1_old * dx_old(2)
+              delta_ee_gl(3,i,nw) = delta_ee_gl(3,i,nw) + f * x1 * dx(3) - f_old * x1_old * dx_old(3)
+              delta_ee_gl(4,i,nw) = delta_ee_gl(4,i,nw) &
+                   + f * (x1 * dx(4) + (kf-1.d0) * grad_c2) &
+                   - f_old * (x1_old * dx_old(4) + (kf-1.d0) * grad_c2_old)
+              x = x*x1
+              x_old = x_old*x1_old
+              kf = kf + 1.d0
+           end do
+
+          delta_ee_gl(4,i,nw) = delta_ee_gl(4,i,nw) * 2
+
+        end do
+
+  end do
+
+end function qmckl_compute_jastrow_champ_single_ee_gl_doc
+     #+end_src
+
+
+ #   #+CALL: generate_c_header(table=qmckl_factor_ee_gl_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+
+
+     #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code
+qmckl_compute_jastrow_champ_single_ee_gl (const qmckl_context context,
+                                          const int64_t num,
+                                          const int64_t walk_num,
+                                          const int64_t elec_num,
+                                          const int64_t up_num,
+                                          const int64_t bord_num,
+                                          const double* b_vector,
+                                          const double* ee_distance_rescaled,
+                                          const double* ee_distance_rescaled_gl,
+                                          const double* ee_rescaled_single,
+                                          const double* ee_rescaled_single_gl,
+                                          const int32_t spin_independent,
+                                          double* const delta_ee_gl );
+     #+end_src
+
+
+
+     #+begin_src c :tangle (eval h_private_func) :comments org
+qmckl_exit_code
+qmckl_compute_jastrow_champ_single_ee_gl_doc (const qmckl_context context,
+                                              const int64_t num,
+                                              const int64_t walk_num,
+                                              const int64_t elec_num,
+                                              const int64_t up_num,
+                                              const int64_t bord_num,
+                                              const double* b_vector,
+                                              const double* ee_distance_rescaled,
+                                              const double* ee_distance_rescaled_gl,
+                                              const double* ee_rescaled_single,
+                                              const double* ee_rescaled_single_gl,
+                                              const int32_t spin_independent,
+                                              double* const delta_ee_gl );
+     #+end_src
+
+
+     #+begin_src c :comments org :tangle (eval c) :noweb yes
+qmckl_exit_code
+qmckl_compute_jastrow_champ_single_ee_gl (const qmckl_context context,
+                                          const int64_t num,
+                                          const int64_t walk_num,
+                                          const int64_t elec_num,
+                                          const int64_t up_num,
+                                          const int64_t bord_num,
+                                          const double* b_vector,
+                                          const double* ee_distance_rescaled,
+                                          const double* ee_distance_rescaled_gl,
+                                          const double* ee_rescaled_single,
+                                          const double* ee_rescaled_single_gl,
+                                          const int32_t spin_independent,
+                                          double* const delta_ee_gl )
+{
+#ifdef HAVE_HPC
+  return qmckl_compute_jastrow_champ_single_ee_gl_doc
+#else
+    return qmckl_compute_jastrow_champ_single_ee_gl_doc
+#endif
+    (context, num, walk_num, elec_num, up_num, bord_num, b_vector,
+     ee_distance_rescaled, ee_distance_rescaled_gl, ee_rescaled_single, ee_rescaled_single_gl, spin_independent, delta_ee_gl );
+}
+     #+end_src
+
+* Delta en gl
+
+** Get
+     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
+qmckl_exit_code
+qmckl_get_jastrow_champ_single_en_gl(qmckl_context context,
+                                    double* const delta_en_gl,
+                                    const int64_t size_max);
+     #+end_src
+
+     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code
+qmckl_get_jastrow_champ_single_en_gl(qmckl_context context,
+                                    double* const delta_en_gl,
+                                    const int64_t size_max)
+{
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_exit_code rc;
+
+  rc = qmckl_provide_jastrow_champ_single_en_gl(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  int64_t sze = ctx->electron.walker.num * 4 * ctx->electron.num;
+  if (size_max < sze) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_3,
+                           "qmckl_get_jastrow_champ_single_en_gl",
+                           "Array too small. Expected 4*walker.num*elec_num");
+  }
+  memcpy(delta_en_gl, ctx->single_point.delta_en_gl, sze*sizeof(double));
+
+  return QMCKL_SUCCESS;
+}
+     #+end_src
+
+
+ #+begin_src f90 :tangle (eval fh_func) :comments org
+interface
+   integer(qmckl_exit_code) function qmckl_get_jastrow_champ_single_en_gl (context, &
+        delta_en_gl, size_max) bind(C)
+     use, intrinsic :: iso_c_binding
+     import
+     implicit none
+     integer (qmckl_context) , intent(in), value :: context
+     integer(c_int64_t), intent(in), value       :: size_max
+     real(c_double),   intent(out)               :: delta_en_gl(size_max)
+   end function qmckl_get_jastrow_champ_single_en_gl
+end interface
+ #+end_src
+
+ ** Provide                                                       :noexport:
+     #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_provide_jastrow_champ_single_en_gl(qmckl_context context);
+     #+end_src
+
+     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code qmckl_provide_jastrow_champ_single_en_gl(qmckl_context context)
+{
+
+  qmckl_exit_code rc;
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_provide_jastrow_champ_single_en_gl",
+                           NULL);
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  if (!ctx->jastrow_champ.provided) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_provide_jastrow_champ_single_en_gl",
+                           NULL);
+  }
+
+  /* Check if en rescaled distance is provided */
+  rc = qmckl_provide_en_distance_rescaled(context);
+  if(rc != QMCKL_SUCCESS) return rc;
+
+  /* Check if en rescaled distance derivatives is provided */
+  rc = qmckl_provide_en_distance_rescaled_gl(context);
+  if(rc != QMCKL_SUCCESS) return rc;
+
+  /* Check if en rescaled distance is provided */
+  rc = qmckl_provide_en_rescaled_single(context);
+  if(rc != QMCKL_SUCCESS) return rc;
+
+  /* Check if en rescaled distance derivatives is provided */
+  rc = qmckl_provide_en_rescaled_single_gl(context);
+  if(rc != QMCKL_SUCCESS) return rc;
+
+  /* Compute if necessary */
+  if (ctx->single_point.date > ctx->single_point.delta_en_gl_date) {
+
+    if (ctx->electron.walker.num > ctx->electron.walker_old.num) {
+      if (ctx->single_point.delta_en_gl != NULL) {
+        rc = qmckl_free(context, ctx->single_point.delta_en_gl);
+        if (rc != QMCKL_SUCCESS) {
+          return qmckl_failwith( context, rc,
+                                 "qmckl_provide_jastrow_champ_single_en_gl",
+                                 "Unable to free ctx->single_point.delta_en_gl");
+        }
+        ctx->single_point.delta_en_gl = NULL;
+      }
+    }
+
+    /* Allocate array */
+    if (ctx->single_point.delta_en_gl == NULL) {
+
+      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+      mem_info.size = ctx->electron.walker.num * 4 * ctx->electron.num * sizeof(double);
+      double* delta_en_gl = (double*) qmckl_malloc(context, mem_info);
+
+      if (delta_en_gl == NULL) {
+        return qmckl_failwith( context,
+                               QMCKL_ALLOCATION_FAILED,
+                               "qmckl_provide_jastrow_champ_single_en_gl",
+                               NULL);
+      }
+      ctx->single_point.delta_en_gl = delta_en_gl;
+    }
+
+    rc = qmckl_compute_jastrow_champ_single_en_gl(context,
+                                         ctx->single_point.num,
+                                         ctx->electron.walker.num,
+                                         ctx->electron.num,
+                                         ctx->nucleus.num,
+                                         ctx->jastrow_champ.type_nucl_num,
+                                         ctx->jastrow_champ.type_nucl_vector,
+                                         ctx->jastrow_champ.aord_num,
+                                         ctx->jastrow_champ.a_vector,
+                                         ctx->jastrow_champ.en_distance_rescaled,
+                                         ctx->jastrow_champ.en_distance_rescaled_gl,
+                                         ctx->single_point.en_rescaled_single,
+                                         ctx->single_point.en_rescaled_single_gl,
+                                         ctx->single_point.delta_en_gl);
+    if (rc != QMCKL_SUCCESS) {
+      return rc;
+    }
+
+    ctx->single_point.delta_en_gl_date = ctx->single_point.date;
+  }
+
+  return QMCKL_SUCCESS;
+}
+     #+end_src
+
+** Compute
+     :PROPERTIES:
+     :Name:     qmckl_compute_jastrow_champ_single_en_gl
+     :CRetType: qmckl_exit_code
+     :FRetType: qmckl_exit_code
+     :END:
+
+     #+NAME: qmckl_single_en_gl_args
+     | Variable                  | Type                                      | In/Out | Description                           |
+     |---------------------------+-------------------------------------------+--------+---------------------------------------|
+     | ~context~                 | ~qmckl_context~                           | in     | Global state                          |
+     | ~wnum~                | ~int64_t~                                 | in     | Number of walkers                     |
+     | ~walk_num~                | ~int64_t~                                 | in     | Number of walkers                     |
+     | ~elec_num~                | ~int64_t~                                 | in     | Number of electrons                   |
+     | ~nucl_num~                | ~int64_t~                                 | in     | Number of nuclei                      |
+     | ~type_nucl_num~           | ~int64_t~                                 | in     | Number of unique nuclei               |
+     | ~type_nucl_vector~        | ~int64_t[nucl_num]~                       | in     | IDs of unique nuclei                  |
+     | ~aord_num~                | ~int64_t~                                 | in     | Number of coefficients                |
+     | ~a_vector~                | ~double[type_nucl_num][aord_num+1]~       | in     | List of coefficients                  |
+     | ~en_distance_rescaled~    | ~double[walk_num][nucl_num][elec_num]~    | in     | Electron-nucleus distances            |
+     | ~en_distance_rescaled_gl~ | ~double[walk_num][nucl_num][elec_num][4]~ | in     | Electron-nucleus distance derivatives |
+     | ~en_rescaled_single~    | ~double[walk_num][nucl_num]~    | in     | Electron-nucleus distances            |
+     | ~en_rescaled_single_gl~ | ~double[walk_num][nucl_num][4]~ | in     | Electron-nucleus distance derivatives |
+     | ~delta_en_gl~            | ~double[walk_num][elec_num][4]~           | out    | Electron-nucleus jastrow              |
+
+     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+function qmckl_compute_jastrow_champ_single_en_gl_doc( &
+     context, num, walk_num, elec_num, nucl_num, type_nucl_num, &
+     type_nucl_vector, aord_num, a_vector, &
+     en_distance_rescaled, en_distance_rescaled_gl, en_rescaled_single, en_rescaled_single_gl, delta_en_gl) &
+     bind(C) result(info)
+  use qmckl
+  implicit none
+
+  integer (qmckl_context), intent(in), value :: context
+  integer (c_int64_t) , intent(in)  , value :: num
+  integer (c_int64_t) , intent(in)  , value :: walk_num
+  integer (c_int64_t) , intent(in)  , value :: elec_num
+  integer (c_int64_t) , intent(in)  , value :: nucl_num
+  integer (c_int64_t) , intent(in)  , value :: type_nucl_num
+  integer (c_int64_t) , intent(in)          :: type_nucl_vector(nucl_num)
+  integer (c_int64_t) , intent(in)  , value :: aord_num
+  real    (c_double ) , intent(in)          :: a_vector(aord_num+1,type_nucl_num)
+  real    (c_double ) , intent(in)          :: en_distance_rescaled(elec_num,nucl_num,walk_num)
+  real    (c_double ) , intent(in)          :: en_distance_rescaled_gl(4, elec_num,nucl_num,walk_num)
+  real    (c_double ) , intent(in)          :: en_rescaled_single(nucl_num,walk_num)
+  real    (c_double ) , intent(in)          :: en_rescaled_single_gl(4, nucl_num,walk_num)
+  real    (c_double ) , intent(out)         :: delta_en_gl(4,elec_num,walk_num)
+  integer(qmckl_exit_code)                   :: info
+
+  integer*8 :: i, a, k, nw, ii
+  double precision   :: x, x1, kf, x_old, x1_old
+  double precision   :: denom, invdenom, invdenom2, f
+  double precision   :: denom_old, invdenom_old, invdenom2_old, f_old
+  double precision   :: grad_c2, grad_c2_old
+  double precision   :: dx(4), dx_old(4)
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (walk_num <= 0) then
+     info = QMCKL_INVALID_ARG_3
+     return
+  endif
+
+  if (elec_num <= 0) then
+     info = QMCKL_INVALID_ARG_4
+     return
+  endif
+
+  if (nucl_num <= 0) then
+     info = QMCKL_INVALID_ARG_5
+     return
+  endif
+
+  if (aord_num < 0) then
+     info = QMCKL_INVALID_ARG_8
+     return
+  endif
+
+
+  do nw =1, walk_num
+    delta_en_gl(:,:,nw) = 0.0d0
+
+    do a = 1, nucl_num
+
+          x_old = en_distance_rescaled(num,a,nw)
+          x = en_rescaled_single(a,nw)
+
+
+          denom = 1.0d0 + a_vector(2, type_nucl_vector(a)+1) * x
+          invdenom = 1.0d0 / denom
+          invdenom2 = invdenom*invdenom
+
+          denom_old = 1.0d0 + a_vector(2, type_nucl_vector(a)+1) * x_old
+          invdenom_old = 1.0d0 / denom_old
+          invdenom2_old = invdenom_old*invdenom_old
+
+          dx(1) = en_rescaled_single_gl(1,a,nw)
+          dx(2) = en_rescaled_single_gl(2,a,nw)
+          dx(3) = en_rescaled_single_gl(3,a,nw)
+          dx(4) = en_rescaled_single_gl(4,a,nw)
+
+          dx_old(1) = en_distance_rescaled_gl(1,num,a,nw)
+          dx_old(2) = en_distance_rescaled_gl(2,num,a,nw)
+          dx_old(3) = en_distance_rescaled_gl(3,num,a,nw)
+          dx_old(4) = en_distance_rescaled_gl(4,num,a,nw)
+
+          f = a_vector(1, type_nucl_vector(a)+1) * invdenom2
+          grad_c2 = dx(1)*dx(1) + dx(2)*dx(2) + dx(3)*dx(3)
+
+          f_old = a_vector(1, type_nucl_vector(a)+1) * invdenom2_old
+          grad_c2_old = dx_old(1)*dx_old(1) + dx_old(2)*dx_old(2) + dx_old(3)*dx_old(3)
+
+          delta_en_gl(1,num,nw) = delta_en_gl(1,num,nw) + f * dx(1) - f_old * dx_old(1)
+          delta_en_gl(2,num,nw) = delta_en_gl(2,num,nw) + f * dx(2) - f_old * dx_old(2)
+          delta_en_gl(3,num,nw) = delta_en_gl(3,num,nw) + f * dx(3) - f_old * dx_old(3)
+          delta_en_gl(4,num,nw) = delta_en_gl(4,num,nw) &
+               + f * (dx(4) - 2.d0 * a_vector(2, type_nucl_vector(a)+1) * grad_c2 * invdenom) &
+               - f_old * (dx_old(4) - 2.d0 * a_vector(2, type_nucl_vector(a)+1) * grad_c2_old * invdenom_old)
+
+
+           kf = 2.d0
+           x1 = x
+           x = 1.d0
+           x1_old = x_old
+           x_old = 1.d0
+           do k=2, aord_num
+              f = a_vector(k+1,type_nucl_vector(a)+1) * kf * x
+              f_old = a_vector(k+1,type_nucl_vector(a)+1) * kf * x_old
+              delta_en_gl(1,num,nw) = delta_en_gl(1,num,nw) + f * x1 * dx(1) - f_old * x1_old * dx_old(1)
+              delta_en_gl(2,num,nw) = delta_en_gl(2,num,nw) + f * x1 * dx(2) - f_old * x1_old * dx_old(2)
+              delta_en_gl(3,num,nw) = delta_en_gl(3,num,nw) + f * x1 * dx(3) - f_old * x1_old * dx_old(3)
+              delta_en_gl(4,num,nw) = delta_en_gl(4,num,nw) &
+                   + f * (x1 * dx(4) + (kf-1.d0) * grad_c2) &
+                   - f_old * (x1_old * dx_old(4) + (kf-1.d0) * grad_c2_old)
+              x = x*x1
+              x_old = x_old*x1_old
+              kf = kf + 1.d0
+           end do
+     end do
+  end do
+
+end function qmckl_compute_jastrow_champ_single_en_gl_doc
+     #+end_src
+
+ #   #+CALL: generate_c_header(table=qmckl_factor_en_gl_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
+
+     #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_compute_jastrow_champ_single_en_gl_doc (
+          const qmckl_context context,
+          const int64_t num,
+          const int64_t walk_num,
+          const int64_t elec_num,
+          const int64_t nucl_num,
+          const int64_t type_nucl_num,
+          const int64_t* type_nucl_vector,
+          const int64_t aord_num,
+          const double* a_vector,
+          const double* en_distance_rescaled,
+          const double* en_distance_rescaled_gl,
+          const double* en_rescaled_single,
+          const double* en_rescaled_single_gl,
+          double* const delta_en_gl );
+
+qmckl_exit_code qmckl_compute_jastrow_champ_single__en_gl (
+          const qmckl_context context,
+          const int64_t num,
+          const int64_t walk_num,
+          const int64_t elec_num,
+          const int64_t nucl_num,
+          const int64_t type_nucl_num,
+          const int64_t* type_nucl_vector,
+          const int64_t aord_num,
+          const double* a_vector,
+          const double* en_distance_rescaled,
+          const double* en_distance_rescaled_gl,
+          const double* en_rescaled_single,
+          const double* en_rescaled_single_gl,
+          double* const delta_en_gl );
+     #+end_src
+
+
+    #+begin_src c :tangle (eval c) :comments org :exports none
+qmckl_exit_code
+qmckl_compute_jastrow_champ_single_en_gl (const qmckl_context context,
+                                          const int64_t num,
+                                          const int64_t walk_num,
+                                          const int64_t elec_num,
+                                          const int64_t nucl_num,
+                                          const int64_t type_nucl_num,
+                                          const int64_t* type_nucl_vector,
+                                          const int64_t aord_num,
+                                          const double* a_vector,
+                                          const double* en_distance_rescaled,
+                                          const double* en_distance_rescaled_gl,
+                                          const double* en_rescaled_single,
+                                          const double* en_rescaled_single_gl,
+                                          double* const delta_en_gl )
+{
+#ifdef HAVE_HPC
+  return qmckl_compute_jastrow_champ_single_en_gl_doc
+#else
+  return qmckl_compute_jastrow_champ_single_en_gl_doc
+#endif
+    (context, num, walk_num, elec_num, nucl_num, type_nucl_num, type_nucl_vector, aord_num,
+     a_vector, en_distance_rescaled, en_distance_rescaled_gl, en_rescaled_single, en_rescaled_single_gl, delta_en_gl );
+}
+  #+end_src
+
 
 * End of files                                                     :noexport:
 
