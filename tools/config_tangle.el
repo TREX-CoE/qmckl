@@ -38,6 +38,7 @@
 
 (setq src (concat top_builddir "/src/"))
 (setq tests (concat top_builddir "/tests/"))
+(setq include (concat top_builddir "/include/"))
 (setq name (file-name-nondirectory (substring buffer-file-name 0 -4)))
 (setq f  (concat src name "_f.F90"))
 (setq fh_func (concat src name "_fh_func.F90"))
