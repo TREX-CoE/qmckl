@@ -4,7 +4,6 @@
 #+INCLUDE: ../tools/lib.org
 
 * Introduction
-
 * Headers                                                          :noexport:
   #+begin_src elisp :noexport :results none
 (org-babel-lob-ingest "../tools/lib.org")
@@ -280,6 +279,115 @@ double new_coords[3][nucl_num];
 
       #+end_src
 
+* Finite-difference function
+
+We introduce here a general function to compute the derivatives of any quantity with respect to nuclear coordinates.
+using finite-differences.
+
+#+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+typedef qmckl_exit_code (*function_callback)(qmckl_context context, double* output, int64_t size);
+
+qmckl_exit_code qmckl_finite_difference_deriv_n(
+    qmckl_context context,
+    const double delta_x,                 // Step size for finite difference
+    function_callback get_function, // Function to compute values
+    double* const derivative_output,      // Output derivative array: nucl_num*3*size
+    int64_t const size)                   // Size of the object to differentiate
+{
+    // Finite difference coefficients for a 9-point stencil
+    double coef[9] = { 1.0/280.0, -4.0/105.0, 1.0/5.0, -4.0/5.0, 0.0, 4.0/5.0, -1.0/5.0, 4.0/105.0, -1.0/280.0 };
+
+    qmckl_exit_code rc;
+
+    int64_t walk_num;
+    rc = qmckl_get_electron_walk_num(context, &walk_num);
+    if (rc != QMCKL_SUCCESS) {
+      return rc;
+    }
+
+    int64_t nucl_num;
+    rc = qmckl_get_nucleus_num(context, &nucl_num);
+    if (rc != QMCKL_SUCCESS) {
+      return rc;
+    }
+
+    
+    double* nucleus_coord = (double*) malloc(3 * nucl_num * sizeof(double));
+    if (nucleus_coord == NULL) {
+      return QMCKL_ALLOCATION_FAILED;
+    }
+    rc = qmckl_get_nucleus_coord (context, 'N', nucleus_coord, 3*nucl_num);
+
+
+    double* temp_coord = (double*) malloc(3 * nucl_num * sizeof(double));
+    if (temp_coord == NULL) {
+      free(nucleus_coord);
+      return QMCKL_ALLOCATION_FAILED;
+    }
+    
+    double* function_values = (double*) malloc(walk_num*size * sizeof(double));
+    if (function_values == NULL) {
+        free(nucleus_coord);
+        free(temp_coord);
+        return QMCKL_ALLOCATION_FAILED;
+    }
+
+    memset(derivative_output, 0, nucl_num*3*walk_num*size*sizeof(double));
+
+    // Copy original coordinates
+    for (int i = 0; i < 3 * nucl_num; i++) {
+      temp_coord[i] = nucleus_coord[i];
+    }
+
+    for (int64_t a = 0; a < nucl_num; a++) {
+      for (int64_t k = 0; k < 3; k++) {
+        for (int64_t m = -4; m <= 4; m++) {
+          
+          // Apply finite difference displacement
+          temp_coord[k+a*3] = nucleus_coord[k+3*a] + (double) m * delta_x;
+
+          // Update coordinates in the context
+          rc = qmckl_set_nucleus_coord(context, 'N', temp_coord, 3*nucl_num);
+          assert(rc == QMCKL_SUCCESS);
+          
+          rc = qmckl_context_touch(context);
+          assert(rc == QMCKL_SUCCESS);
+          
+          // Call the provided function
+          rc = get_function(context, function_values, size);
+          assert(rc == QMCKL_SUCCESS);
+
+          // Accumulate derivative using finite-difference coefficients
+          for (int64_t nw=0 ; nw<walk_num ; nw++) {
+            int64_t shift = nucl_num*3*size*nw + size*(k + 3*a);
+            for (int64_t i = 0; i < size; i++) {
+              derivative_output[i+shift] += coef[m + 4] * function_values[nw*size+i];
+            }
+          }
+        }
+        temp_coord[k+a*3] = nucleus_coord[k+3*a];
+      }
+    }
+
+    // Reset coordinates in the context
+    rc = qmckl_set_nucleus_coord(context, 'N', temp_coord, 3*nucl_num);
+    assert(rc == QMCKL_SUCCESS);
+    
+    rc = qmckl_context_touch(context);
+    assert(rc == QMCKL_SUCCESS);
+          
+    // Normalize by the step size
+    for (int64_t i = 0; i < size*3*nucl_num*walk_num ; i++) {
+      derivative_output[i] /= delta_x;
+    }
+
+    free(nucleus_coord);
+    free(temp_coord);
+    free(function_values);
+    return QMCKL_SUCCESS;
+}
+                                                
+#+end_src
 
 * Force of en jastrow value
 
@@ -544,7 +652,7 @@ function qmckl_compute_forces_jastrow_en_doc( &
         end do
      end do
   end do
-             
+
 
 end function qmckl_compute_forces_jastrow_en_doc
      #+end_src
@@ -627,55 +735,29 @@ assert(qmckl_jastrow_champ_provided(context));
 rc = qmckl_set_nucleus_coord(context, 'T', &(nucl_coord[0]), 3*nucl_num);
 assert(rc == QMCKL_SUCCESS);
 
-double forces_jastrow_en[walk_num][nucl_num][3];
 rc = qmckl_get_forces_jastrow_en(context, &forces_jastrow_en[0][0][0], 3*nucl_num*walk_num);
 assert(rc == QMCKL_SUCCESS);
 
-double finite_difference_force_en[walk_num][nucl_num][3];
-double jastrow_en[walk_num];
-double coef[9] = { 1.0/280.0, -4.0/105.0, 1.0/5.0, -4.0/5.0, 0.0, 4.0/5.0, -1.0/5.0, 4.0/105.0, -1.0/280.0};
-for (int nw = 0; nw < walk_num; nw++){
-  for (int a = 0; a < nucl_num; a++){
-    for (int k = 0; k < 3; k++){
-      finite_difference_force_en[nw][a][k] = 0.0;
-      for (int m = -4; m < 5; m++){
-        rc = qmckl_set_nucleus_coord(context, 'T', &(nucl_coord[0]), 3*nucl_num);
-        assert(rc == QMCKL_SUCCESS);
-
-        rc = qmckl_get_nucleus_coord (context, 'T', &new_coords[0][0], 3*nucl_num);
-        assert(rc == QMCKL_SUCCESS);
-
-        new_coords[k][a] = new_coords[k][a] + m * delta_x;
-
-        rc = qmckl_set_nucleus_coord(context, 'T', &new_coords[0][0], 3*nucl_num);
-        assert(rc == QMCKL_SUCCESS);
-
-        rc = qmckl_context_touch(context);
-
-        rc = qmckl_get_jastrow_champ_factor_en(context, &jastrow_en[0], walk_num);
-        assert(rc == QMCKL_SUCCESS);
-
-        finite_difference_force_en[nw][a][k] = finite_difference_force_en[nw][a][k] + coef[m+4] * jastrow_en[nw];
-
-      }
-      finite_difference_force_en[nw][a][k] = finite_difference_force_en[nw][a][k] / delta_x;
-    }
-  }
-}
-
+rc = qmckl_finite_difference_deriv_n(context, delta_x, &qmckl_get_jastrow_champ_factor_en, finite_difference_force_en, 1);
+                                     
+printf("Forces Jastrow en\n");
 for (int nw = 0; nw < walk_num; nw++){
   for (int a = 0; a < nucl_num; a++) {
     for (int k = 0; k < 3; k++){
-    //printf("%f %f\n", jastrow_en_new[nw], jastrow_en_old[nw]);
-    //printf("%.10f\n", finite_difference_force_en[nw][a][k]);
-    //printf("%.10f\n", forces_jastrow_en[nw][a][k]);
-        assert(fabs(finite_difference_force_en[nw][a][k] - forces_jastrow_en[nw][a][k]) < 1.e-8);
+      printf("%.10f\t", finite_difference_force_en[nw][a][k]);
+      printf("%.10f\n", forces_jastrow_en[nw][a][k]);
+    }
+  }
+}
+for (int nw = 0; nw < walk_num; nw++){
+  for (int a = 0; a < nucl_num; a++) {
+    for (int k = 0; k < 3; k++){
+      assert(fabs(finite_difference_force_en[nw][a][k] - forces_jastrow_en[nw][a][k]) < 1.e-8);
     }
   }
 }
 
       #+end_src
-
 * Force of en jastrow gradient
 
 ** Get
@@ -945,7 +1027,7 @@ function qmckl_compute_forces_jastrow_en_g_doc( &
         x1 = x
         x = 1.d0
         do k=2, aord_num
-          f = a_vector(k+1,type_nucl_vector(a)+1) * kf * x 
+          f = a_vector(k+1,type_nucl_vector(a)+1) * kf * x
           f2 = a_vector(k+1,type_nucl_vector(a)+1) * kf * x * (kf-1.d0)
 
           do m = 1, 3
@@ -965,7 +1047,7 @@ function qmckl_compute_forces_jastrow_en_g_doc( &
     end do
   end do
 
-          
+
 
 end function qmckl_compute_forces_jastrow_en_g_doc
      #+end_src
@@ -1093,7 +1175,7 @@ for (int nw = 0; nw < walk_num; nw++){
           }
         }
       }
-      
+
     }
   }
 }
