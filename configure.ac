@@ -66,7 +66,7 @@ AC_ARG_WITH([icx],
 
 AS_IF([test "x$with_icx" = "xyes"], [
   CC=icx
-  CFLAGS="-march=native -Ofast -ftz -finline -g -qmkl=sequential" ])
+  CFLAGS="-march=native -Ofast -finline -g -qmkl=sequential" ])
 
 AS_IF([test "x$with_icx.$with_ifort" = "xyes.yes"], [
   ax_blas_ok="yes"

@@ -49,7 +49,7 @@ qmckl_f = include/qmckl_f.F90
 qmckl_fo = include/qmckl_f.o
 include_HEADERS = $(qmckl_h) $(qmckl_f)
 
-header_tests  = tests/chbrclf.h tests/n2.h
+header_tests  = include/n2.h
 
 QMCKL_TEST_DIR = $(abs_srcdir)/share/qmckl/test_data/
 
@@ -189,7 +189,7 @@ $(htmlize_el):
 
 tests/chbrclf.h: $(qmckl_h)
 
-tests/n2.h: $(qmckl_h)
+include/n2.h: $(qmckl_h)
 
 cppcheck: cppcheck.out
 
