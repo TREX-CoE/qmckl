@@ -274,7 +274,7 @@ for (int i=0 ; i<type_nucl_num ; ++i) {
 /* Check if Jastrow is properly initialized */
 assert(qmckl_jastrow_champ_provided(context));
 
-double delta_x = 0.0001;
+double delta_x = 0.00001;
 
 double new_coords[3][nucl_num];
 
@@ -763,12 +763,16 @@ qmckl_exit_code qmckl_provide_forces_jastrow_en_g(qmckl_context context)
                            NULL);
   }
 
+
   /* Check if en rescaled distance is provided */
   rc = qmckl_provide_en_distance_rescaled(context);
   if(rc != QMCKL_SUCCESS) return rc;
 
   /* Check if en rescaled distance derivatives is provided */
   rc = qmckl_provide_en_distance_rescaled_gl(context);
+  if(rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_en_distance(context);
   if(rc != QMCKL_SUCCESS) return rc;
 
 
@@ -811,6 +815,8 @@ qmckl_exit_code qmckl_provide_forces_jastrow_en_g(qmckl_context context)
                                          ctx->jastrow_champ.type_nucl_vector,
                                          ctx->jastrow_champ.aord_num,
                                          ctx->jastrow_champ.a_vector,
+                                         ctx->jastrow_champ.rescale_factor_en,
+                                         ctx->electron.en_distance,
                                          ctx->jastrow_champ.en_distance_rescaled,
                                          ctx->jastrow_champ.en_distance_rescaled_gl,
                                          ctx->forces.forces_jastrow_en_g);
@@ -844,6 +850,8 @@ qmckl_exit_code qmckl_provide_forces_jastrow_en_g(qmckl_context context)
      | ~type_nucl_vector~        | ~int64_t[nucl_num]~                       | in     | IDs of unique nuclei                  |
      | ~aord_num~                | ~int64_t~                                 | in     | Number of coefficients                |
      | ~a_vector~                | ~double[type_nucl_num][aord_num+1]~       | in     | List of coefficients                  |
+     | ~rescale_factor_en~       | ~double[type_nucl_num]~                   | in     | Rescale factor for electron-nucleus   |
+     | ~en_distance~             | ~double[elec_num][nucl_num]~              | in     | Electron-nucleus distances            |
      | ~en_distance_rescaled~    | ~double[walk_num][nucl_num][elec_num]~    | in     | Electron-nucleus distances            |
      | ~en_distance_rescaled_gl~ | ~double[walk_num][nucl_num][elec_num][4]~ | in     | Electron-nucleus distance derivatives |
      | ~forces_jastrow_en_g~       | ~double[walk_num][nucl_num][3][elec_num][3]~           | out    | Electron-nucleus forces               |
@@ -851,7 +859,7 @@ qmckl_exit_code qmckl_provide_forces_jastrow_en_g(qmckl_context context)
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
 function qmckl_compute_forces_jastrow_en_g_doc( &
      context, walk_num, elec_num, nucl_num, type_nucl_num, &
-     type_nucl_vector, aord_num, a_vector, &
+     type_nucl_vector, aord_num, a_vector, rescale_factor_en, en_distance, &
      en_distance_rescaled, en_distance_rescaled_gl, forces_jastrow_en_g) &
      bind(C) result(info)
   use qmckl
@@ -865,6 +873,8 @@ function qmckl_compute_forces_jastrow_en_g_doc( &
   integer (c_int64_t) , intent(in)          :: type_nucl_vector(nucl_num)
   integer (c_int64_t) , intent(in)  , value :: aord_num
   real    (c_double ) , intent(in)          :: a_vector(aord_num+1,type_nucl_num)
+  real    (c_double ) , intent(in)          :: rescale_factor_en(type_nucl_num)
+  real    (c_double ) , intent(in)          :: en_distance(nucl_num, elec_num)
   real    (c_double ) , intent(in)          :: en_distance_rescaled(elec_num,nucl_num,walk_num)
   real    (c_double ) , intent(in)          :: en_distance_rescaled_gl(4, elec_num,nucl_num,walk_num)
   real    (c_double ) , intent(out)         :: forces_jastrow_en_g(3,elec_num,3,nucl_num,walk_num)
@@ -872,7 +882,7 @@ function qmckl_compute_forces_jastrow_en_g_doc( &
 
   integer*8 :: i, a, k, nw, ii, m,l
   double precision   :: x, x1, kf
-  double precision   :: denom, invdenom, invdenom2, f, f2, dist
+  double precision   :: denom, invdenom, invdenom2, f, f2, expk, invdist
   double precision   :: dx(3)
 
   info = QMCKL_SUCCESS
@@ -906,23 +916,26 @@ function qmckl_compute_forces_jastrow_en_g_doc( &
     forces_jastrow_en_g(:,:,:,:,nw) = 0.0d0
     do a = 1, nucl_num
       do i = 1, elec_num
+        expk = dexp(rescale_factor_en(type_nucl_vector(a)+1) * en_distance(a,i))
+        invdist = 1.d0 / en_distance(a,i)
         x = en_distance_rescaled(i,a,nw)
         if(abs(x) < 1.d-12) continue
         denom = 1.0d0 + a_vector(2, type_nucl_vector(a)+1) * x
         invdenom = 1.0d0 / denom
         invdenom2 = invdenom*invdenom
         f = a_vector(1, type_nucl_vector(a)+1) * invdenom2
-
+  
         do m = 1, 3
           dx(m) = en_distance_rescaled_gl(m,i,a,nw)
         end do
-        dist = dx(1)*dx(1) + dx(2)*dx(2) + dx(3)*dx(3)
+
         do m = 1, 3
           do l = 1,3
             if (m == l) then
-              forces_jastrow_en_g(m,i,l,a,nw) = forces_jastrow_en_g(m,i,l,a,nw) - f / x 
+              forces_jastrow_en_g(m,i,l,a,nw) = forces_jastrow_en_g(m,i,l,a,nw) - f  * invdist / expk
             end if
-            forces_jastrow_en_g(m,i,l,a,nw) = forces_jastrow_en_g(m,i,l,a,nw) + f * dx(m) * dx(l)/x
+
+            forces_jastrow_en_g(m,i,l,a,nw) = forces_jastrow_en_g(m,i,l,a,nw) + f * dx(m) * dx(l) * invdist * expk
             forces_jastrow_en_g(m,i,l,a,nw) = forces_jastrow_en_g(m,i,l,a,nw) + 2.d0 * f * invdenom * &
               a_vector(2, type_nucl_vector(a)+1) * dx(m) * dx(l)
           end do
@@ -934,13 +947,15 @@ function qmckl_compute_forces_jastrow_en_g_doc( &
         do k=2, aord_num
           f = a_vector(k+1,type_nucl_vector(a)+1) * kf * x 
           f2 = a_vector(k+1,type_nucl_vector(a)+1) * kf * x * (kf-1.d0)
-          print *,k,a,i,f, f2
+
           do m = 1, 3
             do l = 1, 3
               if (m == l) then
-                forces_jastrow_en_g(m,i,l,a,nw) = forces_jastrow_en_g(m,i,l,a,nw) - f * x1/dist
+                forces_jastrow_en_g(m,i,l,a,nw) = forces_jastrow_en_g(m,i,l,a,nw) - f * x1 * invdist / expk
               end if
-              forces_jastrow_en_g(m,i,l,a,nw) = forces_jastrow_en_g(m,i,l,a,nw) - f2 * dx(m) * dx(l) + f * x1 * dx(m) * dx(l) / dist
+              forces_jastrow_en_g(m,i,l,a,nw) = forces_jastrow_en_g(m,i,l,a,nw) - f2 * dx(m) * dx(l) &
+                  + f * x1 * dx(m) * dx(l) * rescale_factor_en(type_nucl_vector(a)+1) * expk &
+                  + f * x1 * dx(m) * dx(l) * invdist * expk
             end do
           end do
           x = x*x1
@@ -967,6 +982,8 @@ qmckl_exit_code qmckl_compute_forces_jastrow_en_g_doc (
           const int64_t* type_nucl_vector,
           const int64_t aord_num,
           const double* a_vector,
+          const double* rescale_factor_en,
+          const double* en_distance,
           const double* en_distance_rescaled,
           const double* en_distance_rescaled_gl,
           double* const forces_jastrow_en_g );
@@ -980,6 +997,8 @@ qmckl_exit_code qmckl_compute_forces_jastrow_en_g (
           const int64_t* type_nucl_vector,
           const int64_t aord_num,
           const double* a_vector,
+          const double* rescale_factor_en,
+          const double* en_distance,
           const double* en_distance_rescaled,
           const double* en_distance_rescaled_gl,
           double* const forces_jastrow_en_g );
@@ -993,6 +1012,8 @@ qmckl_exit_code qmckl_compute_forces_jastrow_en_g (
           const int64_t* type_nucl_vector,
           const int64_t aord_num,
           const double* a_vector,
+          const double* rescale_factor_en,
+          const double* en_distance,
           const double* en_distance_rescaled,
           const double* en_distance_rescaled_gl,
           double* const forces_jastrow_en_g );
@@ -1009,6 +1030,8 @@ qmckl_compute_forces_jastrow_en_g (const qmckl_context context,
                                           const int64_t* type_nucl_vector,
                                           const int64_t aord_num,
                                           const double* a_vector,
+                                          const double* rescale_factor_en,
+                                          const double* en_distance,
                                           const double* en_distance_rescaled,
                                           const double* en_distance_rescaled_gl,
                                           double* const forces_jastrow_en_g )
@@ -1019,7 +1042,7 @@ qmckl_compute_forces_jastrow_en_g (const qmckl_context context,
   return qmckl_compute_forces_jastrow_en_g_doc
 #endif
     (context, walk_num, elec_num, nucl_num, type_nucl_num, type_nucl_vector, aord_num,
-     a_vector, en_distance_rescaled, en_distance_rescaled_gl, forces_jastrow_en_g);
+     a_vector, rescale_factor_en, en_distance, en_distance_rescaled, en_distance_rescaled_gl, forces_jastrow_en_g);
 }
   #+end_src
 
@@ -1079,8 +1102,8 @@ for (int nw = 0; nw < walk_num; nw++){
   for (int a = 0; a < nucl_num; a++) {
     for (int k = 0; k < 3; k++){
       for (int i = 0; i < elec_num; i++){
-        for (int l = 1; l < 3; l++){
-          printf("finite_difference_force_en_g[%i][%i][%i][%i][%i] %.10f \n", nw,a,k,i,l,finite_difference_force_en_g[nw][a][k][i][l]);
+        for (int l = 0; l < 3; l++){
+          printf("finite_difference_force_en_g[%i][%i][%i][%i][%i] %.10f \n", nw,a,k,i,l,finite_difference_force_en_g[nw][a][k][i][l]-forces_jastrow_en_g[nw][a][k][i][l]);
           printf("forces_jastrow_en_g[%i][%i][%i][%i][%i] %.10f\n", nw,a,k,i,l,forces_jastrow_en_g[nw][a][k][i][l]);
           assert(fabs(finite_difference_force_en_g[nw][a][k][i][l] - forces_jastrow_en_g[nw][a][k][i][l]) < 1.e-8);
         }
