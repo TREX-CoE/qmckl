@@ -39,7 +39,7 @@ int main() {
   qmckl_context context;
   context = qmckl_context_create();
   #+end_src
-
+  
   #+begin_src c :tangle (eval c)
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -317,13 +317,23 @@ double coords[walk_num][elec_num][3];
 
 ** Set
 
+   We set the coordinates of the ~num~-th electron for all walkers.
+   The dimension of ~coord~ is
+   - [walk_num][3] if ~transp~ is ~'N'~
+   - [3][walk_num] if ~transp~ is ~'T'~
+   
    #+begin_src c :comments org :tangle (eval h_func)
 qmckl_exit_code qmckl_set_single_point (qmckl_context context,
                                  const char transp,
                                  const int64_t num,
                                  const double* coord,
                                  const int64_t size_max);
+   #+end_src
 
+   The Fortran function shifts the ~num~ by 1 because of 1-based
+   indexing.
+   
+   #+begin_src c :comments org :tangle (eval h_private_func)
 qmckl_exit_code qmckl_set_single_point_f (qmckl_context context,
                                  const char transp,
                                  const int64_t num,
@@ -353,13 +363,6 @@ qmckl_set_single_point (qmckl_context context,
                              "Incorrect point number");
   }
 
-  if (size_max != 3) {
-      return qmckl_failwith( context,
-                             QMCKL_INVALID_ARG_4,
-                             "qmckl_set_single_point",
-                             "Array too small");
-  }
-
   if (transp != 'N' && transp != 'T') {
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_2,
@@ -377,39 +380,46 @@ qmckl_set_single_point (qmckl_context context,
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
+  int64_t walk_num = ctx->electron.walker.num;
+
+  if (size_max < 3*walk_num) {
+      return qmckl_failwith( context,
+                             QMCKL_INVALID_ARG_4,
+                             "qmckl_set_single_point",
+                             "Array too small");
+  }
+
   qmckl_exit_code rc;
 
-    if (ctx->single_point.coord.data != NULL) {
-        rc = qmckl_matrix_free(context, &(ctx->single_point.coord));
-        assert (rc == QMCKL_SUCCESS);
-    }
+  if (ctx->single_point.coord.data != NULL) {
+    rc = qmckl_matrix_free(context, &(ctx->single_point.coord));
+    assert (rc == QMCKL_SUCCESS);
+  }
 
-    ctx->single_point.coord = qmckl_matrix_alloc(context, 1, 3);
-    if (ctx->single_point.coord.data == NULL) {
-        return qmckl_failwith( context,
-                                QMCKL_ALLOCATION_FAILED,
-                                "qmckl_set_single_point",
-                                NULL);
-    }
+  ctx->single_point.coord = qmckl_matrix_alloc(context, walk_num, 3);
+  if (ctx->single_point.coord.data == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_ALLOCATION_FAILED,
+                           "qmckl_set_single_point",
+                           NULL);
+  }
 
   ctx->single_point.num = num;
 
   if (transp == 'T') {
     double *a = ctx->single_point.coord.data;
-#ifdef HAVE_OPENMP
-    #pragma omp for
-#endif
-    for (int64_t i=0 ; i<3 ; ++i) {
+    for (int64_t i=0 ; i<3*walk_num ; ++i) {
       a[i] = coord[i];
     }
   } else {
-    qmckl_mat(ctx->single_point.coord, 0, 0) = coord[0];
-    qmckl_mat(ctx->single_point.coord, 0, 1) = coord[1];
-    qmckl_mat(ctx->single_point.coord, 0, 2) = coord[2];
-
+    for (int64_t i=0 ; i<walk_num ; ++i) {
+      qmckl_mat(ctx->single_point.coord, i, 0) = coord[0];
+      qmckl_mat(ctx->single_point.coord, i, 1) = coord[1];
+      qmckl_mat(ctx->single_point.coord, i, 2) = coord[2];
+    }
   }
 
-  /* Increment the date of the context */
+  /* Increment the date of the single point */
   ctx->single_point.date += 1UL;
 
   return QMCKL_SUCCESS;
@@ -568,17 +578,18 @@ qmckl_exit_code qmckl_provide_single_ee_distance(qmckl_context context)
     | ~single_ee_distance~ | ~double[walk_num][elec_num]~    | out    | Electron-electron distances |
 
     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_single_ee_distance_f(context, elec_num, walk_num, coord, single_coord, single_ee_distance) &
-     result(info)
+integer(qmckl_exit_code) function qmckl_compute_single_ee_distance(context, &
+     elec_num, walk_num, coord, single_coord, single_ee_distance) &
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
   integer(qmckl_context), intent(in)  :: context
-  integer*8             , intent(in)  :: elec_num
-  integer*8             , intent(in)  :: walk_num
-  double precision      , intent(in)  :: coord(elec_num,walk_num,3)
-  double precision      , intent(in)  :: single_coord(1,3)
-  double precision      , intent(out) :: single_ee_distance(elec_num,walk_num)
-
+  integer (c_int64_t) , intent(in)  , value :: elec_num
+  integer (c_int64_t) , intent(in)  , value :: walk_num
+  real    (c_double ) , intent(in)          :: coord(elec_num,3,walk_num)
+  real    (c_double ) , intent(in)          :: single_coord(3,walk_num)
+  real    (c_double ) , intent(out)         :: single_ee_distance(elec_num,walk_num)
 
   integer*8 :: k, i, j
   double precision :: x, y, z
@@ -602,7 +613,7 @@ integer function qmckl_compute_single_ee_distance_f(context, elec_num, walk_num,
 
   do k=1,walk_num
      info = qmckl_distance(context, 'T', 'T', 1_8, elec_num, &
-          single_coord(1,1), 1_8, &
+          single_coord(1,k), 1_8, &
           coord(1,k,1), elec_num * walk_num * 1_8, &
           single_ee_distance(1,k), 1_8)
      if (info /= QMCKL_SUCCESS) then
@@ -610,7 +621,7 @@ integer function qmckl_compute_single_ee_distance_f(context, elec_num, walk_num,
      endif
   end do
 
-end function qmckl_compute_single_ee_distance_f
+end function qmckl_compute_single_ee_distance
     #+end_src
 
     #+begin_src c :tangle (eval h_private_func) :comments org :exports none
@@ -623,30 +634,6 @@ qmckl_exit_code qmckl_compute_single_ee_distance (
           double* const single_ee_distance );
     #+end_src
 
-    #+CALL: generate_c_interface(table=qmckl_single_ee_distance_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
-
-    #+RESULTS:
-    #+begin_src f90 :tangle (eval f) :comments org :exports none
-    integer(c_int32_t) function qmckl_compute_single_ee_distance &
-        (context, elec_num, walk_num, coord, single_coord, single_ee_distance) &
-        bind(C) result(info)
-
-      use, intrinsic :: iso_c_binding
-      implicit none
-
-      integer (c_int64_t) , intent(in)  , value :: context
-      integer (c_int64_t) , intent(in)  , value :: elec_num
-      integer (c_int64_t) , intent(in)  , value :: walk_num
-      real    (c_double ) , intent(in)          :: coord(elec_num,3,walk_num)
-      real    (c_double ) , intent(in)          :: single_coord(3)
-      real    (c_double ) , intent(out)         :: single_ee_distance(elec_num,walk_num)
-
-      integer(c_int32_t), external :: qmckl_compute_single_ee_distance_f
-      info = qmckl_compute_single_ee_distance_f &
-             (context, elec_num, walk_num, coord, single_coord, single_ee_distance)
-
-    end function qmckl_compute_single_ee_distance
-    #+end_src
 
 ** test
 
@@ -725,7 +712,7 @@ qmckl_get_een_rescaled_single_e(qmckl_context context,
   if (size_max < sze) {
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_3,
-                           "todo",
+                           "qmckl_get_een_rescaled_single_e",
                            "Array too small. Expected ctx->electron.num * ctx->electron.num * ctx->electron.walker.num * (ctx->jastrow_champ.cord_num + 1)");
   }
   memcpy(distance_rescaled, ctx->single_point.een_rescaled_single_e, sze * sizeof(double));
@@ -833,21 +820,23 @@ qmckl_exit_code qmckl_provide_een_rescaled_single_e(qmckl_context context)
      | ~een_rescaled_single_e~ | ~double[walk_num][0:cord_num][elec_num]~           | out    | Single electron-electron rescaled distances for each walker |
 
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_een_rescaled_single_e_doc_f( &
+integer function qmckl_compute_een_rescaled_single_e_doc( &
      context, num_in, walk_num, elec_num, cord_num, rescale_factor_ee,  &
      single_ee_distance, een_rescaled_e, een_rescaled_single_e) &
-     result(info)
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
-  integer(qmckl_context), intent(in)  :: context
-  integer*8             , intent(in)  :: num_in
-  integer*8             , intent(in)  :: walk_num
-  integer*8             , intent(in)  :: elec_num
-  integer*8             , intent(in)  :: cord_num
-  double precision      , intent(in)  :: rescale_factor_ee
-  double precision      , intent(in)  :: single_ee_distance(elec_num,walk_num)
-  double precision      , intent(in)  :: een_rescaled_e(elec_num,elec_num,0:cord_num,walk_num)
-  double precision      , intent(out) :: een_rescaled_single_e(elec_num,0:cord_num,walk_num)
+  integer(qmckl_context), intent(in)         :: context
+  integer(c_int64_t)    , intent(in), value  :: num_in
+  integer(c_int64_t)    , intent(in), value  :: walk_num
+  integer(c_int64_t)    , intent(in), value  :: elec_num
+  integer(c_int64_t)    , intent(in), value  :: cord_num
+  real(c_double)        , intent(in), value  :: rescale_factor_ee
+  real(c_double)        , intent(in)         :: single_ee_distance(elec_num,walk_num)
+  real(c_double)        , intent(in)         :: een_rescaled_e(elec_num,elec_num,0:cord_num,walk_num)
+  real(c_double)        , intent(out)        :: een_rescaled_single_e(elec_num,0:cord_num,walk_num)
+
   double precision,allocatable        :: een_rescaled_single_e_ij(:,:)
   double precision                    :: x
   integer*8                           :: i, j, k, l, nw, num
@@ -894,7 +883,7 @@ integer function qmckl_compute_een_rescaled_single_e_doc_f( &
      end do
 
      ! prepare the actual een table
-     een_rescaled_single_e( :, 0, nw) = 1.0d0
+     een_rescaled_single_e(:,0,nw) = 1.0d0
 
      do l = 1, cord_num
         do j = 1, elec_num
@@ -908,7 +897,7 @@ integer function qmckl_compute_een_rescaled_single_e_doc_f( &
 
   end do
 
-end function qmckl_compute_een_rescaled_single_e_doc_f
+end function qmckl_compute_een_rescaled_single_e_doc
      #+end_src
 
  #   #+CALL: generate_c_header(table=qmckl_factor_een_rescaled_e_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
@@ -926,48 +915,6 @@ end function qmckl_compute_een_rescaled_single_e_doc_f
           double* const een_rescaled_single_e );
      #+end_src
 
-     #+CALL: generate_c_interface(table=qmckl_factor_een_rescaled_single_e_args,rettyp=get_value("CRetType"),fname="qmckl_compute_een_rescaled_single_e_doc")
-
-     #+RESULTS:
-     #+begin_src f90 :tangle (eval f) :comments org :exports none
-    integer(c_int32_t) function qmckl_compute_een_rescaled_single_e_doc &
-	(context, num, walk_num, elec_num, cord_num, rescale_factor_ee, &
-        single_ee_distance, een_rescaled_e, een_rescaled_single_e) &
-    bind(C) result(info)
-
-      use, intrinsic :: iso_c_binding
-      implicit none
-
-      integer (c_int64_t) , intent(in)  , value :: context
-      integer (c_int64_t) , intent(in)  , value :: num
-      integer (c_int64_t) , intent(in)  , value :: walk_num
-      integer (c_int64_t) , intent(in)  , value :: elec_num
-      integer (c_int64_t) , intent(in)  , value :: cord_num
-      real    (c_double ) , intent(in)  , value :: rescale_factor_ee
-      real    (c_double ) , intent(in)          :: single_ee_distance(elec_num,walk_num)
-      real    (c_double ) , intent(in)          :: een_rescaled_e(elec_num,elec_num,0:cord_num,walk_num)
-      real    (c_double ) , intent(out)         :: een_rescaled_single_e(elec_num,0:cord_num,walk_num)
-
-      integer(c_int32_t), external :: qmckl_compute_een_rescaled_single_e_doc_f
-      info = qmckl_compute_een_rescaled_single_e_doc_f &
-	     (context, num, walk_num, elec_num, cord_num, rescale_factor_ee, single_ee_distance, een_rescaled_e, een_rescaled_single_e)
-
-    end function qmckl_compute_een_rescaled_single_e_doc
-     #+end_src
-
-     #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
-    qmckl_exit_code qmckl_compute_een_rescaled_single_e (
-	  const qmckl_context context,
-	  const int64_t num,
-	  const int64_t walk_num,
-	  const int64_t elec_num,
-	  const int64_t cord_num,
-	  const double rescale_factor_ee,
-	  const double* single_ee_distance,
-	  const double* een_rescaled_e,
-	  double* const een_rescaled_single_e );
-     #+end_src
-
      #+begin_src c :tangle (eval h_private_func) :comments org
     qmckl_exit_code qmckl_compute_een_rescaled_single_e_doc (
 	  const qmckl_context context,
@@ -982,24 +929,25 @@ end function qmckl_compute_een_rescaled_single_e_doc_f
      #+end_src
 
      #+begin_src c :comments org :tangle (eval c) :noweb yes
-    qmckl_exit_code qmckl_compute_een_rescaled_single_e (
-	  const qmckl_context context,
-	  const int64_t num,
-	  const int64_t walk_num,
-	  const int64_t elec_num,
-	  const int64_t cord_num,
-	  const double rescale_factor_ee,
-	  const double* single_ee_distance,
-	  const double* een_rescaled_e,
-	  double* const een_rescaled_single_e ) {
+qmckl_exit_code
+qmckl_compute_een_rescaled_single_e (const qmckl_context context,
+                                     const int64_t num,
+                                     const int64_t walk_num,
+                                     const int64_t elec_num,
+                                     const int64_t cord_num,
+                                     const double rescale_factor_ee,
+                                     const double* single_ee_distance,
+                                     const double* een_rescaled_e,
+                                     double* const een_rescaled_single_e )
+{
 
 #ifdef HAVE_HPC
-    return qmckl_compute_een_rescaled_single_e_doc
+  return qmckl_compute_een_rescaled_single_e_doc
 #else
-    return qmckl_compute_een_rescaled_single_e_doc
+  return qmckl_compute_een_rescaled_single_e_doc
 #endif
-      (context, num, walk_num, elec_num, cord_num, rescale_factor_ee, single_ee_distance, een_rescaled_e, een_rescaled_single_e);
-    }
+    (context, num, walk_num, elec_num, cord_num, rescale_factor_ee, single_ee_distance, een_rescaled_e, een_rescaled_single_e);
+}
      #+end_src
 
 ** test
@@ -1049,6 +997,10 @@ for (int nw = 0; nw < walk_num; nw++){
 
 ** Get
 
+   Electron-nucleus distance between the single electron and all
+   nuclei for all walkers.
+   Dimension is ~[walk_num][nucl_num]~.
+   
     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
 qmckl_exit_code qmckl_get_single_electron_en_distance(qmckl_context context, double* distance);
     #+end_src
@@ -1082,7 +1034,7 @@ qmckl_exit_code qmckl_get_single_electron_en_distance(qmckl_context context, dou
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
-  size_t sze = ctx->nucleus.num;
+  size_t sze = ctx->nucleus.num * ctx->electron.walker.num;
   memcpy(distance, ctx->single_point.single_en_distance, sze * sizeof(double));
 
   return QMCKL_SUCCESS;
@@ -1117,7 +1069,7 @@ qmckl_exit_code qmckl_provide_single_en_distance(qmckl_context context)
   if (ctx->single_point.date > ctx->single_point.single_en_distance_date) {
 
     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-    mem_info.size = ctx->nucleus.num * sizeof(double);
+    mem_info.size = ctx->nucleus.num * ctx->electron.walker.num * sizeof(double);
 
     if (ctx->single_point.single_en_distance != NULL) {
       qmckl_memory_info_struct mem_info_test = qmckl_memory_info_struct_zero;
@@ -1150,6 +1102,7 @@ qmckl_exit_code qmckl_provide_single_en_distance(qmckl_context context)
     qmckl_exit_code rc =
       qmckl_compute_single_en_distance(context,
                                 ctx->nucleus.num,
+                                ctx->electron.walker.num,
                                 ctx->single_point.coord.data,
                                 ctx->nucleus.coord.data,
                                 ctx->single_point.single_en_distance);
@@ -1178,20 +1131,22 @@ qmckl_exit_code qmckl_provide_single_en_distance(qmckl_context context)
     |----------------------+-----------------------+--------+----------------------------|
     | ~context~            | ~qmckl_context~       | in     | Global state               |
     | ~nucl_num~           | ~int64_t~             | in     | Number of nuclei           |
+    | ~walk_num~           | ~int64_t~             | in     | Number of walkers          |
     | ~elec_coord~         | ~double[3]~           | in     | Electron coordinates       |
     | ~nucl_coord~         | ~double[3][nucl_num]~ | in     | Nuclear coordinates        |
     | ~single_en_distance~ | ~double[nucl_num]~    | out    | Electron-nucleus distances |
 
     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_single_en_distance_f(context, nucl_num, elec_coord, nucl_coord, single_en_distance) &
-     result(info)
+integer function qmckl_compute_single_en_distance(context, nucl_num, walk_num,  &
+     elec_coord, nucl_coord, single_en_distance) result(info) bind(C)
+  use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
-  integer(qmckl_context), intent(in)  :: context
-  integer*8             , intent(in)  :: nucl_num
-  double precision      , intent(in)  :: elec_coord(3)
-  double precision      , intent(in)  :: nucl_coord(nucl_num,3)
-  double precision      , intent(out) :: single_en_distance(nucl_num)
+  integer(qmckl_context), intent(in)        :: context
+  integer (c_int64_t) , intent(in)  , value :: nucl_num, walk_num
+  real    (c_double ) , intent(in)          :: elec_coord(3)
+  real    (c_double ) , intent(in)          :: nucl_coord(nucl_num,3)
+  real    (c_double ) , intent(out)         :: single_en_distance(nucl_num)
 
   integer*8 :: k
 
@@ -1209,43 +1164,20 @@ integer function qmckl_compute_single_en_distance_f(context, nucl_num, elec_coor
 
   info = qmckl_distance(context, 'T', 'T', nucl_num, 1_8, &
           nucl_coord, nucl_num, &
-          elec_coord, 1_8, &
+          elec_coord, walk_num, &
           single_en_distance, nucl_num)
 
-end function qmckl_compute_single_en_distance_f
+end function qmckl_compute_single_en_distance
     #+end_src
 
     #+begin_src c :tangle (eval h_private_func) :comments org :exports none
 qmckl_exit_code qmckl_compute_single_en_distance (
           const qmckl_context context,
           const int64_t nucl_num,
+          const int64_t walk_num,
           const double* elec_coord,
           const double* nucl_coord,
           double* const single_en_distance );
-    #+end_src
-
-    #+CALL: generate_c_interface(table=qmckl_single_en_distance_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
-
-    #+RESULTS:
-    #+begin_src f90 :tangle (eval f) :comments org :exports none
-    integer(c_int32_t) function qmckl_compute_single_en_distance &
-        (context, nucl_num, elec_coord, nucl_coord, single_en_distance) &
-        bind(C) result(info)
-
-      use, intrinsic :: iso_c_binding
-      implicit none
-
-      integer (c_int64_t) , intent(in)  , value :: context
-      integer (c_int64_t) , intent(in)  , value :: nucl_num
-      real    (c_double ) , intent(in)          :: elec_coord(3)
-      real    (c_double ) , intent(in)          :: nucl_coord(nucl_num,3)
-      real    (c_double ) , intent(out)         :: single_en_distance(nucl_num)
-
-      integer(c_int32_t), external :: qmckl_compute_single_en_distance_f
-      info = qmckl_compute_single_en_distance_f &
-             (context, nucl_num, elec_coord, nucl_coord, single_en_distance)
-
-    end function qmckl_compute_single_en_distance
     #+end_src
 
 ** test
@@ -1433,25 +1365,27 @@ qmckl_exit_code qmckl_provide_een_rescaled_single_n(qmckl_context context)
      | ~een_rescaled_single_n~ | ~double[walk_num][0:cord_num][nucl_num]~           | out    | Single electron-nucleus rescaled distances |
 
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_een_rescaled_single_n_f( &
+integer function qmckl_compute_een_rescaled_single_n( &
      context, num_in, walk_num, elec_num, nucl_num, &
      type_nucl_num, type_nucl_vector, cord_num, rescale_factor_en,  &
      single_en_distance, een_rescaled_n, een_rescaled_single_n) &
-     result(info)
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
   integer(qmckl_context), intent(in)  :: context
-  integer*8             , intent(in)  :: num_in
-  integer*8             , intent(in)  :: walk_num
-  integer*8             , intent(in)  :: elec_num
-  integer*8             , intent(in)  :: nucl_num
-  integer*8             , intent(in)  :: type_nucl_num
-  integer*8             , intent(in)  :: type_nucl_vector(nucl_num)
-  integer*8             , intent(in)  :: cord_num
-  double precision      , intent(in)  :: rescale_factor_en(type_nucl_num)
-  double precision      , intent(in)  :: single_en_distance(nucl_num,walk_num)
-  double precision      , intent(in)  :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
-  double precision      , intent(out) :: een_rescaled_single_n(nucl_num,0:cord_num,walk_num)
+  integer(c_int64_t)    , intent(in), value  :: num_in
+  integer(c_int64_t)    , intent(in), value  :: walk_num
+  integer(c_int64_t)    , intent(in), value  :: elec_num
+  integer(c_int64_t)    , intent(in), value  :: nucl_num
+  integer(c_int64_t)    , intent(in), value  :: type_nucl_num
+  integer(c_int64_t)    , intent(in)         :: type_nucl_vector(nucl_num)
+  integer(c_int64_t)    , intent(in), value  :: cord_num
+  real(c_double)        , intent(in)         :: rescale_factor_en(type_nucl_num)
+  real(c_double)        , intent(in)         :: single_en_distance(nucl_num,walk_num)
+  real(c_double)        , intent(in)         :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
+  real(c_double)        , intent(out)        :: een_rescaled_single_n(nucl_num,0:cord_num,walk_num)
+
   double precision                    :: x
   integer*8                           :: i, a, k, l, nw, num
 
@@ -1490,7 +1424,7 @@ integer function qmckl_compute_een_rescaled_single_n_f( &
 
      do l = 2, cord_num
         do a = 1, nucl_num
-            een_rescaled_single_n(a, l, nw) = een_rescaled_single_n(a, l - 1, nw) * een_rescaled_single_n(a, 1, nw)
+           een_rescaled_single_n(a, l, nw) = een_rescaled_single_n(a, l - 1, nw) * een_rescaled_single_n(a, 1, nw)
         end do
      end do
 
@@ -1498,60 +1432,7 @@ integer function qmckl_compute_een_rescaled_single_n_f( &
 
   end do
 
-end function qmckl_compute_een_rescaled_single_n_f
-     #+end_src
-
-     #+CALL: generate_c_interface(table=qmckl_factor_een_rescaled_single_n_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
-
-     #+RESULTS:
-     #+begin_src f90 :tangle (eval f) :comments org :exports none
-    integer(c_int32_t) function qmckl_compute_een_rescaled_single_n &
-        (context, &
-          num, &
-         walk_num, &
-         elec_num, &
-         nucl_num, &
-         type_nucl_num, &
-         type_nucl_vector, &
-         cord_num, &
-         rescale_factor_en, &
-         single_en_distance, &
-         een_rescaled_n, &
-         een_rescaled_single_n) &
-        bind(C) result(info)
-
-      use, intrinsic :: iso_c_binding
-      implicit none
-
-      integer (c_int64_t) , intent(in)  , value :: context
-      integer (c_int64_t) , intent(in)  , value :: num
-      integer (c_int64_t) , intent(in)  , value :: walk_num
-      integer (c_int64_t) , intent(in)  , value :: elec_num
-      integer (c_int64_t) , intent(in)  , value :: nucl_num
-      integer (c_int64_t) , intent(in)  , value :: type_nucl_num
-      integer (c_int64_t) , intent(in)          :: type_nucl_vector(nucl_num)
-      integer (c_int64_t) , intent(in)  , value :: cord_num
-      real    (c_double ) , intent(in)          :: rescale_factor_en(nucl_num)
-      real    (c_double ) , intent(in)          :: single_en_distance(nucl_num,walk_num)
-      real    (c_double ) , intent(in)          :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
-      real    (c_double ) , intent(out)         :: een_rescaled_single_n(nucl_num,0:cord_num,walk_num)
-
-      integer(c_int32_t), external :: qmckl_compute_een_rescaled_single_n_f
-      info = qmckl_compute_een_rescaled_single_n_f &
-             (context, &
-         num, &
-         walk_num, &
-          elec_num, &
-         nucl_num, &
-         type_nucl_num, &
-         type_nucl_vector, &
-         cord_num, &
-         rescale_factor_en, &
-         single_en_distance, &
-         een_rescaled_n, &
-         een_rescaled_single_n)
-
-    end function qmckl_compute_een_rescaled_single_n
+end function qmckl_compute_een_rescaled_single_n
      #+end_src
 
      #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
@@ -1757,19 +1638,20 @@ qmckl_exit_code qmckl_provide_jastrow_champ_delta_p(qmckl_context context)
      | ~delta_p~               | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][elec_num]~ | out    | Electron-nucleus jastrow                    |
 
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_jastrow_champ_delta_p_doc_f( &
+integer function qmckl_compute_jastrow_champ_delta_p_doc( &
      context, num_in, walk_num, elec_num, nucl_num, cord_num,   &
      een_rescaled_n, een_rescaled_e, een_rescaled_single_n, een_rescaled_single_e, delta_p) &
-     result(info)
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
   integer(qmckl_context), intent(in)  :: context
-  integer*8             , intent(in)  :: num_in, walk_num, elec_num, cord_num, nucl_num
-  double precision      , intent(in)  :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
-  double precision      , intent(in)  :: een_rescaled_e(elec_num, elec_num, 0:cord_num, walk_num)
-  double precision      , intent(in)  :: een_rescaled_single_n(nucl_num, 0:cord_num, walk_num)
-  double precision      , intent(in)  :: een_rescaled_single_e(elec_num, 0:cord_num, walk_num)
-  double precision      , intent(out)  :: delta_p(elec_num, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
+  integer(c_int64_t), intent(in), value  :: num_in, walk_num, elec_num, cord_num, nucl_num
+  real(c_double) , intent(in)            :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
+  real(c_double) , intent(in)            :: een_rescaled_e(elec_num, elec_num, 0:cord_num, walk_num)
+  real(c_double) , intent(in)            :: een_rescaled_single_n(nucl_num, 0:cord_num, walk_num)
+  real(c_double) , intent(in)            :: een_rescaled_single_e(elec_num, 0:cord_num, walk_num)
+  real(c_double) , intent(out)           :: delta_p(elec_num, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
 
   double precision        :: een_rescaled_delta_e(elec_num)
 
@@ -1791,7 +1673,7 @@ integer function qmckl_compute_jastrow_champ_delta_p_doc_f( &
   if (cord_num == 0) return
 
   do nw=1, walk_num
-     
+
      do i=0, cord_num-1 
 
         een_rescaled_delta_e(:) = een_rescaled_single_e(:,i,nw) - een_rescaled_e(:,num,i,nw)
@@ -1801,7 +1683,7 @@ integer function qmckl_compute_jastrow_champ_delta_p_doc_f( &
               dn = een_rescaled_single_n(a,c,nw) - een_rescaled_n(num,a,c,nw)
               dn2 = dn + een_rescaled_n(num,a,c,nw)
               do j=1,elec_num
-                delta_p(j,a,c,i,nw) = een_rescaled_e(j,num,i,nw)*dn + een_rescaled_delta_e(j) * dn2
+                 delta_p(j,a,c,i,nw) = een_rescaled_e(j,num,i,nw)*dn + een_rescaled_delta_e(j) * dn2
               enddo
            end do
         end do
@@ -1816,7 +1698,7 @@ integer function qmckl_compute_jastrow_champ_delta_p_doc_f( &
 
   end do
 
-end function qmckl_compute_jastrow_champ_delta_p_doc_f
+end function qmckl_compute_jastrow_champ_delta_p_doc
      #+end_src
 
 # #+CALL: generate_c_header(table=qmckl_factor_een_args,rettyp=qmckl_exit_code),fname=get_value("Name"))
@@ -1874,55 +1756,6 @@ qmckl_compute_jastrow_champ_delta_p (const qmckl_context context,
 
 }
  #+end_src
-   #+CALL: generate_c_interface(table=qmckl_factor_delta_p_args,rettyp=get_value("CRetType"),fname="qmckl_compute_jastrow_champ_delta_p_doc"))
-
-   #+RESULTS:
-   #+begin_src f90 :tangle (eval f) :comments org :exports none
-   integer(c_int32_t) function qmckl_compute_jastrow_champ_delta_p_doc &
-       (context, &
-        num, &
-        walk_num, &
-        elec_num, &
-        nucl_num, &
-        cord_num, &
-        een_rescaled_n, &
-        een_rescaled_e, &
-        een_rescaled_single_n, &
-        een_rescaled_single_e, &
-        delta_p) &
-       bind(C) result(info)
-
-     use, intrinsic :: iso_c_binding
-     implicit none
-
-     integer (c_int64_t) , intent(in)  , value :: context
-     integer (c_int64_t) , intent(in)  , value :: num
-     integer (c_int64_t) , intent(in)  , value :: walk_num
-     integer (c_int64_t) , intent(in)  , value :: elec_num
-     integer (c_int64_t) , intent(in)  , value :: nucl_num
-     integer (c_int64_t) , intent(in)  , value :: cord_num
-     real    (c_double ) , intent(in)          :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
-     real    (c_double ) , intent(in)          :: een_rescaled_e(elec_num,elec_num,0:cord_num,walk_num)
-     real    (c_double ) , intent(in)          :: een_rescaled_single_n(nucl_num,0:cord_num,walk_num)
-     real    (c_double ) , intent(in)          :: een_rescaled_single_e(elec_num,0:cord_num,walk_num)
-     real    (c_double ) , intent(out)         :: delta_p(elec_num,nucl_num,0:cord_num,0:cord_num-1,walk_num)
-
-     integer(c_int32_t), external :: qmckl_compute_jastrow_champ_delta_p_doc_f
-     info = qmckl_compute_jastrow_champ_delta_p_doc_f &
-            (context, &
-        num, &
-        walk_num, &
-        elec_num, &
-        nucl_num, &
-        cord_num, &
-        een_rescaled_n, &
-        een_rescaled_e, &
-        een_rescaled_single_n, &
-        een_rescaled_single_e, &
-        delta_p)
-
-   end function qmckl_compute_jastrow_champ_delta_p_doc
-   #+end_src
 
 
 ** test
@@ -2145,25 +1978,26 @@ qmckl_exit_code qmckl_provide_jastrow_champ_single_een(qmckl_context context)
      | ~delta_een~             | ~double[walk_num]~                                               | out    | Electron-nucleus jastrow                    |
 
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_jastrow_champ_factor_single_een_doc_f( &
+integer function qmckl_compute_jastrow_champ_factor_single_een_doc( &
      context, num_in, walk_num, elec_num, nucl_num, cord_num,   &
      dim_c_vector, c_vector_full, lkpm_combined_index, &
      tmp_c, delta_p, een_rescaled_n, een_rescaled_e, een_rescaled_single_n, &
      een_rescaled_single_e, delta_een) &
-     result(info)
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
   integer(qmckl_context), intent(in)  :: context
-  integer*8             , intent(in)  :: num_in, walk_num, elec_num, cord_num, nucl_num, dim_c_vector
-  integer*8             , intent(in)  :: lkpm_combined_index(dim_c_vector,4)
-  double precision      , intent(in)  :: c_vector_full(nucl_num, dim_c_vector)
-  double precision      , intent(in)  :: tmp_c(elec_num, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
-  double precision      , intent(in)  :: delta_p(elec_num, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
-  double precision      , intent(in)  :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
-  double precision      , intent(in)  :: een_rescaled_e(elec_num, elec_num, 0:cord_num, walk_num)
-  double precision      , intent(in)  :: een_rescaled_single_n(nucl_num, 0:cord_num, walk_num)
-  double precision      , intent(in)  :: een_rescaled_single_e(elec_num, 0:cord_num, walk_num)
-  double precision      , intent(out) :: delta_een(walk_num)
+  integer(c_int64_t)    , intent(in), value  :: num_in, walk_num, elec_num, cord_num, nucl_num, dim_c_vector
+  integer(c_int64_t)    , intent(in)  :: lkpm_combined_index(dim_c_vector,4)
+  real(c_double)        , intent(in)  :: c_vector_full(nucl_num, dim_c_vector)
+  real(c_double)        , intent(in)  :: tmp_c(elec_num, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
+  real(c_double)        , intent(in)  :: delta_p(elec_num, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_e(elec_num, elec_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_single_n(nucl_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_single_e(elec_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(out) :: delta_een(walk_num)
 
   double precision        :: delta_c(nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
   double precision        :: delta_c2(elec_num, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
@@ -2211,7 +2045,7 @@ integer function qmckl_compute_jastrow_champ_factor_single_een_doc_f( &
      end do
   end do
 
-end function qmckl_compute_jastrow_champ_factor_single_een_doc_f
+end function qmckl_compute_jastrow_champ_factor_single_een_doc
      #+end_src
 
 # #+CALL: generate_c_header(table=qmckl_factor_een_args,rettyp=qmckl_exit_code),fname=get_value("Name"))
@@ -2284,70 +2118,6 @@ qmckl_compute_jastrow_champ_factor_single_een (const qmckl_context context,
 
 }
  #+end_src
-   #+CALL: generate_c_interface(table=qmckl_factor_single_een_args,rettyp=get_value("CRetType"),fname="qmckl_compute_jastrow_champ_factor_single_een_doc"))
-
-   #+RESULTS:
-   #+begin_src f90 :tangle (eval f) :comments org :exports none
-integer(c_int32_t) function qmckl_compute_jastrow_champ_factor_single_een_doc &
-     (context, &
-     num, &
-     walk_num, &
-     elec_num, &
-     nucl_num, &
-     cord_num, &
-     dim_c_vector, &
-     c_vector_full, &
-     lkpm_combined_index, &
-     tmp_c, &
-     delta_p, &
-     een_rescaled_n, &
-     een_rescaled_e, &
-     een_rescaled_single_n, &
-     een_rescaled_single_e, &
-     delta_een) &
-     bind(C) result(info)
-
-  use, intrinsic :: iso_c_binding
-  implicit none
-
-  integer (c_int64_t) , intent(in)  , value :: context
-  integer (c_int64_t) , intent(in)  , value :: num
-  integer (c_int64_t) , intent(in)  , value :: walk_num
-  integer (c_int64_t) , intent(in)  , value :: elec_num
-  integer (c_int64_t) , intent(in)  , value :: nucl_num
-  integer (c_int64_t) , intent(in)  , value :: cord_num
-  integer (c_int64_t) , intent(in)  , value :: dim_c_vector
-  real    (c_double ) , intent(in)          :: c_vector_full(nucl_num,dim_c_vector)
-  integer (c_int64_t) , intent(in)          :: lkpm_combined_index(dim_c_vector,4)
-  real    (c_double ) , intent(in)          :: tmp_c(elec_num,nucl_num,0:cord_num,0:cord_num-1,walk_num)
-  real    (c_double ) , intent(in)          :: delta_p(elec_num,nucl_num,0:cord_num,0:cord_num-1,walk_num)
-  real    (c_double ) , intent(in)          :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
-  real    (c_double ) , intent(in)          :: een_rescaled_e(elec_num,elec_num,0:cord_num,walk_num)
-  real    (c_double ) , intent(in)          :: een_rescaled_single_n(nucl_num,0:cord_num,walk_num)
-  real    (c_double ) , intent(in)          :: een_rescaled_single_e(elec_num,0:cord_num,walk_num)
-  real    (c_double ) , intent(out)         :: delta_een(walk_num)
-
-  integer(c_int32_t), external :: qmckl_compute_jastrow_champ_factor_single_een_doc_f
-  info = qmckl_compute_jastrow_champ_factor_single_een_doc_f &
-       (context, &
-       num, &
-       walk_num, &
-       elec_num, &
-       nucl_num, &
-       cord_num, &
-       dim_c_vector, &
-       c_vector_full, &
-       lkpm_combined_index, &
-       tmp_c, &
-       delta_p, &
-       een_rescaled_n, &
-       een_rescaled_e, &
-       een_rescaled_single_n, &
-       een_rescaled_single_e, &
-       delta_een)
-
-end function qmckl_compute_jastrow_champ_factor_single_een_doc
-   #+end_src
 
 ** test
 
@@ -2798,8 +2568,8 @@ qmckl_exit_code qmckl_provide_en_rescaled_single(qmckl_context context)
  
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
 function qmckl_compute_en_rescaled_single_doc(context, &
-     nucl_num, type_nucl_num, &
-     type_nucl_vector, rescale_factor_en, walk_num, single_en_distance, en_rescaled_single) &
+     nucl_num, type_nucl_num, type_nucl_vector, rescale_factor_en, &
+     walk_num, single_en_distance, en_rescaled_single) &
      bind(C) result(info)
   use qmckl
   implicit none
@@ -3244,7 +3014,7 @@ qmckl_compute_jastrow_champ_single_ee (const qmckl_context context,
 }
  #+end_src
 
- ** test
+** test
 
       #+begin_src c :tangle (eval c_test)
 
@@ -3642,7 +3412,6 @@ for (int nw = 0; nw < walk_num; nw++) {
 
       #+end_src
 
-
 * En rescaled derivative een
 
 ** Get
@@ -3702,7 +3471,7 @@ qmckl_exit_code qmckl_provide_een_rescaled_single_n_gl(qmckl_context context)
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
-  /* Check if ee distance is provided */
+  /* Check if en distance is provided */
   qmckl_exit_code rc = qmckl_provide_single_en_distance(context);
   if(rc != QMCKL_SUCCESS) return rc;
 
@@ -3788,28 +3557,30 @@ qmckl_exit_code qmckl_provide_een_rescaled_single_n_gl(qmckl_context context)
      | ~een_rescaled_single_n_gl~ | ~double[walk_num][0:cord_num][nucl_num][4]~ | out    | Electron-nucleus rescaled distances |
 
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_een_rescaled_single_n_gl_f( &
+integer function qmckl_compute_een_rescaled_single_n_gl( &
      context, walk_num, nucl_num, type_nucl_num, type_nucl_vector, &
-     cord_num, rescale_factor_en, &
-     coord_ee, coord_n, single_en_distance, een_rescaled_single_n, een_rescaled_single_n_gl) &
-     result(info)
+     cord_num, rescale_factor_en, coord_ee, coord_n, single_en_distance, &
+     een_rescaled_single_n, een_rescaled_single_n_gl) &
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
-  integer(qmckl_context), intent(in)  :: context
-  integer*8             , intent(in)  :: walk_num
-  integer*8             , intent(in)  :: nucl_num
-  integer*8             , intent(in)  :: type_nucl_num
-  integer*8             , intent(in)  :: type_nucl_vector(nucl_num)
-  integer*8             , intent(in)  :: cord_num
-  double precision      , intent(in)  :: rescale_factor_en(type_nucl_num)
-  double precision      , intent(in)  :: coord_ee(3)
-  double precision      , intent(in)  :: coord_n(nucl_num,3)
-  double precision      , intent(in)  :: single_en_distance(nucl_num,walk_num)
-  double precision      , intent(in)  :: een_rescaled_single_n(nucl_num,0:cord_num,walk_num)
-  double precision      , intent(out) :: een_rescaled_single_n_gl(4,nucl_num,0:cord_num,walk_num)
-  double precision,dimension(:,:),allocatable :: elnuc_dist_gl
-  double precision                    :: x, ria_inv, kappa_l
-  integer*8                           :: i, a, k, l, nw, ii
+  integer(qmckl_context), intent(in), value  :: context
+  integer(c_int64_t)    , intent(in), value  :: walk_num
+  integer(c_int64_t)    , intent(in), value  :: nucl_num
+  integer(c_int64_t)    , intent(in), value  :: type_nucl_num
+  integer(c_int64_t)    , intent(in)         :: type_nucl_vector(nucl_num)
+  integer(c_int64_t)    , intent(in), value  :: cord_num
+  real(c_double)        , intent(in)         :: rescale_factor_en(type_nucl_num)
+  real(c_double)        , intent(in)         :: coord_ee(3,walk_num)
+  real(c_double)        , intent(in)         :: coord_n(nucl_num,3)
+  real(c_double)        , intent(in)         :: single_en_distance(nucl_num,walk_num)
+  real(c_double)        , intent(in)         :: een_rescaled_single_n(nucl_num,0:cord_num,walk_num)
+  real(c_double)        , intent(out)        :: een_rescaled_single_n_gl(4,nucl_num,0:cord_num,walk_num)
+
+  double precision,allocatable   :: elnuc_dist_gl(:,:)
+  double precision               :: x, ria_inv, kappa_l
+  integer*8                      :: i, a, k, l, nw, ii
 
   allocate(elnuc_dist_gl(4, nucl_num))
 
@@ -3844,7 +3615,7 @@ integer function qmckl_compute_een_rescaled_single_n_gl_f( &
      do a = 1, nucl_num
         ria_inv = 1.0d0 / single_en_distance(a, nw)
         do ii = 1, 3
-          elnuc_dist_gl(ii, a) = (coord_ee(ii) - coord_n(a, ii)) * ria_inv
+           elnuc_dist_gl(ii, a) = (coord_ee(ii,nw) - coord_n(a, ii)) * ria_inv
         end do
         elnuc_dist_gl(4, a) = 2.0d0 * ria_inv
      end do
@@ -3852,29 +3623,29 @@ integer function qmckl_compute_een_rescaled_single_n_gl_f( &
      do l = 0, cord_num
         do a = 1, nucl_num
            kappa_l = - dble(l) * rescale_factor_en(type_nucl_vector(a)+1)
-            een_rescaled_single_n_gl(1, a, l, nw) = kappa_l * elnuc_dist_gl(1, a)
-            een_rescaled_single_n_gl(2, a, l, nw) = kappa_l * elnuc_dist_gl(2, a)
-            een_rescaled_single_n_gl(3, a, l, nw) = kappa_l * elnuc_dist_gl(3, a)
-            een_rescaled_single_n_gl(4, a, l, nw) = kappa_l * elnuc_dist_gl(4, a)
+           een_rescaled_single_n_gl(1, a, l, nw) = kappa_l * elnuc_dist_gl(1, a)
+           een_rescaled_single_n_gl(2, a, l, nw) = kappa_l * elnuc_dist_gl(2, a)
+           een_rescaled_single_n_gl(3, a, l, nw) = kappa_l * elnuc_dist_gl(3, a)
+           een_rescaled_single_n_gl(4, a, l, nw) = kappa_l * elnuc_dist_gl(4, a)
 
-            een_rescaled_single_n_gl(4, a, l, nw) = een_rescaled_single_n_gl(4, a, l, nw)           &
-                  + een_rescaled_single_n_gl(1, a, l, nw) * een_rescaled_single_n_gl(1, a, l, nw) &
-                  + een_rescaled_single_n_gl(2, a, l, nw) * een_rescaled_single_n_gl(2, a, l, nw) &
-                  + een_rescaled_single_n_gl(3, a, l, nw) * een_rescaled_single_n_gl(3, a, l, nw)
+           een_rescaled_single_n_gl(4, a, l, nw) = een_rescaled_single_n_gl(4, a, l, nw)           &
+                + een_rescaled_single_n_gl(1, a, l, nw) * een_rescaled_single_n_gl(1, a, l, nw) &
+                + een_rescaled_single_n_gl(2, a, l, nw) * een_rescaled_single_n_gl(2, a, l, nw) &
+                + een_rescaled_single_n_gl(3, a, l, nw) * een_rescaled_single_n_gl(3, a, l, nw)
 
-            een_rescaled_single_n_gl(1, a, l, nw) = een_rescaled_single_n_gl(1, a, l, nw) * &
-                  een_rescaled_single_n(a, l, nw)
-            een_rescaled_single_n_gl(2, a, l, nw) = een_rescaled_single_n_gl(2, a, l, nw) * &
-                  een_rescaled_single_n(a, l, nw)
-            een_rescaled_single_n_gl(3, a, l, nw) = een_rescaled_single_n_gl(3, a, l, nw) * &
-                  een_rescaled_single_n(a, l, nw)
-            een_rescaled_single_n_gl(4, a, l, nw) = een_rescaled_single_n_gl(4, a, l, nw) * &
-                  een_rescaled_single_n(a, l, nw)
+           een_rescaled_single_n_gl(1, a, l, nw) = een_rescaled_single_n_gl(1, a, l, nw) * &
+                een_rescaled_single_n(a, l, nw)
+           een_rescaled_single_n_gl(2, a, l, nw) = een_rescaled_single_n_gl(2, a, l, nw) * &
+                een_rescaled_single_n(a, l, nw)
+           een_rescaled_single_n_gl(3, a, l, nw) = een_rescaled_single_n_gl(3, a, l, nw) * &
+                een_rescaled_single_n(a, l, nw)
+           een_rescaled_single_n_gl(4, a, l, nw) = een_rescaled_single_n_gl(4, a, l, nw) * &
+                een_rescaled_single_n(a, l, nw)
         end do
      end do
   end do
 
-end function qmckl_compute_een_rescaled_single_n_gl_f
+end function qmckl_compute_een_rescaled_single_n_gl
      #+end_src
 
  #   #+CALL: generate_c_header(table=qmckl_compute_jastrow_champ_factor_een_rescaled_n_gl_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
@@ -3895,58 +3666,6 @@ end function qmckl_compute_een_rescaled_single_n_gl_f
           double* const een_rescaled_single_n_gl );
      #+end_src
 
-     #+CALL: generate_c_interface(table=qmckl_compute_een_rescaled_single_n_gl_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
-
-     #+RESULTS:
-     #+begin_src f90 :tangle (eval f) :comments org :exports none
-    integer(c_int32_t) function qmckl_compute_een_rescaled_single_n_gl &
-        (context, &
-         walk_num, &
-         nucl_num, &
-         type_nucl_num, &
-         type_nucl_vector, &
-         cord_num, &
-         rescale_factor_en, &
-         coord_ee, &
-         coord_n, &
-         single_en_distance, &
-         een_rescaled_single_n, &
-         een_rescaled_single_n_gl) &
-        bind(C) result(info)
-
-      use, intrinsic :: iso_c_binding
-      implicit none
-
-      integer (c_int64_t) , intent(in)  , value :: context
-      integer (c_int64_t) , intent(in)  , value :: walk_num
-      integer (c_int64_t) , intent(in)  , value :: nucl_num
-      integer (c_int64_t) , intent(in)  , value :: type_nucl_num
-      integer (c_int64_t) , intent(in)          :: type_nucl_vector(nucl_num)
-      integer (c_int64_t) , intent(in)  , value :: cord_num
-      real    (c_double ) , intent(in)          :: rescale_factor_en(nucl_num)
-      real    (c_double ) , intent(in)          :: coord_ee(3)
-      real    (c_double ) , intent(in)          :: coord_n(nucl_num,3)
-      real    (c_double ) , intent(in)          :: single_en_distance(nucl_num,walk_num)
-      real    (c_double ) , intent(in)          :: een_rescaled_single_n(nucl_num,0:cord_num,walk_num)
-      real    (c_double ) , intent(out)         :: een_rescaled_single_n_gl(4,nucl_num,0:cord_num,walk_num)
-
-      integer(c_int32_t), external :: qmckl_compute_een_rescaled_single_n_gl_f
-      info = qmckl_compute_een_rescaled_single_n_gl_f &
-             (context, &
-         walk_num, &
-         nucl_num, &
-         type_nucl_num, &
-         type_nucl_vector, &
-         cord_num, &
-         rescale_factor_en, &
-         coord_ee, &
-         coord_n, &
-         single_en_distance, &
-         een_rescaled_single_n, &
-         een_rescaled_single_n_gl)
-
-    end function qmckl_compute_een_rescaled_single_n_gl
-     #+end_src
 
 ** test
 
@@ -4138,26 +3857,28 @@ qmckl_exit_code qmckl_provide_een_rescaled_single_e_gl(qmckl_context context)
      | ~een_rescaled_single_e_gl~ | ~double[walk_num][0:cord_num][elec_num][4]~ | out    | Electron-electron rescaled distances |
 
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_een_rescaled_single_e_gl_f( &
+integer function qmckl_compute_een_rescaled_single_e_gl_doc( &
      context, num_in, walk_num, elec_num, cord_num, rescale_factor_ee,  &
      coord, coord_ee, single_ee_distance, een_rescaled_single_e, een_rescaled_single_e_gl) &
-     result(info)
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
-  integer(qmckl_context), intent(in)  :: context
-  integer*8             , intent(in)  :: num_in
-  integer*8             , intent(in)  :: walk_num
-  integer*8             , intent(in)  :: elec_num
-  integer*8             , intent(in)  :: cord_num
-  double precision      , intent(in)  :: rescale_factor_ee
-  double precision      , intent(in)  :: coord(3)
-  double precision      , intent(in)  :: coord_ee(elec_num,3,walk_num)
-  double precision      , intent(in)  :: single_ee_distance(elec_num,walk_num)
-  double precision      , intent(in)  :: een_rescaled_single_e(elec_num,0:cord_num,walk_num)
-  double precision      , intent(out) :: een_rescaled_single_e_gl(4,elec_num,0:cord_num,walk_num)
-  double precision,dimension(:,:),allocatable  :: elec_dist_gl
-  double precision                    :: x, rij_inv, kappa_l
-  integer*8                           :: i, j, k, l, nw, ii, num
+  integer(qmckl_context), intent(in)        :: context
+  integer(c_int64_t)    , intent(in), value :: num_in
+  integer(c_int64_t)    , intent(in), value :: walk_num
+  integer(c_int64_t)    , intent(in), value :: elec_num
+  integer(c_int64_t)    , intent(in), value :: cord_num
+  real(c_double)        , intent(in), value :: rescale_factor_ee
+  real(c_double)        , intent(in)        :: coord(3,walk_num)
+  real(c_double)        , intent(in)        :: coord_ee(elec_num,3,walk_num)
+  real(c_double)        , intent(in)        :: single_ee_distance(elec_num,walk_num)
+  real(c_double)        , intent(in)        :: een_rescaled_single_e(elec_num,0:cord_num,walk_num)
+  real(c_double)        , intent(out)       :: een_rescaled_single_e_gl(4,elec_num,0:cord_num,walk_num)
+
+  double precision,allocatable   :: elec_dist_gl(:,:)
+  double precision               :: x, rij_inv, kappa_l
+  integer*8                      :: i, j, k, l, nw, ii, num
 
   num = num_in + 1
 
@@ -4185,47 +3906,47 @@ integer function qmckl_compute_een_rescaled_single_e_gl_f( &
      return
   endif
 
-!   Not necessary: should be set to zero by qmckl_malloc
-!   een_rescaled_single_e_gl = 0.0d0
+  !   Not necessary: should be set to zero by qmckl_malloc
+  !   een_rescaled_single_e_gl = 0.0d0
 
   ! Prepare table of exponentiated distances raised to appropriate power
 
   do nw = 1, walk_num
-    do i = 1, elec_num
+     do i = 1, elec_num
         rij_inv = 1.0d0 / single_ee_distance(i, nw)
         do ii = 1, 3
-          elec_dist_gl(ii, i) = (coord(ii) - coord_ee(i, ii, nw)) * rij_inv
+           elec_dist_gl(ii, i) = (coord(ii,nw) - coord_ee(i, ii, nw)) * rij_inv
         end do
         elec_dist_gl(4, i) = 2.0d0 * rij_inv
-      end do
+     end do
 
-    elec_dist_gl(:, num) = 0.0d0
+     elec_dist_gl(:, num) = 0.0d0
 
-    do l = 1, cord_num
-      kappa_l = - dble(l) * rescale_factor_ee
-      do i = 1, elec_num
-          een_rescaled_single_e_gl(1, i, l, nw) = kappa_l * elec_dist_gl(1, i)
-          een_rescaled_single_e_gl(2, i, l, nw) = kappa_l * elec_dist_gl(2, i)
-          een_rescaled_single_e_gl(3, i, l, nw) = kappa_l * elec_dist_gl(3, i)
-          een_rescaled_single_e_gl(4, i, l, nw) = kappa_l * elec_dist_gl(4, i)
+     do l = 1, cord_num
+        kappa_l = - dble(l) * rescale_factor_ee
+        do i = 1, elec_num
+           een_rescaled_single_e_gl(1, i, l, nw) = kappa_l * elec_dist_gl(1, i)
+           een_rescaled_single_e_gl(2, i, l, nw) = kappa_l * elec_dist_gl(2, i)
+           een_rescaled_single_e_gl(3, i, l, nw) = kappa_l * elec_dist_gl(3, i)
+           een_rescaled_single_e_gl(4, i, l, nw) = kappa_l * elec_dist_gl(4, i)
 
-          een_rescaled_single_e_gl(4, i, l, nw) = een_rescaled_single_e_gl(4, i, l, nw)              &
-                    + een_rescaled_single_e_gl(1, i, l, nw) * een_rescaled_single_e_gl(1, i, l, nw)  &
-                    + een_rescaled_single_e_gl(2, i, l, nw) * een_rescaled_single_e_gl(2, i, l, nw)  &
-                    + een_rescaled_single_e_gl(3, i, l, nw) * een_rescaled_single_e_gl(3, i, l, nw)
+           een_rescaled_single_e_gl(4, i, l, nw) = een_rescaled_single_e_gl(4, i, l, nw)              &
+                + een_rescaled_single_e_gl(1, i, l, nw) * een_rescaled_single_e_gl(1, i, l, nw)  &
+                + een_rescaled_single_e_gl(2, i, l, nw) * een_rescaled_single_e_gl(2, i, l, nw)  &
+                + een_rescaled_single_e_gl(3, i, l, nw) * een_rescaled_single_e_gl(3, i, l, nw)
 
-          een_rescaled_single_e_gl(1,i,l,nw) = een_rescaled_single_e_gl(1,i,l,nw) * een_rescaled_single_e(i,l,nw)
-          een_rescaled_single_e_gl(2,i,l,nw) = een_rescaled_single_e_gl(2,i,l,nw) * een_rescaled_single_e(i,l,nw)
-          een_rescaled_single_e_gl(3,i,l,nw) = een_rescaled_single_e_gl(3,i,l,nw) * een_rescaled_single_e(i,l,nw)
-          een_rescaled_single_e_gl(4,i,l,nw) = een_rescaled_single_e_gl(4,i,l,nw) * een_rescaled_single_e(i,l,nw)
+           een_rescaled_single_e_gl(1,i,l,nw) = een_rescaled_single_e_gl(1,i,l,nw) * een_rescaled_single_e(i,l,nw)
+           een_rescaled_single_e_gl(2,i,l,nw) = een_rescaled_single_e_gl(2,i,l,nw) * een_rescaled_single_e(i,l,nw)
+           een_rescaled_single_e_gl(3,i,l,nw) = een_rescaled_single_e_gl(3,i,l,nw) * een_rescaled_single_e(i,l,nw)
+           een_rescaled_single_e_gl(4,i,l,nw) = een_rescaled_single_e_gl(4,i,l,nw) * een_rescaled_single_e(i,l,nw)
 
-    end do
+        end do
+     end do
   end do
-end do
 
 
 
-end function qmckl_compute_een_rescaled_single_e_gl_f
+end function qmckl_compute_een_rescaled_single_e_gl_doc
      #+end_src
 
  #  #+CALL: generate_c_header(table=qmckl_factor_een_rescaled_e_gl_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
@@ -4259,57 +3980,6 @@ end function qmckl_compute_een_rescaled_single_e_gl_f
          const double* een_rescaled_single_e,
          double* const een_rescaled_single_e_gl );
  #+end_src
-
-
-     #+CALL: generate_c_interface(table=qmckl_een_rescaled_single_e_gl_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
-
-     #+RESULTS:
-     #+begin_src f90 :tangle (eval f) :comments org :exports none
-    integer(c_int32_t) function qmckl_compute_een_rescaled_single_e_gl_doc &
-        (context, &
-          num, &
-         walk_num, &
-         elec_num, &
-         cord_num, &
-         rescale_factor_ee, &
-         coord, &
-         coord_ee, &
-         single_ee_distance, &
-         een_rescaled_single_e, &
-         een_rescaled_single_e_gl) &
-        bind(C) result(info)
-
-      use, intrinsic :: iso_c_binding
-      implicit none
-
-      integer (c_int64_t) , intent(in)  , value :: context
-      integer (c_int64_t) , intent(in)  , value :: num
-      integer (c_int64_t) , intent(in)  , value :: walk_num
-      integer (c_int64_t) , intent(in)  , value :: elec_num
-      integer (c_int64_t) , intent(in)  , value :: cord_num
-      real    (c_double ) , intent(in)  , value :: rescale_factor_ee
-      real    (c_double ) , intent(in)          :: coord(3)
-      real    (c_double ) , intent(in)          :: coord_ee(elec_num, 3, walk_num)
-      real    (c_double ) , intent(in)          :: single_ee_distance(elec_num,walk_num)
-      real    (c_double ) , intent(in)          :: een_rescaled_single_e(elec_num,0:cord_num,walk_num)
-      real    (c_double ) , intent(out)         :: een_rescaled_single_e_gl(4,elec_num,0:cord_num,walk_num)
-
-      integer(c_int32_t), external :: qmckl_compute_een_rescaled_single_e_gl_f
-      info = qmckl_compute_een_rescaled_single_e_gl_f &
-             (context, &
-          num, &
-         walk_num, &
-         elec_num, &
-         cord_num, &
-         rescale_factor_ee, &
-         coord, &
-         coord_ee, &
-         single_ee_distance, &
-         een_rescaled_single_e, &
-         een_rescaled_single_e_gl)
-
-    end function qmckl_compute_een_rescaled_single_e_gl_doc
-     #+end_src
 
 
  #+begin_src c :comments org :tangle (eval c) :noweb yes
@@ -4396,7 +4066,6 @@ for (int l = 0; l < cord_num+1; l++) {
     }
 }
       #+end_src
-
 
 * gl delta p
 
@@ -4556,34 +4225,34 @@ qmckl_exit_code qmckl_provide_jastrow_champ_delta_p_gl(qmckl_context context)
      | ~delta_p_gl~               | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][4][elec_num]~ | out    | Electron-nucleus jastrow                    |
 
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_jastrow_champ_delta_p_gl_doc_f( &
+integer function qmckl_compute_jastrow_champ_delta_p_gl_doc( &
      context, num_in, walk_num, elec_num, nucl_num, cord_num,   &
      een_rescaled_n, een_rescaled_e, een_rescaled_single_n, een_rescaled_single_e, &
      een_rescaled_n_gl, een_rescaled_e_gl, een_rescaled_single_n_gl, een_rescaled_single_e_gl, delta_p_gl) &
-     result(info)
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
   integer(qmckl_context), intent(in)  :: context
-  integer*8             , intent(in)  :: num_in, walk_num, elec_num, cord_num, nucl_num
-  double precision      , intent(in)  :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
-  double precision      , intent(in)  :: een_rescaled_e(elec_num, elec_num, 0:cord_num, walk_num)
-  double precision      , intent(in)  :: een_rescaled_single_n(nucl_num, 0:cord_num, walk_num)
-  double precision      , intent(in)  :: een_rescaled_single_e(elec_num, 0:cord_num, walk_num)
-  double precision      , intent(in)  :: een_rescaled_n_gl(elec_num, 4, nucl_num, 0:cord_num, walk_num)
-  double precision      , intent(in)  :: een_rescaled_e_gl(elec_num, 4, elec_num, 0:cord_num, walk_num)
-  double precision      , intent(in)  :: een_rescaled_single_n_gl(4, nucl_num, 0:cord_num, walk_num)
-  double precision      , intent(in)  :: een_rescaled_single_e_gl(4,elec_num, 0:cord_num, walk_num)
-  double precision      , intent(out)  :: delta_p_gl(elec_num,4,nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
+  integer(c_int64_t)    , intent(in), value  :: num_in, walk_num, elec_num, cord_num, nucl_num
+  real(c_double)        , intent(in)  :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_e(elec_num, elec_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_single_n(nucl_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_single_e(elec_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_n_gl(elec_num, 4, nucl_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_e_gl(elec_num, 4, elec_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_single_n_gl(4, nucl_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_single_e_gl(4,elec_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(out)  :: delta_p_gl(elec_num,4,nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
 
   double precision        :: delta_e_gl(4,elec_num, 0:cord_num, walk_num)
 
   double precision        :: delta_e_gl_2(elec_num, 0:cord_num, walk_num)
   double precision        :: een_rescaled_e_gl_2(elec_num, elec_num, 0:cord_num, walk_num)
 
-  double precision        :: een_rescaled_delta_n(nucl_num, 0:cord_num, walk_num)
-
-  double precision        :: delta_c(nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
-  double precision        :: delta_c2(elec_num, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
+  double precision        :: een_rescaled_delta_n(nucl_num, 0:cord_num)
+  double precision        :: delta_c(nucl_num,0:cord_num)
+  double precision        :: delta_c2(elec_num, nucl_num,0:cord_num)
 
   integer*8 :: i, a, j, l, k, p, m, n, nw, num
   double precision :: accu, accu2, cn
@@ -4608,8 +4277,6 @@ integer function qmckl_compute_jastrow_champ_delta_p_gl_doc_f( &
 
   delta_e_gl(:, num, :, :) = 0.0d0
 
-  een_rescaled_delta_n(:,:,:) = een_rescaled_single_n(:,:,:) - een_rescaled_n(num, :, :, :)
-
   delta_c = 0.0d0
   delta_c2 = 0.0d0
   delta_p_gl = 0.0d0
@@ -4620,6 +4287,8 @@ integer function qmckl_compute_jastrow_champ_delta_p_gl_doc_f( &
      ! Compute using loops
 
      do nw=1, walk_num
+        een_rescaled_delta_n(:,:) = een_rescaled_single_n(:,:,nw) - een_rescaled_n(num, :, :, nw)
+
         do m=0, cord_num-1
            do a = 1, nucl_num
               do l=0, cord_num
@@ -4632,10 +4301,10 @@ integer function qmckl_compute_jastrow_champ_delta_p_gl_doc_f( &
 
 
                        delta_p_gl(j,k,a,l,m,nw) =   delta_p_gl(j,k,a,l,m,nw) + &
-                            een_rescaled_e_gl(j,k,num,m,nw) * een_rescaled_delta_n(a,l,nw)
+                            een_rescaled_e_gl(j,k,num,m,nw) * een_rescaled_delta_n(a,l)
 
                        delta_p_gl(j,k,a,l,m,nw) =   delta_p_gl(j,k,a,l,m,nw) - &
-                            delta_e_gl(k,j,m,nw) * een_rescaled_delta_n(a,l,nw)
+                            delta_e_gl(k,j,m,nw) * een_rescaled_delta_n(a,l)
 
 
                     end do
@@ -4645,10 +4314,10 @@ integer function qmckl_compute_jastrow_champ_delta_p_gl_doc_f( &
                          delta_e_gl(4,j,m,nw) * een_rescaled_n(num,a,l,nw)
 
                     delta_p_gl(j,4,a,l,m,nw) =   delta_p_gl(j,4,a,l,m,nw) + &
-                         een_rescaled_e_gl(num,4,j,m,nw) * een_rescaled_delta_n(a,l,nw)
+                         een_rescaled_e_gl(num,4,j,m,nw) * een_rescaled_delta_n(a,l)
 
                     delta_p_gl(j,4,a,l,m,nw) =   delta_p_gl(j,4,a,l,m,nw) + &
-                         delta_e_gl(4,j,m,nw) * een_rescaled_delta_n(a,l,nw)
+                         delta_e_gl(4,j,m,nw) * een_rescaled_delta_n(a,l)
 
                  end do
               end do
@@ -4661,6 +4330,7 @@ integer function qmckl_compute_jastrow_champ_delta_p_gl_doc_f( &
      ! Use DGEMM
 
      do nw=1, walk_num
+        een_rescaled_delta_n(:,:) = een_rescaled_single_n(:,:,nw) - een_rescaled_n(num, :, :, nw)
         do m=0, cord_num-1
 
            do k = 1, 3
@@ -4671,35 +4341,35 @@ integer function qmckl_compute_jastrow_champ_delta_p_gl_doc_f( &
                    delta_e_gl_2(1,m,nw),elec_num,     &
                    een_rescaled_n(1,1,0,nw),elec_num, &
                    0.0d0,                                       &
-                   delta_c(1,0,m,nw),1_8)
+                   delta_c,1_8)
 
               info = qmckl_dgemm(context, 'N', 'N', elec_num, nucl_num * (cord_num+1), 1_8, -1.0d0, &
                    delta_e_gl_2(1,m,nw),elec_num,               &
                    een_rescaled_n(num,1,0,nw),elec_num,         &
                    0.0d0,                                       &
-                   delta_c2(1,1,0,m,nw),elec_num)
+                   delta_c2(1,1,0),elec_num)
 
-              delta_c2(num,:,:,m,nw) = delta_c2(num,:,:,m,nw) + delta_c(:,:,m,nw)        
-              delta_p_gl(:,k,:,:,m,nw) = delta_c2(:,:,:,m,nw)
+              delta_c2(num,:,:) = delta_c2(num,:,:) + delta_c(:,:)        
+              delta_p_gl(:,k,:,:,m,nw) = delta_c2(:,:,:)
 
 
               info = qmckl_dgemm(context, 'N', 'T', elec_num, nucl_num * (cord_num+1), 1_8, 1.0d0, &
                    een_rescaled_e_gl_2(:,num,m,nw),elec_num,               &
-                   een_rescaled_delta_n(:,:,nw),nucl_num* (cord_num+1),    &
+                   een_rescaled_delta_n,nucl_num* (cord_num+1),    &
                    0.0d0,                                       &
-                   delta_c2(:,:,:,m,nw),elec_num)
+                   delta_c2,elec_num)
 
 
 
-              delta_p_gl(:,k,:,:,m,nw) = delta_p_gl(:,k,:,:,m,nw) + delta_c2(:,:,:,m,nw)
+              delta_p_gl(:,k,:,:,m,nw) = delta_p_gl(:,k,:,:,m,nw) + delta_c2(:,:,:)
 
               info = qmckl_dgemm(context, 'N', 'T', elec_num, nucl_num * (cord_num+1), 1_8, -1.0d0, &
                    delta_e_gl_2(:,m,nw),elec_num,                       &
-                   een_rescaled_delta_n(:,:,nw),nucl_num* (cord_num+1), &
+                   een_rescaled_delta_n,nucl_num* (cord_num+1), &
                    0.0d0,                                               &
-                   delta_c2(:,:,:,m,nw),elec_num)
+                   delta_c2(:,:,:),elec_num)
 
-              delta_p_gl(:,k,:,:,m,nw) = delta_p_gl(:,k,:,:,m,nw) + delta_c2(:,:,:,m,nw)
+              delta_p_gl(:,k,:,:,m,nw) = delta_p_gl(:,k,:,:,m,nw) + delta_c2(:,:,:)
 
 
            end do
@@ -4711,42 +4381,41 @@ integer function qmckl_compute_jastrow_champ_delta_p_gl_doc_f( &
                 delta_e_gl_2(1,m,nw),elec_num,               &
                 een_rescaled_n(1,1,0,nw),elec_num,           &
                 0.0d0,                                       &
-                delta_c(1,0,m,nw),1_8)
+                delta_c,1_8)
 
            info = qmckl_dgemm(context, 'N', 'N', elec_num, nucl_num * (cord_num+1), 1_8, 1.0d0,     &
                 delta_e_gl_2(1,m,nw),elec_num,               &
                 een_rescaled_n(num,1,0,nw),elec_num,         &
                 0.0d0,                                       &
-                delta_c2(1,1,0,m,nw),elec_num)
+                delta_c2,elec_num)
 
-           delta_c2(num,:,:,m,nw) = delta_c2(num,:,:,m,nw) + delta_c(:,:,m,nw)        
-           delta_p_gl(:,k,:,:,m,nw) = delta_c2(:,:,:,m,nw)
+           delta_c2(num,:,:) = delta_c2(num,:,:) + delta_c(:,:)        
+           delta_p_gl(:,k,:,:,m,nw) = delta_c2(:,:,:)
 
 
            info = qmckl_dgemm(context, 'N', 'T', elec_num, nucl_num * (cord_num+1), 1_8, 1.0d0,     &
                 een_rescaled_e_gl_2(:,num,m,nw),elec_num,                     &
-                een_rescaled_delta_n(:,:,nw),nucl_num* (cord_num+1),          &
+                een_rescaled_delta_n,nucl_num* (cord_num+1),          &
                 0.0d0,                                       &
-                delta_c2(:,:,:,m,nw),elec_num)
+                delta_c2(:,:,:),elec_num)
 
 
-           delta_p_gl(:,k,:,:,m,nw) = delta_p_gl(:,k,:,:,m,nw) + delta_c2(:,:,:,m,nw)
+           delta_p_gl(:,k,:,:,m,nw) = delta_p_gl(:,k,:,:,m,nw) + delta_c2(:,:,:)
 
            info = qmckl_dgemm(context, 'N', 'T', elec_num, nucl_num * (cord_num+1), 1_8, 1.0d0,     &
                 delta_e_gl_2(:,m,nw),elec_num,                     &
-                een_rescaled_delta_n(:,:,nw),nucl_num* (cord_num+1),                     &
+                een_rescaled_delta_n,nucl_num* (cord_num+1),                     &
                 0.0d0,                                       &
-                delta_c2(:,:,:,m,nw),elec_num)
+                delta_c2(:,:,:),elec_num)
 
-           delta_p_gl(:,k,:,:,m,nw) = delta_p_gl(:,k,:,:,m,nw) + delta_c2(:,:,:,m,nw)
+           delta_p_gl(:,k,:,:,m,nw) = delta_p_gl(:,k,:,:,m,nw) + delta_c2(:,:,:)
         end do
      end do
   end if
 
 
 
-end function qmckl_compute_jastrow_champ_delta_p_gl_doc_f
-
+end function qmckl_compute_jastrow_champ_delta_p_gl_doc
      #+end_src
 
 # #+CALL: generate_c_header(table=qmckl_factor_een_args,rettyp=qmckl_exit_code),fname=get_value("Name"))
@@ -4817,67 +4486,7 @@ qmckl_compute_jastrow_champ_delta_p_gl (const qmckl_context context,
 
 }
  #+end_src
-   #+CALL: generate_c_interface(table=qmckl_factor_delta_p_gl_args,rettyp=get_value("CRetType"),fname="qmckl_compute_jastrow_champ_delta_p_gl_doc"))
 
-   #+RESULTS:
-   #+begin_src f90 :tangle (eval f) :comments org :exports none
-   integer(c_int32_t) function qmckl_compute_jastrow_champ_delta_p_gl_doc &
-       (context, &
-        num, &
-        walk_num, &
-        elec_num, &
-        nucl_num, &
-        cord_num, &
-        een_rescaled_n, &
-        een_rescaled_e, &
-        een_rescaled_single_n, &
-        een_rescaled_single_e, &
-        een_rescaled_n_gl, &
-        een_rescaled_e_gl, &
-        een_rescaled_single_n_gl, &
-        een_rescaled_single_e_gl, &
-        delta_p_gl) &
-       bind(C) result(info)
-
-     use, intrinsic :: iso_c_binding
-     implicit none
-
-     integer (c_int64_t) , intent(in)  , value :: context
-     integer (c_int64_t) , intent(in)  , value :: num
-     integer (c_int64_t) , intent(in)  , value :: walk_num
-     integer (c_int64_t) , intent(in)  , value :: elec_num
-     integer (c_int64_t) , intent(in)  , value :: nucl_num
-     integer (c_int64_t) , intent(in)  , value :: cord_num
-     real    (c_double ) , intent(in)          :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
-     real    (c_double ) , intent(in)          :: een_rescaled_e(elec_num,elec_num,0:cord_num,walk_num)
-     real    (c_double ) , intent(in)          :: een_rescaled_single_n(nucl_num,0:cord_num,walk_num)
-     real    (c_double ) , intent(in)          :: een_rescaled_single_e(elec_num,0:cord_num,walk_num)
-     real    (c_double ) , intent(in)          :: een_rescaled_n_gl(elec_num,4,nucl_num,0:cord_num,walk_num)
-     real    (c_double ) , intent(in)          :: een_rescaled_e_gl(elec_num,4,elec_num,0:cord_num,walk_num)
-     real    (c_double ) , intent(in)          :: een_rescaled_single_n_gl(4, nucl_num,0:cord_num,walk_num)
-     real    (c_double ) , intent(in)          :: een_rescaled_single_e_gl(4,elec_num,0:cord_num,walk_num)
-     real    (c_double ) , intent(out)         :: delta_p_gl(elec_num,4,nucl_num,0:cord_num,0:cord_num-1,walk_num)
-
-     integer(c_int32_t), external :: qmckl_compute_jastrow_champ_delta_p_gl_doc_f
-     info = qmckl_compute_jastrow_champ_delta_p_gl_doc_f &
-            (context, &
-        num, &
-        walk_num, &
-        elec_num, &
-        nucl_num, &
-        cord_num, &
-        een_rescaled_n, &
-        een_rescaled_e, &
-        een_rescaled_single_n, &
-        een_rescaled_single_e, &
-        een_rescaled_n_gl, &
-        een_rescaled_e_gl, &
-        een_rescaled_single_n_gl, &
-        een_rescaled_single_e_gl, &
-        delta_p_gl)
-
-   end function qmckl_compute_jastrow_champ_delta_p_gl_doc
-   #+end_src
 
 ** test
 
