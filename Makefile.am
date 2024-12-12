@@ -49,8 +49,6 @@ qmckl_f = include/qmckl_f.F90
 qmckl_fo = include/qmckl_f.o
 include_HEADERS = $(qmckl_h) $(qmckl_f)
 
-header_tests  = include/n2.h
-
 QMCKL_TEST_DIR = $(abs_srcdir)/share/qmckl/test_data/
 
 AM_CPPFLAGS  = -I$(top_builddir)/src -I$(top_builddir)/include
@@ -137,9 +135,9 @@ endif
 
 EXTRA_DIST += $(ORG_FILES) $(TANGLED_FILES) $(EXPORTED_FILES)
 
-BUILT_SOURCES = $(C_FILES) $(F_FILES) $(FH_FUNC_FILES) $(FH_TYPE_FILES) $(H_FUNC_FILES) $(H_TYPE_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES) $(qmckl_f) $(qmckl_h) $(header_tests) $(htmlize_el)
+BUILT_SOURCES = $(C_FILES) $(F_FILES) $(FH_FUNC_FILES) $(FH_TYPE_FILES) $(H_FUNC_FILES) $(H_TYPE_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES) $(qmckl_f) $(qmckl_h) $(htmlize_el)
 
-CLEANFILES += $(BUILT_SOURCES) $(C_TEST_FILES) $(F_TEST_FILES) $(TANGLED_FILES) $(C_TEST_FILES) $(F_TEST_FILES) $(qmckl_f) $(qmckl_h) $(HTML_FILES) $(TEXT_FILES) $(EXPORTED_FILES) $(header_tests) $(htmlize_el)
+CLEANFILES += $(BUILT_SOURCES) $(C_TEST_FILES) $(F_TEST_FILES) $(TANGLED_FILES) $(C_TEST_FILES) $(F_TEST_FILES) $(qmckl_f) $(qmckl_h) $(HTML_FILES) $(TEXT_FILES) $(EXPORTED_FILES) $(htmlize_el)
 
 EXTRA_DIST +=                 \
     tools/build_doc.sh        \
