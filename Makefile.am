@@ -48,6 +48,7 @@ qmckl_h = include/qmckl.h
 qmckl_f = include/qmckl_f.F90
 qmckl_fo = include/qmckl_f.o
 include_HEADERS = $(qmckl_h) $(qmckl_f)
+test_headers = include/chbrclf.h include/n2.h
 
 QMCKL_TEST_DIR = $(abs_srcdir)/share/qmckl/test_data/
 
@@ -76,7 +77,7 @@ ln_s_verbose_0 = @echo "  LN_S     $<";
 
 # Include Guix manifest in the source code distribution tarball
 tools_qmckl_scm = tools/qmckl.scm
-EXTRA_DIST += $(tools_qmckl_scm)
+EXTRA_DIST += $(tools_qmckl_scm) $(test_headers)
 
 # Documentation rules
 if HAVE_DOC
