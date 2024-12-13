@@ -2187,6 +2187,624 @@ assert(fabs(asymp_jasb[1]-1.043287918508297 ) < 1.e-12);
 
       #+end_src
 
+*** Electron-electron rescaled distances
+
+    ~ee_distance_rescaled~ stores the matrix of the rescaled distances between all
+    pairs of electrons:
+
+    \[
+    C_{ij} = \frac{ 1 - e^{-\kappa r_{ij}}}{\kappa}
+    \]
+
+   where \(r_{ij}\) is the matrix of electron-electron distances.
+
+**** Get
+
+     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
+qmckl_exit_code qmckl_get_jastrow_champ_ee_distance_rescaled(qmckl_context context, double* const distance_rescaled);
+     #+end_src
+
+     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code qmckl_get_jastrow_champ_ee_distance_rescaled(qmckl_context context, double* const distance_rescaled)
+{
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_exit_code rc;
+
+  rc = qmckl_provide_ee_distance_rescaled(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  size_t sze = ctx->electron.num * ctx->electron.num * ctx->electron.walker.num;
+  memcpy(distance_rescaled, ctx->jastrow_champ.ee_distance_rescaled, sze * sizeof(double));
+
+  return QMCKL_SUCCESS;
+}
+     #+end_src
+
+**** Provide                                                       :noexport:
+
+     #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_provide_ee_distance_rescaled(qmckl_context context);
+     #+end_src
+
+     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code qmckl_provide_ee_distance_rescaled(qmckl_context context)
+{
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+
+  /* Compute if necessary */
+  if (ctx->electron.walker.point.date > ctx->jastrow_champ.ee_distance_rescaled_date) {
+
+    if (ctx->electron.walker.num > ctx->electron.walker_old.num) {
+      if (ctx->jastrow_champ.ee_distance_rescaled != NULL) {
+        qmckl_exit_code rc = qmckl_free(context, ctx->jastrow_champ.ee_distance_rescaled);
+        if (rc != QMCKL_SUCCESS) {
+          return qmckl_failwith( context, rc,
+                                 "qmckl_provide_ee_distance_rescaled",
+                                 "Unable to free ctx->jastrow_champ.ee_distance_rescaled");
+        }
+        ctx->jastrow_champ.ee_distance_rescaled = NULL;
+      }
+    }
+
+    /* Allocate array */
+    if (ctx->jastrow_champ.ee_distance_rescaled == NULL) {
+
+      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+      mem_info.size = ctx->electron.num * ctx->electron.num *
+        ctx->electron.walker.num * sizeof(double);
+      double* ee_distance_rescaled = (double*) qmckl_malloc(context, mem_info);
+
+      if (ee_distance_rescaled == NULL) {
+        return qmckl_failwith( context,
+                               QMCKL_ALLOCATION_FAILED,
+                               "qmckl_provide_ee_distance_rescaled",
+                               NULL);
+      }
+      ctx->jastrow_champ.ee_distance_rescaled = ee_distance_rescaled;
+    }
+
+    qmckl_exit_code rc =
+      qmckl_compute_ee_distance_rescaled(context,
+                                ctx->electron.num,
+                                ctx->jastrow_champ.rescale_factor_ee,
+                                ctx->electron.walker.num,
+                                ctx->electron.walker.point.coord.data,
+                                ctx->jastrow_champ.ee_distance_rescaled);
+    if (rc != QMCKL_SUCCESS) {
+      return rc;
+    }
+
+    ctx->jastrow_champ.ee_distance_rescaled_date = ctx->date;
+  }
+
+  return QMCKL_SUCCESS;
+}
+     #+end_src
+
+**** Compute
+     :PROPERTIES:
+     :Name:     qmckl_compute_ee_distance_rescaled
+     :CRetType: qmckl_exit_code
+     :FRetType: qmckl_exit_code
+     :END:
+
+     #+NAME: qmckl_ee_distance_rescaled_args
+     | Variable            | Type                                   | In/Out | Description                          |
+     |---------------------+----------------------------------------+--------+--------------------------------------|
+     | ~context~           | ~qmckl_context~                        | in     | Global state                         |
+     | ~elec_num~          | ~int64_t~                              | in     | Number of electrons                  |
+     | ~rescale_factor_ee~ | ~double~                               | in     | Factor to rescale ee distances       |
+     | ~walk_num~          | ~int64_t~                              | in     | Number of walkers                    |
+     | ~coord~             | ~double[3][walk_num][elec_num]~        | in     | Electron coordinates                 |
+     | ~ee_distance~       | ~double[walk_num][elec_num][elec_num]~ | out    | Electron-electron rescaled distances |
+
+     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+function qmckl_compute_ee_distance_rescaled_doc(context, &
+     elec_num, rescale_factor_ee, walk_num, &
+     coord, ee_distance_rescaled) &
+     bind(C) result(info)
+  use qmckl
+  implicit none
+
+  integer(qmckl_context), intent(in), value :: context
+  integer (c_int64_t) , intent(in)  , value :: elec_num
+  real    (c_double ) , intent(in)  , value :: rescale_factor_ee
+  integer (c_int64_t) , intent(in)  , value :: walk_num
+  real    (c_double ) , intent(in)          :: coord(elec_num,walk_num,3)
+  real    (c_double ) , intent(out)         :: ee_distance_rescaled(elec_num,elec_num,walk_num)
+  integer(qmckl_exit_code)                  :: info
+
+  integer*8 :: k
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (elec_num <= 0) then
+     info = QMCKL_INVALID_ARG_2
+     return
+  endif
+
+  if (walk_num <= 0) then
+     info = QMCKL_INVALID_ARG_3
+     return
+  endif
+
+  do k=1,walk_num
+     info = qmckl_distance_rescaled(context, 'T', 'T', elec_num, elec_num, &
+          coord(1,k,1), elec_num * walk_num, &
+          coord(1,k,1), elec_num * walk_num, &
+          ee_distance_rescaled(1,1,k), elec_num, rescale_factor_ee)
+     if (info /= QMCKL_SUCCESS) then
+        exit
+     endif
+  end do
+
+end function qmckl_compute_ee_distance_rescaled_doc
+     #+end_src
+
+     #+begin_src c :tangle (eval h_private_func) :comments org :exports none
+qmckl_exit_code qmckl_compute_ee_distance_rescaled_doc (
+          const qmckl_context context,
+          const int64_t elec_num,
+          const double rescale_factor_ee,
+          const int64_t walk_num,
+          const double* coord,
+          double* const ee_distance_rescaled );
+
+qmckl_exit_code qmckl_compute_ee_distance_rescaled_hpc (
+          const qmckl_context context,
+          const int64_t elec_num,
+          const double rescale_factor_ee,
+          const int64_t walk_num,
+          const double* coord,
+          double* const ee_distance_rescaled );
+
+qmckl_exit_code qmckl_compute_ee_distance_rescaled (
+          const qmckl_context context,
+          const int64_t elec_num,
+          const double rescale_factor_ee,
+          const int64_t walk_num,
+          const double* coord,
+          double* const ee_distance_rescaled );
+     #+end_src
+
+     #+begin_src c :tangle (eval c) :comments org :exports none
+qmckl_exit_code qmckl_compute_ee_distance_rescaled_hpc (
+          const qmckl_context context,
+          const int64_t elec_num,
+          const double rescale_factor_ee,
+          const int64_t walk_num,
+          const double* coord,
+          double* const ee_distance_rescaled )
+{
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_INVALID_CONTEXT;
+  }
+
+  if (elec_num <= 0) {
+    return QMCKL_INVALID_ARG_2;
+  }
+
+  if (walk_num <= 0) {
+    return QMCKL_INVALID_ARG_4;
+  }
+
+  if (coord == NULL) {
+    return QMCKL_INVALID_ARG_5;
+  }
+
+  if (ee_distance_rescaled == NULL) {
+    return QMCKL_INVALID_ARG_6;
+  }
+
+
+  int64_t sze = elec_num*walk_num;
+  int64_t elec_num2= elec_num*elec_num;
+
+
+  qmckl_exit_code result = QMCKL_SUCCESS;
+#ifdef HAVE_OPENMP
+  #pragma omp parallel
+  {
+#endif
+    qmckl_exit_code rc = QMCKL_SUCCESS;
+    #pragma omp for
+    for (int64_t k=0 ; k<walk_num ; ++k)
+    {
+      rc |= qmckl_distance_rescaled(context, 'T', 'T', elec_num, elec_num,
+                                    &(coord[k*elec_num]), sze, &(coord[k*elec_num]), sze,
+                                    &(ee_distance_rescaled[k*elec_num2]), elec_num, rescale_factor_ee);
+    }
+    #pragma omp critical
+    result |= rc;
+#ifdef HAVE_OPENMP
+  }
+#endif
+  return result;
+}
+     #+end_src
+
+     #+begin_src c :tangle (eval c) :comments org :exports none
+qmckl_exit_code qmckl_compute_ee_distance_rescaled (
+          const qmckl_context context,
+          const int64_t elec_num,
+          const double rescale_factor_ee,
+          const int64_t walk_num,
+          const double* coord,
+          double* const ee_distance_rescaled )
+{
+#ifdef HAVE_HPC
+  return qmckl_compute_ee_distance_rescaled_hpc
+#else
+  return qmckl_compute_ee_distance_rescaled_doc
+#endif
+ (context, elec_num, rescale_factor_ee, walk_num, coord, ee_distance_rescaled);
+}
+     #+end_src
+
+**** Test
+
+     #+begin_src python :results output :exports none
+import numpy as np
+
+kappa = 0.6
+
+elec_1_w1 = np.array( [-0.250655104764153,  0.503070975550133      ,  -0.166554344502303])
+elec_2_w1 = np.array( [-0.587812193472177, -0.128751981129274      ,   0.187773606533075])
+elec_5_w1 = np.array( [-0.127732483187947, -0.138975497694196      ,  -8.669850480215846E-002])
+elec_6_w1 = np.array( [-0.232271834949124, -1.059321673434182E-002 ,  -0.504862241464867])
+
+print ( "[0][0] : ", (1.0 - np.exp(-kappa * np.linalg.norm(elec_1_w1-elec_1_w1)) )/kappa )
+print ( "[0][1] : ", (1.0 - np.exp(-kappa * np.linalg.norm(elec_1_w1-elec_2_w1)) )/kappa )
+print ( "[1][0] : ", (1.0 - np.exp(-kappa * np.linalg.norm(elec_2_w1-elec_1_w1)) )/kappa )
+print ( "[5][5] : ", (1.0 - np.exp(-kappa * np.linalg.norm(elec_5_w1-elec_5_w1)) )/kappa )
+print ( "[5][6] : ", (1.0 - np.exp(-kappa * np.linalg.norm(elec_5_w1-elec_6_w1)) )/kappa )
+print ( "[6][5] : ", (1.0 - np.exp(-kappa * np.linalg.norm(elec_6_w1-elec_5_w1)) )/kappa )
+     #+end_src
+
+     #+RESULTS:
+     : [0][0] :  0.0
+     : [0][1] :
+     : [1][0] :  0.6347507420688708
+     : [5][5] :  0.0
+     : [5][6] :  0.3941735387855409
+     : [6][5] :
+
+      #+begin_src c :tangle (eval c_test)
+assert(qmckl_electron_provided(context));
+
+
+double ee_distance_rescaled[walk_num * elec_num * elec_num];
+rc = qmckl_get_jastrow_champ_ee_distance_rescaled(context, ee_distance_rescaled);
+
+// (e1,e2,w)
+// (0,0,0) == 0.
+assert(ee_distance_rescaled[0] == 0.);
+
+// (1,0,0) == (0,1,0)
+assert(ee_distance_rescaled[1] == ee_distance_rescaled[elec_num]);
+
+// value of (1,0,0)
+assert(fabs(ee_distance_rescaled[1]-0.6347507420688708) < 1.e-12);
+
+// (0,0,1) == 0.
+assert(ee_distance_rescaled[5*elec_num + 5] == 0.);
+
+// (1,0,1) == (0,1,1)
+assert(ee_distance_rescaled[5*elec_num+6] == ee_distance_rescaled[6*elec_num+5]);
+
+// value of (1,0,1)
+assert(fabs(ee_distance_rescaled[5*elec_num+6]-0.3941735387855409) < 1.e-12);
+
+      #+end_src
+
+*** Electron-electron rescaled distance gradients and Laplacian with respect to electron coordinates
+
+   The rescaled distances, represented by $C_{ij} = (1 - e^{-\kappa_\text{e} r_{ij}})/\kappa_\text{e}$
+   are differentiated with respect to the electron coordinates.
+   This information is stored in the tensor
+   ~ee_distance_rescaled_gl~. The initial three sequential
+   elements of this three-dimensional tensor provide the $x$, $y$, and $z$
+   direction derivatives, while the fourth index corresponds to the Laplacian.
+
+**** Get
+
+     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
+qmckl_exit_code qmckl_get_jastrow_champ_ee_distance_rescaled_gl(qmckl_context context, double* const distance_rescaled_gl);
+     #+end_src
+
+     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code qmckl_get_jastrow_champ_ee_distance_rescaled_gl(qmckl_context context, double* const distance_rescaled_gl)
+{
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_exit_code rc;
+
+  rc = qmckl_provide_ee_distance_rescaled_gl(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  size_t sze = 4 * ctx->electron.num * ctx->electron.num * ctx->electron.walker.num;
+  memcpy(distance_rescaled_gl, ctx->jastrow_champ.ee_distance_rescaled_gl, sze * sizeof(double));
+
+  return QMCKL_SUCCESS;
+}
+     #+end_src
+
+**** Provide                                                       :noexport:
+
+     #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_provide_ee_distance_rescaled_gl(qmckl_context context);
+     #+end_src
+
+     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code qmckl_provide_ee_distance_rescaled_gl(qmckl_context context)
+{
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+
+  /* Compute if necessary */
+  if (ctx->electron.walker.point.date > ctx->jastrow_champ.ee_distance_rescaled_gl_date) {
+
+    if (ctx->electron.walker.num > ctx->electron.walker_old.num) {
+      if (ctx->jastrow_champ.ee_distance_rescaled_gl != NULL) {
+        qmckl_exit_code rc = qmckl_free(context, ctx->jastrow_champ.ee_distance_rescaled_gl);
+        if (rc != QMCKL_SUCCESS) {
+          return qmckl_failwith( context, rc,
+                                 "qmckl_provide_ee_distance_rescaled_gl",
+                                 "Unable to free ctx->jastrow_champ.ee_distance_rescaled_gl");
+        }
+        ctx->jastrow_champ.ee_distance_rescaled_gl = NULL;
+      }
+    }
+
+    /* Allocate array */
+    if (ctx->jastrow_champ.ee_distance_rescaled_gl == NULL) {
+
+      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+      mem_info.size = 4 * ctx->electron.num * ctx->electron.num *
+        ctx->electron.walker.num * sizeof(double);
+      double* ee_distance_rescaled_gl = (double*) qmckl_malloc(context, mem_info);
+
+      if (ee_distance_rescaled_gl == NULL) {
+        return qmckl_failwith( context,
+                               QMCKL_ALLOCATION_FAILED,
+                               "qmckl_provide_ee_distance_rescaled_gl",
+                               NULL);
+      }
+      ctx->jastrow_champ.ee_distance_rescaled_gl = ee_distance_rescaled_gl;
+    }
+
+    qmckl_exit_code rc =
+      qmckl_compute_ee_distance_rescaled_gl(context,
+                                ctx->electron.num,
+                                ctx->jastrow_champ.rescale_factor_ee,
+                                ctx->electron.walker.num,
+                                ctx->electron.walker.point.coord.data,
+                                ctx->jastrow_champ.ee_distance_rescaled_gl);
+    if (rc != QMCKL_SUCCESS) {
+      return rc;
+    }
+
+    ctx->jastrow_champ.ee_distance_rescaled_date = ctx->date;
+  }
+
+  return QMCKL_SUCCESS;
+}
+     #+end_src
+
+**** Compute
+     :PROPERTIES:
+     :Name:     qmckl_compute_ee_distance_rescaled_gl
+     :CRetType: qmckl_exit_code
+     :FRetType: qmckl_exit_code
+     :END:
+
+     #+NAME: qmckl_ee_distance_rescaled_gl_args
+     | Variable                  | Type                                      | In/Out | Description                                     |
+     |---------------------------+-------------------------------------------+--------+-------------------------------------------------|
+     | ~context~                 | ~qmckl_context~                           | in     | Global state                                    |
+     | ~elec_num~                | ~int64_t~                                 | in     | Number of electrons                             |
+     | ~rescale_factor_ee~       | ~double~                                  | in     | Factor to rescale ee distances                  |
+     | ~walk_num~                | ~int64_t~                                 | in     | Number of walkers                               |
+     | ~coord~                   | ~double[3][walk_num][elec_num]~           | in     | Electron coordinates                            |
+     | ~ee_distance_rescaled_gl~ | ~double[walk_num][elec_num][elec_num][4]~ | out    | Electron-electron rescaled distance derivatives |
+
+     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+function qmckl_compute_ee_distance_rescaled_gl_doc(context,  &
+     elec_num, rescale_factor_ee, walk_num, coord, ee_distance_rescaled_gl) &
+     bind(C) result(info)
+  use qmckl
+  implicit none
+
+  integer(qmckl_context), intent(in), value :: context
+  integer (c_int64_t) , intent(in)  , value :: elec_num
+  real    (c_double ) , intent(in)  , value :: rescale_factor_ee
+  integer (c_int64_t) , intent(in)  , value :: walk_num
+  real    (c_double ) , intent(in)          :: coord(elec_num,walk_num,3)
+  real    (c_double ) , intent(out)         :: ee_distance_rescaled_gl(4,elec_num,elec_num,walk_num)
+  integer(qmckl_exit_code)                  :: info
+
+  integer*8 :: k
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (elec_num <= 0) then
+     info = QMCKL_INVALID_ARG_2
+     return
+  endif
+
+  if (walk_num <= 0) then
+     info = QMCKL_INVALID_ARG_3
+     return
+  endif
+
+  do k=1,walk_num
+     info = qmckl_distance_rescaled_gl(context, 'T', 'T', elec_num, elec_num, &
+          coord(1,k,1), elec_num*walk_num, &
+          coord(1,k,1), elec_num*walk_num, &
+          ee_distance_rescaled_gl(1,1,1,k), elec_num, rescale_factor_ee)
+     if (info /= QMCKL_SUCCESS) then
+        exit
+     endif
+  end do
+
+end function qmckl_compute_ee_distance_rescaled_gl_doc
+     #+end_src
+
+     #+begin_src c :tangle (eval h_private_func) :comments org :exports none
+qmckl_exit_code qmckl_compute_ee_distance_rescaled_gl_doc (
+          const qmckl_context context,
+          const int64_t elec_num,
+          const double rescale_factor_ee,
+          const int64_t walk_num,
+          const double* coord,
+          double* const ee_distance_rescaled_gl );
+
+qmckl_exit_code qmckl_compute_ee_distance_rescaled_gl_hpc (
+          const qmckl_context context,
+          const int64_t elec_num,
+          const double rescale_factor_ee,
+          const int64_t walk_num,
+          const double* coord,
+          double* const ee_distance_rescaled_gl );
+
+qmckl_exit_code qmckl_compute_ee_distance_rescaled_gl (
+          const qmckl_context context,
+          const int64_t elec_num,
+          const double rescale_factor_ee,
+          const int64_t walk_num,
+          const double* coord,
+          double* const ee_distance_rescaled_gl );
+     #+end_src
+
+
+     #+begin_src c :tangle (eval c) :comments org :exports none
+qmckl_exit_code qmckl_compute_ee_distance_rescaled_gl_hpc (
+          const qmckl_context context,
+          const int64_t elec_num,
+          const double rescale_factor_ee,
+          const int64_t walk_num,
+          const double* coord,
+          double* const ee_distance_rescaled_gl )
+{
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) return QMCKL_INVALID_CONTEXT;
+  if (elec_num <= 0) return QMCKL_INVALID_ARG_2;
+  if (walk_num <= 0) return QMCKL_INVALID_ARG_4;
+  if (coord == NULL) return QMCKL_INVALID_ARG_5;
+  if (ee_distance_rescaled_gl == NULL) return QMCKL_INVALID_ARG_6;
+
+  int64_t sze = elec_num*walk_num;
+  int64_t elec_num2= elec_num*elec_num*4;
+
+  qmckl_exit_code result = QMCKL_SUCCESS;
+  #pragma omp parallel
+  {
+    qmckl_exit_code rc = QMCKL_SUCCESS;
+    #pragma omp for
+    for (int64_t k=0 ; k<walk_num ; ++k)
+    {
+      rc |= qmckl_distance_rescaled_gl(context, 'T', 'T', elec_num, elec_num,
+                                       &(coord[k*elec_num]), sze,
+                                       &(coord[k*elec_num]), sze,
+                                       &(ee_distance_rescaled_gl[k*elec_num2]), elec_num,
+                                       rescale_factor_ee);
+    }
+    #pragma omp critical
+    result |= rc;
+  }
+  return result;
+}
+     #+end_src
+
+     #+begin_src c :tangle (eval c) :comments org :exports none
+qmckl_exit_code qmckl_compute_ee_distance_rescaled_gl (
+          const qmckl_context context,
+          const int64_t elec_num,
+          const double rescale_factor_ee,
+          const int64_t walk_num,
+          const double* coord,
+          double* const ee_distance_rescaled_gl )
+{
+#ifdef HAVE_HPC
+  return qmckl_compute_ee_distance_rescaled_gl_hpc
+#else
+  return qmckl_compute_ee_distance_rescaled_gl_doc
+#endif
+   (context, elec_num, rescale_factor_ee, walk_num, coord,
+   ee_distance_rescaled_gl);
+}
+     #+end_src
+
+**** Test
+
+     #+begin_src python :results output :exports none
+import numpy as np
+
+# TODO
+     #+end_src
+
+      #+begin_src c :tangle (eval c_test)
+assert(qmckl_electron_provided(context));
+
+
+double ee_distance_rescaled_gl[4 * walk_num * elec_num * elec_num];
+rc = qmckl_get_jastrow_champ_ee_distance_rescaled_gl(context, ee_distance_rescaled_gl);
+
+// TODO: Get exact values
+//// (e1,e2,w)
+//// (0,0,0) == 0.
+//assert(ee_distance[0] == 0.);
+//
+//// (1,0,0) == (0,1,0)
+//assert(ee_distance[1] == ee_distance[elec_num]);
+//
+//// value of (1,0,0)
+//assert(fabs(ee_distance[1]-7.152322512964209) < 1.e-12);
+//
+//// (0,0,1) == 0.
+//assert(ee_distance[elec_num*elec_num] == 0.);
+//
+//// (1,0,1) == (0,1,1)
+//assert(ee_distance[elec_num*elec_num+1] == ee_distance[elec_num*elec_num+elec_num]);
+//
+//// value of (1,0,1)
+//assert(fabs(ee_distance[elec_num*elec_num+1]-6.5517646321055665) < 1.e-12);
+
+      #+end_src
+
 *** Electron-electron component
 
    Calculate the electron-electron jastrow component ~factor_ee~ using the ~asymp_jasb~
@@ -3292,626 +3910,8 @@ printf("%f  %f\n", factor_ee_gl[0][3][0],2.8650469630854483);
 assert(fabs(factor_ee_gl[0][3][0]-2.8650469630854483) < 1.e-12);
       #+end_src
 
-*** Electron-electron rescaled distances
-
-    ~ee_distance_rescaled~ stores the matrix of the rescaled distances between all
-    pairs of electrons:
-
-    \[
-    C_{ij} = \frac{ 1 - e^{-\kappa r_{ij}}}{\kappa}
-    \]
-
-   where \(r_{ij}\) is the matrix of electron-electron distances.
-
-**** Get
-
-     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
-qmckl_exit_code qmckl_get_jastrow_champ_ee_distance_rescaled(qmckl_context context, double* const distance_rescaled);
-     #+end_src
-
-     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
-qmckl_exit_code qmckl_get_jastrow_champ_ee_distance_rescaled(qmckl_context context, double* const distance_rescaled)
-{
-  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return QMCKL_NULL_CONTEXT;
-  }
-
-  qmckl_exit_code rc;
-
-  rc = qmckl_provide_ee_distance_rescaled(context);
-  if (rc != QMCKL_SUCCESS) return rc;
-
-  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
-  assert (ctx != NULL);
-
-  size_t sze = ctx->electron.num * ctx->electron.num * ctx->electron.walker.num;
-  memcpy(distance_rescaled, ctx->jastrow_champ.ee_distance_rescaled, sze * sizeof(double));
-
-  return QMCKL_SUCCESS;
-}
-     #+end_src
-
-**** Provide                                                       :noexport:
-
-     #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
-qmckl_exit_code qmckl_provide_ee_distance_rescaled(qmckl_context context);
-     #+end_src
-
-     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
-qmckl_exit_code qmckl_provide_ee_distance_rescaled(qmckl_context context)
-{
-
-  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return QMCKL_NULL_CONTEXT;
-  }
-
-  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
-  assert (ctx != NULL);
-
-
-  /* Compute if necessary */
-  if (ctx->electron.walker.point.date > ctx->jastrow_champ.ee_distance_rescaled_date) {
-
-    if (ctx->electron.walker.num > ctx->electron.walker_old.num) {
-      if (ctx->jastrow_champ.ee_distance_rescaled != NULL) {
-        qmckl_exit_code rc = qmckl_free(context, ctx->jastrow_champ.ee_distance_rescaled);
-        if (rc != QMCKL_SUCCESS) {
-          return qmckl_failwith( context, rc,
-                                 "qmckl_provide_ee_distance_rescaled",
-                                 "Unable to free ctx->jastrow_champ.ee_distance_rescaled");
-        }
-        ctx->jastrow_champ.ee_distance_rescaled = NULL;
-      }
-    }
-
-    /* Allocate array */
-    if (ctx->jastrow_champ.ee_distance_rescaled == NULL) {
-
-      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-      mem_info.size = ctx->electron.num * ctx->electron.num *
-        ctx->electron.walker.num * sizeof(double);
-      double* ee_distance_rescaled = (double*) qmckl_malloc(context, mem_info);
-
-      if (ee_distance_rescaled == NULL) {
-        return qmckl_failwith( context,
-                               QMCKL_ALLOCATION_FAILED,
-                               "qmckl_provide_ee_distance_rescaled",
-                               NULL);
-      }
-      ctx->jastrow_champ.ee_distance_rescaled = ee_distance_rescaled;
-    }
-
-    qmckl_exit_code rc =
-      qmckl_compute_ee_distance_rescaled(context,
-                                ctx->electron.num,
-                                ctx->jastrow_champ.rescale_factor_ee,
-                                ctx->electron.walker.num,
-                                ctx->electron.walker.point.coord.data,
-                                ctx->jastrow_champ.ee_distance_rescaled);
-    if (rc != QMCKL_SUCCESS) {
-      return rc;
-    }
-
-    ctx->jastrow_champ.ee_distance_rescaled_date = ctx->date;
-  }
-
-  return QMCKL_SUCCESS;
-}
-     #+end_src
-
-**** Compute
-     :PROPERTIES:
-     :Name:     qmckl_compute_ee_distance_rescaled
-     :CRetType: qmckl_exit_code
-     :FRetType: qmckl_exit_code
-     :END:
-
-     #+NAME: qmckl_ee_distance_rescaled_args
-     | Variable            | Type                                   | In/Out | Description                          |
-     |---------------------+----------------------------------------+--------+--------------------------------------|
-     | ~context~           | ~qmckl_context~                        | in     | Global state                         |
-     | ~elec_num~          | ~int64_t~                              | in     | Number of electrons                  |
-     | ~rescale_factor_ee~ | ~double~                               | in     | Factor to rescale ee distances       |
-     | ~walk_num~          | ~int64_t~                              | in     | Number of walkers                    |
-     | ~coord~             | ~double[3][walk_num][elec_num]~        | in     | Electron coordinates                 |
-     | ~ee_distance~       | ~double[walk_num][elec_num][elec_num]~ | out    | Electron-electron rescaled distances |
-
-     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-function qmckl_compute_ee_distance_rescaled_doc(context, &
-     elec_num, rescale_factor_ee, walk_num, &
-     coord, ee_distance_rescaled) &
-     bind(C) result(info)
-  use qmckl
-  implicit none
-
-  integer(qmckl_context), intent(in), value :: context
-  integer (c_int64_t) , intent(in)  , value :: elec_num
-  real    (c_double ) , intent(in)  , value :: rescale_factor_ee
-  integer (c_int64_t) , intent(in)  , value :: walk_num
-  real    (c_double ) , intent(in)          :: coord(elec_num,walk_num,3)
-  real    (c_double ) , intent(out)         :: ee_distance_rescaled(elec_num,elec_num,walk_num)
-  integer(qmckl_exit_code)                  :: info
-
-  integer*8 :: k
-
-  info = QMCKL_SUCCESS
-
-  if (context == QMCKL_NULL_CONTEXT) then
-     info = QMCKL_INVALID_CONTEXT
-     return
-  endif
-
-  if (elec_num <= 0) then
-     info = QMCKL_INVALID_ARG_2
-     return
-  endif
-
-  if (walk_num <= 0) then
-     info = QMCKL_INVALID_ARG_3
-     return
-  endif
-
-  do k=1,walk_num
-     info = qmckl_distance_rescaled(context, 'T', 'T', elec_num, elec_num, &
-          coord(1,k,1), elec_num * walk_num, &
-          coord(1,k,1), elec_num * walk_num, &
-          ee_distance_rescaled(1,1,k), elec_num, rescale_factor_ee)
-     if (info /= QMCKL_SUCCESS) then
-        exit
-     endif
-  end do
-
-end function qmckl_compute_ee_distance_rescaled_doc
-     #+end_src
-
-     #+begin_src c :tangle (eval h_private_func) :comments org :exports none
-qmckl_exit_code qmckl_compute_ee_distance_rescaled_doc (
-          const qmckl_context context,
-          const int64_t elec_num,
-          const double rescale_factor_ee,
-          const int64_t walk_num,
-          const double* coord,
-          double* const ee_distance_rescaled );
-
-qmckl_exit_code qmckl_compute_ee_distance_rescaled_hpc (
-          const qmckl_context context,
-          const int64_t elec_num,
-          const double rescale_factor_ee,
-          const int64_t walk_num,
-          const double* coord,
-          double* const ee_distance_rescaled );
-
-qmckl_exit_code qmckl_compute_ee_distance_rescaled (
-          const qmckl_context context,
-          const int64_t elec_num,
-          const double rescale_factor_ee,
-          const int64_t walk_num,
-          const double* coord,
-          double* const ee_distance_rescaled );
-     #+end_src
-
-     #+begin_src c :tangle (eval c) :comments org :exports none
-qmckl_exit_code qmckl_compute_ee_distance_rescaled_hpc (
-          const qmckl_context context,
-          const int64_t elec_num,
-          const double rescale_factor_ee,
-          const int64_t walk_num,
-          const double* coord,
-          double* const ee_distance_rescaled )
-{
-  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return QMCKL_INVALID_CONTEXT;
-  }
-
-  if (elec_num <= 0) {
-    return QMCKL_INVALID_ARG_2;
-  }
-
-  if (walk_num <= 0) {
-    return QMCKL_INVALID_ARG_4;
-  }
-
-  if (coord == NULL) {
-    return QMCKL_INVALID_ARG_5;
-  }
-
-  if (ee_distance_rescaled == NULL) {
-    return QMCKL_INVALID_ARG_6;
-  }
-
-
-  int64_t sze = elec_num*walk_num;
-  int64_t elec_num2= elec_num*elec_num;
-
-
-  qmckl_exit_code result = QMCKL_SUCCESS;
-#ifdef HAVE_OPENMP
-  #pragma omp parallel
-  {
-#endif
-    qmckl_exit_code rc = QMCKL_SUCCESS;
-    #pragma omp for
-    for (int64_t k=0 ; k<walk_num ; ++k)
-    {
-      rc |= qmckl_distance_rescaled(context, 'T', 'T', elec_num, elec_num,
-                                    &(coord[k*elec_num]), sze, &(coord[k*elec_num]), sze,
-                                    &(ee_distance_rescaled[k*elec_num2]), elec_num, rescale_factor_ee);
-    }
-    #pragma omp critical
-    result |= rc;
-#ifdef HAVE_OPENMP
-  }
-#endif
-  return result;
-}
-     #+end_src
-
-     #+begin_src c :tangle (eval c) :comments org :exports none
-qmckl_exit_code qmckl_compute_ee_distance_rescaled (
-          const qmckl_context context,
-          const int64_t elec_num,
-          const double rescale_factor_ee,
-          const int64_t walk_num,
-          const double* coord,
-          double* const ee_distance_rescaled )
-{
-#ifdef HAVE_HPC
-  return qmckl_compute_ee_distance_rescaled_hpc
-#else
-  return qmckl_compute_ee_distance_rescaled_doc
-#endif
- (context, elec_num, rescale_factor_ee, walk_num, coord, ee_distance_rescaled);
-}
-     #+end_src
-
-**** Test
-
-     #+begin_src python :results output :exports none
-import numpy as np
-
-kappa = 0.6
-
-elec_1_w1 = np.array( [-0.250655104764153,  0.503070975550133      ,  -0.166554344502303])
-elec_2_w1 = np.array( [-0.587812193472177, -0.128751981129274      ,   0.187773606533075])
-elec_5_w1 = np.array( [-0.127732483187947, -0.138975497694196      ,  -8.669850480215846E-002])
-elec_6_w1 = np.array( [-0.232271834949124, -1.059321673434182E-002 ,  -0.504862241464867])
-
-print ( "[0][0] : ", (1.0 - np.exp(-kappa * np.linalg.norm(elec_1_w1-elec_1_w1)) )/kappa )
-print ( "[0][1] : ", (1.0 - np.exp(-kappa * np.linalg.norm(elec_1_w1-elec_2_w1)) )/kappa )
-print ( "[1][0] : ", (1.0 - np.exp(-kappa * np.linalg.norm(elec_2_w1-elec_1_w1)) )/kappa )
-print ( "[5][5] : ", (1.0 - np.exp(-kappa * np.linalg.norm(elec_5_w1-elec_5_w1)) )/kappa )
-print ( "[5][6] : ", (1.0 - np.exp(-kappa * np.linalg.norm(elec_5_w1-elec_6_w1)) )/kappa )
-print ( "[6][5] : ", (1.0 - np.exp(-kappa * np.linalg.norm(elec_6_w1-elec_5_w1)) )/kappa )
-     #+end_src
-
-     #+RESULTS:
-     : [0][0] :  0.0
-     : [0][1] :
-     : [1][0] :  0.6347507420688708
-     : [5][5] :  0.0
-     : [5][6] :  0.3941735387855409
-     : [6][5] :
-
-      #+begin_src c :tangle (eval c_test)
-assert(qmckl_electron_provided(context));
-
-
-double ee_distance_rescaled[walk_num * elec_num * elec_num];
-rc = qmckl_get_jastrow_champ_ee_distance_rescaled(context, ee_distance_rescaled);
-
-// (e1,e2,w)
-// (0,0,0) == 0.
-assert(ee_distance_rescaled[0] == 0.);
-
-// (1,0,0) == (0,1,0)
-assert(ee_distance_rescaled[1] == ee_distance_rescaled[elec_num]);
-
-// value of (1,0,0)
-assert(fabs(ee_distance_rescaled[1]-0.6347507420688708) < 1.e-12);
-
-// (0,0,1) == 0.
-assert(ee_distance_rescaled[5*elec_num + 5] == 0.);
-
-// (1,0,1) == (0,1,1)
-assert(ee_distance_rescaled[5*elec_num+6] == ee_distance_rescaled[6*elec_num+5]);
-
-// value of (1,0,1)
-assert(fabs(ee_distance_rescaled[5*elec_num+6]-0.3941735387855409) < 1.e-12);
-
-      #+end_src
-
-*** Electron-electron rescaled distance gradients and Laplacian with respect to electron coordinates
-
-   The rescaled distances, represented by $C_{ij} = (1 - e^{-\kappa_\text{e} r_{ij}})/\kappa_\text{e}$
-   are differentiated with respect to the electron coordinates.
-   This information is stored in the tensor
-   ~ee_distance_rescaled_gl~. The initial three sequential
-   elements of this three-dimensional tensor provide the $x$, $y$, and $z$
-   direction derivatives, while the fourth index corresponds to the Laplacian.
-
-**** Get
-
-     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
-qmckl_exit_code qmckl_get_jastrow_champ_ee_distance_rescaled_gl(qmckl_context context, double* const distance_rescaled_gl);
-     #+end_src
-
-     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
-qmckl_exit_code qmckl_get_jastrow_champ_ee_distance_rescaled_gl(qmckl_context context, double* const distance_rescaled_gl)
-{
-  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return QMCKL_NULL_CONTEXT;
-  }
-
-  qmckl_exit_code rc;
-
-  rc = qmckl_provide_ee_distance_rescaled_gl(context);
-  if (rc != QMCKL_SUCCESS) return rc;
-
-  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
-  assert (ctx != NULL);
-
-  size_t sze = 4 * ctx->electron.num * ctx->electron.num * ctx->electron.walker.num;
-  memcpy(distance_rescaled_gl, ctx->jastrow_champ.ee_distance_rescaled_gl, sze * sizeof(double));
-
-  return QMCKL_SUCCESS;
-}
-     #+end_src
-
-**** Provide                                                       :noexport:
-
-     #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
-qmckl_exit_code qmckl_provide_ee_distance_rescaled_gl(qmckl_context context);
-     #+end_src
-
-     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
-qmckl_exit_code qmckl_provide_ee_distance_rescaled_gl(qmckl_context context)
-{
-
-  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return QMCKL_NULL_CONTEXT;
-  }
-
-  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
-  assert (ctx != NULL);
-
-
-  /* Compute if necessary */
-  if (ctx->electron.walker.point.date > ctx->jastrow_champ.ee_distance_rescaled_gl_date) {
-
-    if (ctx->electron.walker.num > ctx->electron.walker_old.num) {
-      if (ctx->jastrow_champ.ee_distance_rescaled_gl != NULL) {
-        qmckl_exit_code rc = qmckl_free(context, ctx->jastrow_champ.ee_distance_rescaled_gl);
-        if (rc != QMCKL_SUCCESS) {
-          return qmckl_failwith( context, rc,
-                                 "qmckl_provide_ee_distance_rescaled_gl",
-                                 "Unable to free ctx->jastrow_champ.ee_distance_rescaled_gl");
-        }
-        ctx->jastrow_champ.ee_distance_rescaled_gl = NULL;
-      }
-    }
-
-    /* Allocate array */
-    if (ctx->jastrow_champ.ee_distance_rescaled_gl == NULL) {
-
-      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-      mem_info.size = 4 * ctx->electron.num * ctx->electron.num *
-        ctx->electron.walker.num * sizeof(double);
-      double* ee_distance_rescaled_gl = (double*) qmckl_malloc(context, mem_info);
-
-      if (ee_distance_rescaled_gl == NULL) {
-        return qmckl_failwith( context,
-                               QMCKL_ALLOCATION_FAILED,
-                               "qmckl_provide_ee_distance_rescaled_gl",
-                               NULL);
-      }
-      ctx->jastrow_champ.ee_distance_rescaled_gl = ee_distance_rescaled_gl;
-    }
-
-    qmckl_exit_code rc =
-      qmckl_compute_ee_distance_rescaled_gl(context,
-                                ctx->electron.num,
-                                ctx->jastrow_champ.rescale_factor_ee,
-                                ctx->electron.walker.num,
-                                ctx->electron.walker.point.coord.data,
-                                ctx->jastrow_champ.ee_distance_rescaled_gl);
-    if (rc != QMCKL_SUCCESS) {
-      return rc;
-    }
-
-    ctx->jastrow_champ.ee_distance_rescaled_date = ctx->date;
-  }
-
-  return QMCKL_SUCCESS;
-}
-     #+end_src
-
-**** Compute
-     :PROPERTIES:
-     :Name:     qmckl_compute_ee_distance_rescaled_gl
-     :CRetType: qmckl_exit_code
-     :FRetType: qmckl_exit_code
-     :END:
-
-     #+NAME: qmckl_ee_distance_rescaled_gl_args
-     | Variable                  | Type                                      | In/Out | Description                                     |
-     |---------------------------+-------------------------------------------+--------+-------------------------------------------------|
-     | ~context~                 | ~qmckl_context~                           | in     | Global state                                    |
-     | ~elec_num~                | ~int64_t~                                 | in     | Number of electrons                             |
-     | ~rescale_factor_ee~       | ~double~                                  | in     | Factor to rescale ee distances                  |
-     | ~walk_num~                | ~int64_t~                                 | in     | Number of walkers                               |
-     | ~coord~                   | ~double[3][walk_num][elec_num]~           | in     | Electron coordinates                            |
-     | ~ee_distance_rescaled_gl~ | ~double[walk_num][elec_num][elec_num][4]~ | out    | Electron-electron rescaled distance derivatives |
-
-     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-function qmckl_compute_ee_distance_rescaled_gl_doc(context,  &
-     elec_num, rescale_factor_ee, walk_num, coord, ee_distance_rescaled_gl) &
-     bind(C) result(info)
-  use qmckl
-  implicit none
-
-  integer(qmckl_context), intent(in), value :: context
-  integer (c_int64_t) , intent(in)  , value :: elec_num
-  real    (c_double ) , intent(in)  , value :: rescale_factor_ee
-  integer (c_int64_t) , intent(in)  , value :: walk_num
-  real    (c_double ) , intent(in)          :: coord(elec_num,walk_num,3)
-  real    (c_double ) , intent(out)         :: ee_distance_rescaled_gl(4,elec_num,elec_num,walk_num)
-  integer(qmckl_exit_code)                  :: info
-
-  integer*8 :: k
-
-  info = QMCKL_SUCCESS
-
-  if (context == QMCKL_NULL_CONTEXT) then
-     info = QMCKL_INVALID_CONTEXT
-     return
-  endif
-
-  if (elec_num <= 0) then
-     info = QMCKL_INVALID_ARG_2
-     return
-  endif
-
-  if (walk_num <= 0) then
-     info = QMCKL_INVALID_ARG_3
-     return
-  endif
-
-  do k=1,walk_num
-     info = qmckl_distance_rescaled_gl(context, 'T', 'T', elec_num, elec_num, &
-          coord(1,k,1), elec_num*walk_num, &
-          coord(1,k,1), elec_num*walk_num, &
-          ee_distance_rescaled_gl(1,1,1,k), elec_num, rescale_factor_ee)
-     if (info /= QMCKL_SUCCESS) then
-        exit
-     endif
-  end do
-
-end function qmckl_compute_ee_distance_rescaled_gl_doc
-     #+end_src
-
-     #+begin_src c :tangle (eval h_private_func) :comments org :exports none
-qmckl_exit_code qmckl_compute_ee_distance_rescaled_gl_doc (
-          const qmckl_context context,
-          const int64_t elec_num,
-          const double rescale_factor_ee,
-          const int64_t walk_num,
-          const double* coord,
-          double* const ee_distance_rescaled_gl );
-
-qmckl_exit_code qmckl_compute_ee_distance_rescaled_gl_hpc (
-          const qmckl_context context,
-          const int64_t elec_num,
-          const double rescale_factor_ee,
-          const int64_t walk_num,
-          const double* coord,
-          double* const ee_distance_rescaled_gl );
-
-qmckl_exit_code qmckl_compute_ee_distance_rescaled_gl (
-          const qmckl_context context,
-          const int64_t elec_num,
-          const double rescale_factor_ee,
-          const int64_t walk_num,
-          const double* coord,
-          double* const ee_distance_rescaled_gl );
-     #+end_src
-
-
-     #+begin_src c :tangle (eval c) :comments org :exports none
-qmckl_exit_code qmckl_compute_ee_distance_rescaled_gl_hpc (
-          const qmckl_context context,
-          const int64_t elec_num,
-          const double rescale_factor_ee,
-          const int64_t walk_num,
-          const double* coord,
-          double* const ee_distance_rescaled_gl )
-{
-  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) return QMCKL_INVALID_CONTEXT;
-  if (elec_num <= 0) return QMCKL_INVALID_ARG_2;
-  if (walk_num <= 0) return QMCKL_INVALID_ARG_4;
-  if (coord == NULL) return QMCKL_INVALID_ARG_5;
-  if (ee_distance_rescaled_gl == NULL) return QMCKL_INVALID_ARG_6;
-
-  int64_t sze = elec_num*walk_num;
-  int64_t elec_num2= elec_num*elec_num*4;
-
-  qmckl_exit_code result = QMCKL_SUCCESS;
-  #pragma omp parallel
-  {
-    qmckl_exit_code rc = QMCKL_SUCCESS;
-    #pragma omp for
-    for (int64_t k=0 ; k<walk_num ; ++k)
-    {
-      rc |= qmckl_distance_rescaled_gl(context, 'T', 'T', elec_num, elec_num,
-                                       &(coord[k*elec_num]), sze,
-                                       &(coord[k*elec_num]), sze,
-                                       &(ee_distance_rescaled_gl[k*elec_num2]), elec_num,
-                                       rescale_factor_ee);
-    }
-    #pragma omp critical
-    result |= rc;
-  }
-  return result;
-}
-     #+end_src
-
-     #+begin_src c :tangle (eval c) :comments org :exports none
-qmckl_exit_code qmckl_compute_ee_distance_rescaled_gl (
-          const qmckl_context context,
-          const int64_t elec_num,
-          const double rescale_factor_ee,
-          const int64_t walk_num,
-          const double* coord,
-          double* const ee_distance_rescaled_gl )
-{
-#ifdef HAVE_HPC
-  return qmckl_compute_ee_distance_rescaled_gl_hpc
-#else
-  return qmckl_compute_ee_distance_rescaled_gl_doc
-#endif
-   (context, elec_num, rescale_factor_ee, walk_num, coord,
-   ee_distance_rescaled_gl);
-}
-     #+end_src
-
-**** Test
-
-     #+begin_src python :results output :exports none
-import numpy as np
-
-# TODO
-     #+end_src
-
-      #+begin_src c :tangle (eval c_test)
-assert(qmckl_electron_provided(context));
-
-
-double ee_distance_rescaled_gl[4 * walk_num * elec_num * elec_num];
-rc = qmckl_get_jastrow_champ_ee_distance_rescaled_gl(context, ee_distance_rescaled_gl);
-
-// TODO: Get exact values
-//// (e1,e2,w)
-//// (0,0,0) == 0.
-//assert(ee_distance[0] == 0.);
-//
-//// (1,0,0) == (0,1,0)
-//assert(ee_distance[1] == ee_distance[elec_num]);
-//
-//// value of (1,0,0)
-//assert(fabs(ee_distance[1]-7.152322512964209) < 1.e-12);
-//
-//// (0,0,1) == 0.
-//assert(ee_distance[elec_num*elec_num] == 0.);
-//
-//// (1,0,1) == (0,1,1)
-//assert(ee_distance[elec_num*elec_num+1] == ee_distance[elec_num*elec_num+elec_num]);
-//
-//// value of (1,0,1)
-//assert(fabs(ee_distance[elec_num*elec_num+1]-6.5517646321055665) < 1.e-12);
-
-      #+end_src
-
 ** Electron-nucleus component
-*** Asymptotic component for
+*** Asymptotic component
 
    Calculate the asymptotic component ~asymp_jasa~ to be subtracted from the final
    electron-nucleus jastrow factor \(J_{\text{eN}}\). The asymptotic component is calculated
@@ -4148,6 +4148,723 @@ rc = qmckl_get_jastrow_champ_asymp_jasa(context, asymp_jasa, type_nucl_num);
 // calculate asymp_jasb
 printf("%e %e\n", asymp_jasa[0], -1.75529774);
 assert(fabs(-1.75529774 - asymp_jasa[0]) < 1.e-8);
+
+      #+end_src
+
+*** Electron-nucleus rescaled distances
+
+    ~en_distance_rescaled~ stores the matrix of the rescaled distances between
+    electrons and nuclei.
+
+    \[
+    C_{i\alpha} = \frac{ 1 - e^{-\kappa_\alpha R_{i\alpha}}}{\kappa_\alpha}
+    \]
+
+   where \(R_{i\alpha}\) is the matrix of electron-nucleus distances.
+
+**** Get
+
+     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
+qmckl_exit_code qmckl_get_electron_en_distance_rescaled(qmckl_context context, double* distance_rescaled);
+     #+end_src
+
+
+     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code qmckl_get_electron_en_distance_rescaled(qmckl_context context, double* distance_rescaled)
+{
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_exit_code rc;
+
+  rc = qmckl_provide_en_distance_rescaled(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  size_t sze = ctx->electron.num * ctx->nucleus.num * ctx->electron.walker.num;
+  memcpy(distance_rescaled, ctx->jastrow_champ.en_distance_rescaled, sze * sizeof(double));
+
+  return QMCKL_SUCCESS;
+}
+     #+end_src
+
+**** Provide                                                       :noexport:
+
+     #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_provide_en_distance_rescaled(qmckl_context context);
+     #+end_src
+
+     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code qmckl_provide_en_distance_rescaled(qmckl_context context)
+{
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  if (!(ctx->nucleus.provided)) {
+    return QMCKL_NOT_PROVIDED;
+  }
+
+  /* Compute if necessary */
+  if (ctx->electron.walker.point.date > ctx->jastrow_champ.en_distance_rescaled_date) {
+
+    if (ctx->electron.walker.num > ctx->electron.walker_old.num) {
+      if (ctx->jastrow_champ.en_distance_rescaled != NULL) {
+        qmckl_exit_code rc = qmckl_free(context, ctx->jastrow_champ.en_distance_rescaled);
+        if (rc != QMCKL_SUCCESS) {
+          return qmckl_failwith( context, rc,
+                                 "qmckl_provide_en_distance_rescaled",
+                                 "Unable to free ctx->jastrow_champ.en_distance_rescaled");
+        }
+        ctx->jastrow_champ.en_distance_rescaled = NULL;
+      }
+    }
+
+    /* Allocate array */
+    if (ctx->jastrow_champ.en_distance_rescaled == NULL) {
+
+      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+      mem_info.size = ctx->electron.num * ctx->nucleus.num *
+        ctx->electron.walker.num * sizeof(double);
+      double* en_distance_rescaled = (double*) qmckl_malloc(context, mem_info);
+
+      if (en_distance_rescaled == NULL) {
+        return qmckl_failwith( context,
+                               QMCKL_ALLOCATION_FAILED,
+                               "qmckl_provide_en_distance_rescaled",
+                               NULL);
+      }
+      ctx->jastrow_champ.en_distance_rescaled = en_distance_rescaled;
+    }
+
+    qmckl_exit_code rc =
+      qmckl_compute_en_distance_rescaled(context,
+                                ctx->electron.num,
+                                ctx->nucleus.num,
+                                ctx->jastrow_champ.type_nucl_num,
+                                ctx->jastrow_champ.type_nucl_vector,
+                                ctx->jastrow_champ.rescale_factor_en,
+                                ctx->electron.walker.num,
+                                ctx->electron.walker.point.coord.data,
+                                ctx->nucleus.coord.data,
+                                ctx->jastrow_champ.en_distance_rescaled);
+
+    if (rc != QMCKL_SUCCESS) {
+      return rc;
+    }
+
+    ctx->jastrow_champ.en_distance_rescaled_date = ctx->date;
+  }
+
+  return QMCKL_SUCCESS;
+}
+     #+end_src
+
+**** Compute
+     :PROPERTIES:
+     :Name:     qmckl_compute_en_distance_rescaled
+     :CRetType: qmckl_exit_code
+     :FRetType: qmckl_exit_code
+     :END:
+
+    #+NAME: qmckl_en_distance_rescaled_args
+     | Variable               | Type                                   | In/Out | Description                       |
+     |------------------------+----------------------------------------+--------+-----------------------------------|
+     | ~context~              | ~qmckl_context~                        | in     | Global state                      |
+     | ~elec_num~             | ~int64_t~                              | in     | Number of electrons               |
+     | ~nucl_num~             | ~int64_t~                              | in     | Number of nuclei                  |
+     | ~type_nucl_num~        | ~int64_t~                              | in     | Number of types of nuclei         |
+     | ~type_nucl_vector~     | ~int64_t[nucl_num]~                    | in     | Number of types of nuclei         |
+     | ~rescale_factor_en~    | ~double[type_nucl_num]~                | in     | The factor for rescaled distances |
+     | ~walk_num~             | ~int64_t~                              | in     | Number of walkers                 |
+     | ~elec_coord~           | ~double[3][walk_num][elec_num]~        | in     | Electron coordinates              |
+     | ~nucl_coord~           | ~double[3][elec_num]~                  | in     | Nuclear coordinates               |
+     | ~en_distance_rescaled~ | ~double[walk_num][nucl_num][elec_num]~ | out    | Electron-nucleus distances        |
+
+     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+function qmckl_compute_en_distance_rescaled_doc(context, &
+     elec_num, nucl_num, type_nucl_num, &
+     type_nucl_vector, rescale_factor_en, walk_num, elec_coord, &
+     nucl_coord, en_distance_rescaled) &
+     bind(C) result(info)
+  use qmckl
+  implicit none
+  integer (qmckl_context), intent(in), value :: context
+  integer (c_int64_t) , intent(in)  , value :: elec_num
+  integer (c_int64_t) , intent(in)  , value :: nucl_num
+  integer (c_int64_t) , intent(in)  , value :: type_nucl_num
+  integer (c_int64_t) , intent(in)          :: type_nucl_vector(nucl_num)
+  real    (c_double ) , intent(in)          :: rescale_factor_en(type_nucl_num)
+  integer (c_int64_t) , intent(in)  , value :: walk_num
+  real    (c_double ) , intent(in)          :: elec_coord(elec_num,walk_num,3)
+  real    (c_double ) , intent(in)          :: nucl_coord(nucl_num,3)
+  real    (c_double ) , intent(out)         :: en_distance_rescaled(elec_num,nucl_num,walk_num)
+  integer(qmckl_exit_code)                  :: info
+
+  integer*8 :: i, k
+  double precision      :: coord(3)
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (elec_num <= 0) then
+     info = QMCKL_INVALID_ARG_2
+     return
+  endif
+
+  if (nucl_num <= 0) then
+     info = QMCKL_INVALID_ARG_3
+     return
+  endif
+
+  if (walk_num <= 0) then
+     info = QMCKL_INVALID_ARG_5
+     return
+  endif
+
+  do i=1, nucl_num
+     coord(1:3) = nucl_coord(i,1:3)
+     do k=1,walk_num
+        info = qmckl_distance_rescaled(context, 'T', 'N', elec_num, 1_8, &
+             elec_coord(1,k,1), elec_num*walk_num, coord, 3_8, &
+             en_distance_rescaled(1,i,k), elec_num, rescale_factor_en(type_nucl_vector(i)+1))
+        if (info /= QMCKL_SUCCESS) then
+           return
+        endif
+     end do
+  end do
+
+end function qmckl_compute_en_distance_rescaled_doc
+     #+end_src
+
+     #+begin_src c :tangle (eval c) :comments org :exports none
+qmckl_exit_code qmckl_compute_en_distance_rescaled_hpc (
+          const qmckl_context context,
+          const int64_t elec_num,
+          const int64_t nucl_num,
+          const int64_t type_nucl_num,
+          const int64_t* type_nucl_vector,
+          const double* rescale_factor_en,
+          const int64_t walk_num,
+          const double* elec_coord,
+          const double* nucl_coord,
+          double* const en_distance_rescaled )
+{
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) return QMCKL_INVALID_CONTEXT;
+  if (elec_num <= 0) return QMCKL_INVALID_ARG_2;
+  if (nucl_num <= 0) return QMCKL_INVALID_ARG_3;
+  if (type_nucl_num <= 0) return QMCKL_INVALID_ARG_4;
+  if (type_nucl_vector == NULL) return QMCKL_INVALID_ARG_5;
+  if (rescale_factor_en == NULL) return QMCKL_INVALID_ARG_6;
+  if (walk_num <= 0) return QMCKL_INVALID_ARG_7;
+  if (elec_coord == NULL) return QMCKL_INVALID_ARG_8;
+  if (nucl_coord == NULL) return QMCKL_INVALID_ARG_9;
+  if (en_distance_rescaled == NULL) return QMCKL_INVALID_ARG_10;
+
+  int64_t sze = elec_num*walk_num;
+
+  qmckl_exit_code result = QMCKL_SUCCESS;
+  #pragma omp parallel
+  {
+    qmckl_exit_code rc = QMCKL_SUCCESS;
+    #pragma omp for
+    for (int64_t k=0 ; k<walk_num ; ++k)
+    {
+      for (int64_t a=0 ; a<nucl_num ; ++a) {
+        const double coord[3] = { nucl_coord[a], nucl_coord[a+nucl_num], nucl_coord[a+2*nucl_num] };
+        rc |= qmckl_distance_rescaled(context, 'T', 'N', elec_num, 1,
+                                      &(elec_coord[k*elec_num]), sze,
+                                      coord, 3,
+                                      &(en_distance_rescaled[elec_num*(a+nucl_num*k)]), elec_num,
+                                      rescale_factor_en[type_nucl_vector[a]]);
+      }
+    }
+    #pragma omp critical
+    result |= rc;
+  }
+  return result;
+}
+     #+end_src
+
+     #+begin_src c :tangle (eval h_private_func) :comments org :exports none
+qmckl_exit_code qmckl_compute_en_distance_rescaled_doc (
+          const qmckl_context context,
+          const int64_t elec_num,
+          const int64_t nucl_num,
+          const int64_t type_nucl_num,
+          const int64_t* type_nucl_vector,
+          const double*  rescale_factor_en,
+          const int64_t walk_num,
+          const double* elec_coord,
+          const double* nucl_coord,
+          double* const en_distance_rescaled );
+
+qmckl_exit_code qmckl_compute_en_distance_rescaled_hpc (
+          const qmckl_context context,
+          const int64_t elec_num,
+          const int64_t nucl_num,
+          const int64_t type_nucl_num,
+          const int64_t* type_nucl_vector,
+          const double* rescale_factor_en,
+          const int64_t walk_num,
+          const double* elec_coord,
+          const double* nucl_coord,
+          double* const en_distance_rescaled );
+
+qmckl_exit_code qmckl_compute_en_distance_rescaled (
+          const qmckl_context context,
+          const int64_t elec_num,
+          const int64_t nucl_num,
+          const int64_t type_nucl_num,
+          const int64_t* type_nucl_vector,
+          const double*  rescale_factor_en,
+          const int64_t walk_num,
+          const double* elec_coord,
+          const double* nucl_coord,
+          double* const en_distance_rescaled );
+     #+end_src
+
+     #+begin_src c :tangle (eval c) :comments org :exports none
+qmckl_exit_code qmckl_compute_en_distance_rescaled (
+          const qmckl_context context,
+          const int64_t elec_num,
+          const int64_t nucl_num,
+          const int64_t type_nucl_num,
+          const int64_t* type_nucl_vector,
+          const double* rescale_factor_en,
+          const int64_t walk_num,
+          const double* elec_coord,
+          const double* nucl_coord,
+          double* const en_distance_rescaled )
+{
+#ifdef HAVE_HPC
+  return qmckl_compute_en_distance_rescaled_hpc
+#else
+  return qmckl_compute_en_distance_rescaled_doc
+#endif
+  (context, elec_num, nucl_num, type_nucl_num, type_nucl_vector,
+  rescale_factor_en, walk_num, elec_coord, nucl_coord, en_distance_rescaled );
+}
+    #+end_src
+
+**** Test
+
+     #+begin_src python :results output :exports none
+import numpy as np
+
+kappa = 0.6
+
+elec_1_w1 = np.array( [-0.250655104764153,  0.503070975550133      ,  -0.166554344502303])
+elec_2_w1 = np.array( [-0.587812193472177, -0.128751981129274      ,   0.187773606533075])
+elec_5_w1 = np.array( [-0.127732483187947, -0.138975497694196      ,  -8.669850480215846E-002])
+elec_6_w1 = np.array( [-0.232271834949124, -1.059321673434182E-002 ,  -0.504862241464867])
+nucl_1    = np.array( [ 0., 0., 0. ])
+nucl_2    = np.array( [ 0., 0., 2.059801 ])
+
+print ( "[0][0] : ", (1.0 - np.exp(-kappa * np.linalg.norm(elec_1_w1-nucl_1)) )/kappa )
+print ( "[1][0] : ", (1.0 - np.exp(-kappa * np.linalg.norm(elec_1_w1-nucl_2)) )/kappa )
+print ( "[0][1] : ", (1.0 - np.exp(-kappa * np.linalg.norm(elec_2_w1-nucl_1)) )/kappa )
+print ( "[0][5] : ", (1.0 - np.exp(-kappa * np.linalg.norm(elec_5_w1-nucl_1)) )/kappa )
+print ( "[1][5] : ", (1.0 - np.exp(-kappa * np.linalg.norm(elec_5_w1-nucl_2)) )/kappa )
+print ( "[0][6] : ", (1.0 - np.exp(-kappa * np.linalg.norm(elec_6_w1-nucl_1)) )/kappa )
+
+     #+end_src
+
+     #+RESULTS:
+     : [0][0] :  0.4942158656729477
+     : [1][0] :  1.2464137498005765
+     : [0][1] :  0.5248654474756858
+     : [0][5] :  0.19529459944794733
+     : [1][5] :  1.2091967687767369
+     : [0][6] :  0.4726452953409436
+
+
+      #+begin_src c :tangle (eval c_test)
+
+assert(qmckl_electron_provided(context));
+assert(qmckl_nucleus_provided(context));
+
+double en_distance_rescaled[walk_num][nucl_num][elec_num];
+
+rc = qmckl_check(context,
+                 qmckl_get_electron_en_distance_rescaled(context, &(en_distance_rescaled[0][0][0]))
+                 );
+assert (rc == QMCKL_SUCCESS);
+
+// (e,n,w) in Fortran notation
+// (1,1,1)
+assert(fabs(en_distance_rescaled[0][0][0] - 0.4942158656729477) < 1.e-12);
+// (1,2,1)
+assert(fabs(en_distance_rescaled[0][1][0] - 1.2464137498005765) < 1.e-12);
+// (2,1,1)
+assert(fabs(en_distance_rescaled[0][0][1] - 0.5248654474756858) < 1.e-12);
+// (1,1,2)
+assert(fabs(en_distance_rescaled[0][0][5] - 0.19529459944794733) < 1.e-12);
+// (1,2,2)
+assert(fabs(en_distance_rescaled[0][1][5] - 1.2091967687767369) < 1.e-12);
+// (2,1,2)
+assert(fabs(en_distance_rescaled[0][0][6] - 0.4726452953409436) < 1.e-12);
+
+
+      #+end_src
+
+*** Electron-electron rescaled distance gradients and Laplacian with respect to electron coordinates
+
+   The rescaled distances, represented by $C_{i\alpha} = (1 - e^{-\kappa_\alpha R_{i\alpha}})/\kappa$
+   are differentiated with respect to the electron coordinates.
+   This information is stored in the tensor
+   ~en_distance_rescaled_gl~. The initial three sequential
+   elements of this three-index tensor provide the $x$, $y$, and $z$
+   direction derivatives, while the fourth index corresponds to the Laplacian.
+
+**** Get
+
+     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
+qmckl_exit_code qmckl_get_electron_en_distance_rescaled_gl(qmckl_context context, double* distance_rescaled_gl);
+     #+end_src
+
+     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code qmckl_get_electron_en_distance_rescaled_gl(qmckl_context context, double* distance_rescaled_gl)
+{
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_exit_code rc;
+
+  rc = qmckl_provide_en_distance_rescaled_gl(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  size_t sze = 4 * ctx->electron.num * ctx->nucleus.num * ctx->electron.walker.num;
+  memcpy(distance_rescaled_gl, ctx->jastrow_champ.en_distance_rescaled_gl, sze * sizeof(double));
+
+  return QMCKL_SUCCESS;
+}
+     #+end_src
+
+**** Provide                                                       :noexport:
+
+     #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_provide_en_distance_rescaled_gl(qmckl_context context);
+     #+end_src
+
+     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code qmckl_provide_en_distance_rescaled_gl(qmckl_context context)
+{
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  if (!(ctx->nucleus.provided)) {
+    return QMCKL_NOT_PROVIDED;
+  }
+
+  /* Compute if necessary */
+  if (ctx->electron.walker.point.date > ctx->jastrow_champ.en_distance_rescaled_gl_date) {
+
+    if (ctx->electron.walker.num > ctx->electron.walker_old.num) {
+      if (ctx->jastrow_champ.en_distance_rescaled_gl != NULL) {
+        qmckl_exit_code rc = qmckl_free(context, ctx->jastrow_champ.en_distance_rescaled_gl);
+        if (rc != QMCKL_SUCCESS) {
+          return qmckl_failwith( context, rc,
+                                 "qmckl_provide_en_distance_rescaled_gl",
+                                 "Unable to free ctx->jastrow_champ.en_distance_rescaled_gl");
+        }
+        ctx->jastrow_champ.en_distance_rescaled_gl = NULL;
+      }
+    }
+
+    /* Allocate array */
+    if (ctx->jastrow_champ.en_distance_rescaled_gl == NULL) {
+
+      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+      mem_info.size = 4 * ctx->electron.num * ctx->nucleus.num *
+        ctx->electron.walker.num * sizeof(double);
+      double* en_distance_rescaled_gl = (double*) qmckl_malloc(context, mem_info);
+
+      if (en_distance_rescaled_gl == NULL) {
+        return qmckl_failwith( context,
+                               QMCKL_ALLOCATION_FAILED,
+                               "qmckl_provide_en_distance_rescaled_gl",
+                               NULL);
+      }
+      ctx->jastrow_champ.en_distance_rescaled_gl = en_distance_rescaled_gl;
+    }
+
+    qmckl_exit_code rc =
+      qmckl_compute_en_distance_rescaled_gl(context,
+                                ctx->electron.num,
+                                ctx->nucleus.num,
+                                ctx->jastrow_champ.type_nucl_num,
+                                ctx->jastrow_champ.type_nucl_vector,
+                                ctx->jastrow_champ.rescale_factor_en,
+                                ctx->electron.walker.num,
+                                ctx->electron.walker.point.coord.data,
+                                ctx->nucleus.coord.data,
+                                ctx->jastrow_champ.en_distance_rescaled_gl);
+    if (rc != QMCKL_SUCCESS) {
+      return rc;
+    }
+
+    ctx->jastrow_champ.en_distance_rescaled_gl_date = ctx->date;
+  }
+
+  return QMCKL_SUCCESS;
+}
+     #+end_src
+
+**** Compute
+     :PROPERTIES:
+     :Name:     qmckl_compute_en_distance_rescaled_gl
+     :CRetType: qmckl_exit_code
+     :FRetType: qmckl_exit_code
+     :END:
+
+     #+NAME: qmckl_en_distance_rescaled_gl_args
+     | Variable                       | Type                                      | In/Out | Description                           |
+     |--------------------------------+-------------------------------------------+--------+---------------------------------------|
+     | ~context~                      | ~qmckl_context~                           | in     | Global state                          |
+     | ~elec_num~                     | ~int64_t~                                 | in     | Number of electrons                   |
+     | ~nucl_num~                     | ~int64_t~                                 | in     | Number of nuclei                      |
+     | ~type_nucl_num~                | ~int64_t~                                 | in     | Number of nucleus types               |
+     | ~type_nucl_vector~             | ~int64_t[nucl_num]~                       | in     | Array of nucleus types                |
+     | ~rescale_factor_en~            | ~double[nucl_num]~                        | in     | The factors for rescaled distances    |
+     | ~walk_num~                     | ~int64_t~                                 | in     | Number of walkers                     |
+     | ~elec_coord~                   | ~double[3][walk_num][elec_num]~           | in     | Electron coordinates                  |
+     | ~nucl_coord~                   | ~double[3][elec_num]~                     | in     | Nuclear coordinates                   |
+     | ~en_distance_rescaled_gl~ | ~double[walk_num][nucl_num][elec_num][4]~ | out    | Electron-nucleus distance derivatives |
+
+     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+function qmckl_compute_en_distance_rescaled_gl_doc(context, elec_num, nucl_num, &
+     type_nucl_num, type_nucl_vector, rescale_factor_en, walk_num, elec_coord, &
+     nucl_coord, en_distance_rescaled_gl) &
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
+  use qmckl
+  implicit none
+  integer(qmckl_context), intent(in)  :: context
+  integer (c_int64_t) , intent(in)  , value :: elec_num
+  integer (c_int64_t) , intent(in)  , value :: nucl_num
+  integer (c_int64_t) , intent(in)  , value :: type_nucl_num
+  integer (c_int64_t) , intent(in)          :: type_nucl_vector(nucl_num)
+  real    (c_double ) , intent(in)          :: rescale_factor_en(nucl_num)
+  integer (c_int64_t) , intent(in)  , value :: walk_num
+  real    (c_double ) , intent(in)          :: elec_coord(elec_num,walk_num,3)
+  real    (c_double ) , intent(in)          :: nucl_coord(nucl_num,3)
+  real    (c_double ) , intent(out)         :: en_distance_rescaled_gl(4,elec_num,nucl_num,walk_num)
+
+  integer(qmckl_exit_code)                  :: info
+  integer*8 :: i, k
+  double precision :: coord(3)
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (elec_num <= 0) then
+     info = QMCKL_INVALID_ARG_2
+     return
+  endif
+
+  if (nucl_num <= 0) then
+     info = QMCKL_INVALID_ARG_3
+     return
+  endif
+
+  if (walk_num <= 0) then
+     info = QMCKL_INVALID_ARG_5
+     return
+  endif
+
+  do i=1, nucl_num
+     coord(1:3) = nucl_coord(i,1:3)
+     do k=1,walk_num
+        info = qmckl_distance_rescaled_gl(context, 'T', 'T', elec_num, 1_8, &
+             elec_coord(1,k,1), elec_num*walk_num, coord, 1_8, &
+             en_distance_rescaled_gl(1,1,i,k), elec_num, rescale_factor_en(type_nucl_vector(i)+1))
+        if (info /= QMCKL_SUCCESS) then
+           return
+        endif
+     end do
+  end do
+
+end function qmckl_compute_en_distance_rescaled_gl_doc
+     #+end_src
+
+     #+begin_src c :tangle (eval h_private_func) :comments org :exports none
+qmckl_exit_code qmckl_compute_en_distance_rescaled_gl_doc (
+          const qmckl_context context,
+          const int64_t elec_num,
+          const int64_t nucl_num,
+          const int64_t type_nucl_num,
+          int64_t* const type_nucl_vector,
+          const double*  rescale_factor_en,
+          const int64_t walk_num,
+          const double* elec_coord,
+          const double* nucl_coord,
+          double* const en_distance_rescaled_gl );
+
+qmckl_exit_code qmckl_compute_en_distance_rescaled_gl_hpc (
+          const qmckl_context context,
+          const int64_t elec_num,
+          const int64_t nucl_num,
+          const int64_t type_nucl_num,
+          int64_t* const type_nucl_vector,
+          const double*  rescale_factor_en,
+          const int64_t walk_num,
+          const double* elec_coord,
+          const double* nucl_coord,
+          double* const en_distance_rescaled_gl );
+
+qmckl_exit_code qmckl_compute_en_distance_rescaled_gl (
+          const qmckl_context context,
+          const int64_t elec_num,
+          const int64_t nucl_num,
+          const int64_t type_nucl_num,
+          int64_t* const type_nucl_vector,
+          const double*  rescale_factor_en,
+          const int64_t walk_num,
+          const double* elec_coord,
+          const double* nucl_coord,
+          double* const en_distance_rescaled_gl );
+     #+end_src
+
+     #+begin_src c :tangle (eval c) :comments org :exports none
+qmckl_exit_code qmckl_compute_en_distance_rescaled_gl_hpc (
+          const qmckl_context context,
+          const int64_t elec_num,
+          const int64_t nucl_num,
+          const int64_t type_nucl_num,
+          int64_t* const type_nucl_vector,
+          const double*  rescale_factor_en,
+          const int64_t walk_num,
+          const double* elec_coord,
+          const double* nucl_coord,
+          double* const en_distance_rescaled_gl )
+{
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) return QMCKL_INVALID_CONTEXT;
+  if (elec_num <= 0) return QMCKL_INVALID_ARG_2;
+  if (nucl_num <= 0) return QMCKL_INVALID_ARG_3;
+  if (type_nucl_num <= 0) return QMCKL_INVALID_ARG_4;
+  if (type_nucl_vector == NULL) return QMCKL_INVALID_ARG_5;
+  if (rescale_factor_en == NULL) return QMCKL_INVALID_ARG_6;
+  if (walk_num <= 0) return QMCKL_INVALID_ARG_7;
+  if (elec_coord == NULL) return QMCKL_INVALID_ARG_8;
+  if (nucl_coord == NULL) return QMCKL_INVALID_ARG_9;
+  if (en_distance_rescaled_gl == NULL) return QMCKL_INVALID_ARG_10;
+
+  int64_t sze = elec_num*walk_num;
+
+  qmckl_exit_code result = QMCKL_SUCCESS;
+  #pragma omp parallel
+  {
+    qmckl_exit_code rc = QMCKL_SUCCESS;
+    #pragma omp for
+    for (int64_t k=0 ; k<walk_num ; ++k)
+    {
+      for (int64_t a=0 ; a<nucl_num ; ++a) {
+        const double coord[3] = { nucl_coord[a], nucl_coord[a+nucl_num], nucl_coord[a+2*nucl_num] };
+        rc |= qmckl_distance_rescaled_gl(context, 'T', 'T', elec_num, 1,
+                                         &(elec_coord[k*elec_num]), sze,
+                                         coord, 1,
+                                         &(en_distance_rescaled_gl[4*elec_num*(a+nucl_num*k)]), elec_num,
+                                         rescale_factor_en[type_nucl_vector[a]]);
+      }
+    }
+    #pragma omp critical
+    result |= rc;
+  }
+  return result;
+}
+     #+end_src
+
+     #+begin_src c :tangle (eval c) :comments org :exports none
+qmckl_exit_code qmckl_compute_en_distance_rescaled_gl (
+          const qmckl_context context,
+          const int64_t elec_num,
+          const int64_t nucl_num,
+          const int64_t type_nucl_num,
+          int64_t* const type_nucl_vector,
+          const double*  rescale_factor_en,
+          const int64_t walk_num,
+          const double* elec_coord,
+          const double* nucl_coord,
+          double* const en_distance_rescaled_gl )
+{
+#ifdef HAVE_HPC
+  return qmckl_compute_en_distance_rescaled_gl_hpc
+#else
+  return qmckl_compute_en_distance_rescaled_gl_doc
+#endif
+    (context, elec_num, nucl_num, type_nucl_num, type_nucl_vector, rescale_factor_en,
+     walk_num, elec_coord, nucl_coord, en_distance_rescaled_gl );
+}
+     #+end_src
+
+**** Test
+
+     #+begin_src python :results output :exports none
+import numpy as np
+
+# TODO
+     #+end_src
+
+
+      #+begin_src c :tangle (eval c_test)
+
+assert(qmckl_electron_provided(context));
+
+assert(qmckl_nucleus_provided(context));
+
+double en_distance_rescaled_gl[walk_num][4][nucl_num][elec_num];
+
+rc = qmckl_check(context,
+                 qmckl_get_electron_en_distance_rescaled_gl(context, &(en_distance_rescaled_gl[0][0][0][0]))
+                 );
+assert (rc == QMCKL_SUCCESS);
+
+// TODO: check exact values
+//// (e,n,w) in Fortran notation
+//// (1,1,1)
+//assert(fabs(en_distance_rescaled[0][0][0] - 7.546738741619978) < 1.e-12);
+//
+//// (1,2,1)
+//assert(fabs(en_distance_rescaled[0][1][0] - 8.77102435246984) < 1.e-12);
+//
+//// (2,1,1)
+//assert(fabs(en_distance_rescaled[0][0][1] - 3.698922010513608) < 1.e-12);
+//
+//// (1,1,2)
+//assert(fabs(en_distance_rescaled[1][0][0] - 5.824059436060509) < 1.e-12);
+//
+//// (1,2,2)
+//assert(fabs(en_distance_rescaled[1][1][0] - 7.080482110317645) < 1.e-12);
+//
+//// (2,1,2)
+//assert(fabs(en_distance_rescaled[1][0][1] - 3.1804527583077356) < 1.e-12);
 
       #+end_src
 
@@ -5127,723 +5844,6 @@ assert(fabs( 0.19656663796630847 - factor_en_gl[0][0][0]) < 1.e-12);
 assert(fabs( -0.3945140890522283 - factor_en_gl[0][1][0]) < 1.e-12);
 assert(fabs( 0.5082964671286118  - factor_en_gl[0][2][0]) < 1.e-12);
 assert(fabs( -1.8409460670666289 - factor_en_gl[0][3][0]) < 1.e-12);
-
-      #+end_src
-
-*** Electron-nucleus rescaled distances
-
-    ~en_distance_rescaled~ stores the matrix of the rescaled distances between
-    electrons and nuclei.
-
-    \[
-    C_{i\alpha} = \frac{ 1 - e^{-\kappa_\alpha R_{i\alpha}}}{\kappa_\alpha}
-    \]
-
-   where \(R_{i\alpha}\) is the matrix of electron-nucleus distances.
-
-**** Get
-
-     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
-qmckl_exit_code qmckl_get_electron_en_distance_rescaled(qmckl_context context, double* distance_rescaled);
-     #+end_src
-
-
-     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
-qmckl_exit_code qmckl_get_electron_en_distance_rescaled(qmckl_context context, double* distance_rescaled)
-{
-
-  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return QMCKL_NULL_CONTEXT;
-  }
-
-  qmckl_exit_code rc;
-
-  rc = qmckl_provide_en_distance_rescaled(context);
-  if (rc != QMCKL_SUCCESS) return rc;
-
-  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
-  assert (ctx != NULL);
-
-  size_t sze = ctx->electron.num * ctx->nucleus.num * ctx->electron.walker.num;
-  memcpy(distance_rescaled, ctx->jastrow_champ.en_distance_rescaled, sze * sizeof(double));
-
-  return QMCKL_SUCCESS;
-}
-     #+end_src
-
-**** Provide                                                       :noexport:
-
-     #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
-qmckl_exit_code qmckl_provide_en_distance_rescaled(qmckl_context context);
-     #+end_src
-
-     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
-qmckl_exit_code qmckl_provide_en_distance_rescaled(qmckl_context context)
-{
-
-  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return QMCKL_NULL_CONTEXT;
-  }
-
-  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
-  assert (ctx != NULL);
-
-  if (!(ctx->nucleus.provided)) {
-    return QMCKL_NOT_PROVIDED;
-  }
-
-  /* Compute if necessary */
-  if (ctx->electron.walker.point.date > ctx->jastrow_champ.en_distance_rescaled_date) {
-
-    if (ctx->electron.walker.num > ctx->electron.walker_old.num) {
-      if (ctx->jastrow_champ.en_distance_rescaled != NULL) {
-        qmckl_exit_code rc = qmckl_free(context, ctx->jastrow_champ.en_distance_rescaled);
-        if (rc != QMCKL_SUCCESS) {
-          return qmckl_failwith( context, rc,
-                                 "qmckl_provide_en_distance_rescaled",
-                                 "Unable to free ctx->jastrow_champ.en_distance_rescaled");
-        }
-        ctx->jastrow_champ.en_distance_rescaled = NULL;
-      }
-    }
-
-    /* Allocate array */
-    if (ctx->jastrow_champ.en_distance_rescaled == NULL) {
-
-      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-      mem_info.size = ctx->electron.num * ctx->nucleus.num *
-        ctx->electron.walker.num * sizeof(double);
-      double* en_distance_rescaled = (double*) qmckl_malloc(context, mem_info);
-
-      if (en_distance_rescaled == NULL) {
-        return qmckl_failwith( context,
-                               QMCKL_ALLOCATION_FAILED,
-                               "qmckl_provide_en_distance_rescaled",
-                               NULL);
-      }
-      ctx->jastrow_champ.en_distance_rescaled = en_distance_rescaled;
-    }
-
-    qmckl_exit_code rc =
-      qmckl_compute_en_distance_rescaled(context,
-                                ctx->electron.num,
-                                ctx->nucleus.num,
-                                ctx->jastrow_champ.type_nucl_num,
-                                ctx->jastrow_champ.type_nucl_vector,
-                                ctx->jastrow_champ.rescale_factor_en,
-                                ctx->electron.walker.num,
-                                ctx->electron.walker.point.coord.data,
-                                ctx->nucleus.coord.data,
-                                ctx->jastrow_champ.en_distance_rescaled);
-
-    if (rc != QMCKL_SUCCESS) {
-      return rc;
-    }
-
-    ctx->jastrow_champ.en_distance_rescaled_date = ctx->date;
-  }
-
-  return QMCKL_SUCCESS;
-}
-     #+end_src
-
-**** Compute
-     :PROPERTIES:
-     :Name:     qmckl_compute_en_distance_rescaled
-     :CRetType: qmckl_exit_code
-     :FRetType: qmckl_exit_code
-     :END:
-
-    #+NAME: qmckl_en_distance_rescaled_args
-     | Variable               | Type                                   | In/Out | Description                       |
-     |------------------------+----------------------------------------+--------+-----------------------------------|
-     | ~context~              | ~qmckl_context~                        | in     | Global state                      |
-     | ~elec_num~             | ~int64_t~                              | in     | Number of electrons               |
-     | ~nucl_num~             | ~int64_t~                              | in     | Number of nuclei                  |
-     | ~type_nucl_num~        | ~int64_t~                              | in     | Number of types of nuclei         |
-     | ~type_nucl_vector~     | ~int64_t[nucl_num]~                    | in     | Number of types of nuclei         |
-     | ~rescale_factor_en~    | ~double[type_nucl_num]~                | in     | The factor for rescaled distances |
-     | ~walk_num~             | ~int64_t~                              | in     | Number of walkers                 |
-     | ~elec_coord~           | ~double[3][walk_num][elec_num]~        | in     | Electron coordinates              |
-     | ~nucl_coord~           | ~double[3][elec_num]~                  | in     | Nuclear coordinates               |
-     | ~en_distance_rescaled~ | ~double[walk_num][nucl_num][elec_num]~ | out    | Electron-nucleus distances        |
-
-     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-function qmckl_compute_en_distance_rescaled_doc(context, &
-     elec_num, nucl_num, type_nucl_num, &
-     type_nucl_vector, rescale_factor_en, walk_num, elec_coord, &
-     nucl_coord, en_distance_rescaled) &
-     bind(C) result(info)
-  use qmckl
-  implicit none
-  integer (qmckl_context), intent(in), value :: context
-  integer (c_int64_t) , intent(in)  , value :: elec_num
-  integer (c_int64_t) , intent(in)  , value :: nucl_num
-  integer (c_int64_t) , intent(in)  , value :: type_nucl_num
-  integer (c_int64_t) , intent(in)          :: type_nucl_vector(nucl_num)
-  real    (c_double ) , intent(in)          :: rescale_factor_en(type_nucl_num)
-  integer (c_int64_t) , intent(in)  , value :: walk_num
-  real    (c_double ) , intent(in)          :: elec_coord(elec_num,walk_num,3)
-  real    (c_double ) , intent(in)          :: nucl_coord(nucl_num,3)
-  real    (c_double ) , intent(out)         :: en_distance_rescaled(elec_num,nucl_num,walk_num)
-  integer(qmckl_exit_code)                  :: info
-
-  integer*8 :: i, k
-  double precision      :: coord(3)
-
-  info = QMCKL_SUCCESS
-
-  if (context == QMCKL_NULL_CONTEXT) then
-     info = QMCKL_INVALID_CONTEXT
-     return
-  endif
-
-  if (elec_num <= 0) then
-     info = QMCKL_INVALID_ARG_2
-     return
-  endif
-
-  if (nucl_num <= 0) then
-     info = QMCKL_INVALID_ARG_3
-     return
-  endif
-
-  if (walk_num <= 0) then
-     info = QMCKL_INVALID_ARG_5
-     return
-  endif
-
-  do i=1, nucl_num
-     coord(1:3) = nucl_coord(i,1:3)
-     do k=1,walk_num
-        info = qmckl_distance_rescaled(context, 'T', 'N', elec_num, 1_8, &
-             elec_coord(1,k,1), elec_num*walk_num, coord, 3_8, &
-             en_distance_rescaled(1,i,k), elec_num, rescale_factor_en(type_nucl_vector(i)+1))
-        if (info /= QMCKL_SUCCESS) then
-           return
-        endif
-     end do
-  end do
-
-end function qmckl_compute_en_distance_rescaled_doc
-     #+end_src
-
-     #+begin_src c :tangle (eval c) :comments org :exports none
-qmckl_exit_code qmckl_compute_en_distance_rescaled_hpc (
-          const qmckl_context context,
-          const int64_t elec_num,
-          const int64_t nucl_num,
-          const int64_t type_nucl_num,
-          const int64_t* type_nucl_vector,
-          const double* rescale_factor_en,
-          const int64_t walk_num,
-          const double* elec_coord,
-          const double* nucl_coord,
-          double* const en_distance_rescaled )
-{
-  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) return QMCKL_INVALID_CONTEXT;
-  if (elec_num <= 0) return QMCKL_INVALID_ARG_2;
-  if (nucl_num <= 0) return QMCKL_INVALID_ARG_3;
-  if (type_nucl_num <= 0) return QMCKL_INVALID_ARG_4;
-  if (type_nucl_vector == NULL) return QMCKL_INVALID_ARG_5;
-  if (rescale_factor_en == NULL) return QMCKL_INVALID_ARG_6;
-  if (walk_num <= 0) return QMCKL_INVALID_ARG_7;
-  if (elec_coord == NULL) return QMCKL_INVALID_ARG_8;
-  if (nucl_coord == NULL) return QMCKL_INVALID_ARG_9;
-  if (en_distance_rescaled == NULL) return QMCKL_INVALID_ARG_10;
-
-  int64_t sze = elec_num*walk_num;
-
-  qmckl_exit_code result = QMCKL_SUCCESS;
-  #pragma omp parallel
-  {
-    qmckl_exit_code rc = QMCKL_SUCCESS;
-    #pragma omp for
-    for (int64_t k=0 ; k<walk_num ; ++k)
-    {
-      for (int64_t a=0 ; a<nucl_num ; ++a) {
-        const double coord[3] = { nucl_coord[a], nucl_coord[a+nucl_num], nucl_coord[a+2*nucl_num] };
-        rc |= qmckl_distance_rescaled(context, 'T', 'N', elec_num, 1,
-                                      &(elec_coord[k*elec_num]), sze,
-                                      coord, 3,
-                                      &(en_distance_rescaled[elec_num*(a+nucl_num*k)]), elec_num,
-                                      rescale_factor_en[type_nucl_vector[a]]);
-      }
-    }
-    #pragma omp critical
-    result |= rc;
-  }
-  return result;
-}
-     #+end_src
-
-     #+begin_src c :tangle (eval h_private_func) :comments org :exports none
-qmckl_exit_code qmckl_compute_en_distance_rescaled_doc (
-          const qmckl_context context,
-          const int64_t elec_num,
-          const int64_t nucl_num,
-          const int64_t type_nucl_num,
-          const int64_t* type_nucl_vector,
-          const double*  rescale_factor_en,
-          const int64_t walk_num,
-          const double* elec_coord,
-          const double* nucl_coord,
-          double* const en_distance_rescaled );
-
-qmckl_exit_code qmckl_compute_en_distance_rescaled_hpc (
-          const qmckl_context context,
-          const int64_t elec_num,
-          const int64_t nucl_num,
-          const int64_t type_nucl_num,
-          const int64_t* type_nucl_vector,
-          const double* rescale_factor_en,
-          const int64_t walk_num,
-          const double* elec_coord,
-          const double* nucl_coord,
-          double* const en_distance_rescaled );
-
-qmckl_exit_code qmckl_compute_en_distance_rescaled (
-          const qmckl_context context,
-          const int64_t elec_num,
-          const int64_t nucl_num,
-          const int64_t type_nucl_num,
-          const int64_t* type_nucl_vector,
-          const double*  rescale_factor_en,
-          const int64_t walk_num,
-          const double* elec_coord,
-          const double* nucl_coord,
-          double* const en_distance_rescaled );
-     #+end_src
-
-     #+begin_src c :tangle (eval c) :comments org :exports none
-qmckl_exit_code qmckl_compute_en_distance_rescaled (
-          const qmckl_context context,
-          const int64_t elec_num,
-          const int64_t nucl_num,
-          const int64_t type_nucl_num,
-          const int64_t* type_nucl_vector,
-          const double* rescale_factor_en,
-          const int64_t walk_num,
-          const double* elec_coord,
-          const double* nucl_coord,
-          double* const en_distance_rescaled )
-{
-#ifdef HAVE_HPC
-  return qmckl_compute_en_distance_rescaled_hpc
-#else
-  return qmckl_compute_en_distance_rescaled_doc
-#endif
-  (context, elec_num, nucl_num, type_nucl_num, type_nucl_vector,
-  rescale_factor_en, walk_num, elec_coord, nucl_coord, en_distance_rescaled );
-}
-    #+end_src
-
-**** Test
-
-     #+begin_src python :results output :exports none
-import numpy as np
-
-kappa = 0.6
-
-elec_1_w1 = np.array( [-0.250655104764153,  0.503070975550133      ,  -0.166554344502303])
-elec_2_w1 = np.array( [-0.587812193472177, -0.128751981129274      ,   0.187773606533075])
-elec_5_w1 = np.array( [-0.127732483187947, -0.138975497694196      ,  -8.669850480215846E-002])
-elec_6_w1 = np.array( [-0.232271834949124, -1.059321673434182E-002 ,  -0.504862241464867])
-nucl_1    = np.array( [ 0., 0., 0. ])
-nucl_2    = np.array( [ 0., 0., 2.059801 ])
-
-print ( "[0][0] : ", (1.0 - np.exp(-kappa * np.linalg.norm(elec_1_w1-nucl_1)) )/kappa )
-print ( "[1][0] : ", (1.0 - np.exp(-kappa * np.linalg.norm(elec_1_w1-nucl_2)) )/kappa )
-print ( "[0][1] : ", (1.0 - np.exp(-kappa * np.linalg.norm(elec_2_w1-nucl_1)) )/kappa )
-print ( "[0][5] : ", (1.0 - np.exp(-kappa * np.linalg.norm(elec_5_w1-nucl_1)) )/kappa )
-print ( "[1][5] : ", (1.0 - np.exp(-kappa * np.linalg.norm(elec_5_w1-nucl_2)) )/kappa )
-print ( "[0][6] : ", (1.0 - np.exp(-kappa * np.linalg.norm(elec_6_w1-nucl_1)) )/kappa )
-
-     #+end_src
-
-     #+RESULTS:
-     : [0][0] :  0.4942158656729477
-     : [1][0] :  1.2464137498005765
-     : [0][1] :  0.5248654474756858
-     : [0][5] :  0.19529459944794733
-     : [1][5] :  1.2091967687767369
-     : [0][6] :  0.4726452953409436
-
-
-      #+begin_src c :tangle (eval c_test)
-
-assert(qmckl_electron_provided(context));
-assert(qmckl_nucleus_provided(context));
-
-double en_distance_rescaled[walk_num][nucl_num][elec_num];
-
-rc = qmckl_check(context,
-                 qmckl_get_electron_en_distance_rescaled(context, &(en_distance_rescaled[0][0][0]))
-                 );
-assert (rc == QMCKL_SUCCESS);
-
-// (e,n,w) in Fortran notation
-// (1,1,1)
-assert(fabs(en_distance_rescaled[0][0][0] - 0.4942158656729477) < 1.e-12);
-// (1,2,1)
-assert(fabs(en_distance_rescaled[0][1][0] - 1.2464137498005765) < 1.e-12);
-// (2,1,1)
-assert(fabs(en_distance_rescaled[0][0][1] - 0.5248654474756858) < 1.e-12);
-// (1,1,2)
-assert(fabs(en_distance_rescaled[0][0][5] - 0.19529459944794733) < 1.e-12);
-// (1,2,2)
-assert(fabs(en_distance_rescaled[0][1][5] - 1.2091967687767369) < 1.e-12);
-// (2,1,2)
-assert(fabs(en_distance_rescaled[0][0][6] - 0.4726452953409436) < 1.e-12);
-
-
-      #+end_src
-
-*** Electron-electron rescaled distance gradients and Laplacian with respect to electron coordinates
-
-   The rescaled distances, represented by $C_{i\alpha} = (1 - e^{-\kappa_\alpha R_{i\alpha}})/\kappa$
-   are differentiated with respect to the electron coordinates.
-   This information is stored in the tensor
-   ~en_distance_rescaled_gl~. The initial three sequential
-   elements of this three-index tensor provide the $x$, $y$, and $z$
-   direction derivatives, while the fourth index corresponds to the Laplacian.
-
-**** Get
-
-     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
-qmckl_exit_code qmckl_get_electron_en_distance_rescaled_gl(qmckl_context context, double* distance_rescaled_gl);
-     #+end_src
-
-     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
-qmckl_exit_code qmckl_get_electron_en_distance_rescaled_gl(qmckl_context context, double* distance_rescaled_gl)
-{
-
-  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return QMCKL_NULL_CONTEXT;
-  }
-
-  qmckl_exit_code rc;
-
-  rc = qmckl_provide_en_distance_rescaled_gl(context);
-  if (rc != QMCKL_SUCCESS) return rc;
-
-  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
-  assert (ctx != NULL);
-
-  size_t sze = 4 * ctx->electron.num * ctx->nucleus.num * ctx->electron.walker.num;
-  memcpy(distance_rescaled_gl, ctx->jastrow_champ.en_distance_rescaled_gl, sze * sizeof(double));
-
-  return QMCKL_SUCCESS;
-}
-     #+end_src
-
-**** Provide                                                       :noexport:
-
-     #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
-qmckl_exit_code qmckl_provide_en_distance_rescaled_gl(qmckl_context context);
-     #+end_src
-
-     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
-qmckl_exit_code qmckl_provide_en_distance_rescaled_gl(qmckl_context context)
-{
-
-  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return QMCKL_NULL_CONTEXT;
-  }
-
-  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
-  assert (ctx != NULL);
-
-  if (!(ctx->nucleus.provided)) {
-    return QMCKL_NOT_PROVIDED;
-  }
-
-  /* Compute if necessary */
-  if (ctx->electron.walker.point.date > ctx->jastrow_champ.en_distance_rescaled_gl_date) {
-
-    if (ctx->electron.walker.num > ctx->electron.walker_old.num) {
-      if (ctx->jastrow_champ.en_distance_rescaled_gl != NULL) {
-        qmckl_exit_code rc = qmckl_free(context, ctx->jastrow_champ.en_distance_rescaled_gl);
-        if (rc != QMCKL_SUCCESS) {
-          return qmckl_failwith( context, rc,
-                                 "qmckl_provide_en_distance_rescaled_gl",
-                                 "Unable to free ctx->jastrow_champ.en_distance_rescaled_gl");
-        }
-        ctx->jastrow_champ.en_distance_rescaled_gl = NULL;
-      }
-    }
-
-    /* Allocate array */
-    if (ctx->jastrow_champ.en_distance_rescaled_gl == NULL) {
-
-      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-      mem_info.size = 4 * ctx->electron.num * ctx->nucleus.num *
-        ctx->electron.walker.num * sizeof(double);
-      double* en_distance_rescaled_gl = (double*) qmckl_malloc(context, mem_info);
-
-      if (en_distance_rescaled_gl == NULL) {
-        return qmckl_failwith( context,
-                               QMCKL_ALLOCATION_FAILED,
-                               "qmckl_provide_en_distance_rescaled_gl",
-                               NULL);
-      }
-      ctx->jastrow_champ.en_distance_rescaled_gl = en_distance_rescaled_gl;
-    }
-
-    qmckl_exit_code rc =
-      qmckl_compute_en_distance_rescaled_gl(context,
-                                ctx->electron.num,
-                                ctx->nucleus.num,
-                                ctx->jastrow_champ.type_nucl_num,
-                                ctx->jastrow_champ.type_nucl_vector,
-                                ctx->jastrow_champ.rescale_factor_en,
-                                ctx->electron.walker.num,
-                                ctx->electron.walker.point.coord.data,
-                                ctx->nucleus.coord.data,
-                                ctx->jastrow_champ.en_distance_rescaled_gl);
-    if (rc != QMCKL_SUCCESS) {
-      return rc;
-    }
-
-    ctx->jastrow_champ.en_distance_rescaled_gl_date = ctx->date;
-  }
-
-  return QMCKL_SUCCESS;
-}
-     #+end_src
-
-**** Compute
-     :PROPERTIES:
-     :Name:     qmckl_compute_en_distance_rescaled_gl
-     :CRetType: qmckl_exit_code
-     :FRetType: qmckl_exit_code
-     :END:
-
-     #+NAME: qmckl_en_distance_rescaled_gl_args
-     | Variable                       | Type                                      | In/Out | Description                           |
-     |--------------------------------+-------------------------------------------+--------+---------------------------------------|
-     | ~context~                      | ~qmckl_context~                           | in     | Global state                          |
-     | ~elec_num~                     | ~int64_t~                                 | in     | Number of electrons                   |
-     | ~nucl_num~                     | ~int64_t~                                 | in     | Number of nuclei                      |
-     | ~type_nucl_num~                | ~int64_t~                                 | in     | Number of nucleus types               |
-     | ~type_nucl_vector~             | ~int64_t[nucl_num]~                       | in     | Array of nucleus types                |
-     | ~rescale_factor_en~            | ~double[nucl_num]~                        | in     | The factors for rescaled distances    |
-     | ~walk_num~                     | ~int64_t~                                 | in     | Number of walkers                     |
-     | ~elec_coord~                   | ~double[3][walk_num][elec_num]~           | in     | Electron coordinates                  |
-     | ~nucl_coord~                   | ~double[3][elec_num]~                     | in     | Nuclear coordinates                   |
-     | ~en_distance_rescaled_gl~ | ~double[walk_num][nucl_num][elec_num][4]~ | out    | Electron-nucleus distance derivatives |
-
-     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-function qmckl_compute_en_distance_rescaled_gl_doc(context, elec_num, nucl_num, &
-     type_nucl_num, type_nucl_vector, rescale_factor_en, walk_num, elec_coord, &
-     nucl_coord, en_distance_rescaled_gl) &
-     result(info) bind(C)
-  use, intrinsic :: iso_c_binding
-  use qmckl
-  implicit none
-  integer(qmckl_context), intent(in)  :: context
-  integer (c_int64_t) , intent(in)  , value :: elec_num
-  integer (c_int64_t) , intent(in)  , value :: nucl_num
-  integer (c_int64_t) , intent(in)  , value :: type_nucl_num
-  integer (c_int64_t) , intent(in)          :: type_nucl_vector(nucl_num)
-  real    (c_double ) , intent(in)          :: rescale_factor_en(nucl_num)
-  integer (c_int64_t) , intent(in)  , value :: walk_num
-  real    (c_double ) , intent(in)          :: elec_coord(elec_num,walk_num,3)
-  real    (c_double ) , intent(in)          :: nucl_coord(nucl_num,3)
-  real    (c_double ) , intent(out)         :: en_distance_rescaled_gl(4,elec_num,nucl_num,walk_num)
-
-  integer(qmckl_exit_code)                  :: info
-  integer*8 :: i, k
-  double precision :: coord(3)
-
-  info = QMCKL_SUCCESS
-
-  if (context == QMCKL_NULL_CONTEXT) then
-     info = QMCKL_INVALID_CONTEXT
-     return
-  endif
-
-  if (elec_num <= 0) then
-     info = QMCKL_INVALID_ARG_2
-     return
-  endif
-
-  if (nucl_num <= 0) then
-     info = QMCKL_INVALID_ARG_3
-     return
-  endif
-
-  if (walk_num <= 0) then
-     info = QMCKL_INVALID_ARG_5
-     return
-  endif
-
-  do i=1, nucl_num
-     coord(1:3) = nucl_coord(i,1:3)
-     do k=1,walk_num
-        info = qmckl_distance_rescaled_gl(context, 'T', 'T', elec_num, 1_8, &
-             elec_coord(1,k,1), elec_num*walk_num, coord, 1_8, &
-             en_distance_rescaled_gl(1,1,i,k), elec_num, rescale_factor_en(type_nucl_vector(i)+1))
-        if (info /= QMCKL_SUCCESS) then
-           return
-        endif
-     end do
-  end do
-
-end function qmckl_compute_en_distance_rescaled_gl_doc
-     #+end_src
-
-     #+begin_src c :tangle (eval h_private_func) :comments org :exports none
-qmckl_exit_code qmckl_compute_en_distance_rescaled_gl_doc (
-          const qmckl_context context,
-          const int64_t elec_num,
-          const int64_t nucl_num,
-          const int64_t type_nucl_num,
-          int64_t* const type_nucl_vector,
-          const double*  rescale_factor_en,
-          const int64_t walk_num,
-          const double* elec_coord,
-          const double* nucl_coord,
-          double* const en_distance_rescaled_gl );
-
-qmckl_exit_code qmckl_compute_en_distance_rescaled_gl_hpc (
-          const qmckl_context context,
-          const int64_t elec_num,
-          const int64_t nucl_num,
-          const int64_t type_nucl_num,
-          int64_t* const type_nucl_vector,
-          const double*  rescale_factor_en,
-          const int64_t walk_num,
-          const double* elec_coord,
-          const double* nucl_coord,
-          double* const en_distance_rescaled_gl );
-
-qmckl_exit_code qmckl_compute_en_distance_rescaled_gl (
-          const qmckl_context context,
-          const int64_t elec_num,
-          const int64_t nucl_num,
-          const int64_t type_nucl_num,
-          int64_t* const type_nucl_vector,
-          const double*  rescale_factor_en,
-          const int64_t walk_num,
-          const double* elec_coord,
-          const double* nucl_coord,
-          double* const en_distance_rescaled_gl );
-     #+end_src
-
-     #+begin_src c :tangle (eval c) :comments org :exports none
-qmckl_exit_code qmckl_compute_en_distance_rescaled_gl_hpc (
-          const qmckl_context context,
-          const int64_t elec_num,
-          const int64_t nucl_num,
-          const int64_t type_nucl_num,
-          int64_t* const type_nucl_vector,
-          const double*  rescale_factor_en,
-          const int64_t walk_num,
-          const double* elec_coord,
-          const double* nucl_coord,
-          double* const en_distance_rescaled_gl )
-{
-  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) return QMCKL_INVALID_CONTEXT;
-  if (elec_num <= 0) return QMCKL_INVALID_ARG_2;
-  if (nucl_num <= 0) return QMCKL_INVALID_ARG_3;
-  if (type_nucl_num <= 0) return QMCKL_INVALID_ARG_4;
-  if (type_nucl_vector == NULL) return QMCKL_INVALID_ARG_5;
-  if (rescale_factor_en == NULL) return QMCKL_INVALID_ARG_6;
-  if (walk_num <= 0) return QMCKL_INVALID_ARG_7;
-  if (elec_coord == NULL) return QMCKL_INVALID_ARG_8;
-  if (nucl_coord == NULL) return QMCKL_INVALID_ARG_9;
-  if (en_distance_rescaled_gl == NULL) return QMCKL_INVALID_ARG_10;
-
-  int64_t sze = elec_num*walk_num;
-
-  qmckl_exit_code result = QMCKL_SUCCESS;
-  #pragma omp parallel
-  {
-    qmckl_exit_code rc = QMCKL_SUCCESS;
-    #pragma omp for
-    for (int64_t k=0 ; k<walk_num ; ++k)
-    {
-      for (int64_t a=0 ; a<nucl_num ; ++a) {
-        const double coord[3] = { nucl_coord[a], nucl_coord[a+nucl_num], nucl_coord[a+2*nucl_num] };
-        rc |= qmckl_distance_rescaled_gl(context, 'T', 'T', elec_num, 1,
-                                         &(elec_coord[k*elec_num]), sze,
-                                         coord, 1,
-                                         &(en_distance_rescaled_gl[4*elec_num*(a+nucl_num*k)]), elec_num,
-                                         rescale_factor_en[type_nucl_vector[a]]);
-      }
-    }
-    #pragma omp critical
-    result |= rc;
-  }
-  return result;
-}
-     #+end_src
-
-     #+begin_src c :tangle (eval c) :comments org :exports none
-qmckl_exit_code qmckl_compute_en_distance_rescaled_gl (
-          const qmckl_context context,
-          const int64_t elec_num,
-          const int64_t nucl_num,
-          const int64_t type_nucl_num,
-          int64_t* const type_nucl_vector,
-          const double*  rescale_factor_en,
-          const int64_t walk_num,
-          const double* elec_coord,
-          const double* nucl_coord,
-          double* const en_distance_rescaled_gl )
-{
-#ifdef HAVE_HPC
-  return qmckl_compute_en_distance_rescaled_gl_hpc
-#else
-  return qmckl_compute_en_distance_rescaled_gl_doc
-#endif
-    (context, elec_num, nucl_num, type_nucl_num, type_nucl_vector, rescale_factor_en,
-     walk_num, elec_coord, nucl_coord, en_distance_rescaled_gl );
-}
-     #+end_src
-
-**** Test
-
-     #+begin_src python :results output :exports none
-import numpy as np
-
-# TODO
-     #+end_src
-
-
-      #+begin_src c :tangle (eval c_test)
-
-assert(qmckl_electron_provided(context));
-
-assert(qmckl_nucleus_provided(context));
-
-double en_distance_rescaled_gl[walk_num][4][nucl_num][elec_num];
-
-rc = qmckl_check(context,
-                 qmckl_get_electron_en_distance_rescaled_gl(context, &(en_distance_rescaled_gl[0][0][0][0]))
-                 );
-assert (rc == QMCKL_SUCCESS);
-
-// TODO: check exact values
-//// (e,n,w) in Fortran notation
-//// (1,1,1)
-//assert(fabs(en_distance_rescaled[0][0][0] - 7.546738741619978) < 1.e-12);
-//
-//// (1,2,1)
-//assert(fabs(en_distance_rescaled[0][1][0] - 8.77102435246984) < 1.e-12);
-//
-//// (2,1,1)
-//assert(fabs(en_distance_rescaled[0][0][1] - 3.698922010513608) < 1.e-12);
-//
-//// (1,1,2)
-//assert(fabs(en_distance_rescaled[1][0][0] - 5.824059436060509) < 1.e-12);
-//
-//// (1,2,2)
-//assert(fabs(en_distance_rescaled[1][1][0] - 7.080482110317645) < 1.e-12);
-//
-//// (2,1,2)
-//assert(fabs(en_distance_rescaled[1][0][1] - 3.1804527583077356) < 1.e-12);
 
       #+end_src
 
@@ -9483,7 +9483,7 @@ interface
    end function qmckl_get_jastrow_champ_factor_een_grad
 end interface
  #+end_src
- #
+
 **** Provide                                                       :noexport:
      #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
 qmckl_exit_code qmckl_provide_jastrow_champ_factor_een_gl(qmckl_context context);
