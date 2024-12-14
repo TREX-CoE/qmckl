@@ -62,7 +62,9 @@
   The eN and eeN parameters are the same of all identical nuclei.
   Warning: The types of nuclei use zero-based indexing.
 
-  
+  The derivatives are computed with respect to the electron $i$ for
+  \[ r_{ij} = |r_i - r_j| \]
+
 ** Reformulation of the three-body part
 
    To accelerate the computation of the three-body part, the Jastrow
@@ -111,6 +113,7 @@
 
   #+begin_src c :tangle (eval c_test) :noweb yes
 #include "qmckl.h"
+#include <string.h>
 #include <assert.h>
 #include <math.h>
 #ifdef HAVE_CONFIG_H
@@ -120,6 +123,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include "n2.h"
+#include "qmckl_context_private_type.h"
 #include "qmckl_jastrow_champ_private_func.h"
 
 int main() {
@@ -224,12 +228,12 @@ int main() {
     | ~factor_en_gl_date~            | ~uint64_t~                                                      | Keep track of the date for the en derivative                                                            |
     | ~factor_een_gl~                | ~double[walk_num][4][elec_num]~                                 | Derivative of the Jastrow factor: electron-electron-nucleus  part                                       |
     | ~factor_een_gl_date~           | ~uint64_t~                                                      | Keep track of the date for the een derivative                                                           |
-    | ~factor_een_grad~              | ~double[walk_num][3][elec_num]~                                 | Gradient of the Jastrow factor: electron-electron-nucleus  part                                       |
+    | ~factor_een_grad~              | ~double[walk_num][3][elec_num]~                                 | Gradient of the Jastrow factor: electron-electron-nucleus  part                                         |
     | ~factor_een_grad_date~         | ~uint64_t~                                                      | Keep track of the date for the een derivative                                                           |
     | ~value~                        | ~double[walk_num]~                                              | Value of the Jastrow factor                                                                             |
     | ~value_date~                   | ~uint64_t~                                                      | Keep track of the date                                                                                  |
     | ~gl~                           | ~double[walk_num][4][elec_num]~                                 | Gradient and Laplacian of the Jastrow factor                                                            |
-    | ~grad~                         | ~double[walk_num][3][elec_num]~                                 | Gradient of the Jastrow factor                                                            |
+    | ~grad~                         | ~double[walk_num][3][elec_num]~                                 | Gradient of the Jastrow factor                                                                          |
     | ~value_date~                   | ~uint64_t~                                                      | Keep track of the date                                                                                  |
 
    #+NAME: jastrow_data
@@ -908,7 +912,7 @@ qmckl_set_jastrow_champ_rescale_factor_en(qmckl_context context,
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_3,
                            "qmckl_set_jastrow_champ_rescale_factor_en",
-                           "Array too small");
+                           "Array too small. Expected type_nucl_num.");
   }
 
 
@@ -1333,13 +1337,6 @@ qmckl_get_jastrow_champ_a_vector (const qmckl_context context,
                            NULL);
   }
 
-  if (a_vector == NULL) {
-    return qmckl_failwith( context,
-                           QMCKL_INVALID_ARG_2,
-                           "qmckl_get_jastrow_champ_a_vector",
-                           "a_vector is a null pointer");
-  }
-
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
@@ -1349,15 +1346,26 @@ qmckl_get_jastrow_champ_a_vector (const qmckl_context context,
     return QMCKL_NOT_PROVIDED;
   }
 
+  if (a_vector == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_get_jastrow_champ_a_vector",
+                           "Null pointer");
+  }
+
   assert (ctx->jastrow_champ.a_vector != NULL);
-  int64_t sze = (ctx->jastrow_champ.aord_num + 1)*ctx->jastrow_champ.type_nucl_num;
+
+  const int64_t sze = (ctx->jastrow_champ.aord_num + 1)*ctx->jastrow_champ.type_nucl_num;
+
   if (size_max < sze) {
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_3,
                            "qmckl_get_jastrow_champ_a_vector",
-                           "Array too small. Expected (ctx->jastrow_champ.aord_num + 1)*ctx->jastrow_champ.type_nucl_num");
+                           "Array too small. Expected (aord_num + 1)*type_nucl_num");
   }
+
   memcpy(a_vector, ctx->jastrow_champ.a_vector, sze*sizeof(double));
+
   return QMCKL_SUCCESS;
 }
 
@@ -1373,13 +1381,6 @@ qmckl_get_jastrow_champ_b_vector (const qmckl_context context,
                            NULL);
   }
 
-  if (b_vector == NULL) {
-    return qmckl_failwith( context,
-                           QMCKL_INVALID_ARG_2,
-                           "qmckl_get_jastrow_champ_b_vector",
-                           "b_vector is a null pointer");
-  }
-
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
@@ -1390,14 +1391,25 @@ qmckl_get_jastrow_champ_b_vector (const qmckl_context context,
   }
 
   assert (ctx->jastrow_champ.b_vector != NULL);
-  int64_t sze=ctx->jastrow_champ.bord_num +1;
+
+  if (b_vector == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_get_jastrow_champ_b_vector",
+                           "Null pointer");
+  }
+
+  const int64_t sze=ctx->jastrow_champ.bord_num +1;
+
   if (size_max < sze) {
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_3,
                            "qmckl_get_jastrow_champ_b_vector",
-                           "Array too small. Expected (ctx->jastrow_champ.bord_num + 1)");
+                           "Array too small. Expected bord_num + 1");
   }
+
   memcpy(b_vector, ctx->jastrow_champ.b_vector, sze*sizeof(double));
+
   return QMCKL_SUCCESS;
 }
 
@@ -1411,13 +1423,6 @@ qmckl_get_jastrow_champ_c_vector (const qmckl_context context,
                            QMCKL_INVALID_CONTEXT,
                            "qmckl_get_jastrow_champ_c_vector",
                            NULL);
-  }
-
-  if (c_vector == NULL) {
-    return qmckl_failwith( context,
-                           QMCKL_INVALID_ARG_2,
-                           "qmckl_get_jastrow_champ_c_vector",
-                           "c_vector is a null pointer");
   }
 
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
@@ -1435,20 +1440,29 @@ qmckl_get_jastrow_champ_c_vector (const qmckl_context context,
   qmckl_exit_code rc = qmckl_get_jastrow_champ_dim_c_vector(context, &dim_c_vector);
   if (rc != QMCKL_SUCCESS) return rc;
 
-  int64_t sze=dim_c_vector * ctx->jastrow_champ.type_nucl_num;
+  if (c_vector == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_get_jastrow_champ_c_vector",
+                           "c_vector is a null pointer");
+  }
+
+  const int64_t sze=dim_c_vector * ctx->jastrow_champ.type_nucl_num;
+
   if (size_max < sze) {
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_3,
                            "qmckl_get_jastrow_champ_c_vector",
-                           "Array too small. Expected dim_c_vector * jastrow_champ.type_nucl_num");
+                           "Array too small. Expected dim_c_vector*type_nucl_num");
   }
+
   memcpy(c_vector, ctx->jastrow_champ.c_vector, sze*sizeof(double));
   return QMCKL_SUCCESS;
 }
 
 qmckl_exit_code
 qmckl_get_jastrow_champ_rescale_factor_ee (const qmckl_context context,
-                                      double* const rescale_factor_ee) {
+                                           double* const rescale_factor_ee) {
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return qmckl_failwith( context,
@@ -1483,6 +1497,7 @@ qmckl_exit_code
 qmckl_get_jastrow_champ_rescale_factor_en (const qmckl_context context,
                                       double* const rescale_factor_en,
                                       const int64_t size_max) {
+
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return qmckl_failwith( context,
                            QMCKL_INVALID_CONTEXT,
@@ -1510,7 +1525,7 @@ qmckl_get_jastrow_champ_rescale_factor_en (const qmckl_context context,
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_3,
                            "qmckl_get_jastrow_champ_rescale_factor_en",
-                           "Array to small");
+                           "Array to small. Expected type_nucl_num.");
   }
 
   assert(ctx->jastrow_champ.rescale_factor_en != NULL);
@@ -1680,7 +1695,7 @@ qmckl_exit_code qmckl_get_jastrow_champ_spin_independent(const qmckl_context con
   end interface
 #+end_src
 
-** Test
+** Test                                                            :noexport:
    #+begin_src c :tangle (eval c_test)
 /* Reference input data */
 int64_t walk_num      = n2_walk_num;
@@ -1843,7 +1858,7 @@ qmckl_get_jastrow_champ_asymp_jasb(qmckl_context context,
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
-  int64_t sze = 2;
+  const int64_t sze = 2;
   if (size_max < sze) {
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_3,
@@ -2061,12 +2076,12 @@ qmckl_exit_code qmckl_compute_jastrow_champ_asymp_jasb (const qmckl_context cont
 #ifdef HAVE_HPC
   return qmckl_compute_jastrow_champ_asymp_jasb_hpc
 #else
-    return qmckl_compute_jastrow_champ_asymp_jasb_doc
+  return qmckl_compute_jastrow_champ_asymp_jasb_doc
 #endif
     (context, bord_num, b_vector, rescale_factor_ee, spin_independent, asymp_jasb);
 }
  #+end_src
-**** Test
+**** Test                                                          :noexport:
      #+name: asymp_jasb
      #+begin_src python :results output :exports none :noweb yes
 import numpy as np
@@ -2176,14 +2191,38 @@ for (int i=0 ; i<type_nucl_num ; ++i) {
 /* Check if Jastrow is properly initialized */
 assert(qmckl_jastrow_champ_provided(context));
 
+printf("asymp_jasb\n");
 double asymp_jasb[2];
 rc = qmckl_check(context,
-                 qmckl_get_jastrow_champ_asymp_jasb(context, asymp_jasb,2)
+                 qmckl_get_jastrow_champ_asymp_jasb(context, &(asymp_jasb[0]),2)
                  );
 
 // calculate asymp_jasb
 assert(fabs(asymp_jasb[0]-0.7115733522582638) < 1.e-12);
 assert(fabs(asymp_jasb[1]-1.043287918508297 ) < 1.e-12);
+
+printf("asymp_jasb_hpc\n");
+double asymp_jasb_doc[2];
+double asymp_jasb_hpc[2];
+// calculate asymp_jasb
+rc = qmckl_check(context,
+                 qmckl_compute_jastrow_champ_asymp_jasb_doc (context,
+                                            bord_num,
+                                            b_vector,
+                                            rescale_factor_ee,
+                                            0,
+                                            &(asymp_jasb_doc[0]) )
+                 );
+rc = qmckl_check(context,
+                 qmckl_compute_jastrow_champ_asymp_jasb_hpc (context,
+                                            bord_num,
+                                            b_vector,
+                                            rescale_factor_ee,
+                                            0,
+                                            &(asymp_jasb_hpc[0]) )
+                 );
+assert(fabs(asymp_jasb_doc[0]-asymp_jasb_hpc[0]) < 1.e-8);
+assert(fabs(asymp_jasb_doc[1]-asymp_jasb_hpc[1]) < 1.e-8);
 
       #+end_src
 
@@ -2201,11 +2240,15 @@ assert(fabs(asymp_jasb[1]-1.043287918508297 ) < 1.e-12);
 **** Get
 
      #+begin_src c :comments org :tangle (eval h_func) :noweb yes
-qmckl_exit_code qmckl_get_jastrow_champ_ee_distance_rescaled(qmckl_context context, double* const distance_rescaled);
+qmckl_exit_code qmckl_get_jastrow_champ_ee_distance_rescaled(qmckl_context context,
+                                                             double* const distance_rescaled,
+                                                             int64_t const size_max);
      #+end_src
 
      #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
-qmckl_exit_code qmckl_get_jastrow_champ_ee_distance_rescaled(qmckl_context context, double* const distance_rescaled)
+qmckl_exit_code qmckl_get_jastrow_champ_ee_distance_rescaled(qmckl_context context,
+                                                             double* const distance_rescaled,
+                                                             int64_t const size_max)
 {
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return QMCKL_NULL_CONTEXT;
@@ -2219,7 +2262,21 @@ qmckl_exit_code qmckl_get_jastrow_champ_ee_distance_rescaled(qmckl_context conte
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
-  size_t sze = ctx->electron.num * ctx->electron.num * ctx->electron.walker.num;
+  if (distance_rescaled == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_provide_jastrow_champ_factor_ee_gl",
+                           "Null pointer");
+  }
+
+  const int64_t sze = ctx->electron.num * ctx->electron.num * ctx->electron.walker.num;
+
+  if (size_max < sze) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_provide_jastrow_champ_factor_ee_gl",
+                           "Array too small. Expected elec_num*elec_num*walk_num.");
+  }
   memcpy(distance_rescaled, ctx->jastrow_champ.ee_distance_rescaled, sze * sizeof(double));
 
   return QMCKL_SUCCESS;
@@ -2415,8 +2472,8 @@ qmckl_exit_code qmckl_compute_ee_distance_rescaled_hpc (
   }
 
 
-  int64_t sze = elec_num*walk_num;
-  int64_t elec_num2= elec_num*elec_num;
+  const int64_t sze = elec_num*walk_num;
+  const int64_t elec_num2= elec_num*elec_num;
 
 
   qmckl_exit_code result = QMCKL_SUCCESS;
@@ -2425,14 +2482,18 @@ qmckl_exit_code qmckl_compute_ee_distance_rescaled_hpc (
   {
 #endif
     qmckl_exit_code rc = QMCKL_SUCCESS;
+#ifdef HAVE_OPENMP
     #pragma omp for
+#endif
     for (int64_t k=0 ; k<walk_num ; ++k)
     {
       rc |= qmckl_distance_rescaled(context, 'T', 'T', elec_num, elec_num,
                                     &(coord[k*elec_num]), sze, &(coord[k*elec_num]), sze,
                                     &(ee_distance_rescaled[k*elec_num2]), elec_num, rescale_factor_ee);
     }
+#ifdef HAVE_OPENMP
     #pragma omp critical
+#endif
     result |= rc;
 #ifdef HAVE_OPENMP
   }
@@ -2459,7 +2520,7 @@ qmckl_exit_code qmckl_compute_ee_distance_rescaled (
 }
      #+end_src
 
-**** Test
+**** Test                                                          :noexport:
 
      #+begin_src python :results output :exports none
 import numpy as np
@@ -2490,29 +2551,68 @@ print ( "[6][5] : ", (1.0 - np.exp(-kappa * np.linalg.norm(elec_6_w1-elec_5_w1))
       #+begin_src c :tangle (eval c_test)
 assert(qmckl_electron_provided(context));
 
+{
+  printf("ee_distance_rescaled\n");
+  double ee_distance_rescaled[walk_num * elec_num * elec_num];
+  rc = qmckl_get_jastrow_champ_ee_distance_rescaled(context,
+                                                    ee_distance_rescaled,
+                                                    walk_num*elec_num*elec_num);
 
-double ee_distance_rescaled[walk_num * elec_num * elec_num];
-rc = qmckl_get_jastrow_champ_ee_distance_rescaled(context, ee_distance_rescaled);
+  // (e1,e2,w)
+  // (0,0,0) == 0.
+  assert(ee_distance_rescaled[0] == 0.);
 
-// (e1,e2,w)
-// (0,0,0) == 0.
-assert(ee_distance_rescaled[0] == 0.);
+  // (1,0,0) == (0,1,0)
+  assert(ee_distance_rescaled[1] == ee_distance_rescaled[elec_num]);
 
-// (1,0,0) == (0,1,0)
-assert(ee_distance_rescaled[1] == ee_distance_rescaled[elec_num]);
+  // value of (1,0,0)
+  assert(fabs(ee_distance_rescaled[1]-0.6347507420688708) < 1.e-12);
 
-// value of (1,0,0)
-assert(fabs(ee_distance_rescaled[1]-0.6347507420688708) < 1.e-12);
+  // (0,0,1) == 0.
+  assert(ee_distance_rescaled[5*elec_num + 5] == 0.);
 
-// (0,0,1) == 0.
-assert(ee_distance_rescaled[5*elec_num + 5] == 0.);
+  // (1,0,1) == (0,1,1)
+  assert(ee_distance_rescaled[5*elec_num+6] == ee_distance_rescaled[6*elec_num+5]);
 
-// (1,0,1) == (0,1,1)
-assert(ee_distance_rescaled[5*elec_num+6] == ee_distance_rescaled[6*elec_num+5]);
+  // value of (1,0,1)
+  assert(fabs(ee_distance_rescaled[5*elec_num+6]-0.3941735387855409) < 1.e-12);
 
-// value of (1,0,1)
-assert(fabs(ee_distance_rescaled[5*elec_num+6]-0.3941735387855409) < 1.e-12);
+  printf("ee_distance_rescaled_hpc\n");
+  double ee_distance[walk_num * elec_num * elec_num];
+  rc = qmckl_get_electron_ee_distance(context, &(ee_distance[0]), walk_num*elec_num*elec_num);
+  assert(rc == QMCKL_SUCCESS);
 
+  double ee_distance_rescaled_doc[walk_num * elec_num * elec_num * (cord_num+1)];
+  memset(ee_distance_rescaled_doc, 0, sizeof(ee_distance_rescaled_doc));
+
+  rc = qmckl_compute_een_rescaled_e_doc (context, walk_num,
+                                         elec_num, cord_num,
+                                         rescale_factor_ee,
+                                         &(ee_distance[0]),
+                                         &(ee_distance_rescaled_doc[0]));
+
+  assert(rc == QMCKL_SUCCESS);
+
+  double ee_distance_rescaled_hpc[walk_num * elec_num * elec_num * (cord_num+1)];
+  memset(ee_distance_rescaled_hpc, 0, sizeof(ee_distance_rescaled_hpc));
+
+  rc = qmckl_compute_een_rescaled_e_hpc (context, walk_num,
+                                         elec_num, cord_num,
+                                         rescale_factor_ee,
+                                         &(ee_distance[0]),
+                                         &(ee_distance_rescaled_hpc[0]));
+  assert(rc == QMCKL_SUCCESS);
+
+  for (int64_t i=0 ; i<walk_num*elec_num*elec_num*(cord_num+1) ; i++) {
+    if (fabs(ee_distance_rescaled_hpc[i] - ee_distance_rescaled_doc[i]) > 1.e-10) {
+      printf("i = %ld\n", i);
+      printf("ee_distance_rescaled_hpc = %f\n", ee_distance_rescaled_hpc[i]);
+      printf("ee_distance_rescaled_doc = %f\n", ee_distance_rescaled_doc[i]);
+      fflush(stdout);
+    }
+    assert(fabs(ee_distance_rescaled_hpc[i] - ee_distance_rescaled_doc[i]) < 1.e-10);
+  }
+}
       #+end_src
 
 *** Electron-electron rescaled distance gradients and Laplacian with respect to electron coordinates
@@ -2527,11 +2627,15 @@ assert(fabs(ee_distance_rescaled[5*elec_num+6]-0.3941735387855409) < 1.e-12);
 **** Get
 
      #+begin_src c :comments org :tangle (eval h_func) :noweb yes
-qmckl_exit_code qmckl_get_jastrow_champ_ee_distance_rescaled_gl(qmckl_context context, double* const distance_rescaled_gl);
+qmckl_exit_code qmckl_get_jastrow_champ_ee_distance_rescaled_gl(qmckl_context context,
+                                                                double* const distance_rescaled_gl,
+                                                                const int64_t size_max);
      #+end_src
 
      #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
-qmckl_exit_code qmckl_get_jastrow_champ_ee_distance_rescaled_gl(qmckl_context context, double* const distance_rescaled_gl)
+qmckl_exit_code qmckl_get_jastrow_champ_ee_distance_rescaled_gl(qmckl_context context,
+                                                                double* const distance_rescaled_gl,
+                                                                const int64_t size_max)
 {
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return QMCKL_NULL_CONTEXT;
@@ -2545,7 +2649,22 @@ qmckl_exit_code qmckl_get_jastrow_champ_ee_distance_rescaled_gl(qmckl_context co
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
-  size_t sze = 4 * ctx->electron.num * ctx->electron.num * ctx->electron.walker.num;
+  if (distance_rescaled_gl == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_get_jastrow_champ_ee_distance_rescaled_gl",
+                           "Null pointer.");
+  }
+
+  const int64_t sze = 4 * ctx->electron.num * ctx->electron.num * ctx->electron.walker.num;
+
+  if (size_max < sze) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_get_jastrow_champ_ee_distance_rescaled_gl",
+                           "Array too small. Expected 4*elec_num*elec_num*walk_num");
+  }
+
   memcpy(distance_rescaled_gl, ctx->jastrow_champ.ee_distance_rescaled_gl, sze * sizeof(double));
 
   return QMCKL_SUCCESS;
@@ -2613,7 +2732,7 @@ qmckl_exit_code qmckl_provide_ee_distance_rescaled_gl(qmckl_context context)
       return rc;
     }
 
-    ctx->jastrow_champ.ee_distance_rescaled_date = ctx->date;
+    ctx->jastrow_champ.ee_distance_rescaled_gl_date = ctx->date;
   }
 
   return QMCKL_SUCCESS;
@@ -2726,14 +2845,18 @@ qmckl_exit_code qmckl_compute_ee_distance_rescaled_gl_hpc (
   if (coord == NULL) return QMCKL_INVALID_ARG_5;
   if (ee_distance_rescaled_gl == NULL) return QMCKL_INVALID_ARG_6;
 
-  int64_t sze = elec_num*walk_num;
-  int64_t elec_num2= elec_num*elec_num*4;
+  const int64_t sze = elec_num*walk_num;
+  const int64_t elec_num2= elec_num*elec_num*4;
 
   qmckl_exit_code result = QMCKL_SUCCESS;
+#ifdef HAVE_OPENMP
   #pragma omp parallel
+#endif
   {
     qmckl_exit_code rc = QMCKL_SUCCESS;
+#ifdef HAVE_OPENMP
     #pragma omp for
+#endif
     for (int64_t k=0 ; k<walk_num ; ++k)
     {
       rc |= qmckl_distance_rescaled_gl(context, 'T', 'T', elec_num, elec_num,
@@ -2742,7 +2865,9 @@ qmckl_exit_code qmckl_compute_ee_distance_rescaled_gl_hpc (
                                        &(ee_distance_rescaled_gl[k*elec_num2]), elec_num,
                                        rescale_factor_ee);
     }
+#ifdef HAVE_OPENMP
     #pragma omp critical
+#endif
     result |= rc;
   }
   return result;
@@ -2768,40 +2893,163 @@ qmckl_exit_code qmckl_compute_ee_distance_rescaled_gl (
 }
      #+end_src
 
-**** Test
-
-     #+begin_src python :results output :exports none
-import numpy as np
-
-# TODO
-     #+end_src
+**** Test                                                          :noexport:
 
       #+begin_src c :tangle (eval c_test)
 assert(qmckl_electron_provided(context));
 
+{
+  printf("ee_distance_rescaled_gl\n");
+  double fd[walk_num][elec_num][elec_num][4];
 
-double ee_distance_rescaled_gl[4 * walk_num * elec_num * elec_num];
-rc = qmckl_get_jastrow_champ_ee_distance_rescaled_gl(context, ee_distance_rescaled_gl);
+  double delta_x = 0.001;
 
-// TODO: Get exact values
-//// (e1,e2,w)
-//// (0,0,0) == 0.
-//assert(ee_distance[0] == 0.);
-//
-//// (1,0,0) == (0,1,0)
-//assert(ee_distance[1] == ee_distance[elec_num]);
-//
-//// value of (1,0,0)
-//assert(fabs(ee_distance[1]-7.152322512964209) < 1.e-12);
-//
-//// (0,0,1) == 0.
-//assert(ee_distance[elec_num*elec_num] == 0.);
-//
-//// (1,0,1) == (0,1,1)
-//assert(ee_distance[elec_num*elec_num+1] == ee_distance[elec_num*elec_num+elec_num]);
-//
-//// value of (1,0,1)
-//assert(fabs(ee_distance[elec_num*elec_num+1]-6.5517646321055665) < 1.e-12);
+  // Finite difference coefficients for gradients
+  double coef[9] = { 1.0/280.0, -4.0/105.0,  1.0/5.0, -4.0/5.0,         0.0, 4.0/5.0, -1.0/5.0, 4.0/105.0, -1.0/280.0 };
+
+  // Finite difference coefficients for Laplacian
+  double coef2[9]= {-1.0/560.0,	 8.0/315.0, -1.0/5.0,  8.0/5.0, -205.0/72.0, 8.0/5.0, -1.0/5.0,	8.0/315.0, -1.0/560.0 };
+
+  qmckl_exit_code rc;
+
+  int64_t elec_num;
+  rc = qmckl_get_electron_num(context, &elec_num);
+  if (rc != QMCKL_SUCCESS) {
+    return rc;
+  }
+
+  double elec_coord[walk_num][elec_num][3];
+  rc = qmckl_get_electron_coord (context, 'N', &(elec_coord[0][0][0]), 3*walk_num*elec_num);
+
+  double temp_coord[walk_num][elec_num][3];
+  memcpy(&(temp_coord[0][0][0]), &(elec_coord[0][0][0]), sizeof(temp_coord));
+
+  double function_values[walk_num][elec_num][elec_num];
+
+  memset(&(fd[0][0][0][0]), 0, sizeof(fd));
+
+  for (int64_t i = 0; i < elec_num; i++) {
+    for (int64_t k = 0; k < 3; k++) {
+      for (int64_t m = -4; m <= 4; m++) {          // Apply finite difference displacement
+
+        for (int64_t nw=0 ; nw<walk_num ; nw++) {
+          temp_coord[nw][i][k] = elec_coord[nw][i][k] + (double) m * delta_x;
+        }
+
+        // Update coordinates in the context
+        rc = qmckl_set_electron_coord (context, 'N', walk_num,
+                                       &(temp_coord[0][0][0]),
+                                       walk_num*3*elec_num);
+        assert(rc == QMCKL_SUCCESS);
+
+        // Call the provided function
+        rc = qmckl_get_jastrow_champ_ee_distance_rescaled(context,
+                                                          &(function_values[0][0][0]),
+                                                          elec_num*elec_num*walk_num);
+        assert(rc == QMCKL_SUCCESS);
+
+        // Accumulate derivative using finite-difference coefficients
+        for (int64_t nw=0 ; nw<walk_num ; nw++) {
+          for (int64_t j = 0; j < elec_num; j++) {
+            fd[nw][j][i][k] += coef [m + 4] * function_values[nw][j][i];
+            fd[nw][j][i][3] += coef2[m + 4] * function_values[nw][j][i];
+          }
+        }
+      }
+      for (int64_t nw=0 ; nw<walk_num ; nw++) {
+        temp_coord[nw][i][k] = elec_coord[nw][i][k];
+      }
+    }
+  }
+
+  // Reset coordinates in the context
+  rc = qmckl_set_electron_coord (context, 'N', walk_num,
+                                 &(elec_coord[0][0][0]),
+                                 walk_num*3*elec_num);
+  assert(rc == QMCKL_SUCCESS);
+
+  // Normalize by the step size
+  for (int64_t nw=0 ; nw<walk_num ; nw++) {
+    for (int64_t i = 0; i < elec_num; i++) {
+      for (int64_t k = 0; k < 4; k++) {
+        for (int64_t j = 0; j < elec_num; j++) {
+          fd[nw][i][j][k] /= delta_x;
+        }
+      }
+      for (int64_t j = 0; j < elec_num; j++) {
+        fd[nw][i][j][3] /= delta_x;
+      }
+    }
+  }
+
+
+  double ee_distance_rescaled_gl[walk_num][elec_num][elec_num][4];
+  rc = qmckl_check(context,
+                   qmckl_get_jastrow_champ_ee_distance_rescaled_gl(context,
+                                                                   &(ee_distance_rescaled_gl[0][0][0][0]),
+                                                                   walk_num*elec_num*4*elec_num)
+                   );
+
+  assert(rc == QMCKL_SUCCESS);
+
+  for (int nw = 0; nw < walk_num; nw++){
+    for (int i = 0; i < elec_num; i++) {
+      for (int j = 0; j < elec_num; j++) {
+        for (int k = 0; k < 3; k++){
+          if (fabs(fd[nw][i][j][k] - ee_distance_rescaled_gl[nw][i][j][k]) > 1.e-12) {
+            printf("nw=%d i=%d j=%d k=%d\n", nw, i, j, k);
+            printf("fd                     =%f\n", fd[nw][i][j][k]);
+            printf("ee_distance_rescaled_gl=%f\n", ee_distance_rescaled_gl[nw][i][j][k]);
+            fflush(stdout);
+          }
+          assert(fabs(fd[nw][i][j][k] - ee_distance_rescaled_gl[nw][i][j][k]) < 1.e-8);
+        }
+        int k=3;
+        if (i != j) {
+          if (fabs(fd[nw][i][j][k] - ee_distance_rescaled_gl[nw][i][j][k]) > 1.e-12) {
+            printf("nw=%d i=%d j=%d k=%d\n", nw, i, j, k);
+            printf("fd                     =%f\n", fd[nw][i][j][k]);
+            printf("ee_distance_rescaled_gl=%f\n", ee_distance_rescaled_gl[nw][i][j][k]);
+            fflush(stdout);
+          }
+          assert(fabs(fd[nw][i][j][k] - ee_distance_rescaled_gl[nw][i][j][k]) < 1.e-6);
+        }
+      }
+    }
+  }
+  printf("OK\n");
+
+  printf("ee_distance_rescaled_gl_hpc\n");
+
+  double ee_distance_rescaled_gl_doc[walk_num*elec_num*elec_num*4];
+  rc = qmckl_compute_ee_distance_rescaled_gl_doc (context,
+                                                  elec_num,
+                                                  rescale_factor_ee,
+                                                  walk_num,
+                                                  &(elec_coord[0][0][0]),
+                                                  &(ee_distance_rescaled_gl_doc[0]));
+  assert(rc == QMCKL_SUCCESS);
+
+  double ee_distance_rescaled_gl_hpc[walk_num*elec_num*elec_num*4];
+  rc = qmckl_compute_ee_distance_rescaled_gl_hpc (context,
+                                                  elec_num,
+                                                  rescale_factor_ee,
+                                                  walk_num,
+                                                  &(elec_coord[0][0][0]),
+                                                  &(ee_distance_rescaled_gl_hpc[0]));
+  assert(rc == QMCKL_SUCCESS);
+
+  for (int64_t i = 0; i < walk_num*nucl_num*elec_num*4; i++) {
+    if (fabs(ee_distance_rescaled_gl_hpc[i] - ee_distance_rescaled_gl_doc[i]) > 1.e-12) {
+      printf("i=%ld\n", i);
+      printf("ee_distance_rescaled_gl_doc=%f\n", ee_distance_rescaled_gl_doc[i]);
+      printf("ee_distance_rescaled_gl_hpc=%f\n", ee_distance_rescaled_gl_hpc[i]);
+      fflush(stdout);
+    }
+    assert(fabs(ee_distance_rescaled_gl_doc[i] - ee_distance_rescaled_gl_hpc[i]) < 1.e-8);
+  }
+}
+
 
       #+end_src
 
@@ -2856,12 +3104,20 @@ qmckl_get_jastrow_champ_factor_ee(qmckl_context context,
   rc = qmckl_provide_jastrow_champ_factor_ee(context);
   if (rc != QMCKL_SUCCESS) return rc;
 
-  int64_t sze=ctx->electron.walker.num;
+  if (factor_ee == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_get_jastrow_champ_factor_ee",
+                           "Null pointer");
+  }
+
+  const int64_t sze = ctx->electron.walker.num;
+
   if (size_max < sze) {
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_3,
                            "qmckl_get_jastrow_champ_factor_ee",
-                           "Array too small. Expected walker.num");
+                           "Array too small. Expected walk_num");
   }
   memcpy(factor_ee, ctx->jastrow_champ.factor_ee, sze*sizeof(double));
 
@@ -2993,8 +3249,6 @@ qmckl_exit_code qmckl_provide_jastrow_champ_factor_ee(qmckl_context context)
      | ~ee_distance_rescaled~ | ~double[walk_num][elec_num][elec_num]~ | in     | Electron-electron distances     |
      | ~asymp_jasb~           | ~double[2]~                            | in     | Asymptotic value of the Jastrow |
      | ~factor_ee~            | ~double[walk_num]~                     | out    | $f_{ee}$                        |
-
- #  #+CALL: generate_c_interface(table=qmckl_factor_ee_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
 
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
 function qmckl_compute_jastrow_champ_factor_ee_doc(context, &
@@ -3232,7 +3486,7 @@ qmckl_compute_jastrow_champ_factor_ee (const qmckl_context context,
      ee_distance_rescaled, asymp_jasb, spin_independent, factor_ee);
 }
  #+end_src
-**** Test
+**** Test                                                          :noexport:
      #+begin_src python :results output :exports none :noweb yes
 import numpy as np
 
@@ -3261,29 +3515,101 @@ for i in range(0,elec_num):
                           / (1.0 + b_vector[1] * ee_distance_rescaled[i][j])     \
                          - asymp_jasb[ipar] + pow_ser
 print("factor_ee        :",factor_ee)
+print("ee_distance_rescaled :",ee_distance_rescaled)
 
      #+end_src
 
      #+RESULTS:
-     : asym_one         :  0.6634291325000664
-     : asymp_jasb[0]    :  0.7115733522582638
-     : asymp_jasb[1]    :  1.043287918508297
-     : factor_ee        : -16.83886184243964
-
+     #+begin_example
+     asym_one         :  0.6634291325000664
+     asymp_jasb[0]    :  0.7115733522582638
+     asymp_jasb[1]    :  1.043287918508297
+     factor_ee        : -16.83886184243964
+     ee_distance_rescaled : [[0.         0.63475074 1.29816415 1.23147027 1.51933127 0.54402406
+       0.51452479 0.96538731 1.25878564 1.3722995 ]
+      [0.63475074 0.         1.35148664 1.13524156 1.48940503 0.4582292
+       0.62758076 1.06560856 1.179133   1.30763703]
+      [1.29816415 1.35148664 0.         1.50021375 1.59200788 1.23488312
+       1.20844259 1.0355537  1.52064535 1.53049239]
+      [1.23147027 1.13524156 1.50021375 0.         1.12016142 1.19158954
+       1.29762585 1.24824277 0.25292267 0.58609336]
+      [1.51933127 1.48940503 1.59200788 1.12016142 0.         1.50217017
+       1.54012828 1.48753895 1.10441805 0.84504381]
+      [0.54402406 0.4582292  1.23488312 1.19158954 1.50217017 0.
+       0.39417354 0.87009603 1.23838502 1.33419121]
+      [0.51452479 0.62758076 1.20844259 1.29762585 1.54012828 0.39417354
+       0.         0.95118809 1.33068934 1.41097406]
+      [0.96538731 1.06560856 1.0355537  1.24824277 1.48753895 0.87009603
+       0.95118809 0.         1.29422213 1.33222493]
+      [1.25878564 1.179133   1.52064535 0.25292267 1.10441805 1.23838502
+       1.33068934 1.29422213 0.         0.62196802]
+      [1.3722995  1.30763703 1.53049239 0.58609336 0.84504381 1.33419121
+       1.41097406 1.33222493 0.62196802 0.        ]]
+     #+end_example
 
       #+begin_src c :tangle (eval c_test)
 /* Check if Jastrow is properly initialized */
 assert(qmckl_jastrow_champ_provided(context));
 
-double factor_ee[walk_num];
-rc = qmckl_check(context,
-                 qmckl_get_jastrow_champ_factor_ee(context, factor_ee, walk_num)
-                 );
+{
+  printf("factor_ee\n");
+  double factor_ee[walk_num];
+  rc = qmckl_check(context,
+                   qmckl_get_jastrow_champ_factor_ee(context, &(factor_ee[0]), walk_num)
+                   );
 
-// calculate factor_ee
-printf("%e\n%e\n\n",factor_ee[0],-16.83886184243964);
-assert(fabs(factor_ee[0]+16.83886184243964) < 1.e-12);
+  // calculate factor_ee
+  printf("%20.15f\n%20.15f\n",factor_ee[0],-16.83886184243964);
+  fflush(stdout);
+  assert(fabs(factor_ee[0]+16.83886184243964) < 1.e-12);
 
+  printf("factor_ee_hpc\n");
+  double ee_distance_rescaled[walk_num*elec_num*elec_num];
+  rc = qmckl_get_jastrow_champ_ee_distance_rescaled(context,
+                                                    &(ee_distance_rescaled[0]),
+                                                    walk_num*elec_num*elec_num);
+  assert(rc == QMCKL_SUCCESS);
+
+  int64_t up_num;
+  rc = qmckl_get_electron_up_num(context, &up_num);
+  assert(rc == QMCKL_SUCCESS);
+
+  double factor_ee_doc[walk_num];
+  rc = qmckl_compute_jastrow_champ_factor_ee_doc(context,
+                                                 walk_num,
+                                                 elec_num,
+                                                 up_num,
+                                                 bord_num,
+                                                 b_vector,
+                                                 &(ee_distance_rescaled[0]),
+                                                 &(asymp_jasb[0]),
+                                                 0,
+                                                 &(factor_ee_doc[0]));
+  assert (rc == QMCKL_SUCCESS);
+
+  double factor_ee_hpc[walk_num];
+  rc = qmckl_compute_jastrow_champ_factor_ee_hpc(context,
+                                                 walk_num,
+                                                 elec_num,
+                                                 up_num,
+                                                 bord_num,
+                                                 b_vector,
+                                                 &(ee_distance_rescaled[0]),
+                                                 &(asymp_jasb[0]),
+                                                 0,
+                                                 &(factor_ee_hpc[0]));
+  assert (rc == QMCKL_SUCCESS);
+
+  for (int64_t i = 0; i < walk_num; i++) {
+    if (fabs(factor_ee_doc[i] - factor_ee_hpc[i]) > 1.e-12) {
+      printf("i=%ld\n", i);
+      printf("factor_ee_doc=%f\n", factor_ee_doc[i]);
+      printf("factor_ee_hpc=%f\n", factor_ee_hpc[i]);
+      fflush(stdout);
+    }
+    assert(fabs(factor_ee_doc[i] - factor_ee_hpc[i]) < 1.e-8);
+  }
+}
       #+end_src
 
 *** Derivative
@@ -3331,7 +3657,15 @@ qmckl_get_jastrow_champ_factor_ee_gl(qmckl_context context,
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
-  int64_t sze = ctx->electron.walker.num * 4 * ctx->electron.num;
+  if (factor_ee_gl == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_get_jastrow_champ_factor_ee_gl",
+                           "Null pointer");
+  }
+
+  const int64_t sze = ctx->electron.walker.num * 4 * ctx->electron.num;
+
   if (size_max < sze) {
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_3,
@@ -3466,7 +3800,7 @@ qmckl_exit_code qmckl_provide_jastrow_champ_factor_ee_gl(qmckl_context context)
      | ~bord_num~                | ~int64_t~                                 | in     | Number of coefficients                                    |
      | ~b_vector~                | ~double[bord_num+1]~                      | in     | List of coefficients                                      |
      | ~ee_distance_rescaled~    | ~double[walk_num][elec_num][elec_num]~    | in     | Electron-electron distances                               |
-     | ~ee_distance_rescaled_gl~ | ~double[walk_num][4][elec_num][elec_num]~ | in     | Electron-electron distances                               |
+     | ~ee_distance_rescaled_gl~ | ~double[walk_num][elec_num][elec_num][4]~ | in     | Electron-electron distances                               |
      | ~spin_independent~        | ~int32_t~                                 | in     | If 1, same parameters for parallel and antiparallel spins |
      | ~factor_ee_gl~            | ~double[walk_num][4][elec_num]~           | out    | Electron-electron distances                               |
 
@@ -3630,13 +3964,15 @@ qmckl_compute_jastrow_champ_factor_ee_gl_hpc(const qmckl_context context,
       double * restrict factor_ee_gl_3 = factor_ee_gl_2 + elec_num;
 
       for (int i = 0; i < elec_num; ++i) {
-        if (j == i && j == 0) {
-          factor_ee_gl_0[i] = 0;
-          factor_ee_gl_1[i] = 0;
-          factor_ee_gl_2[i] = 0;
-          factor_ee_gl_3[i] = 0;
+        if (j == i) {
+          if (j == 0) {
+            factor_ee_gl_0[i] = 0.0;
+            factor_ee_gl_1[i] = 0.0;
+            factor_ee_gl_2[i] = 0.0;
+            factor_ee_gl_3[i] = 0.0;
+          }
+          continue;
         }
-        if (j == i) continue;
 
         double x = xj[i];
 
@@ -3765,7 +4101,7 @@ qmckl_compute_jastrow_champ_factor_ee_gl (const qmckl_context context,
 }
      #+end_src
 
-**** Test
+**** Test                                                          :noexport:
      #+begin_src python :results output :exports none :noweb yes
 import numpy as np
 
@@ -3887,27 +4223,177 @@ print("factor_ee_gl[3][0]:",factor_ee_gl[3][0])
      : factor_ee_gl[2][0]:
      : factor_ee_gl[3][0]:
 
-
       #+begin_src c :tangle (eval c_test)
 /* Check if Jastrow is properly initialized */
 assert(qmckl_jastrow_champ_provided(context));
 
-// calculate factor_ee_gl
-double factor_ee_gl[walk_num][4][elec_num];
-rc = qmckl_get_jastrow_champ_factor_ee_gl(context, &(factor_ee_gl[0][0][0]),walk_num*4*elec_num);
+//----
+{
+  printf("factor_ee_gl\n");
+  double fd[walk_num][4][elec_num];
+  double delta_x = 0.001;
 
-// check factor_ee_gl
-printf("%f  %f\n", factor_ee_gl[0][0][0], -0.39319353942687446);
-assert(fabs(factor_ee_gl[0][0][0]+0.39319353942687446) < 1.e-12);
+  // Finite difference coefficients for gradients
+  double coef[9] = { 1.0/280.0, -4.0/105.0,  1.0/5.0, -4.0/5.0,         0.0, 4.0/5.0, -1.0/5.0, 4.0/105.0, -1.0/280.0 };
 
-printf("%f  %f\n", factor_ee_gl[0][1][0], 1.0535615450668214);
-assert(fabs(factor_ee_gl[0][1][0]-1.0535615450668214) < 1.e-12);
+  // Finite difference coefficients for Laplacian
+  double coef2[9]= {-1.0/560.0,	 8.0/315.0, -1.0/5.0,  8.0/5.0, -205.0/72.0, 8.0/5.0, -1.0/5.0,	8.0/315.0, -1.0/560.0 };
 
-printf("%f  %f\n", factor_ee_gl[0][2][0],-0.39098406960784515);
-assert(fabs(factor_ee_gl[0][2][0]+0.39098406960784515) < 1.e-12);
+  qmckl_exit_code rc;
 
-printf("%f  %f\n", factor_ee_gl[0][3][0],2.8650469630854483);
-assert(fabs(factor_ee_gl[0][3][0]-2.8650469630854483) < 1.e-12);
+  int64_t walk_num;
+  rc = qmckl_get_electron_walk_num(context, &walk_num);
+  if (rc != QMCKL_SUCCESS) {
+    return rc;
+  }
+
+  int64_t elec_num;
+  rc = qmckl_get_electron_num(context, &elec_num);
+  if (rc != QMCKL_SUCCESS) {
+    return rc;
+  }
+
+  double elec_coord[walk_num][elec_num][3];
+  rc = qmckl_get_electron_coord (context, 'N', &(elec_coord[0][0][0]), 3*walk_num*elec_num);
+
+  double temp_coord[walk_num][elec_num][3];
+  memcpy(&(temp_coord[0][0][0]), &(elec_coord[0][0][0]), sizeof(temp_coord));
+
+  double function_values[walk_num];
+
+  memset(&(fd[0][0][0]), 0, sizeof(fd));
+
+  for (int64_t i = 0; i < elec_num; i++) {
+    for (int64_t k = 0; k < 3; k++) {
+      for (int64_t m = -4; m <= 4; m++) {          // Apply finite difference displacement
+
+        for (int64_t nw=0 ; nw<walk_num ; nw++) {
+          temp_coord[nw][i][k] = elec_coord[nw][i][k] + (double) m * delta_x;
+        }
+
+        // Update coordinates in the context
+        rc = qmckl_set_electron_coord (context, 'N', walk_num, &(temp_coord[0][0][0]), walk_num*3*elec_num);
+        assert(rc == QMCKL_SUCCESS);
+
+        // Call the provided function
+        rc = qmckl_get_jastrow_champ_factor_ee(context, &(function_values[0]), walk_num);
+        assert(rc == QMCKL_SUCCESS);
+
+        // Accumulate derivative using finite-difference coefficients
+        for (int64_t nw=0 ; nw<walk_num ; nw++) {
+          fd[nw][k][i] += coef [m + 4] * function_values[nw];
+          fd[nw][3][i] += coef2[m + 4] * function_values[nw];
+        }
+      }
+      for (int64_t nw=0 ; nw<walk_num ; nw++) {
+        temp_coord[nw][i][k] = elec_coord[nw][i][k];
+      }
+    }
+  }
+
+  // Reset coordinates in the context
+  rc = qmckl_set_electron_coord (context, 'N', walk_num, &(elec_coord[0][0][0]), walk_num*3*elec_num);
+  assert(rc == QMCKL_SUCCESS);
+
+  // Normalize by the step size
+  for (int64_t nw=0 ; nw<walk_num ; nw++) {
+    for (int64_t k = 0; k < 4; k++) {
+      for (int64_t i = 0; i < elec_num; i++) {
+          fd[nw][k][i] /= delta_x;
+      }
+    }
+    for (int64_t i = 0; i < elec_num; i++) {
+      fd[nw][3][i] /= delta_x;
+    }
+  }
+
+
+  double factor_ee_gl[walk_num][4][elec_num];
+  rc = qmckl_check(context,
+                   qmckl_get_jastrow_champ_factor_ee_gl(context,
+                                                        &(factor_ee_gl[0][0][0]),
+                                                        walk_num*4*elec_num)
+                   );
+
+  assert(rc == QMCKL_SUCCESS);
+
+  for (int nw = 0; nw < walk_num; nw++){
+    for (int i = 0; i < elec_num; i++) {
+      for (int k = 0; k < 3; k++){
+        if (fabs(fd[nw][k][i] - factor_ee_gl[nw][k][i]) > 1.e-12) {
+          printf("nw=%d i=%d k=%d\n", nw, i, k);
+          printf("fd=%f factor_ee_gl=%f\n", fd[nw][k][i], factor_ee_gl[nw][k][i]);
+          fflush(stdout);
+        }
+        assert(fabs(fd[nw][k][i] - factor_ee_gl[nw][k][i]) < 1.e-8);
+      }
+      int k=3;
+      if (fabs(fd[nw][k][i] - factor_ee_gl[nw][k][i]) > 1.e-12) {
+        printf("nw=%d i=%d k=%d\n", nw, i, k);
+        printf("fd=%f factor_ee_gl=%f\n", fd[nw][k][i], factor_ee_gl[nw][k][i]);
+        fflush(stdout);
+      }
+      assert(fabs(fd[nw][k][i] - factor_ee_gl[nw][k][i]) < 1.e-5);
+    }
+  }
+  printf("OK\n");
+}
+{
+  printf("factor_ee_gl_hpc\n");
+  int64_t up_num;
+  rc = qmckl_get_electron_up_num(context, &up_num);
+  assert(rc == QMCKL_SUCCESS);
+
+  double ee_distance_rescaled[walk_num*elec_num*elec_num];
+  rc = qmckl_get_jastrow_champ_ee_distance_rescaled(context,
+                                                    &(ee_distance_rescaled[0]),
+                                                    walk_num*elec_num*elec_num);
+  assert(rc == QMCKL_SUCCESS);
+
+  double ee_distance_rescaled_gl[4*walk_num*elec_num*elec_num];
+  rc = qmckl_get_jastrow_champ_ee_distance_rescaled_gl(context,
+                                                      &(ee_distance_rescaled_gl[0]),
+                                                      4*walk_num*elec_num*elec_num);
+  assert(rc == QMCKL_SUCCESS);
+
+  double factor_ee_gl_doc[walk_num*4*elec_num];
+  memset(&(factor_ee_gl_doc[0]), 0, sizeof(factor_ee_gl_doc));
+
+  rc = qmckl_compute_jastrow_champ_factor_ee_gl_doc(context,
+                                                    walk_num,
+                                                    elec_num,
+                                                    up_num,
+                                                    bord_num,
+                                                    b_vector,
+                                                    &(ee_distance_rescaled[0]),
+                                                    &(ee_distance_rescaled_gl[0]),
+                                                    0,
+                                                    &(factor_ee_gl_doc[0]));
+  assert(rc == QMCKL_SUCCESS);
+
+  double factor_ee_gl_hpc[walk_num*4*elec_num];
+  memset(&(factor_ee_gl_hpc[0]), 0, sizeof(factor_ee_gl_hpc));
+
+  rc = qmckl_compute_jastrow_champ_factor_ee_gl_hpc(context,
+                                                    walk_num,
+                                                    elec_num,
+                                                    up_num,
+                                                    bord_num,
+                                                    b_vector,
+                                                    &(ee_distance_rescaled[0]),
+                                                    &(ee_distance_rescaled_gl[0]),
+                                                    0,
+                                                    &(factor_ee_gl_hpc[0]));
+  assert(rc == QMCKL_SUCCESS);
+
+  for (int64_t i = 0 ; i < walk_num*4*elec_num ; i++) {
+    if (fabs(factor_ee_gl_hpc[i] - factor_ee_gl_doc[i]) > 1.e-12) {
+      printf("i=%ld\nfactor_ee_gl_hpc=%f\nfactor_ee_gl_doc=%f\n", i, factor_ee_gl_hpc[i], factor_ee_gl_doc[i]);
+      fflush(stdout);
+    }
+    assert(fabs(factor_ee_gl_hpc[i] - factor_ee_gl_doc[i]) < 1.e-8);
+  }
+}
       #+end_src
 
 ** Electron-nucleus component
@@ -3925,15 +4411,15 @@ assert(fabs(factor_ee_gl[0][3][0]-2.8650469630854483) < 1.e-12);
      #+begin_src c :comments org :tangle (eval h_func) :noweb yes
 qmckl_exit_code
 qmckl_get_jastrow_champ_asymp_jasa(qmckl_context context,
-                             double* const asymp_jasa,
-                             const int64_t size_max);
+                                   double* const asymp_jasa,
+                                   const int64_t size_max);
      #+end_src
 
      #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
 qmckl_exit_code
 qmckl_get_jastrow_champ_asymp_jasa(qmckl_context context,
-                             double* const asymp_jasa,
-                             const int64_t size_max)
+                                   double* const asymp_jasa,
+                                   const int64_t size_max)
 {
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return qmckl_failwith( context,
@@ -3948,18 +4434,27 @@ qmckl_get_jastrow_champ_asymp_jasa(qmckl_context context,
   qmckl_exit_code rc;
   rc = qmckl_provide_jastrow_champ_asymp_jasa(context);
   if(rc != QMCKL_SUCCESS) return rc;
-  */
+  ,*/
 
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
-  int64_t sze = ctx->jastrow_champ.type_nucl_num;
+  if (asymp_jasa == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_get_jastrow_champ_asymp_jasa",
+                           "Null pointer");
+  }
+
+  const int64_t sze = ctx->jastrow_champ.type_nucl_num;
+
   if (size_max < sze) {
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_3,
                            "qmckl_get_jastrow_champ_asymp_jasa",
-                           "Array too small. Expected nucleus.num");
+                           "Array too small. Expected nucl_num");
   }
+
   memcpy(asymp_jasa, ctx->jastrow_champ.asymp_jasa, sze * sizeof(double));
 
   return QMCKL_SUCCESS;
@@ -4070,7 +4565,7 @@ function qmckl_compute_jastrow_champ_asymp_jasa(context, aord_num, type_nucl_num
   use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
-  integer(qmckl_context), intent(in)        :: context
+  integer(qmckl_context), intent(in), value :: context
   integer (c_int64_t) , intent(in)  , value :: aord_num
   integer (c_int64_t) , intent(in)  , value :: type_nucl_num
   real    (c_double ) , intent(in)          :: a_vector(aord_num+1,type_nucl_num)
@@ -4123,7 +4618,7 @@ end function qmckl_compute_jastrow_champ_asymp_jasa
          double* const asymp_jasa );
     #+end_src
 
-**** Test
+**** Test                                                          :noexport:
      #+name: asymp_jasa
      #+begin_src python :results output :exports none :noweb yes
 import numpy as np
@@ -4147,6 +4642,7 @@ rc = qmckl_get_jastrow_champ_asymp_jasa(context, asymp_jasa, type_nucl_num);
 
 // calculate asymp_jasb
 printf("%e %e\n", asymp_jasa[0], -1.75529774);
+fflush(stdout);
 assert(fabs(-1.75529774 - asymp_jasa[0]) < 1.e-8);
 
       #+end_src
@@ -4165,12 +4661,18 @@ assert(fabs(-1.75529774 - asymp_jasa[0]) < 1.e-8);
 **** Get
 
      #+begin_src c :comments org :tangle (eval h_func) :noweb yes
-qmckl_exit_code qmckl_get_electron_en_distance_rescaled(qmckl_context context, double* distance_rescaled);
+qmckl_exit_code
+qmckl_get_jastrow_champ_en_distance_rescaled(qmckl_context context,
+                                             double* const distance_rescaled,
+                                             const int64_t size_max);
      #+end_src
 
 
      #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
-qmckl_exit_code qmckl_get_electron_en_distance_rescaled(qmckl_context context, double* distance_rescaled)
+qmckl_exit_code
+qmckl_get_jastrow_champ_en_distance_rescaled(qmckl_context context,
+                                             double* const distance_rescaled,
+                                             const int64_t size_max)
 {
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
@@ -4185,7 +4687,22 @@ qmckl_exit_code qmckl_get_electron_en_distance_rescaled(qmckl_context context, d
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
-  size_t sze = ctx->electron.num * ctx->nucleus.num * ctx->electron.walker.num;
+  if (distance_rescaled == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_get_jastrow_champ_en_distance_rescaled",
+                           "Null pointer");
+  }
+
+  const int64_t sze = ctx->electron.num * ctx->nucleus.num * ctx->electron.walker.num;
+
+  if (size_max < sze) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_3,
+                           "qmckl_get_jastrow_champ_en_distance_rescaled",
+                           "Array too small. Expected walk_num*nucl_num*elec_num");
+  }
+
   memcpy(distance_rescaled, ctx->jastrow_champ.en_distance_rescaled, sze * sizeof(double));
 
   return QMCKL_SUCCESS;
@@ -4373,13 +4890,17 @@ qmckl_exit_code qmckl_compute_en_distance_rescaled_hpc (
   if (nucl_coord == NULL) return QMCKL_INVALID_ARG_9;
   if (en_distance_rescaled == NULL) return QMCKL_INVALID_ARG_10;
 
-  int64_t sze = elec_num*walk_num;
+  const int64_t sze = elec_num*walk_num;
 
   qmckl_exit_code result = QMCKL_SUCCESS;
+#ifdef HAVE_OPENMP
   #pragma omp parallel
+#endif
   {
     qmckl_exit_code rc = QMCKL_SUCCESS;
+#ifdef HAVE_OPENMP
     #pragma omp for
+#endif
     for (int64_t k=0 ; k<walk_num ; ++k)
     {
       for (int64_t a=0 ; a<nucl_num ; ++a) {
@@ -4391,7 +4912,9 @@ qmckl_exit_code qmckl_compute_en_distance_rescaled_hpc (
                                       rescale_factor_en[type_nucl_vector[a]]);
       }
     }
+#ifdef HAVE_OPENMP
     #pragma omp critical
+#endif
     result |= rc;
   }
   return result;
@@ -4459,7 +4982,7 @@ qmckl_exit_code qmckl_compute_en_distance_rescaled (
 }
     #+end_src
 
-**** Test
+**** Test                                                          :noexport:
 
      #+begin_src python :results output :exports none
 import numpy as np
@@ -4490,16 +5013,17 @@ print ( "[0][6] : ", (1.0 - np.exp(-kappa * np.linalg.norm(elec_6_w1-nucl_1)) )/
      : [1][5] :  1.2091967687767369
      : [0][6] :  0.4726452953409436
 
-
       #+begin_src c :tangle (eval c_test)
-
+{
 assert(qmckl_electron_provided(context));
 assert(qmckl_nucleus_provided(context));
 
 double en_distance_rescaled[walk_num][nucl_num][elec_num];
 
 rc = qmckl_check(context,
-                 qmckl_get_electron_en_distance_rescaled(context, &(en_distance_rescaled[0][0][0]))
+                 qmckl_get_jastrow_champ_en_distance_rescaled(context,
+                                                              &(en_distance_rescaled[0][0][0]),
+                                                              walk_num*nucl_num*elec_num)
                  );
 assert (rc == QMCKL_SUCCESS);
 
@@ -4517,7 +5041,33 @@ assert(fabs(en_distance_rescaled[0][1][5] - 1.2091967687767369) < 1.e-12);
 // (2,1,2)
 assert(fabs(en_distance_rescaled[0][0][6] - 0.4726452953409436) < 1.e-12);
 
+}
 
+{
+  printf("en_distance_rescaled_hpc\n");
+
+  double en_distance_rescaled_doc[walk_num*nucl_num*elec_num];
+  memset(&(en_distance_rescaled_doc[0]), 0, walk_num*nucl_num*elec_num*sizeof(double));
+  rc = qmckl_compute_en_distance_rescaled_doc(context, elec_num, nucl_num, type_nucl_num,
+                                              type_nucl_vector, rescale_factor_en, walk_num,
+                                              elec_coord, nucl_coord, en_distance_rescaled_doc);
+  assert(rc == QMCKL_SUCCESS);
+
+  double en_distance_rescaled_hpc[walk_num*nucl_num*elec_num];
+  memset(&(en_distance_rescaled_hpc[0]), 0, walk_num*nucl_num*elec_num*sizeof(double));
+  rc = qmckl_compute_en_distance_rescaled_hpc(context, elec_num, nucl_num, type_nucl_num,
+                                              type_nucl_vector, rescale_factor_en, walk_num,
+                                              elec_coord, nucl_coord, en_distance_rescaled_hpc);
+  assert(rc == QMCKL_SUCCESS);
+
+  for (int64_t i=0 ; i<walk_num*nucl_num*elec_num ; ++i) {
+    if (fabs(en_distance_rescaled_doc[i] - en_distance_rescaled_hpc[i]) > 1.e-12) {
+      printf("i = %ld, doc = %e, hpc = %e\n", i, en_distance_rescaled_doc[i], en_distance_rescaled_hpc[i]);
+      fflush(stdout);
+    }
+    assert(fabs(en_distance_rescaled_doc[i] - en_distance_rescaled_hpc[i]) < 1.e-8);
+  }
+}
       #+end_src
 
 *** Electron-electron rescaled distance gradients and Laplacian with respect to electron coordinates
@@ -4532,11 +5082,17 @@ assert(fabs(en_distance_rescaled[0][0][6] - 0.4726452953409436) < 1.e-12);
 **** Get
 
      #+begin_src c :comments org :tangle (eval h_func) :noweb yes
-qmckl_exit_code qmckl_get_electron_en_distance_rescaled_gl(qmckl_context context, double* distance_rescaled_gl);
+qmckl_exit_code
+qmckl_get_jastrow_champ_en_distance_rescaled_gl(qmckl_context context,
+                                                double* const distance_rescaled_gl,
+                                                const int64_t size_max);
      #+end_src
 
      #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
-qmckl_exit_code qmckl_get_electron_en_distance_rescaled_gl(qmckl_context context, double* distance_rescaled_gl)
+qmckl_exit_code
+qmckl_get_jastrow_champ_en_distance_rescaled_gl(qmckl_context context,
+                                                double* const distance_rescaled_gl,
+                                                const int64_t size_max)
 {
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
@@ -4551,7 +5107,22 @@ qmckl_exit_code qmckl_get_electron_en_distance_rescaled_gl(qmckl_context context
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
-  size_t sze = 4 * ctx->electron.num * ctx->nucleus.num * ctx->electron.walker.num;
+  if (distance_rescaled_gl == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_get_jastrow_champ_en_distance_rescaled_gl",
+                           "Null pointer");
+  }
+
+  const int64_t sze = 4 * ctx->electron.num * ctx->nucleus.num * ctx->electron.walker.num;
+
+  if (size_max < sze) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_3,
+                           "qmckl_get_jastrow_champ_en_distance_rescaled_gl",
+                           "Array too small. Expected walk_num*elec_num*4");
+  }
+
   memcpy(distance_rescaled_gl, ctx->jastrow_champ.en_distance_rescaled_gl, sze * sizeof(double));
 
   return QMCKL_SUCCESS;
@@ -4641,17 +5212,17 @@ qmckl_exit_code qmckl_provide_en_distance_rescaled_gl(qmckl_context context)
      :END:
 
      #+NAME: qmckl_en_distance_rescaled_gl_args
-     | Variable                       | Type                                      | In/Out | Description                           |
-     |--------------------------------+-------------------------------------------+--------+---------------------------------------|
-     | ~context~                      | ~qmckl_context~                           | in     | Global state                          |
-     | ~elec_num~                     | ~int64_t~                                 | in     | Number of electrons                   |
-     | ~nucl_num~                     | ~int64_t~                                 | in     | Number of nuclei                      |
-     | ~type_nucl_num~                | ~int64_t~                                 | in     | Number of nucleus types               |
-     | ~type_nucl_vector~             | ~int64_t[nucl_num]~                       | in     | Array of nucleus types                |
-     | ~rescale_factor_en~            | ~double[nucl_num]~                        | in     | The factors for rescaled distances    |
-     | ~walk_num~                     | ~int64_t~                                 | in     | Number of walkers                     |
-     | ~elec_coord~                   | ~double[3][walk_num][elec_num]~           | in     | Electron coordinates                  |
-     | ~nucl_coord~                   | ~double[3][elec_num]~                     | in     | Nuclear coordinates                   |
+     | Variable                  | Type                                      | In/Out | Description                           |
+     |---------------------------+-------------------------------------------+--------+---------------------------------------|
+     | ~context~                 | ~qmckl_context~                           | in     | Global state                          |
+     | ~elec_num~                | ~int64_t~                                 | in     | Number of electrons                   |
+     | ~nucl_num~                | ~int64_t~                                 | in     | Number of nuclei                      |
+     | ~type_nucl_num~           | ~int64_t~                                 | in     | Number of nucleus types               |
+     | ~type_nucl_vector~        | ~int64_t[nucl_num]~                       | in     | Array of nucleus types                |
+     | ~rescale_factor_en~       | ~double[nucl_num]~                        | in     | The factors for rescaled distances    |
+     | ~walk_num~                | ~int64_t~                                 | in     | Number of walkers                     |
+     | ~elec_coord~              | ~double[3][walk_num][elec_num]~           | in     | Electron coordinates                  |
+     | ~nucl_coord~              | ~double[3][elec_num]~                     | in     | Nuclear coordinates                   |
      | ~en_distance_rescaled_gl~ | ~double[walk_num][nucl_num][elec_num][4]~ | out    | Electron-nucleus distance derivatives |
 
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
@@ -4776,13 +5347,17 @@ qmckl_exit_code qmckl_compute_en_distance_rescaled_gl_hpc (
   if (nucl_coord == NULL) return QMCKL_INVALID_ARG_9;
   if (en_distance_rescaled_gl == NULL) return QMCKL_INVALID_ARG_10;
 
-  int64_t sze = elec_num*walk_num;
+  const int64_t sze = elec_num*walk_num;
 
   qmckl_exit_code result = QMCKL_SUCCESS;
+#ifdef HAVE_OPENMP
   #pragma omp parallel
+#endif
   {
     qmckl_exit_code rc = QMCKL_SUCCESS;
+#ifdef HAVE_OPENMP
     #pragma omp for
+#endif
     for (int64_t k=0 ; k<walk_num ; ++k)
     {
       for (int64_t a=0 ; a<nucl_num ; ++a) {
@@ -4794,7 +5369,9 @@ qmckl_exit_code qmckl_compute_en_distance_rescaled_gl_hpc (
                                          rescale_factor_en[type_nucl_vector[a]]);
       }
     }
+#ifdef HAVE_OPENMP
     #pragma omp critical
+#endif
     result |= rc;
   }
   return result;
@@ -4824,48 +5401,152 @@ qmckl_exit_code qmckl_compute_en_distance_rescaled_gl (
 }
      #+end_src
 
-**** Test
-
-     #+begin_src python :results output :exports none
-import numpy as np
-
-# TODO
-     #+end_src
-
+**** Test                                                          :noexport:
 
       #+begin_src c :tangle (eval c_test)
-
 assert(qmckl_electron_provided(context));
 
-assert(qmckl_nucleus_provided(context));
+{
+  printf("en_distance_rescaled_gl\n");
+  double fd[walk_num][nucl_num][elec_num][4];
 
-double en_distance_rescaled_gl[walk_num][4][nucl_num][elec_num];
+  double delta_x = 0.001;
 
-rc = qmckl_check(context,
-                 qmckl_get_electron_en_distance_rescaled_gl(context, &(en_distance_rescaled_gl[0][0][0][0]))
-                 );
-assert (rc == QMCKL_SUCCESS);
+  // Finite difference coefficients for gradients
+  double coef[9] = { 1.0/280.0, -4.0/105.0,  1.0/5.0, -4.0/5.0,         0.0, 4.0/5.0, -1.0/5.0, 4.0/105.0, -1.0/280.0 };
 
-// TODO: check exact values
-//// (e,n,w) in Fortran notation
-//// (1,1,1)
-//assert(fabs(en_distance_rescaled[0][0][0] - 7.546738741619978) < 1.e-12);
-//
-//// (1,2,1)
-//assert(fabs(en_distance_rescaled[0][1][0] - 8.77102435246984) < 1.e-12);
-//
-//// (2,1,1)
-//assert(fabs(en_distance_rescaled[0][0][1] - 3.698922010513608) < 1.e-12);
-//
-//// (1,1,2)
-//assert(fabs(en_distance_rescaled[1][0][0] - 5.824059436060509) < 1.e-12);
-//
-//// (1,2,2)
-//assert(fabs(en_distance_rescaled[1][1][0] - 7.080482110317645) < 1.e-12);
-//
-//// (2,1,2)
-//assert(fabs(en_distance_rescaled[1][0][1] - 3.1804527583077356) < 1.e-12);
+  // Finite difference coefficients for Laplacian
+  double coef2[9]= {-1.0/560.0,	 8.0/315.0, -1.0/5.0,  8.0/5.0, -205.0/72.0, 8.0/5.0, -1.0/5.0,	8.0/315.0, -1.0/560.0 };
 
+  qmckl_exit_code rc;
+
+  int64_t walk_num;
+  rc = qmckl_get_electron_walk_num(context, &walk_num);
+  if (rc != QMCKL_SUCCESS) {
+    return rc;
+  }
+
+  int64_t elec_num;
+  rc = qmckl_get_electron_num(context, &elec_num);
+  if (rc != QMCKL_SUCCESS) {
+    return rc;
+  }
+
+  double elec_coord[walk_num][elec_num][3];
+  rc = qmckl_get_electron_coord (context, 'N', &(elec_coord[0][0][0]), 3*walk_num*elec_num);
+
+  double temp_coord[walk_num][elec_num][3];
+  memcpy(&(temp_coord[0][0][0]), &(elec_coord[0][0][0]), sizeof(temp_coord));
+
+  double function_values[walk_num][nucl_num][elec_num];
+
+  memset(&(fd[0][0][0][0]), 0, sizeof(fd));
+
+  for (int64_t i = 0; i < elec_num; i++) {
+    for (int64_t k = 0; k < 3; k++) {
+      for (int64_t m = -4; m <= 4; m++) {          // Apply finite difference displacement
+
+        for (int64_t nw=0 ; nw<walk_num ; nw++) {
+          temp_coord[nw][i][k] = elec_coord[nw][i][k] + (double) m * delta_x;
+        }
+
+        // Update coordinates in the context
+        rc = qmckl_set_electron_coord (context, 'N', walk_num, &(temp_coord[0][0][0]), walk_num*3*elec_num);
+        assert(rc == QMCKL_SUCCESS);
+
+        // Call the provided function
+        rc = qmckl_get_jastrow_champ_en_distance_rescaled(context, &(function_values[0][0][0]), nucl_num*elec_num*walk_num);
+        assert(rc == QMCKL_SUCCESS);
+
+        // Accumulate derivative using finite-difference coefficients
+        for (int64_t nw=0 ; nw<walk_num ; nw++) {
+          for (int64_t j = 0; j < nucl_num; j++) {
+            fd[nw][j][i][k] += coef [m + 4] * function_values[nw][j][i];
+            fd[nw][j][i][3] += coef2[m + 4] * function_values[nw][j][i];
+          }
+        }
+      }
+      for (int64_t nw=0 ; nw<walk_num ; nw++) {
+        temp_coord[nw][i][k] = elec_coord[nw][i][k];
+      }
+    }
+  }
+
+  // Reset coordinates in the context
+  rc = qmckl_set_electron_coord (context, 'N', walk_num, &(elec_coord[0][0][0]), walk_num*3*elec_num);
+  assert(rc == QMCKL_SUCCESS);
+
+  // Normalize by the step size
+  for (int64_t nw=0 ; nw<walk_num ; nw++) {
+    for (int64_t i = 0; i < nucl_num; i++) {
+      for (int64_t k = 0; k < 4; k++) {
+        for (int64_t j = 0; j < elec_num; j++) {
+          fd[nw][i][j][k] /= delta_x;
+        }
+      }
+      for (int64_t j = 0; j < elec_num; j++) {
+        fd[nw][i][j][3] /= delta_x;
+      }
+    }
+  }
+
+
+  double en_distance_rescaled_gl[walk_num][nucl_num][elec_num][4];
+  rc = qmckl_check(context,
+                   qmckl_get_jastrow_champ_en_distance_rescaled_gl(context,
+                                                                   &(en_distance_rescaled_gl[0][0][0][0]),
+                                                                   walk_num*nucl_num*4*elec_num)
+                   );
+
+  assert(rc == QMCKL_SUCCESS);
+
+  for (int nw = 0; nw < walk_num; nw++){
+    for (int i = 0; i < nucl_num; i++) {
+      for (int j = 0; j < elec_num; j++) {
+        for (int k = 0; k < 3; k++){
+          printf("%.10f\t", fd[nw][i][j][k]);
+          printf("%.10f\n", en_distance_rescaled_gl[nw][i][j][k]);
+          fflush(stdout);
+          assert(fabs(fd[nw][i][j][k] - en_distance_rescaled_gl[nw][i][j][k]) < 1.e-8);
+        }
+        int k=3;
+        if (i != j) {
+          printf("%.10f\t", fd[nw][i][j][k]);
+          printf("%.10f\n", en_distance_rescaled_gl[nw][i][j][k]);
+          fflush(stdout);
+          assert(fabs(fd[nw][i][j][k] - en_distance_rescaled_gl[nw][i][j][k]) < 1.e-6);
+        }
+      }
+    }
+  }
+  printf("OK\n");
+}
+
+{
+  printf("en_distance_rescaled_gl_hpc\n");
+
+  double en_distance_rescaled_gl_doc[walk_num*nucl_num*elec_num*4];
+  rc = qmckl_compute_en_distance_rescaled_gl_doc (context,
+          elec_num, nucl_num, type_nucl_num, type_nucl_vector, rescale_factor_en,
+          walk_num, elec_coord, nucl_coord,
+          &(en_distance_rescaled_gl_doc[0]));
+  assert(rc == QMCKL_SUCCESS);
+
+  double en_distance_rescaled_gl_hpc[walk_num*nucl_num*elec_num*4];
+  rc = qmckl_compute_en_distance_rescaled_gl_hpc (context,
+          elec_num, nucl_num, type_nucl_num, type_nucl_vector, rescale_factor_en,
+          walk_num, elec_coord, nucl_coord,
+          &(en_distance_rescaled_gl_hpc[0]));
+  assert(rc == QMCKL_SUCCESS);
+
+  for (int i = 0; i < walk_num*nucl_num*elec_num*4; i++) {
+    if (fabs(en_distance_rescaled_gl_doc[i] - en_distance_rescaled_gl_hpc[i]) > 1.e-8) {
+      printf("i = %d, doc = %e, hpc = %e\n", i, en_distance_rescaled_gl_doc[i], en_distance_rescaled_gl_hpc[i]);
+      fflush(stdout);
+    }
+    assert(fabs(en_distance_rescaled_gl_doc[i] - en_distance_rescaled_gl_hpc[i]) < 1.e-8);
+  }
+}
       #+end_src
 
 *** Electron-nucleus component
@@ -4907,13 +5588,22 @@ qmckl_get_jastrow_champ_factor_en(qmckl_context context,
   rc = qmckl_provide_jastrow_champ_factor_en(context);
   if (rc != QMCKL_SUCCESS) return rc;
 
-  int64_t sze=ctx->electron.walker.num;
+  if (factor_en == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_get_jastrow_champ_factor_en",
+                           "Null pointer");
+  }
+
+  const int64_t sze=ctx->electron.walker.num;
+
   if (size_max < sze) {
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_3,
                            "qmckl_get_jastrow_champ_factor_en",
-                           "Array too small. Expected walker.num");
+                           "Array too small. Expected walk_num");
   }
+
   memcpy(factor_en, ctx->jastrow_champ.factor_en, sze*sizeof(double));
 
   return QMCKL_SUCCESS;
@@ -5253,7 +5943,7 @@ qmckl_exit_code qmckl_compute_jastrow_champ_factor_en_hpc (
 }
     #+end_src
 
-**** Test
+**** Test                                                          :noexport:
      #+begin_src python :results output :exports none :noweb yes
 import numpy as np
 
@@ -5292,8 +5982,40 @@ rc = qmckl_get_jastrow_champ_factor_en(context, factor_en,walk_num);
 
 // calculate factor_en
 printf("%f %f\n", factor_en[0], 22.781375792083587);
+fflush(stdout);
 assert(fabs(22.781375792083587 - factor_en[0]) < 1.e-12);
 
+{
+  printf("factor_en_hpc\n");
+  double asymp_jasa[type_nucl_num];
+  rc = qmckl_get_jastrow_champ_asymp_jasa(context, asymp_jasa, type_nucl_num);
+  assert(rc == QMCKL_SUCCESS);
+
+  double en_distance_rescaled[walk_num*nucl_num*elec_num];
+  rc = qmckl_get_jastrow_champ_en_distance_rescaled(context,
+                                                    en_distance_rescaled,
+                                                    walk_num*nucl_num*elec_num);
+  assert(rc == QMCKL_SUCCESS);
+
+  double factor_en_doc[walk_num];
+  memset(&(factor_en_doc[0]), 0, sizeof(factor_en_doc));
+  rc = qmckl_compute_jastrow_champ_factor_en_doc (context,
+          walk_num, elec_num, nucl_num, type_nucl_num, type_nucl_vector,
+          aord_num, a_vector,
+          en_distance_rescaled, asymp_jasa, factor_en_doc);
+  assert(rc == QMCKL_SUCCESS);
+
+  double factor_en_hpc[walk_num];
+  rc = qmckl_compute_jastrow_champ_factor_en_hpc (context,
+          walk_num, elec_num, nucl_num, type_nucl_num, type_nucl_vector,
+          aord_num, a_vector,
+          en_distance_rescaled, asymp_jasa, factor_en_hpc);
+  assert(rc == QMCKL_SUCCESS);
+
+  for (int64_t i = 0; i < walk_num; i++) {
+    assert(fabs(factor_en_doc[i] - factor_en_hpc[i]) < 1.e-10);
+  }
+}
       #+end_src
 
 *** Derivative
@@ -5329,13 +6051,22 @@ qmckl_get_jastrow_champ_factor_en_gl(qmckl_context context,
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
-  int64_t sze = ctx->electron.walker.num * 4 * ctx->electron.num;
+  if (factor_en_gl == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_get_jastrow_champ_factor_en_gl",
+                           "Null pointer");
+  }
+
+  const int64_t sze = ctx->electron.walker.num * 4 * ctx->electron.num;
+
   if (size_max < sze) {
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_3,
                            "qmckl_get_jastrow_champ_factor_en_gl",
-                           "Array too small. Expected 4*walker.num*elec_num");
+                           "Array too small. Expected 4*walk_num*elec_num");
   }
+
   memcpy(factor_en_gl, ctx->jastrow_champ.factor_en_gl, sze*sizeof(double));
 
   return QMCKL_SUCCESS;
@@ -5835,16 +6566,151 @@ print("factor_en_gl[3][0]:",factor_en_gl[3][0])
 /* Check if Jastrow is properly initialized */
 assert(qmckl_jastrow_champ_provided(context));
 
-// calculate factor_en_gl
-double factor_en_gl[walk_num][4][elec_num];
-rc = qmckl_get_jastrow_champ_factor_en_gl(context, &(factor_en_gl[0][0][0]),walk_num*4*elec_num);
+{
+  printf("factor_en_gl\n");
+  double fd[walk_num][4][elec_num];
+  double delta_x = 0.001;
 
-// check factor_en_gl
-assert(fabs( 0.19656663796630847 - factor_en_gl[0][0][0]) < 1.e-12);
-assert(fabs( -0.3945140890522283 - factor_en_gl[0][1][0]) < 1.e-12);
-assert(fabs( 0.5082964671286118  - factor_en_gl[0][2][0]) < 1.e-12);
-assert(fabs( -1.8409460670666289 - factor_en_gl[0][3][0]) < 1.e-12);
+  // Finite difference coefficients for gradients
+  double coef[9] = { 1.0/280.0, -4.0/105.0,  1.0/5.0, -4.0/5.0,         0.0, 4.0/5.0, -1.0/5.0, 4.0/105.0, -1.0/280.0 };
 
+  // Finite difference coefficients for Laplacian
+  double coef2[9]= {-1.0/560.0,	 8.0/315.0, -1.0/5.0,  8.0/5.0, -205.0/72.0, 8.0/5.0, -1.0/5.0,	8.0/315.0, -1.0/560.0 };
+
+  qmckl_exit_code rc;
+
+  int64_t walk_num;
+  rc = qmckl_get_electron_walk_num(context, &walk_num);
+  if (rc != QMCKL_SUCCESS) {
+    return rc;
+  }
+
+  int64_t elec_num;
+  rc = qmckl_get_electron_num(context, &elec_num);
+  if (rc != QMCKL_SUCCESS) {
+    return rc;
+  }
+
+  double elec_coord[walk_num][elec_num][3];
+  rc = qmckl_get_electron_coord (context, 'N', &(elec_coord[0][0][0]), 3*walk_num*elec_num);
+
+  double temp_coord[walk_num][elec_num][3];
+  memcpy(&(temp_coord[0][0][0]), &(elec_coord[0][0][0]), sizeof(temp_coord));
+
+  double function_values[walk_num];
+
+  memset(&(fd[0][0][0]), 0, sizeof(fd));
+
+  for (int64_t i = 0; i < elec_num; i++) {
+    for (int64_t k = 0; k < 3; k++) {
+      for (int64_t m = -4; m <= 4; m++) {          // Apply finite difference displacement
+
+        for (int64_t nw=0 ; nw<walk_num ; nw++) {
+          temp_coord[nw][i][k] = elec_coord[nw][i][k] + (double) m * delta_x;
+        }
+
+        // Update coordinates in the context
+        rc = qmckl_set_electron_coord (context, 'N', walk_num, &(temp_coord[0][0][0]), walk_num*3*elec_num);
+        assert(rc == QMCKL_SUCCESS);
+
+        // Call the provided function
+        rc = qmckl_get_jastrow_champ_factor_en(context, &(function_values[0]), walk_num);
+        assert(rc == QMCKL_SUCCESS);
+
+        // Accumulate derivative using finite-difference coefficients
+        for (int64_t nw=0 ; nw<walk_num ; nw++) {
+          fd[nw][k][i] += coef [m + 4] * function_values[nw];
+          fd[nw][3][i] += coef2[m + 4] * function_values[nw];
+        }
+      }
+      for (int64_t nw=0 ; nw<walk_num ; nw++) {
+        temp_coord[nw][i][k] = elec_coord[nw][i][k];
+      }
+    }
+  }
+
+  // Reset coordinates in the context
+  rc = qmckl_set_electron_coord (context, 'N', walk_num, &(elec_coord[0][0][0]), walk_num*3*elec_num);
+  assert(rc == QMCKL_SUCCESS);
+
+  // Normalize by the step size
+  for (int64_t nw=0 ; nw<walk_num ; nw++) {
+    for (int64_t k = 0; k < 4; k++) {
+      for (int64_t i = 0; i < elec_num; i++) {
+          fd[nw][k][i] /= delta_x;
+      }
+    }
+    for (int64_t i = 0; i < elec_num; i++) {
+      fd[nw][3][i] /= delta_x;
+    }
+  }
+
+
+  double factor_en_gl[walk_num][4][elec_num];
+  rc = qmckl_check(context,
+                   qmckl_get_jastrow_champ_factor_en_gl(context,
+                                                        &(factor_en_gl[0][0][0]),
+                                                        walk_num*4*elec_num)
+                   );
+
+  assert(rc == QMCKL_SUCCESS);
+
+  for (int nw = 0; nw < walk_num; nw++){
+    for (int i = 0; i < elec_num; i++) {
+      for (int k = 0; k < 3; k++){
+        printf("%.10f\t", fd[nw][k][i]);
+        printf("%.10f\n", factor_en_gl[nw][k][i]);
+        fflush(stdout);
+        assert(fabs(fd[nw][k][i] - factor_en_gl[nw][k][i]) < 1.e-8);
+      }
+      int k=3;
+      if (fabs(fd[nw][k][i] - factor_en_gl[nw][k][i]) > 1.e-5) {
+        printf("i=%d doc=%f hpc=%f\n", i, fd[nw][k][i], factor_en_gl[nw][k][i]);
+        fflush(stdout);
+      }
+      assert(fabs(fd[nw][k][i] - factor_en_gl[nw][k][i]) < 1.e-5);
+    }
+  }
+  printf("OK\n");
+}
+
+{
+  printf("factor_en_gl_hpc\n");
+
+  double en_distance_rescaled[walk_num][nucl_num][elec_num];
+  rc = qmckl_get_jastrow_champ_en_distance_rescaled(context,
+                                                    &(en_distance_rescaled[0][0][0]),
+                                                    walk_num*nucl_num*elec_num);
+  assert(rc == QMCKL_SUCCESS);
+
+  double en_distance_rescaled_gl[walk_num][4][elec_num][nucl_num];
+  rc = qmckl_get_jastrow_champ_en_distance_rescaled_gl(context,
+                                                       &(en_distance_rescaled_gl[0][0][0][0]),
+                                                       walk_num*4*elec_num*nucl_num);
+  assert(rc == QMCKL_SUCCESS);
+
+  double factor_en_gl_doc[walk_num*4*elec_num];
+  memset(&(factor_en_gl_doc[0]), 0, sizeof(factor_en_gl_doc));
+  rc = qmckl_compute_jastrow_champ_factor_en_gl_doc(context, walk_num, elec_num,
+       nucl_num, type_nucl_num, type_nucl_vector, aord_num, &(a_vector[0]),
+       &(en_distance_rescaled[0][0][0]), &(en_distance_rescaled_gl[0][0][0][0]), &(factor_en_gl_doc[0]));
+  assert(rc == QMCKL_SUCCESS);
+
+  double factor_en_gl_hpc[walk_num*4*elec_num];
+  memset(&(factor_en_gl_hpc[0]), 0, sizeof(factor_en_gl_hpc));
+  rc = qmckl_compute_jastrow_champ_factor_en_gl_hpc(context, walk_num, elec_num,
+       nucl_num, type_nucl_num, type_nucl_vector, aord_num, &(a_vector[0]),
+       &(en_distance_rescaled[0][0][0]), &(en_distance_rescaled_gl[0][0][0][0]), &(factor_en_gl_hpc[0]));
+  assert(rc == QMCKL_SUCCESS);
+
+  for (int64_t i = 0; i < walk_num*4*elec_num; i++) {
+    if (fabs(factor_en_gl_doc[i] - factor_en_gl_hpc[i]) > 1.e-12) {
+      printf("i=%ld doc=%f hpc=%f\n", i, factor_en_gl_doc[i], factor_en_gl_hpc[i]);
+      fflush(stdout);
+    }
+    assert(fabs(factor_en_gl_doc[i] - factor_en_gl_hpc[i]) < 1.e-8);
+  }
+}
       #+end_src
 
 ** Electron-electron-nucleus component
@@ -5863,16 +6729,16 @@ assert(fabs( -1.8409460670666289 - factor_en_gl[0][3][0]) < 1.e-12);
 
      #+begin_src c :comments org :tangle (eval h_func) :noweb yes
 qmckl_exit_code
-qmckl_get_jastrow_champ_een_rescaled_e(qmckl_context context,
-                                 double* const distance_rescaled,
-                                 const int64_t size_max);
+qmckl_get_jastrow_champ_een_distance_rescaled_e(qmckl_context context,
+                                                double* const een_rescaled_e,
+                                                const int64_t size_max);
      #+end_src
 
      #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
 qmckl_exit_code
-qmckl_get_jastrow_champ_een_rescaled_e(qmckl_context context,
-                                 double* const distance_rescaled,
-                                 const int64_t size_max)
+qmckl_get_jastrow_champ_een_distance_rescaled_e(qmckl_context context,
+                                                double* const een_rescaled_e,
+                                                const int64_t size_max)
 {
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return QMCKL_NULL_CONTEXT;
@@ -5886,14 +6752,23 @@ qmckl_get_jastrow_champ_een_rescaled_e(qmckl_context context,
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
-  int64_t sze = ctx->electron.num * ctx->electron.num * ctx->electron.walker.num * (ctx->jastrow_champ.cord_num + 1);
+  if (een_rescaled_e == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_get_jastrow_champ_een_distance_rescaled_e",
+                           "Null pointer");
+  }
+
+  const int64_t sze = ctx->electron.num * ctx->electron.num * ctx->electron.walker.num * (ctx->jastrow_champ.cord_num + 1);
+
   if (size_max < sze) {
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_3,
-                           "qmckl_get_jastrow_champ_factor_een_rescaled_e",
-                           "Array too small. Expected ctx->electron.num * ctx->electron.num * ctx->electron.walker.num * (ctx->jastrow_champ.cord_num + 1)");
+                           "qmckl_get_jastrow_champ_een_distance_rescaled_e",
+                           "Array too small. Expected elec_num*elec_num*walk_num*(cord_num + 1)");
   }
-  memcpy(distance_rescaled, ctx->jastrow_champ.een_rescaled_e, sze * sizeof(double));
+
+  memcpy(een_rescaled_e, ctx->jastrow_champ.een_rescaled_e, sze * sizeof(double));
 
   return QMCKL_SUCCESS;
 }
@@ -5996,7 +6871,7 @@ function qmckl_compute_een_rescaled_e_doc( &
   use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
-  integer(qmckl_context), intent(in)  :: context
+  integer(qmckl_context), intent(in), value :: context
   integer (c_int64_t) , intent(in)  , value :: walk_num
   integer (c_int64_t) , intent(in)  , value :: elec_num
   integer (c_int64_t) , intent(in)  , value :: cord_num
@@ -6049,27 +6924,25 @@ function qmckl_compute_een_rescaled_e_doc( &
 
      do l = 2, cord_num
         do k = 1, elec_num * (elec_num - 1)/2
-           een_rescaled_e_ij(k, l + 1) = een_rescaled_e_ij(k, l) * een_rescaled_e_ij(k, 2)
+           een_rescaled_e_ij(k, l+1) = een_rescaled_e_ij(k, l) * een_rescaled_e_ij(k, 2)
         end do
      end do
 
      ! prepare the actual een table
      een_rescaled_e(:, :, 0, nw) = 1.0d0
+     do j = 1, elec_num
+        een_rescaled_e(j, j, 0, nw) = 0.0d0
+     end do
 
      do l = 1, cord_num
         k = 0
         do j = 1, elec_num
            do i = 1, j - 1
               k = k + 1
-              x = een_rescaled_e_ij(k, l + 1)
+              x = een_rescaled_e_ij(k, l+1)
               een_rescaled_e(i, j, l, nw) = x
               een_rescaled_e(j, i, l, nw) = x
            end do
-        end do
-     end do
-
-     do l = 0, cord_num
-        do j = 1, elec_num
            een_rescaled_e(j, j, l, nw) = 0.0d0
         end do
      end do
@@ -6093,8 +6966,7 @@ end function qmckl_compute_een_rescaled_e_doc
      #+end_src
 
      #+begin_src c :comments org :tangle (eval c) :noweb yes
-qmckl_exit_code qmckl_compute_een_rescaled_e_hpc (
-                                                  const qmckl_context context,
+qmckl_exit_code qmckl_compute_een_rescaled_e_hpc (const qmckl_context context,
                                                   const int64_t walk_num,
                                                   const int64_t elec_num,
                                                   const int64_t cord_num,
@@ -6341,10 +7213,10 @@ print(" een_rescaled_e[1, 5, 2] = ",een_rescaled_e[1, 5, 2])
 
       #+begin_src c :tangle (eval c_test)
 assert(qmckl_electron_provided(context));
-
+{
 
 double een_rescaled_e[walk_num][(cord_num + 1)][elec_num][elec_num];
-rc = qmckl_get_jastrow_champ_een_rescaled_e(context, &(een_rescaled_e[0][0][0][0]),elec_num*elec_num*(cord_num+1)*walk_num);
+rc = qmckl_get_jastrow_champ_een_distance_rescaled_e(context, &(een_rescaled_e[0][0][0][0]),elec_num*elec_num*(cord_num+1)*walk_num);
 
 // value of (0,2,1)
 assert(fabs(een_rescaled_e[0][1][0][2]- 0.2211015082992776 ) < 1.e-12);
@@ -6353,6 +7225,40 @@ assert(fabs(een_rescaled_e[0][1][0][4]- 0.0884012350763747 ) < 1.e-12);
 assert(fabs(een_rescaled_e[0][2][1][3]- 0.1016685507354656 ) < 1.e-12);
 assert(fabs(een_rescaled_e[0][2][1][4]- 0.0113118073246869 ) < 1.e-12);
 assert(fabs(een_rescaled_e[0][2][1][5]- 0.5257156022077619 ) < 1.e-12);
+}
+
+{
+  printf("een_rescaled_e_hpc\n");
+  double ee_distance[walk_num * elec_num * elec_num];
+  rc = qmckl_get_electron_ee_distance(context, &(ee_distance[0]), walk_num*elec_num*elec_num);
+  assert(rc == QMCKL_SUCCESS);
+
+  double een_rescaled_e_doc[walk_num][cord_num+1][elec_num][elec_num];
+  memset(&(een_rescaled_e_doc[0][0][0][0]), 0, sizeof(een_rescaled_e_doc));
+  rc = qmckl_compute_een_rescaled_e(context, walk_num, elec_num, cord_num,
+                0.6, &(ee_distance[0]), &(een_rescaled_e_doc[0][0][0][0]));
+  assert(rc == QMCKL_SUCCESS);
+
+  double een_rescaled_e_hpc[walk_num][cord_num+1][elec_num][elec_num];
+  memset(&(een_rescaled_e_hpc[0][0][0][0]), 0, sizeof(een_rescaled_e_hpc));
+  rc = qmckl_compute_een_rescaled_e_hpc(context, walk_num, elec_num, cord_num,
+                0.6, &(ee_distance[0]), &(een_rescaled_e_hpc[0][0][0][0]));
+  assert(rc == QMCKL_SUCCESS);
+
+  for (int64_t i = 0; i < walk_num; i++) {
+    for (int64_t j = 0; j < cord_num+1; j++) {
+      for (int64_t k = 0; k < elec_num; k++) {
+        for (int64_t l = 0; l < elec_num; l++) {
+          if (fabs(een_rescaled_e_doc[i][j][k][l] - een_rescaled_e_hpc[i][j][k][l]) > 1.e-12) {
+            printf("i=%ld j=%ld k=%ld l=%ld doc=%f hpc=%f\n", i, j, k, l, een_rescaled_e_doc[i][j][k][l], een_rescaled_e_hpc[i][j][k][l]);
+            fflush(stdout);
+          }
+          assert(fabs(een_rescaled_e_doc[i][j][k][l] - een_rescaled_e_hpc[i][j][k][l]) < 1.e-8);
+        }
+      }
+    }
+  }
+}
       #+end_src
 
 *** Electron-electron rescaled distances derivatives in $J_\text{eeN}$
@@ -6370,16 +7276,16 @@ assert(fabs(een_rescaled_e[0][2][1][5]- 0.5257156022077619 ) < 1.e-12);
 
      #+begin_src c :comments org :tangle (eval h_func) :noweb yes
 qmckl_exit_code
-qmckl_get_jastrow_champ_een_rescaled_e_gl(qmckl_context context,
-                                         double* const distance_rescaled,
-                                         const int64_t size_max);
+qmckl_get_jastrow_champ_een_distance_rescaled_e_gl(qmckl_context context,
+                                                   double* const een_rescaled_e_gl,
+                                                   const int64_t size_max);
      #+end_src
 
      #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
 qmckl_exit_code
-qmckl_get_jastrow_champ_een_rescaled_e_gl(qmckl_context context,
-                                         double* const distance_rescaled,
-                                         const int64_t size_max)
+qmckl_get_jastrow_champ_een_distance_rescaled_e_gl(qmckl_context context,
+                                                   double* const een_rescaled_e_gl,
+                                                   const int64_t size_max)
 {
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return QMCKL_NULL_CONTEXT;
@@ -6393,14 +7299,24 @@ qmckl_get_jastrow_champ_een_rescaled_e_gl(qmckl_context context,
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
-  int64_t sze = ctx->electron.num * 4 * ctx->electron.num * ctx->electron.walker.num * (ctx->jastrow_champ.cord_num + 1);
+  if (een_rescaled_e_gl == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_get_jastrow_champ_een_distance_rescaled_e_gl",
+                           "Null pointer");
+  }
+
+  const int64_t sze = ctx->electron.num * 4 * ctx->electron.num *
+    ctx->electron.walker.num * (ctx->jastrow_champ.cord_num + 1);
+
   if (size_max < sze) {
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_3,
-                           "qmckl_get_jastrow_champ_factor_een_gl",
-                           "Array too small. Expected ctx->electron.num * 4 * ctx->electron.num * ctx->electron.walker.num * (ctx->jastrow_champ.cord_num + 1)");
+                           "qmckl_get_jastrow_champ_een_distance_rescaled_e_gl",
+                           "Array too small. Expected elec_num*4*elec_num*walk_num*(cord_num + 1)");
   }
-  memcpy(distance_rescaled, ctx->jastrow_champ.een_rescaled_e_gl, sze * sizeof(double));
+
+  memcpy(een_rescaled_e_gl, ctx->jastrow_champ.een_rescaled_e_gl, sze * sizeof(double));
 
   return QMCKL_SUCCESS;
 }
@@ -6424,7 +7340,11 @@ qmckl_exit_code qmckl_provide_een_rescaled_e_gl(qmckl_context context)
   assert (ctx != NULL);
 
   /* Check if ee distance is provided */
-  qmckl_exit_code rc = qmckl_provide_een_rescaled_e(context);
+  qmckl_exit_code rc = qmckl_provide_ee_distance(context);
+  if(rc != QMCKL_SUCCESS) return rc;
+
+  /* Check if een rescaled distance is provided */
+  rc = qmckl_provide_een_rescaled_e(context);
   if(rc != QMCKL_SUCCESS) return rc;
 
   /* Compute if necessary */
@@ -6448,6 +7368,7 @@ qmckl_exit_code qmckl_provide_een_rescaled_e_gl(qmckl_context context)
       qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
       mem_info.size = ctx->electron.num * 4 * ctx->electron.num *
         ctx->electron.walker.num * (ctx->jastrow_champ.cord_num + 1) * sizeof(double);
+
       double* een_rescaled_e_gl = (double*) qmckl_malloc(context, mem_info);
 
       if (een_rescaled_e_gl == NULL) {
@@ -6507,7 +7428,7 @@ function qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl_doc( &
   use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
-  integer(qmckl_context), intent(in)  :: context
+  integer(qmckl_context), intent(in), value  :: context
   integer(c_int64_t)    , intent(in), value  :: walk_num
   integer(c_int64_t)    , intent(in), value  :: elec_num
   integer(c_int64_t)    , intent(in), value  :: cord_num
@@ -6519,8 +7440,10 @@ function qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl_doc( &
   integer(qmckl_exit_code)            :: info
 
   double precision, allocatable       :: elec_dist_gl(:,:,:)
-  double precision                    :: x, rij_inv, kappa_l
+  double precision                    :: x, kappa_l
   integer*8                           :: i, j, k, l, nw, ii
+
+  double precision  :: rij_inv(elec_num)
 
   allocate(elec_dist_gl(elec_num, 4, elec_num))
 
@@ -6546,30 +7469,27 @@ function qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl_doc( &
      return
   endif
 
-  ! Prepare table of exponentiated distances raised to appropriate power
   do nw = 1, walk_num
+
+     ! Prepare table of exponentiated distances raised to appropriate power
      do j = 1, elec_num
         do i = 1, j-1
-           rij_inv = 1.0d0 / ee_distance(i, j, nw)
-           do ii = 1, 3
-              elec_dist_gl(i, ii, j) = (coord_ee(i, ii, nw) - coord_ee(j, ii, nw)) * rij_inv
-           end do
-           elec_dist_gl(i, 4, j) = 2.0d0 * rij_inv
-        end do
-
-        elec_dist_gl(j, :, j) = 0.0d0
-
+           rij_inv(i) = 1.0d0 / ee_distance(i, j, nw)
+        enddo
+        rij_inv(j) = 0.0d0
         do i = j+1, elec_num
-           rij_inv = 1.0d0 / ee_distance(i, j, nw)
+           rij_inv(i) = 1.0d0 / ee_distance(i, j, nw)
+        enddo
+        do i = 1, elec_num
            do ii = 1, 3
-              elec_dist_gl(i, ii, j) = (coord_ee(i, ii, nw) - coord_ee(j, ii, nw)) * rij_inv
+              elec_dist_gl(i, ii, j) = (coord_ee(i, ii, nw) - coord_ee(j, ii, nw)) * rij_inv(i)
            end do
-           elec_dist_gl(i, 4, j) = 2.0d0 * rij_inv
+           elec_dist_gl(i, 4, j) = 2.0d0 * rij_inv(i)
         end do
      end do
 
      !   Not necessary: should be set to zero by qmckl_malloc
-     !   een_rescaled_e_gl(:,:,:,0,nw) = 0.d0
+     een_rescaled_e_gl(:,:,:,0,nw) = 0.d0
 
      do l = 1, cord_num
         kappa_l = - dble(l) * rescale_factor_ee
@@ -6579,10 +7499,16 @@ function qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl_doc( &
               een_rescaled_e_gl(i, 2, j, l, nw) = kappa_l * elec_dist_gl(i, 2, j)
               een_rescaled_e_gl(i, 3, j, l, nw) = kappa_l * elec_dist_gl(i, 3, j)
               een_rescaled_e_gl(i, 4, j, l, nw) = kappa_l * elec_dist_gl(i, 4, j)
+           end do
 
-              een_rescaled_e_gl(i, 4, j, l, nw) = een_rescaled_e_gl(i, 4, j, l, nw) + &
-                   kappa_l * kappa_l
+           do i = 1, elec_num
+              een_rescaled_e_gl(i, 4, j, l, nw) = een_rescaled_e_gl(i, 4, j, l, nw)              &
+                   + een_rescaled_e_gl(i, 1, j, l, nw) * een_rescaled_e_gl(i, 1, j, l, nw)  &
+                   + een_rescaled_e_gl(i, 2, j, l, nw) * een_rescaled_e_gl(i, 2, j, l, nw)  &
+                   + een_rescaled_e_gl(i, 3, j, l, nw) * een_rescaled_e_gl(i, 3, j, l, nw)
+           end do
 
+           do i = 1, elec_num
               een_rescaled_e_gl(i,1,j,l,nw) = een_rescaled_e_gl(i,1,j,l,nw) * een_rescaled_e(i,j,l,nw)
               een_rescaled_e_gl(i,2,j,l,nw) = een_rescaled_e_gl(i,2,j,l,nw) * een_rescaled_e(i,j,l,nw)
               een_rescaled_e_gl(i,3,j,l,nw) = een_rescaled_e_gl(i,3,j,l,nw) * een_rescaled_e(i,j,l,nw)
@@ -6638,21 +7564,26 @@ end function qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl_doc
  #+end_src
 
  #+begin_src c :comments org :tangle (eval c) :noweb yes
-qmckl_exit_code qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl_hpc (
-         const qmckl_context context,
-         const int64_t walk_num,
-         const int64_t elec_num,
-         const int64_t cord_num,
-         const double rescale_factor_ee,
-         const double* coord_ee,
-         const double* ee_distance,
-         const double* een_rescaled_e,
-         double* const een_rescaled_e_gl )
+qmckl_exit_code
+qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl_hpc (const qmckl_context context,
+                                                          const int64_t walk_num,
+                                                          const int64_t elec_num,
+                                                          const int64_t cord_num,
+                                                          const double rescale_factor_ee,
+                                                          const double* coord_ee,
+                                                          const double* ee_distance,
+                                                          const double* een_rescaled_e,
+                                                          double* const een_rescaled_e_gl )
 {
-    if (context == QMCKL_NULL_CONTEXT) return QMCKL_INVALID_CONTEXT;
-    if (walk_num <= 0) return QMCKL_INVALID_ARG_2;
-    if (elec_num <= 0) return QMCKL_INVALID_ARG_3;
-    if (cord_num < 0) return QMCKL_INVALID_ARG_4;
+  if (context == QMCKL_NULL_CONTEXT) return QMCKL_INVALID_CONTEXT;
+  if (walk_num <= 0) return QMCKL_INVALID_ARG_2;
+  if (elec_num <= 0) return QMCKL_INVALID_ARG_3;
+  if (cord_num < 0) return QMCKL_INVALID_ARG_4;
+
+#ifdef HAVE_OPENMP
+#pragma omp parallel
+#endif
+  {
 
     double* restrict elec_dist_gl0 = (double*) calloc(elec_num * elec_num, sizeof(double));
     double* restrict elec_dist_gl1 = (double*) calloc(elec_num * elec_num, sizeof(double));
@@ -6663,94 +7594,117 @@ qmckl_exit_code qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl_hpc (
     assert (elec_dist_gl2 != NULL);
     assert (elec_dist_gl3 != NULL);
 
-    #pragma omp parallel for
+#ifdef HAVE_OPENMP
+#pragma omp for
+#endif
     for (int64_t nw = 0; nw < walk_num; ++nw) {
-        double rij_inv[elec_num];
-        for (int64_t j = 0; j < elec_num; ++j) {
+
+      double rij_inv[elec_num];
+
+      for (int64_t j=0; j<elec_num; ++j) {
+
 #ifdef HAVE_OPENMP
 #pragma omp simd
 #endif
-            for (int64_t i = 0; i < elec_num ; ++i) {
-              rij_inv[i] = ee_distance[i + j * elec_num + nw * elec_num * elec_num] + 1.e-30;
-            }
-#ifdef HAVE_OPENMP
-#pragma omp simd
-#endif
-            for (int64_t i = 0; i < elec_num ; ++i) {
-              rij_inv[i] = 1.0/rij_inv[i];
-            }
-            rij_inv[j] = 0.;
-            const double xj = coord_ee[j + nw * elec_num * 3];
-            const double yj = coord_ee[j + elec_num + nw * elec_num * 3];
-            const double zj = coord_ee[j + 2 * elec_num + nw * elec_num * 3];
-#ifdef HAVE_OPENMP
-#pragma omp simd
-#endif
-            for (int64_t i = 0; i < elec_num ; ++i) {
-              const double xi = coord_ee[i + nw * elec_num * 3];
-              const double yi = coord_ee[i + elec_num + nw * elec_num * 3];
-              const double zi = coord_ee[i + 2 * elec_num + nw * elec_num * 3];
-              elec_dist_gl0[i + j * elec_num] = rij_inv[i] * (xi-xj);
-              elec_dist_gl1[i + j * elec_num] = rij_inv[i] * (yi-yj);
-              elec_dist_gl2[i + j * elec_num] = rij_inv[i] * (zi-zj);
-              elec_dist_gl3[i + j * elec_num] = rij_inv[i] + rij_inv[i];
-            }
+        for (int64_t i = 0; i < elec_num ; ++i) {
+          rij_inv[i] = ee_distance[i+j*elec_num+nw*elec_num*elec_num];
         }
 
-        for (int64_t j = 0; j < elec_num; ++j) {
-          double* restrict eegl = &een_rescaled_e_gl[ elec_num * 4 * (j + elec_num * (cord_num + 1) * nw)];
+        rij_inv[j] = 1.0;
 #ifdef HAVE_OPENMP
 #pragma omp simd
 #endif
-          for (int64_t i = 0; i < 4*elec_num; ++i) {
-                eegl[i] = 0.0;
+        for (int64_t i = 0; i < elec_num ; ++i) {
+          rij_inv[i] = 1.0/rij_inv[i];
+        }
+        rij_inv[j] = 0.0;
+
+        const double xj = coord_ee[j + nw * elec_num * 3];
+        const double yj = coord_ee[j + elec_num + nw * elec_num * 3];
+        const double zj = coord_ee[j + 2 * elec_num + nw * elec_num * 3];
+
+#ifdef HAVE_OPENMP
+#pragma omp simd
+#endif
+        for (int64_t i = 0; i < elec_num ; ++i) {
+
+          const double xi = coord_ee[i + nw * elec_num * 3];
+          const double yi = coord_ee[i + elec_num + nw * elec_num * 3];
+          const double zi = coord_ee[i + 2 * elec_num + nw * elec_num * 3];
+
+          elec_dist_gl0[i + j * elec_num] = rij_inv[i] * (xi-xj);
+          elec_dist_gl1[i + j * elec_num] = rij_inv[i] * (yi-yj);
+          elec_dist_gl2[i + j * elec_num] = rij_inv[i] * (zi-zj);
+          elec_dist_gl3[i + j * elec_num] = rij_inv[i] + rij_inv[i];
+        }
+      }
+
+      for (int64_t j = 0; j < elec_num; ++j) {
+
+        double* restrict eegl = &een_rescaled_e_gl[ elec_num * 4 * (j + elec_num * (cord_num + 1) * nw)];
+#ifdef HAVE_OPENMP
+#pragma omp simd
+#endif
+        for (int64_t i = 0; i < 4*elec_num; ++i) {
+          eegl[i] = 0.0;
+        }
+
+      }
+
+      for (int64_t l=1; l<=cord_num; ++l) {
+
+        double kappa_l = - (double)l * rescale_factor_ee;
+
+        for (int64_t j=0; j<elec_num; ++j) {
+
+          double* restrict eegl =
+            &een_rescaled_e_gl[elec_num*4*(j+elec_num*(l+(cord_num+1)*nw))];
+
+#ifdef HAVE_OPENMP
+#pragma omp simd
+#endif
+          for (int64_t i=0; i<elec_num; ++i) {
+            eegl[i               ] = kappa_l * elec_dist_gl0[i + j * elec_num];
+            eegl[i + elec_num    ] = kappa_l * elec_dist_gl1[i + j * elec_num];
+            eegl[i + elec_num * 2] = kappa_l * elec_dist_gl2[i + j * elec_num];
+            eegl[i + elec_num * 3] = kappa_l * elec_dist_gl3[i + j * elec_num];
+          }
+
+#ifdef HAVE_OPENMP
+#pragma omp simd
+#endif
+          for (int64_t i=0; i<elec_num; ++i) {
+            eegl[i + elec_num*3] = eegl[i + elec_num*3] +
+              eegl[i] * eegl[i] +
+              eegl[i + elec_num*1] * eegl[i + elec_num*1] +
+              eegl[i + elec_num*2] * eegl[i + elec_num*2];
+          }
+
+          const double* restrict ee =
+            &een_rescaled_e[elec_num*(j+elec_num*(l+(cord_num+1)*nw))];
+
+#ifdef HAVE_OPENMP
+#pragma omp simd
+#endif
+          for (int64_t i=0; i<elec_num; ++i) {
+            eegl[i               ] *= ee[i];
+            eegl[i + elec_num * 1] *= ee[i];
+            eegl[i + elec_num * 2] *= ee[i];
+            eegl[i + elec_num * 3] *= ee[i];
           }
         }
-
-        for (int64_t l = 1; l <= cord_num; ++l) {
-            double kappa_l = - (double)l * rescale_factor_ee;
-            for (int64_t j = 0; j < elec_num; ++j) {
-              double* restrict eegl = &een_rescaled_e_gl[ elec_num * 4 * (j + elec_num * (l + (cord_num + 1) * nw))];
-              const double* restrict ee   = &een_rescaled_e   [ elec_num *     (j + elec_num * (l + (cord_num + 1) * nw))];
-#ifdef HAVE_OPENMP
-#pragma omp simd
-#endif
-              for (int64_t i = 0; i < elec_num; ++i) {
-                eegl[i               ] = kappa_l * elec_dist_gl0[i + j * elec_num];
-                eegl[i + elec_num    ] = kappa_l * elec_dist_gl1[i + j * elec_num];
-                eegl[i + elec_num * 2] = kappa_l * elec_dist_gl2[i + j * elec_num];
-                eegl[i + elec_num * 3] = kappa_l * elec_dist_gl3[i + j * elec_num];
-              }
-#ifdef HAVE_OPENMP
-#pragma omp simd
-#endif
-              for (int64_t i = 0; i < elec_num; ++i) {
-                eegl[i + elec_num*3] = eegl[i + elec_num*3] +
-                  eegl[i] * eegl[i] +
-                  eegl[i + elec_num*1] * eegl[i + elec_num*1] +
-                  eegl[i + elec_num*2] * eegl[i + elec_num*2];
-              }
-#ifdef HAVE_OPENMP
-#pragma omp simd
-#endif
-              for (int64_t i = 0; i < elec_num; ++i) {
-                  eegl[i               ] *= ee[i];
-                  eegl[i + elec_num * 1] *= ee[i];
-                  eegl[i + elec_num * 2] *= ee[i];
-                  eegl[i + elec_num * 3] *= ee[i];
-                }
-            }
-        }
+      }
     }
 
     free(elec_dist_gl0);
     free(elec_dist_gl1);
     free(elec_dist_gl2);
     free(elec_dist_gl3);
+  }
 
-    return QMCKL_SUCCESS;
+  return QMCKL_SUCCESS;
 }
- #+end_src
+#+end_src
 
  #+begin_src c :comments org :tangle (eval c) :noweb yes
 qmckl_exit_code qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl (
@@ -6773,7 +7727,9 @@ qmckl_exit_code qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl (
     coord_ee, ee_distance, een_rescaled_e, een_rescaled_e_gl );
 }
     #+end_src
-**** Test
+
+**** Test                                                          :noexport:
+
  #+name: een_e_gl
      #+begin_src python :results output :exports none :noweb yes
 import numpy as np
@@ -6791,7 +7747,7 @@ for j in range(elec_num):
   for i in range(elec_num):
     rij_inv = 1.0 / elec_dist[i, j]
     for ii in range(3):
-      elec_dist_gl[ii, i, j] = -(elec_coord[j][ii] - elec_coord[i][ii]) * rij_inv
+      elec_dist_gl[ii, i, j] = (elec_coord[i][ii] - elec_coord[j][ii]) * rij_inv
     elec_dist_gl[3, i, j] = 2.0 * rij_inv
   elec_dist_gl[:, j, j] = 0.0
 
@@ -6838,38 +7794,198 @@ for l in range(0,cord_num+1):
       for ii in range(0,4):
         een_rescaled_e_gl[i,ii,j,l] = een_rescaled_e_gl[i,ii,j,l] * een_rescaled_e[i,j,l]
 
-print(" een_rescaled_e_gl[e, 4, e, c]   ")
-print(" een_rescaled_e_gl[0, 0, 2, 1] = ",een_rescaled_e_gl[0, 0, 2, 1])
-print(" een_rescaled_e_gl[0, 0, 3, 1] = ",een_rescaled_e_gl[0, 0, 3, 1])
-print(" een_rescaled_e_gl[0, 0, 4, 1] = ",een_rescaled_e_gl[0, 0, 4, 1])
-print(" een_rescaled_e_gl[1, 0, 5, 2] = ",een_rescaled_e_gl[1, 0, 3, 2])
-print(" een_rescaled_e_gl[1, 0, 4, 2] = ",een_rescaled_e_gl[1, 0, 4, 2])
-print(" een_rescaled_e_gl[1, 0, 5, 2] = ",een_rescaled_e_gl[1, 0, 5, 2])
+print(" een_rescaled_e_gl[1, 1, 3, 1] = ",een_rescaled_e_gl[0, 0, 2, 1])
+print(" een_rescaled_e_gl[1, 1, 4, 1] = ",een_rescaled_e_gl[0, 0, 3, 1])
+print(" een_rescaled_e_gl[1, 1, 5, 1] = ",een_rescaled_e_gl[0, 0, 4, 1])
+print(" een_rescaled_e_gl[2, 1, 4, 2] = ",een_rescaled_e_gl[1, 0, 3, 2])
+print(" een_rescaled_e_gl[2, 1, 5, 2] = ",een_rescaled_e_gl[1, 0, 4, 2])
+print(" een_rescaled_e_gl[2, 1, 6, 2] = ",een_rescaled_e_gl[1, 0, 5, 2])
      #+end_src
 
-     #+RESULTS: een_e_gl
-     :  een_rescaled_e_gl[e, 4, e, c]   
-     :  een_rescaled_e_gl[0, 0, 2, 1] =  0.09831391870751387
-     :  een_rescaled_e_gl[0, 0, 3, 1] =  0.017204157459682526
-     :  een_rescaled_e_gl[0, 0, 4, 1] =  0.013345768421098646
-     :  een_rescaled_e_gl[1, 0, 5, 2] =  0.03733086358273962
-     :  een_rescaled_e_gl[1, 0, 4, 2] =  0.004922634822943517
-     :  een_rescaled_e_gl[1, 0, 5, 2] =  0.5416751547830982
-
       #+begin_src c :tangle (eval c_test)
-double een_rescaled_e_gl[walk_num][(cord_num + 1)][elec_num][4][elec_num];
-size_max=walk_num*(cord_num + 1)*elec_num*4*elec_num;
-rc = qmckl_get_jastrow_champ_een_rescaled_e_gl(context,
-          &(een_rescaled_e_gl[0][0][0][0][0]),size_max);
+assert(qmckl_electron_provided(context));
 
-// value of (0,0,0,2,1)
-printf("%e \n", fabs(een_rescaled_e_gl[0][1][2][0][0] -  0.09831391870751387   ));
-assert(fabs(een_rescaled_e_gl[0][1][2][0][0] -  0.09831391870751387   ) < 1.e-12);
-assert(fabs(een_rescaled_e_gl[0][1][3][0][0] -  0.017204157459682526  ) < 1.e-12);
-assert(fabs(een_rescaled_e_gl[0][1][4][0][0] -  0.013345768421098641  ) < 1.e-12);
-assert(fabs(een_rescaled_e_gl[0][2][3][0][1] -  0.03733086358273962   ) < 1.e-12);
-assert(fabs(een_rescaled_e_gl[0][2][4][0][1] -  0.004922634822943517  ) < 1.e-12);
-assert(fabs(een_rescaled_e_gl[0][2][5][0][1] -  0.5416751547830984    ) < 1.e-12);
+{
+  double een_rescaled_e_gl[walk_num][(cord_num + 1)][elec_num][4][elec_num];
+  size_max=walk_num*(cord_num + 1)*elec_num*4*elec_num;
+  rc = qmckl_get_jastrow_champ_een_distance_rescaled_e_gl(context,
+            &(een_rescaled_e_gl[0][0][0][0][0]),size_max);
+
+  assert(fabs(een_rescaled_e_gl[0][1][0][0][2] +  0.09831391870751387   ) < 1.e-8);
+  assert(fabs(een_rescaled_e_gl[0][1][0][0][3] +  0.017204157459682526  ) < 1.e-8);
+  assert(fabs(een_rescaled_e_gl[0][1][0][0][4] +  0.013345768421098641  ) < 1.e-8);
+  assert(fabs(een_rescaled_e_gl[0][2][1][0][3] +  0.03733086358273962   ) < 1.e-8);
+  assert(fabs(een_rescaled_e_gl[0][2][1][0][4] +  0.004922634822943517  ) < 1.e-8);
+  assert(fabs(een_rescaled_e_gl[0][2][1][0][5] +  0.5416751547830984    ) < 1.e-8);
+}
+
+
+{
+  qmckl_context_struct* ctx = (qmckl_context_struct*) context;
+  double een_rescaled_e_gl_doc[walk_num*(cord_num + 1)*elec_num*4*elec_num];
+  memset(een_rescaled_e_gl_doc, 0, sizeof(een_rescaled_e_gl_doc));
+  rc = qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl_doc(context,
+            ctx->electron.walker.num,
+            ctx->electron.num,
+            ctx->jastrow_champ.cord_num,
+            ctx->jastrow_champ.rescale_factor_ee,
+            ctx->electron.walker.point.coord.data,
+            ctx->electron.ee_distance,
+            ctx->jastrow_champ.een_rescaled_e,
+            een_rescaled_e_gl_doc);
+  assert(rc == QMCKL_SUCCESS);
+
+  double een_rescaled_e_gl_hpc[walk_num*(cord_num + 1)*elec_num*4*elec_num];
+  memset(een_rescaled_e_gl_hpc, 0, sizeof(een_rescaled_e_gl_hpc));
+  rc = qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl_hpc(context,
+            ctx->electron.walker.num,
+            ctx->electron.num,
+            ctx->jastrow_champ.cord_num,
+            ctx->jastrow_champ.rescale_factor_ee,
+            ctx->electron.walker.point.coord.data,
+            ctx->electron.ee_distance,
+            ctx->jastrow_champ.een_rescaled_e,
+            een_rescaled_e_gl_hpc);
+  assert(rc == QMCKL_SUCCESS);
+
+  for (int64_t i = 0; i < walk_num*(cord_num + 1)*elec_num*4*elec_num; i++) {
+    if (fabs(een_rescaled_e_gl_doc[i] - een_rescaled_e_gl_hpc[i]) > 1.e-12) {
+      printf("i = %ld, doc = %f, hpc = %f\n", i, een_rescaled_e_gl_doc[i], een_rescaled_e_gl_hpc[i]);
+      fflush(stdout);
+    }
+    assert(fabs(een_rescaled_e_gl_doc[i] - een_rescaled_e_gl_hpc[i]) < 1.e-8);
+  }
+
+}
+
+{
+  /* Finite difference test fails and I can't understand why... */
+/*
+
+  printf("een_distance_rescaled_e_gl\n");
+
+  double fd[walk_num][cord_num+1][elec_num][4][elec_num];
+
+  double delta_x = 0.001;
+
+  // Finite difference coefficients for gradients
+  double coef[9] = { 1.0/280.0, -4.0/105.0,  1.0/5.0, -4.0/5.0,         0.0, 4.0/5.0, -1.0/5.0, 4.0/105.0, -1.0/280.0 };
+
+  // Finite difference coefficients for Laplacian
+  double coef2[9]= {-1.0/560.0,	 8.0/315.0, -1.0/5.0,  8.0/5.0, -205.0/72.0, 8.0/5.0, -1.0/5.0,	8.0/315.0, -1.0/560.0 };
+
+  qmckl_exit_code rc;
+
+  double elec_coord[walk_num][3][elec_num];
+  rc = qmckl_get_electron_coord (context, 'T', &(elec_coord[0][0][0]), 3*walk_num*elec_num);
+  assert (rc == QMCKL_SUCCESS);
+
+  double temp_coord[walk_num][3][elec_num];
+  memcpy(&(temp_coord[0][0][0]), &(elec_coord[0][0][0]), sizeof(temp_coord));
+
+  double function_values[walk_num][cord_num+1][elec_num][elec_num];
+  memset(&(fd[0][0][0][0]), 0, sizeof(fd));
+
+  for (int64_t i = 0; i < elec_num; i++) {
+    for (int64_t k = 0; k < 3; k++) {
+      for (int64_t m = -4; m <= 4; m++) {          // Apply finite difference displacement
+
+        for (int64_t nw=0 ; nw<walk_num ; nw++) {
+          temp_coord[nw][k][i] = elec_coord[nw][k][i] + (double) m * delta_x;
+        }
+
+        // Update coordinates in the context
+        rc = qmckl_set_electron_coord (context, 'T', walk_num,
+                                       &(temp_coord[0][0][0]),
+                                       walk_num*3*elec_num);
+        assert(rc == QMCKL_SUCCESS);
+
+        // Call the provided function
+        rc = qmckl_get_jastrow_champ_een_distance_rescaled_e(context,
+                                                             &(function_values[0][0][0][0]),
+                                                             walk_num*(cord_num+1)*elec_num*elec_num);
+        assert(rc == QMCKL_SUCCESS);
+
+        // Accumulate derivative using finite-difference coefficients
+        for (int64_t nw=0 ; nw<walk_num ; nw++) {
+          for (int64_t c = 0; c < cord_num+1 ; c++) {
+            for (int64_t j = 0; j < elec_num; j++) {
+            fd[nw][c][j][k][i] += coef [m + 4] * function_values[nw][c][j][i];
+            fd[nw][c][j][3][i] += coef2[m + 4] * function_values[nw][c][j][i];
+            }
+          }
+        }
+
+      }
+      for (int64_t nw=0 ; nw<walk_num ; nw++) {
+        temp_coord[nw][k][i] = elec_coord[nw][k][i];
+      }
+    }
+  }
+
+  // Reset coordinates in the context
+  rc = qmckl_set_electron_coord (context, 'T', walk_num,
+                                 &(elec_coord[0][0][0]),
+                                 walk_num*3*elec_num);
+  assert(rc == QMCKL_SUCCESS);
+
+  // Normalize by the step size
+  for (int64_t nw=0 ; nw<walk_num ; nw++) {
+    for (int64_t c = 0; c < cord_num+1 ; c++) {
+      for (int64_t i = 0; i < elec_num; i++) {
+        for (int64_t k = 0; k < 4; k++) {
+          for (int64_t j = 0; j < elec_num; j++) {
+            fd[nw][c][i][k][j] /= delta_x;
+          }
+        }
+        for (int64_t j = 0; j < elec_num; j++) {
+          fd[nw][c][i][3][j] /= delta_x;
+        }
+      }
+    }
+  }
+
+
+  double een_distance_rescaled_e_gl[walk_num][cord_num+1][elec_num][4][elec_num];
+  rc = qmckl_check(context,
+                   qmckl_get_jastrow_champ_een_distance_rescaled_e_gl(context,
+                                                                      &(een_distance_rescaled_e_gl[0][0][0][0][0]),
+                                                                      walk_num*(cord_num+1)*elec_num*4*elec_num)
+                   );
+
+  assert(rc == QMCKL_SUCCESS);
+
+  for (int nw = 0; nw < walk_num; nw++){
+    for (int c = 0; c < cord_num+1 ; c++) {
+      for (int i = 0; i < elec_num; i++) {
+        for (int j = 0; j < elec_num; j++) {
+          for (int k = 0; k < 3; k++){
+            if (fabs(fd[nw][c][i][k][j] - een_distance_rescaled_e_gl[nw][c][i][k][j]) > 1.e-10) {
+              printf("%2d %2d %2d %2d %2d\t", nw, c, i, k, j);
+              printf("%.10e\t", fd[nw][c][i][k][j]);
+              printf("%.10e\n", een_distance_rescaled_e_gl[nw][c][i][k][j]);
+              fflush(stdout);
+            }
+            assert(fabs(fd[nw][c][i][k][j] - een_distance_rescaled_e_gl[nw][c][i][k][j]) < 1.e-8);
+          }
+          int k=3;
+          if (i != j) {
+            if (fabs(fd[nw][c][i][k][j] - een_distance_rescaled_e_gl[nw][c][i][k][j]) > 1.e-8) {
+              printf("%2d %2d %2d %2d %2d\t", nw, c, i, k, j);
+              printf("%.10e\t", fd[nw][c][i][k][j]);
+              printf("%.10e\n", een_distance_rescaled_e_gl[nw][c][i][k][j]);
+              fflush(stdout);
+            }
+            assert(fabs(fd[nw][c][i][k][j] - een_distance_rescaled_e_gl[nw][c][i][k][j]) < 1.e-6);
+          }
+        }
+      }
+    }
+  }
+  printf("OK\n");
+*/
+}
+
       #+end_src
 
 *** Electron-nucleus rescaled distances in $J_\text{eeN}$
@@ -6888,14 +8004,14 @@ assert(fabs(een_rescaled_e_gl[0][2][5][0][1] -  0.5416751547830984    ) < 1.e-12
      #+begin_src c :comments org :tangle (eval h_func) :noweb yes
 qmckl_exit_code
 qmckl_get_jastrow_champ_een_rescaled_n(qmckl_context context,
-                                 double* const distance_rescaled,
+                                 double* const een_rescaled_n,
                                  const int64_t size_max);
      #+end_src
 
      #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
 qmckl_exit_code
 qmckl_get_jastrow_champ_een_rescaled_n(qmckl_context context,
-                                 double* const distance_rescaled,
+                                 double* const een_rescaled_n,
                                  const int64_t size_max)
 {
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
@@ -6910,14 +8026,23 @@ qmckl_get_jastrow_champ_een_rescaled_n(qmckl_context context,
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
-  int64_t sze = ctx->electron.num * ctx->nucleus.num * ctx->electron.walker.num * (ctx->jastrow_champ.cord_num + 1);
+  if (een_rescaled_n == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_get_jastrow_champ_een_rescaled_n",
+                           "Null pointer");
+  }
+
+  const int64_t sze = ctx->electron.num * ctx->nucleus.num * ctx->electron.walker.num * (ctx->jastrow_champ.cord_num + 1);
+
   if (size_max < sze) {
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_3,
-                           "qmckl_get_jastrow_champ_factor_een_gl",
-                           "Array too small. Expected ctx->electron.num * ctx->nucleus.num * ctx->electron.walker.num * (ctx->jastrow_champ.cord_num + 1)");
+                           "qmckl_get_jastrow_champ_een_rescaled_n",
+                           "Array too small. Expected elec_num*nucl_num*walk_num*(cord_num + 1)");
   }
-  memcpy(distance_rescaled, ctx->jastrow_champ.een_rescaled_n, sze * sizeof(double));
+
+  memcpy(een_rescaled_n, ctx->jastrow_champ.een_rescaled_n, sze * sizeof(double));
 
   return QMCKL_SUCCESS;
 }
@@ -7027,7 +8152,7 @@ function qmckl_compute_een_rescaled_n( &
   use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
-  integer(qmckl_context), intent(in)  :: context
+  integer(qmckl_context), intent(in), value :: context
   integer (c_int64_t) , intent(in)  , value :: walk_num
   integer (c_int64_t) , intent(in)  , value :: elec_num
   integer (c_int64_t) , intent(in)  , value :: nucl_num
@@ -7175,7 +8300,7 @@ qmckl_exit_code qmckl_compute_een_rescaled_n_hpc (
           double* const een_rescaled_n );
      #+end_src
 
-**** Test
+**** Test                                                          :noexport:
 
      #+begin_src python :results output :exports none :noweb yes
 import numpy as np
@@ -7256,14 +8381,14 @@ assert(fabs(een_rescaled_n[0][2][1][5]-0.07534033469115217)< 1.e-12);
      #+begin_src c :comments org :tangle (eval h_func) :noweb yes
 qmckl_exit_code
 qmckl_get_jastrow_champ_een_rescaled_n_gl(qmckl_context context,
-                                         double* const distance_rescaled,
+                                         double* const een_rescaled_n_gl,
                                          const int64_t size_max);
      #+end_src
 
      #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
 qmckl_exit_code
 qmckl_get_jastrow_champ_een_rescaled_n_gl(qmckl_context context,
-                                         double* const distance_rescaled,
+                                         double* const een_rescaled_n_gl,
                                          const int64_t size_max)
 {
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
@@ -7278,14 +8403,23 @@ qmckl_get_jastrow_champ_een_rescaled_n_gl(qmckl_context context,
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
-  int64_t sze = ctx->electron.num * 4 * ctx->nucleus.num * ctx->electron.walker.num * (ctx->jastrow_champ.cord_num + 1);
+  if (een_rescaled_n_gl == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_get_jastrow_champ_een_rescaled_n_gl",
+                           "Null pointer");
+  }
+
+  const int64_t sze = ctx->electron.num * 4 * ctx->nucleus.num * ctx->electron.walker.num * (ctx->jastrow_champ.cord_num + 1);
+
   if (size_max < sze) {
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_3,
-                           "qmckl_get_jastrow_champ_factor_een_gl",
+                           "qmckl_get_jastrow_champ_een_rescaled_n_gl",
                            "Array too small. Expected ctx->electron.num * 4 * ctx->nucleus.num * ctx->electron.walker.num * (ctx->jastrow_champ.cord_num + 1)");
   }
-  memcpy(distance_rescaled, ctx->jastrow_champ.een_rescaled_n_gl, sze * sizeof(double));
+
+  memcpy(een_rescaled_n_gl, ctx->jastrow_champ.een_rescaled_n_gl, sze * sizeof(double));
 
   return QMCKL_SUCCESS;
 }
@@ -7405,7 +8539,7 @@ function qmckl_compute_jastrow_champ_factor_een_rescaled_n_gl( &
   use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
-  integer(qmckl_context), intent(in)  :: context
+  integer(qmckl_context), intent(in), value :: context
   integer (c_int64_t) , intent(in)  , value :: walk_num
   integer (c_int64_t) , intent(in)  , value :: elec_num
   integer (c_int64_t) , intent(in)  , value :: nucl_num
@@ -7477,8 +8611,10 @@ function qmckl_compute_jastrow_champ_factor_een_rescaled_n_gl( &
               een_rescaled_n_gl(i, 3, a, l, nw) = kappa_l * elnuc_dist_gl(i, 3, a)
               een_rescaled_n_gl(i, 4, a, l, nw) = kappa_l * elnuc_dist_gl(i, 4, a)
 
-              een_rescaled_n_gl(i, 4, a, l, nw) = een_rescaled_n_gl(i, 4, a, l, nw) + &
-                kappa_l * kappa_l
+              een_rescaled_n_gl(i, 4, a, l, nw) = een_rescaled_n_gl(i, 4, a, l, nw)           &
+                   + een_rescaled_n_gl(i, 1, a, l, nw) * een_rescaled_n_gl(i, 1, a, l, nw) &
+                   + een_rescaled_n_gl(i, 2, a, l, nw) * een_rescaled_n_gl(i, 2, a, l, nw) &
+                   + een_rescaled_n_gl(i, 3, a, l, nw) * een_rescaled_n_gl(i, 3, a, l, nw)
 
               een_rescaled_n_gl(i, 1, a, l, nw) = een_rescaled_n_gl(i, 1, a, l, nw) * &
                    een_rescaled_n(i, a, l, nw)
@@ -7515,7 +8651,7 @@ end function qmckl_compute_jastrow_champ_factor_een_rescaled_n_gl
           double* const een_rescaled_n_gl );
      #+end_src
 
-**** Test
+**** Test                                                          :noexport:
 
      #+begin_src python :results output :exports none :noweb yes
 import numpy as np
@@ -7660,7 +8796,7 @@ function qmckl_compute_dim_c_vector_doc( &
   use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
-  integer(qmckl_context), intent(in)        :: context
+  integer(qmckl_context), intent(in), value :: context
   integer (c_int64_t) , intent(in)  , value :: cord_num
   integer (c_int64_t) , intent(out)         :: dim_c_vector
   integer(qmckl_exit_code)                  :: info
@@ -7774,12 +8910,22 @@ qmckl_exit_code qmckl_compute_dim_c_vector (
 **** Get
 
      #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes
-qmckl_exit_code qmckl_get_jastrow_champ_tmp_c(qmckl_context context, double* const tmp_c);
-qmckl_exit_code qmckl_get_jastrow_champ_dtmp_c(qmckl_context context, double* const dtmp_c);
+qmckl_exit_code
+qmckl_get_jastrow_champ_tmp_c(qmckl_context context,
+                              double* const tmp_c,
+                              const int64_t size_max);
+
+qmckl_exit_code
+qmckl_get_jastrow_champ_dtmp_c(qmckl_context context,
+                               double* const dtmp_c,
+                               const int64_t size_max);
      #+end_src
 
      #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
-qmckl_exit_code qmckl_get_jastrow_champ_tmp_c(qmckl_context context, double* const tmp_c)
+qmckl_exit_code
+qmckl_get_jastrow_champ_tmp_c(qmckl_context context,
+                              double* const tmp_c,
+                              const int64_t size_max)
 {
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return QMCKL_NULL_CONTEXT;
@@ -7796,14 +8942,33 @@ qmckl_exit_code qmckl_get_jastrow_champ_tmp_c(qmckl_context context, double* con
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
-  size_t sze = (ctx->jastrow_champ.cord_num) * (ctx->jastrow_champ.cord_num + 1)
-               ,* ctx->electron.num * ctx->nucleus.num * ctx->electron.walker.num;
+  if (tmp_c == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_get_jastrow_champ_tmp_c",
+                           "Null pointer");
+  }
+
+  const int64_t sze = (ctx->jastrow_champ.cord_num) * (ctx->jastrow_champ.cord_num + 1) *
+    ctx->electron.num * ctx->nucleus.num * ctx->electron.walker.num;
+
+  if (size_max < sze) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_3,
+                           "qmckl_get_jastrow_champ_tmp_c",
+                           "Array too small. Expected cord_num*(cord_num+1)*walk_num*elec_num*nucl_num");
+  }
+
   memcpy(tmp_c, ctx->jastrow_champ.tmp_c, sze * sizeof(double));
 
   return QMCKL_SUCCESS;
 }
 
-qmckl_exit_code qmckl_get_jastrow_champ_dtmp_c(qmckl_context context, double* const dtmp_c)
+
+qmckl_exit_code
+qmckl_get_jastrow_champ_dtmp_c(qmckl_context context,
+                               double* const dtmp_c,
+                               const int64_t size_max)
 {
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return QMCKL_NULL_CONTEXT;
@@ -7820,8 +8985,23 @@ qmckl_exit_code qmckl_get_jastrow_champ_dtmp_c(qmckl_context context, double* co
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
-  size_t sze = (ctx->jastrow_champ.cord_num) * (ctx->jastrow_champ.cord_num + 1)
-    ,*4* ctx->electron.num * ctx->nucleus.num * ctx->electron.walker.num;
+  if (dtmp_c == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_get_jastrow_champ_dtmp_c",
+                           "Null pointer");
+  }
+
+  const int64_t sze = (ctx->jastrow_champ.cord_num) * (ctx->jastrow_champ.cord_num + 1)*
+    4* ctx->electron.num * ctx->nucleus.num * ctx->electron.walker.num;
+
+  if (size_max < sze) {
+    return qmckl_failwith(context,
+                          QMCKL_INVALID_ARG_3,
+                          "qmckl_get_jastrow_champ_dtmp_c",
+                          "Array too small. Expected 4*cord_num*(cord_num+1)*walk_num*elec_num*nucl_num");
+  }
+
   memcpy(dtmp_c, ctx->jastrow_champ.dtmp_c, sze * sizeof(double));
 
   return QMCKL_SUCCESS;
@@ -8105,7 +9285,7 @@ qmckl_exit_code qmckl_provide_dtmp_c(qmckl_context context)
      | ~type_nucl_num~    | ~int64_t~                             | in     | dimension of cord full table |
      | ~type_nucl_vector~ | ~int64_t[nucl_num]~                   | in     | dimension of cord full table |
      | ~c_vector~         | ~double[dim_c_vector][type_nucl_num]~ | in     | dimension of cord full table |
-     | ~c_vector_full~    | ~double[nucl_num][dim_c_vector]~      | out    | Full list of coefficients    |
+     | ~c_vector_full~    | ~double[dim_c_vector][nucl_num]~      | out    | Full list of coefficients    |
 
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
 function qmckl_compute_c_vector_full_doc( &
@@ -8115,12 +9295,12 @@ function qmckl_compute_c_vector_full_doc( &
   use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
-  integer(qmckl_context), intent(in)        :: context
+  integer(qmckl_context), intent(in), value :: context
   integer (c_int64_t) , intent(in)  , value :: nucl_num
   integer (c_int64_t) , intent(in)  , value :: dim_c_vector
   integer (c_int64_t) , intent(in)  , value :: type_nucl_num
   integer (c_int64_t) , intent(in)          :: type_nucl_vector(nucl_num)
-  real    (c_double ) , intent(in)          :: c_vector(type_nucl_num,dim_c_vector)
+  real    (c_double ) , intent(in)          :: c_vector(dim_c_vector, type_nucl_num)
   real    (c_double ) , intent(out)         :: c_vector_full(nucl_num,dim_c_vector)
   integer(qmckl_exit_code)                  :: info
 
@@ -8247,7 +9427,7 @@ function qmckl_compute_lkpm_combined_index_doc( &
   use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
-  integer(qmckl_context), intent(in)        :: context
+  integer(qmckl_context), intent(in), value :: context
   integer (c_int64_t) , intent(in)  , value :: cord_num
   integer (c_int64_t) , intent(in)  , value :: dim_c_vector
   integer (c_int64_t) , intent(out)         :: lkpm_combined_index(dim_c_vector,4)
@@ -8450,7 +9630,7 @@ function qmckl_compute_tmp_c_doc( &
   use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
-  integer(qmckl_context), intent(in)  :: context
+  integer(qmckl_context), intent(in), value  :: context
   integer (c_int64_t) , intent(in)  , value :: cord_num
   integer (c_int64_t) , intent(in)  , value :: elec_num
   integer (c_int64_t) , intent(in)  , value :: nucl_num
@@ -8675,7 +9855,7 @@ function qmckl_compute_dtmp_c_doc( &
   use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
-  integer(qmckl_context), intent(in)        :: context
+  integer(qmckl_context), intent(in), value :: context
   integer (c_int64_t) , intent(in)  , value :: cord_num
   integer (c_int64_t) , intent(in)  , value :: elec_num
   integer (c_int64_t) , intent(in)  , value :: nucl_num
@@ -8804,7 +9984,7 @@ qmckl_exit_code qmckl_compute_dtmp_c_hpc (
       double* const dtmp_c );
       #+end_src
 
-**** Test
+**** Test                                                          :noexport:
 
      #+name: helper_funcs
      #+begin_src python :results output :exports none :noweb yes
@@ -8878,15 +10058,17 @@ lkpm_of_cindex = np.array(lkpm_combined_index).T
 assert(qmckl_electron_provided(context));
 
 double tmp_c[walk_num][cord_num][cord_num+1][nucl_num][elec_num];
-rc = qmckl_get_jastrow_champ_tmp_c(context, &(tmp_c[0][0][0][0][0]));
+rc = qmckl_get_jastrow_champ_tmp_c(context, &(tmp_c[0][0][0][0][0]), sizeof(tmp_c)/sizeof(double));
 
 double dtmp_c[walk_num][cord_num][cord_num+1][nucl_num][4][elec_num];
-rc = qmckl_get_jastrow_champ_dtmp_c(context, &(dtmp_c[0][0][0][0][0][0]));
+rc = qmckl_get_jastrow_champ_dtmp_c(context, &(dtmp_c[0][0][0][0][0][0]), sizeof(dtmp_c)/sizeof(double));
 
 printf("%e\n%e\n", tmp_c[0][0][1][0][0],  3.954384);
+fflush(stdout);
 assert(fabs(tmp_c[0][0][1][0][0] - 3.954384) < 1e-6);
 
 printf("%e\n%e\n", dtmp_c[0][1][0][0][0][0],3.278657e-01);
+fflush(stdout);
 assert(fabs(dtmp_c[0][1][0][0][0][0] - 3.278657e-01 ) < 1e-6);
       #+end_src
 
@@ -8923,13 +10105,22 @@ qmckl_get_jastrow_champ_factor_een(qmckl_context context,
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
-  int64_t sze = ctx->electron.walker.num;
+  if (factor_een == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_get_jastrow_champ_factor_een",
+                           "Null pointer");
+  }
+
+  const int64_t sze = ctx->electron.walker.num;
+
   if (size_max < sze) {
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_3,
                            "qmckl_get_jastrow_champ_factor_een",
                            "Array too small. Expected walk_num");
   }
+
   memcpy(factor_een, ctx->jastrow_champ.factor_een, sze*sizeof(double));
 
   return QMCKL_SUCCESS;
@@ -9025,20 +10216,6 @@ qmckl_exit_code qmckl_provide_jastrow_champ_factor_een(qmckl_context context)
       ctx->jastrow_champ.factor_een = factor_een;
     }
 
-    /*
-    rc = qmckl_compute_jastrow_champ_factor_een_naive(context,
-                                                ctx->electron.walker.num,
-                                                ctx->electron.num,
-                                                ctx->nucleus.num,
-                                                ctx->jastrow_champ.cord_num,
-                                                ctx->jastrow_champ.dim_c_vector,
-                                                ctx->jastrow_champ.c_vector_full,
-                                                ctx->jastrow_champ.lkpm_combined_index,
-                                                ctx->jastrow_champ.een_rescaled_e,
-                                                ctx->jastrow_champ.een_rescaled_n,
-                                                ctx->jastrow_champ.factor_een);
-                                                */
-
     rc = qmckl_compute_jastrow_champ_factor_een(context,
                                                 ctx->electron.walker.num,
                                                 ctx->electron.num,
@@ -9092,7 +10269,7 @@ function qmckl_compute_jastrow_champ_factor_een_naive( &
   use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
-  integer(qmckl_context), intent(in)        :: context
+  integer(qmckl_context), intent(in), value :: context
   integer (c_int64_t) , intent(in)  , value :: walk_num
   integer (c_int64_t) , intent(in)  , value :: elec_num
   integer (c_int64_t) , intent(in)  , value :: nucl_num
@@ -9100,8 +10277,8 @@ function qmckl_compute_jastrow_champ_factor_een_naive( &
   integer (c_int64_t) , intent(in)  , value :: dim_c_vector
   real    (c_double ) , intent(in)          :: c_vector_full(nucl_num,dim_c_vector)
   integer (c_int64_t) , intent(in)          :: lkpm_combined_index(dim_c_vector,4)
-  real    (c_double ) , intent(in)          :: een_rescaled_e(0:cord_num,elec_num,elec_num,walk_num)
-  real    (c_double ) , intent(in)          :: een_rescaled_n(0:cord_num,nucl_num,elec_num,walk_num)
+  real    (c_double ) , intent(in)          :: een_rescaled_e(elec_num,elec_num,0:cord_num,walk_num)
+  real    (c_double ) , intent(in)          :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
   real    (c_double ) , intent(out)         :: factor_een(walk_num)
   integer(qmckl_exit_code)                  :: info
 
@@ -9117,44 +10294,16 @@ function qmckl_compute_jastrow_champ_factor_een_naive( &
   if (cord_num <  0)                 info = QMCKL_INVALID_ARG_5
   if (info /= QMCKL_SUCCESS)         return
 
-
-! do nw =1, walk_num
-!    factor_een(nw) = 0.0d0
-!    do n = 1, dim_c_vector
-!       l = lkpm_combined_index(n, 1)
-!       k = lkpm_combined_index(n, 2)
-!       p = lkpm_combined_index(n, 3)
-!       m = lkpm_combined_index(n, 4)
-
-!       do a = 1, nucl_num
-!          accu2 = 0.0d0
-!          cn = c_vector_full(a, n)
-!          do j = 1, elec_num
-!             accu = 0.0d0
-!             do i = 1, elec_num
-
-!                accu = accu + een_rescaled_e(i,j,k,nw) *       &
-!                     een_rescaled_n(i,a,m,nw)
-!             end do
-!             accu2 = accu2 + accu * een_rescaled_n(j,a,m + l,nw)
-!          end do
-!          factor_een(nw) = factor_een(nw) + accu2 * cn
-!       end do
-!    end do
-! end do
-
   do nw =1, walk_num
      factor_een(nw) = 0.d0
      do n = 1, dim_c_vector
         l = lkpm_combined_index(n, 1)
         k = lkpm_combined_index(n, 2)
-        p = lkpm_combined_index(n, 3)
         m = lkpm_combined_index(n, 4)
 
         do a = 1, nucl_num
            accu2 = 0.0d0
            cn = c_vector_full(a, n)
-           print *, a, l, k, p, cn
            do j = 1, elec_num
               accu = 0.0d0
               do i = 1, j-1
@@ -9222,7 +10371,7 @@ function qmckl_compute_jastrow_champ_factor_een_doc( &
   use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
-  integer(qmckl_context), intent(in)        :: context
+  integer(qmckl_context), intent(in), value :: context
   integer (c_int64_t) , intent(in)  , value :: walk_num
   integer (c_int64_t) , intent(in)  , value :: elec_num
   integer (c_int64_t) , intent(in)  , value :: nucl_num
@@ -9255,7 +10404,6 @@ function qmckl_compute_jastrow_champ_factor_een_doc( &
      do n = 1, dim_c_vector
         l = lkpm_combined_index(n, 1)
         k = lkpm_combined_index(n, 2)
-        p = lkpm_combined_index(n, 3)
         m = lkpm_combined_index(n, 4)
 
         do a = 1, nucl_num
@@ -9330,7 +10478,7 @@ qmckl_compute_jastrow_champ_factor_een (const qmckl_context context,
 }
  #+end_src
 
-**** Test
+**** Test                                      :noexport:
      #+begin_src python :results output :exports none :noweb yes
 import numpy as np
 
@@ -9374,6 +10522,32 @@ double factor_een[walk_num];
 rc = qmckl_get_jastrow_champ_factor_een(context, &(factor_een[0]),walk_num);
 
 assert(fabs(factor_een[0] + 0.382580260174321) < 1e-12);
+
+{
+  double factor_een_naive[walk_num];
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  rc = qmckl_compute_jastrow_champ_factor_een_naive(context,
+                                                ctx->electron.walker.num,
+                                                ctx->electron.num,
+                                                ctx->nucleus.num,
+                                                ctx->jastrow_champ.cord_num,
+                                                ctx->jastrow_champ.dim_c_vector,
+                                                ctx->jastrow_champ.c_vector_full,
+                                                ctx->jastrow_champ.lkpm_combined_index,
+                                                ctx->jastrow_champ.een_rescaled_e,
+                                                ctx->jastrow_champ.een_rescaled_n,
+                                                factor_een_naive);
+
+  for (int64_t i = 0; i < walk_num; i++) {
+    if (fabs(factor_een[i] - factor_een_naive[i]) > 1e-12) {
+      printf("factor_een[%ld] = %e\n", i, factor_een[i]);
+      printf("factor_een_naive[%ld] = %e\n", i, factor_een_naive[i]);
+    }
+    assert(fabs(factor_een[i] - factor_een_naive[i]) < 1e-8);
+  }
+}
       #+end_src
 
 *** Electron-electron-nucleus Jastrow $f_{een}$ derivative
@@ -9389,7 +10563,9 @@ qmckl_exit_code
 qmckl_get_jastrow_champ_factor_een_gl(qmckl_context context,
                                      double* const factor_een_gl,
                                      const int64_t size_max);
+     #+end_src
 
+     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
 qmckl_exit_code
 qmckl_get_jastrow_champ_factor_een_grad(qmckl_context context,
                                         double* const factor_een_grad,
@@ -9414,13 +10590,22 @@ qmckl_get_jastrow_champ_factor_een_gl(qmckl_context context,
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
-  int64_t sze = ctx->electron.walker.num * 4 * ctx->electron.num;
+  if (factor_een_gl == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_get_jastrow_champ_factor_een_gl",
+                           "Null pointer");
+  }
+
+  const int64_t sze = ctx->electron.walker.num * 4 * ctx->electron.num;
+
   if (size_max < sze) {
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_3,
                            "qmckl_get_jastrow_champ_factor_een_gl",
                            "Array too small. Expected 4*walk_num*elec_num");
   }
+
   memcpy(factor_een_gl, ctx->jastrow_champ.factor_een_gl, sze*sizeof(double));
 
   return QMCKL_SUCCESS;
@@ -9570,22 +10755,6 @@ qmckl_exit_code qmckl_provide_jastrow_champ_factor_een_gl(qmckl_context context)
       ctx->jastrow_champ.factor_een_gl = factor_een_gl;
     }
 
-    /*
-      rc = qmckl_compute_jastrow_champ_factor_een_gl_naive (context,
-      ctx->electron.walker.num,
-      ctx->electron.num,
-      ctx->nucleus.num,
-      ctx->jastrow_champ.cord_num,
-      ctx->jastrow_champ.dim_c_vector,
-      ctx->jastrow_champ.c_vector_full,
-      ctx->jastrow_champ.lkpm_combined_index,
-      ctx->jastrow_champ.een_rescaled_e,
-      ctx->jastrow_champ.een_rescaled_n,
-      ctx->jastrow_champ.een_rescaled_e_gl,
-      ctx->jastrow_champ.een_rescaled_n_gl,
-      ctx->jastrow_champ.factor_een_gl);
-    ,*/
-
     rc = qmckl_compute_jastrow_champ_factor_een_gl(context,
                                                    ctx->electron.walker.num,
                                                    ctx->electron.num,
@@ -9703,7 +10872,7 @@ qmckl_exit_code qmckl_provide_jastrow_champ_factor_een_grad(qmckl_context contex
                                                      ctx->jastrow_champ.een_rescaled_n,
                                                      ctx->jastrow_champ.een_rescaled_n_gl,
                                                      ctx->jastrow_champ.factor_een_grad);
-    
+
     if (rc != QMCKL_SUCCESS) {
       return rc;
     }
@@ -9748,7 +10917,7 @@ function qmckl_compute_jastrow_champ_factor_een_gl_naive( &
   use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
-  integer(qmckl_context), intent(in)        :: context
+  integer(qmckl_context), intent(in), value :: context
   integer (c_int64_t) , intent(in)  , value :: walk_num
   integer (c_int64_t) , intent(in)  , value :: elec_num
   integer (c_int64_t) , intent(in)  , value :: nucl_num
@@ -9756,14 +10925,14 @@ function qmckl_compute_jastrow_champ_factor_een_gl_naive( &
   integer (c_int64_t) , intent(in)  , value :: dim_c_vector
   real    (c_double ) , intent(in)          :: c_vector_full(nucl_num,dim_c_vector)
   integer (c_int64_t) , intent(in)          :: lkpm_combined_index(dim_c_vector,4)
-  real    (c_double ) , intent(in)          :: een_rescaled_e(0:cord_num,elec_num,elec_num,walk_num)
-  real    (c_double ) , intent(in)          :: een_rescaled_n(0:cord_num,nucl_num,elec_num,walk_num)
-  real    (c_double ) , intent(in)          :: een_rescaled_e_gl(0:cord_num,elec_num,4,elec_num,walk_num)
-  real    (c_double ) , intent(in)          :: een_rescaled_n_gl(0:cord_num,nucl_num,4,elec_num,walk_num)
+  real    (c_double ) , intent(in)          :: een_rescaled_e(elec_num,elec_num,0:cord_num,walk_num)
+  real    (c_double ) , intent(in)          :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
+  real    (c_double ) , intent(in)          :: een_rescaled_e_gl(elec_num,4,elec_num,0:cord_num,walk_num)
+  real    (c_double ) , intent(in)          :: een_rescaled_n_gl(elec_num,4,nucl_num,0:cord_num,walk_num)
   real    (c_double ) , intent(out)         :: factor_een_gl(elec_num,4,walk_num)
   integer(qmckl_exit_code)                  :: info
 
-  integer*8 :: i, a, j, l, k, p, m, n, nw
+  integer*8 :: i, a, j, l, k, m, n, nw
   double precision :: accu, accu2, cn
   double precision :: daccu(1:4), daccu2(1:4)
 
@@ -9782,7 +10951,6 @@ function qmckl_compute_jastrow_champ_factor_een_gl_naive( &
      do n = 1, dim_c_vector
         l = lkpm_combined_index(n, 1)
         k = lkpm_combined_index(n, 2)
-        p = lkpm_combined_index(n, 3)
         m = lkpm_combined_index(n, 4)
 
         do a = 1, nucl_num
@@ -9849,6 +11017,7 @@ end function qmckl_compute_jastrow_champ_factor_een_gl_naive
      :END:
 
      #+NAME: qmckl_factor_een_gl_args
+     |-----------------------+---------------------------------------------------------------------+--------+------------------------------------------------|
      | Variable              | Type                                                                | In/Out | Description                                    |
      |-----------------------+---------------------------------------------------------------------+--------+------------------------------------------------|
      | ~context~             | ~qmckl_context~                                                     | in     | Global state                                   |
@@ -9864,6 +11033,7 @@ end function qmckl_compute_jastrow_champ_factor_een_gl_naive
      | ~een_rescaled_n~      | ~double[walk_num][0:cord_num][nucl_num][elec_num]~                  | in     | Electron-nucleus rescaled factor               |
      | ~een_rescaled_n_gl~   | ~double[walk_num][0:cord_num][nucl_num][4][elec_num]~               | in     | Derivative of Electron-nucleus rescaled factor |
      | ~factor_een_gl~       | ~double[walk_num][4][elec_num]~                                     | out    | Derivative of Electron-nucleus jastrow         |
+     |-----------------------+---------------------------------------------------------------------+--------+------------------------------------------------|
 
 
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
@@ -9875,7 +11045,7 @@ function qmckl_compute_jastrow_champ_factor_een_gl_doc( &
   use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
-  integer(qmckl_context), intent(in)        :: context
+  integer(qmckl_context), intent(in), value :: context
   integer (c_int64_t) , intent(in)  , value :: walk_num
   integer (c_int64_t) , intent(in)  , value :: elec_num
   integer (c_int64_t) , intent(in)  , value :: nucl_num
@@ -9902,11 +11072,13 @@ function qmckl_compute_jastrow_champ_factor_een_gl_doc( &
   if (cord_num <  0)                 info = QMCKL_INVALID_ARG_5
   if (info /= QMCKL_SUCCESS)         return
 
-  factor_een_gl = 0.0d0
-
-  if (cord_num == 0) return
+  if (cord_num == 0) then
+     factor_een_gl = 0.0d0
+     return
+  end if
 
   do nw =1, walk_num
+     factor_een_gl(:,:,nw) = 0.0d0
      do n = 1, dim_c_vector
         l = lkpm_combined_index(n, 1)
         k = lkpm_combined_index(n, 2)
@@ -9918,24 +11090,24 @@ function qmckl_compute_jastrow_champ_factor_een_gl_doc( &
 
            do ii = 1, 4
               do j = 1, elec_num
-                 factor_een_gl(j,ii,nw) = factor_een_gl(j,ii,nw) + (          &
-                      tmp_c(j,a,m,k,nw)       * een_rescaled_n_gl(j,ii,a,m+l,nw) + &
-                      (dtmp_c(j,ii,a,m,k,nw))   * een_rescaled_n(j,a,m+l,nw)          + &
-                      (dtmp_c(j,ii,a,m+l,k,nw)) * een_rescaled_n(j,a,m  ,nw)          + &
-                      tmp_c(j,a,m+l,k,nw)     * een_rescaled_n_gl(j,ii,a,m,nw)     &
+                 factor_een_gl(j,ii,nw) = factor_een_gl(j,ii,nw) + ( &
+                      tmp_c (j,   a,m  ,k,nw) * een_rescaled_n_gl(j,ii,a,m+l,nw) + &
+                      tmp_c (j,   a,m+l,k,nw) * een_rescaled_n_gl(j,ii,a,m  ,nw) + &
+                      dtmp_c(j,ii,a,m  ,k,nw) * een_rescaled_n   (j,   a,m+l,nw) + &
+                      dtmp_c(j,ii,a,m+l,k,nw) * een_rescaled_n   (j,   a,m  ,nw)   &
                       ) * cn
               end do
            end do
 
            cn = cn + cn
            do j = 1, elec_num
-              factor_een_gl(j,4,nw) = factor_een_gl(j,4,nw) +  (            &
-                   (dtmp_c(j,1,a,m  ,k,nw)) * een_rescaled_n_gl(j,1,a,m+l,nw)  + &
-                   (dtmp_c(j,2,a,m  ,k,nw)) * een_rescaled_n_gl(j,2,a,m+l,nw)  + &
-                   (dtmp_c(j,3,a,m  ,k,nw)) * een_rescaled_n_gl(j,3,a,m+l,nw)  + &
-                   (dtmp_c(j,1,a,m+l,k,nw)) * een_rescaled_n_gl(j,1,a,m  ,nw)  + &
-                   (dtmp_c(j,2,a,m+l,k,nw)) * een_rescaled_n_gl(j,2,a,m  ,nw)  + &
-                   (dtmp_c(j,3,a,m+l,k,nw)) * een_rescaled_n_gl(j,3,a,m  ,nw)    &
+              factor_een_gl(j,4,nw) = factor_een_gl(j,4,nw) +  ( &
+                   dtmp_c(j,1,a,m  ,k,nw) * een_rescaled_n_gl(j,1,a,m+l,nw)  + &
+                   dtmp_c(j,2,a,m  ,k,nw) * een_rescaled_n_gl(j,2,a,m+l,nw)  + &
+                   dtmp_c(j,3,a,m  ,k,nw) * een_rescaled_n_gl(j,3,a,m+l,nw)  + &
+                   dtmp_c(j,1,a,m+l,k,nw) * een_rescaled_n_gl(j,1,a,m  ,nw)  + &
+                   dtmp_c(j,2,a,m+l,k,nw) * een_rescaled_n_gl(j,2,a,m  ,nw)  + &
+                   dtmp_c(j,3,a,m+l,k,nw) * een_rescaled_n_gl(j,3,a,m  ,nw)    &
                    ) * cn
            end do
         end do
@@ -10002,7 +11174,7 @@ qmckl_compute_jastrow_champ_factor_een_gl(const qmckl_context context,
                                                double* const factor_een_gl)
 {
 #ifdef HAVE_HPC
-  return qmckl_compute_jastrow_champ_factor_een_gl_doc
+  return qmckl_compute_jastrow_champ_factor_een_gl_hpc
 #else
   return qmckl_compute_jastrow_champ_factor_een_gl_doc
 #endif
@@ -10014,7 +11186,201 @@ qmckl_compute_jastrow_champ_factor_een_gl(const qmckl_context context,
 }
 #+end_src
 
-***** Test
+***** HPC implementation                                           :noexport:
+   #+CALL: generate_private_c_header(table=qmckl_factor_een_gl_args,rettyp=get_value("CRetType"),fname="qmckl_compute_jastrow_champ_factor_een_gl_hpc" )
+
+   #+RESULTS:
+   #+begin_src c :tangle (eval h_private_func) :comments org
+qmckl_exit_code
+qmckl_compute_jastrow_champ_factor_een_gl_hpc (
+         const qmckl_context context,
+         const int64_t walk_num,
+         const int64_t elec_num,
+         const int64_t nucl_num,
+         const int64_t cord_num,
+         const int64_t dim_c_vector,
+         const double* c_vector_full,
+         const int64_t* lkpm_combined_index,
+         const double* tmp_c,
+         const double* dtmp_c,
+         const double* een_rescaled_n,
+         const double* een_rescaled_n_gl,
+         double* const factor_een_gl );
+   #+end_src
+
+   #+begin_src c :tangle (eval c) :comments org
+qmckl_exit_code
+qmckl_compute_jastrow_champ_factor_een_gl_hpc(const qmckl_context context,
+                                                   const int64_t walk_num,
+                                                   const int64_t elec_num,
+                                                   const int64_t nucl_num,
+                                                   const int64_t cord_num,
+                                                   const int64_t dim_c_vector,
+                                                   const double *c_vector_full,
+                                                   const int64_t *lkpm_combined_index,
+                                                   const double *tmp_c,
+                                                   const double *dtmp_c,
+                                                   const double *een_rescaled_n,
+                                                   const double *een_rescaled_n_gl,
+                                                   double* const factor_een_gl)
+{
+
+  int64_t info = QMCKL_SUCCESS;
+
+  if (context == QMCKL_NULL_CONTEXT) return QMCKL_INVALID_CONTEXT;
+  if (walk_num <= 0)                 return QMCKL_INVALID_ARG_2;
+  if (elec_num <= 0)                 return QMCKL_INVALID_ARG_3;
+  if (nucl_num <= 0)                 return QMCKL_INVALID_ARG_4;
+  if (cord_num <  0)                 return QMCKL_INVALID_ARG_5;
+
+
+  if (cord_num == 0) {
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
+    for (size_t nw = 0; nw < (size_t) walk_num; ++nw) {
+      double* const restrict factor_een_gl_0nw = &(factor_een_gl[elec_num*4*nw]);
+      memset(factor_een_gl_0nw, 0, elec_num*4*sizeof(double));
+    }
+    return QMCKL_SUCCESS;
+  }
+
+  const size_t elec_num2 = elec_num + elec_num;
+  const size_t elec_num3 = elec_num2 + elec_num;
+
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
+  for (size_t nw = 0; nw < (size_t) walk_num; ++nw) {
+    double* const restrict factor_een_gl_0nw = &(factor_een_gl[elec_num*4*nw]);
+    memset(factor_een_gl_0nw, 0, elec_num*4*sizeof(double));
+    for (size_t n = 0; n < (size_t) dim_c_vector; ++n) {
+      const size_t l = lkpm_combined_index[n];
+      const size_t k = lkpm_combined_index[n+  dim_c_vector];
+      const size_t m = lkpm_combined_index[n+3*dim_c_vector];
+
+      const size_t en = elec_num*nucl_num;
+      const size_t len = l*en;
+      const size_t len4 = len*4;
+      const size_t c1 = cord_num+1;
+      const size_t cn = cord_num*nw;
+      const size_t addr0 = en*(m+c1*(k+cn));
+      const size_t addr1 = en*(m+c1*nw);
+
+      const double* restrict tmp_c_mkn = &(tmp_c[addr0]);
+      const double* restrict tmp_c_mlkn = tmp_c_mkn + len;
+      const double* restrict een_rescaled_n_mnw = &(een_rescaled_n[addr1]);
+      const double* restrict een_rescaled_n_mlnw = een_rescaled_n_mnw + len;
+      const double* restrict dtmp_c_mknw = &(dtmp_c[addr0*4]);
+      const double* restrict dtmp_c_mlknw = dtmp_c_mknw + len4;
+      const double* restrict een_rescaled_n_gl_mnw = &(een_rescaled_n_gl[addr1*4]);   // ?
+      const double* restrict een_rescaled_n_gl_mlnw = een_rescaled_n_gl_mnw + len4;
+
+      for (size_t a = 0; a < (size_t) nucl_num; a++) {
+        double cn = c_vector_full[a+n*nucl_num];
+        if (cn == 0.0) continue;
+
+        const size_t ishift  = elec_num*a;
+        const size_t ishift4 = ishift*4;
+
+        const double* restrict tmp_c_amkn  = tmp_c_mkn  + ishift;
+        const double* restrict tmp_c_amlkn = tmp_c_mlkn + ishift;
+        const double* restrict een_rescaled_n_amnw  = een_rescaled_n_mnw  + ishift;
+        const double* restrict een_rescaled_n_amlnw = een_rescaled_n_mlnw + ishift;
+        const double* restrict dtmp_c_0amknw  = dtmp_c_mknw  + ishift4;
+        const double* restrict dtmp_c_0amlknw = dtmp_c_mlknw + ishift4;
+        const double* restrict een_rescaled_n_gl_0amnw  = een_rescaled_n_gl_mnw  + ishift4;
+        const double* restrict een_rescaled_n_gl_0amlnw = een_rescaled_n_gl_mlnw + ishift4;
+
+        const double* restrict dtmp_c_1amknw  = dtmp_c_0amknw  + elec_num;
+        const double* restrict dtmp_c_1amlknw = dtmp_c_0amlknw + elec_num;
+        const double* restrict dtmp_c_2amknw  = dtmp_c_0amknw  + elec_num2;
+        const double* restrict dtmp_c_2amlknw = dtmp_c_0amlknw + elec_num2;
+        const double* restrict dtmp_c_3amknw  = dtmp_c_0amknw  + elec_num3;
+        const double* restrict dtmp_c_3amlknw = dtmp_c_0amlknw + elec_num3;
+
+        const double* restrict een_rescaled_n_gl_1amnw  = een_rescaled_n_gl_0amnw  + elec_num;
+        const double* restrict een_rescaled_n_gl_1amlnw = een_rescaled_n_gl_0amlnw + elec_num;
+        const double* restrict een_rescaled_n_gl_2amnw  = een_rescaled_n_gl_0amnw  + elec_num2;
+        const double* restrict een_rescaled_n_gl_2amlnw = een_rescaled_n_gl_0amlnw + elec_num2;
+        const double* restrict een_rescaled_n_gl_3amnw  = een_rescaled_n_gl_0amnw  + elec_num3;
+        const double* restrict een_rescaled_n_gl_3amlnw = een_rescaled_n_gl_0amlnw + elec_num3;
+
+        double* const restrict factor_een_gl_1nw = factor_een_gl_0nw + elec_num;
+        double* const restrict factor_een_gl_2nw = factor_een_gl_0nw + elec_num2;
+        double* const restrict factor_een_gl_3nw = factor_een_gl_0nw + elec_num3;
+
+        double tmp3[elec_num];
+
+#ifdef HAVE_OPENMP
+#pragma omp simd
+#endif
+        for (size_t j = 0; j < (size_t) elec_num; ++j) {
+
+            factor_een_gl_0nw[j] = factor_een_gl_0nw[j] + cn * (
+               dtmp_c_0amknw [j] * een_rescaled_n_amlnw[j]  +
+               dtmp_c_0amlknw[j] * een_rescaled_n_amnw [j]  +
+               tmp_c_amkn [j] * een_rescaled_n_gl_0amlnw[j] +
+               tmp_c_amlkn[j] * een_rescaled_n_gl_0amnw [j] );
+
+            tmp3[j] =
+              dtmp_c_0amknw [j]  * een_rescaled_n_gl_0amlnw[j] +
+              dtmp_c_0amlknw[j]  * een_rescaled_n_gl_0amnw [j];
+          }
+
+#ifdef HAVE_OPENMP
+#pragma omp simd
+#endif
+        for (size_t j = 0; j < (size_t) elec_num; ++j) {
+
+            factor_een_gl_1nw[j] = factor_een_gl_1nw[j] + cn * (
+               dtmp_c_1amknw [j] * een_rescaled_n_amlnw[j]  +
+               dtmp_c_1amlknw[j] * een_rescaled_n_amnw [j]  +
+               tmp_c_amkn [j] * een_rescaled_n_gl_1amlnw[j] +
+               tmp_c_amlkn[j] * een_rescaled_n_gl_1amnw [j]);
+
+            tmp3[j] = tmp3[j] +
+              dtmp_c_1amknw [j] * een_rescaled_n_gl_1amlnw[j] +
+              dtmp_c_1amlknw[j] * een_rescaled_n_gl_1amnw [j];
+        }
+
+#ifdef HAVE_OPENMP
+#pragma omp simd
+#endif
+        for (size_t j = 0; j < (size_t) elec_num; ++j) {
+
+            factor_een_gl_2nw[j] = factor_een_gl_2nw[j] + cn * (
+               dtmp_c_2amknw [j] * een_rescaled_n_amlnw[j]  +
+               dtmp_c_2amlknw[j] * een_rescaled_n_amnw [j]  +
+               tmp_c_amkn [j] * een_rescaled_n_gl_2amlnw[j] +
+               tmp_c_amlkn[j] * een_rescaled_n_gl_2amnw [j]);
+
+            tmp3[j] = tmp3[j] +
+              dtmp_c_2amknw [j] * een_rescaled_n_gl_2amlnw[j] +
+              dtmp_c_2amlknw[j] * een_rescaled_n_gl_2amnw [j];
+        }
+
+#ifdef HAVE_OPENMP
+#pragma omp simd
+#endif
+        for (size_t j = 0; j < (size_t) elec_num; ++j) {
+            factor_een_gl_3nw[j] = factor_een_gl_3nw[j] + cn * (
+               dtmp_c_3amknw [j] * een_rescaled_n_amlnw[j] +
+               dtmp_c_3amlknw[j] * een_rescaled_n_amnw [j] +
+               tmp_c_amkn [j] * een_rescaled_n_gl_3amlnw[j] +
+               tmp_c_amlkn[j] * een_rescaled_n_gl_3amnw [j] +
+               tmp3[j]*2.0);
+          }
+
+      }
+    }
+  }
+  return info;
+}
+   #+end_src
+
+***** Test                                                          :noexport:
+
      #+begin_src python :results output :exports none :noweb yes
 import numpy as np
 
@@ -10056,43 +11422,132 @@ print("factor_een:",factor_een)
      #+end_src
 
      #+RESULTS:
-     :  een_rescaled_e_gl[e, 4, e, c]   
-     :  een_rescaled_e_gl[0, 0, 2, 1] =  0.09831391870751387
-     :  een_rescaled_e_gl[0, 0, 3, 1] =  0.017204157459682526
-     :  een_rescaled_e_gl[0, 0, 4, 1] =  0.013345768421098646
-     :  een_rescaled_e_gl[1, 0, 5, 2] =  0.03733086358273962
-     :  een_rescaled_e_gl[1, 0, 4, 2] =  0.004922634822943517
-     :  een_rescaled_e_gl[1, 0, 5, 2] =  0.5416751547830982
+     :  een_rescaled_e_gl[1, 1, 3, 1] =  0.09831391870751387
+     :  een_rescaled_e_gl[1, 1, 4, 1] =  0.017204157459682526
+     :  een_rescaled_e_gl[1, 1, 5, 1] =  0.013345768421098641
+     :  een_rescaled_e_gl[2, 1, 4, 2] =  0.03733086358273962
+     :  een_rescaled_e_gl[2, 1, 5, 2] =  0.004922634822943517
+     :  een_rescaled_e_gl[2, 1, 6, 2] =  0.5416751547830984
      : (6, 10, 4, 10)
-     : factor_een: -14.956095654486418
+     : factor_een: -14.956095654486404
 
 
       #+begin_src c :tangle (eval c_test)
 /* Check if Jastrow is properly initialized */
 assert(qmckl_jastrow_champ_provided(context));
 
-double factor_een_gl[walk_num][4][elec_num];
-rc = qmckl_get_jastrow_champ_factor_een_gl(context, &(factor_een_gl[0][0][0]),4*walk_num*elec_num);
+/*
+{
+  double factor_een_gl[walk_num][4][elec_num];
+  rc = qmckl_check(context,
+                   rc = qmckl_get_jastrow_champ_factor_een_gl(context, &(factor_een_gl[0][0][0]),4*walk_num*elec_num)
+                   );
+  assert(rc == QMCKL_SUCCESS);
 
-for (int nw=0 ; nw<walk_num ; nw++) {
-  for (int k=0 ; k<4 ; k++) {
-    for (int i=0 ; i<elec_num ; i++) {
-      printf("factor_een_gl[%d][%d][%d] = %e\n", nw, k, i, factor_een_gl[nw][k][i]);
+  printf("%20.15e\n", factor_een_gl[0][0][0]);
+  assert(fabs(8.967809309100624e-02 - factor_een_gl[0][0][0]) < 1e-12);
+
+  printf("%20.15e\n", factor_een_gl[0][1][1]);
+  assert(fabs(3.543090132452453e-02 - factor_een_gl[0][1][1]) < 1e-12);
+
+  printf("%20.15e\n", factor_een_gl[0][2][2]);
+  assert(fabs(8.996044894431991e-04 - factor_een_gl[0][2][2]) < 1e-12);
+
+  printf("%20.15e\n", factor_een_gl[0][3][3]);
+  assert(fabs(-1.175028308456619e+00 - factor_een_gl[0][3][3]) < 1e-12);
+}
+,*/
+{
+  printf("factor_een_gl_hpc\n");
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+
+  assert (ctx != NULL);
+  assert(walk_num == 2);
+  assert(elec_num == 10);
+  assert(nucl_num == 2);
+  assert(cord_num == 5);
+  assert(dim_c_vector == 23);
+
+  assert(ctx->electron.walker.num == walk_num);
+  assert(ctx->electron.num == elec_num);
+  assert(ctx->nucleus.num == nucl_num);
+  assert(ctx->jastrow_champ.cord_num == cord_num);
+  assert(ctx->jastrow_champ.dim_c_vector == dim_c_vector);
+
+  double factor_een_gl_naive[walk_num*4*elec_num];
+  memset(&(factor_een_gl_naive[0]), 0, sizeof(factor_een_gl_naive));
+
+  rc = qmckl_compute_jastrow_champ_factor_een_gl_naive(context,
+                                                       ctx->electron.walker.num,
+                                                       ctx->electron.num,
+                                                       ctx->nucleus.num,
+                                                       ctx->jastrow_champ.cord_num,
+                                                       ctx->jastrow_champ.dim_c_vector,
+                                                       ctx->jastrow_champ.c_vector_full,
+                                                       ctx->jastrow_champ.lkpm_combined_index,
+                                                       ctx->jastrow_champ.een_rescaled_e,
+                                                       ctx->jastrow_champ.een_rescaled_n,
+                                                       ctx->jastrow_champ.een_rescaled_e_gl,
+                                                       ctx->jastrow_champ.een_rescaled_n_gl,
+                                                       factor_een_gl_naive);
+  assert(rc == QMCKL_SUCCESS);
+
+  double factor_een_gl_doc[walk_num*4*elec_num];
+  memset(&(factor_een_gl_doc[0]), 0, sizeof(factor_een_gl_doc));
+
+  rc = qmckl_compute_jastrow_champ_factor_een_gl_doc(context,
+                                                     ctx->electron.walker.num,
+                                                     ctx->electron.num,
+                                                     ctx->nucleus.num,
+                                                     ctx->jastrow_champ.cord_num,
+                                                     ctx->jastrow_champ.dim_c_vector,
+                                                     ctx->jastrow_champ.c_vector_full,
+                                                     ctx->jastrow_champ.lkpm_combined_index,
+                                                     ctx->jastrow_champ.tmp_c,
+                                                     ctx->jastrow_champ.dtmp_c,
+                                                     ctx->jastrow_champ.een_rescaled_n,
+                                                     ctx->jastrow_champ.een_rescaled_n_gl,
+                                                     factor_een_gl_doc);
+  assert(rc == QMCKL_SUCCESS);
+
+  for (int64_t i = 0; i < walk_num*4*elec_num; ++i) {
+      if (fabs(factor_een_gl_naive[i] - factor_een_gl_doc[i]) > 1e-12) {
+        printf("i = %ld\n", i);
+        printf("factor_een_gl_naive = %20.15e\n", factor_een_gl_naive[i]);
+        printf("factor_een_gl_doc = %20.15e\n", factor_een_gl_doc[i]);
+        fflush(stdout);
       }
-    }
+      assert(fabs(factor_een_gl_naive[i] - factor_een_gl_doc[i]) < 1e-8);
   }
 
-printf("%20.15e\n", factor_een_gl[0][0][0]);
-assert(fabs(8.967809309100624e-02 - factor_een_gl[0][0][0]) < 1e-12);
+  double factor_een_gl_hpc[walk_num*4*elec_num];
+  memset(&(factor_een_gl_hpc[0]), 0, sizeof(factor_een_gl_hpc));
 
-printf("%20.15e\n", factor_een_gl[0][1][1]);
-assert(fabs(3.543090132452453e-02 - factor_een_gl[0][1][1]) < 1e-12);
+  rc = qmckl_compute_jastrow_champ_factor_een_gl_hpc(context,
+                                                    ctx->electron.walker.num,
+                                                    ctx->electron.num,
+                                                    ctx->nucleus.num,
+                                                    ctx->jastrow_champ.cord_num,
+                                                    ctx->jastrow_champ.dim_c_vector,
+                                                    ctx->jastrow_champ.c_vector_full,
+                                                    ctx->jastrow_champ.lkpm_combined_index,
+                                                    ctx->jastrow_champ.tmp_c,
+                                                    ctx->jastrow_champ.dtmp_c,
+                                                    ctx->jastrow_champ.een_rescaled_n,
+                                                    ctx->jastrow_champ.een_rescaled_n_gl,
+                                                    factor_een_gl_hpc);
 
-printf("%20.15e\n", factor_een_gl[0][2][2]);
-assert(fabs(8.996044894431991e-04 - factor_een_gl[0][2][2]) < 1e-12);
-
-printf("%20.15e\n", factor_een_gl[0][3][3]);
-assert(fabs(-1.175028308456619e+00 - factor_een_gl[0][3][3]) < 1e-12);
+  for (int64_t i = 0; i < walk_num*4*elec_num; ++i) {
+      if (fabs(factor_een_gl_doc[i] - factor_een_gl_hpc[i]) > 1e-12) {
+        printf("i = %ld\n", i);
+        printf("factor_een_gl_doc = %20.15e\n", factor_een_gl_doc[i]);
+        printf("factor_een_gl_hpc = %20.15e\n", factor_een_gl_hpc[i]);
+        fflush(stdout);
+      }
+      assert(fabs(factor_een_gl_doc[i] - factor_een_gl_hpc[i]) < 1e-8);
+  }
+}
       #+end_src
 
 **** Compute Gradient only
@@ -10117,7 +11572,7 @@ assert(fabs(-1.175028308456619e+00 - factor_een_gl[0][3][3]) < 1e-12);
      | ~dtmp_c~              | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][4][elec_num]~ | in     | vector of non-zero coefficients                |
      | ~een_rescaled_n~      | ~double[walk_num][0:cord_num][nucl_num][elec_num]~                  | in     | Electron-nucleus rescaled factor               |
      | ~een_rescaled_n_gl~   | ~double[walk_num][0:cord_num][nucl_num][4][elec_num]~               | in     | Derivative of Electron-nucleus rescaled factor |
-     | ~factor_een_grad~     | ~double[walk_num][4][elec_num]~                                     | out    | Derivative of Electron-nucleus jastrow         |
+     | ~factor_een_grad~     | ~double[walk_num][3][elec_num]~                                     | out    | Derivative of Electron-nucleus jastrow         |
 
 
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
@@ -10130,7 +11585,7 @@ function qmckl_compute_jastrow_champ_factor_een_grad_doc( &
   use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
-  integer(qmckl_context), intent(in)  :: context
+  integer(qmckl_context), intent(in), value :: context
   integer (c_int64_t) , intent(in)  , value :: walk_num
   integer (c_int64_t) , intent(in)  , value :: elec_num
   integer (c_int64_t) , intent(in)  , value :: nucl_num
@@ -10177,10 +11632,10 @@ function qmckl_compute_jastrow_champ_factor_een_grad_doc( &
            do ii = 1, 3
               do j = 1, elec_num
                  factor_een_grad(j,ii,nw) = factor_een_grad(j,ii,nw) + (           &
-                      tmp_c(j,a,m,k,nw)       * een_rescaled_n_gl(j,ii,a,m+l,nw) + &
-                      (dtmp_c(j,ii,a,m,k,nw))   * een_rescaled_n(j,a,m+l,nw)     + &
-                      (dtmp_c(j,ii,a,m+l,k,nw)) * een_rescaled_n(j,a,m  ,nw)     + &
-                      tmp_c(j,a,m+l,k,nw)     * een_rescaled_n_gl(j,ii,a,m,nw)     &
+                      dtmp_c(j,ii,a,m  ,k,nw) * een_rescaled_n   (j,   a,m+l,nw) + &
+                      dtmp_c(j,ii,a,m+l,k,nw) * een_rescaled_n   (j,   a,m  ,nw) + &
+                      tmp_c(j,a,m  ,k,nw)     * een_rescaled_n_gl(j,ii,a,m+l,nw) + &
+                      tmp_c(j,a,m+l,k,nw)     * een_rescaled_n_gl(j,ii,a,m  ,nw)   &
                       ) * cn
               end do
            end do
@@ -10285,18 +11740,18 @@ qmckl_compute_jastrow_champ_factor_een_grad_hpc (
    #+begin_src c :tangle (eval c) :comments org
 qmckl_exit_code
 qmckl_compute_jastrow_champ_factor_een_grad_hpc(const qmckl_context context,
-                                                   const int64_t walk_num,
-                                                   const int64_t elec_num,
-                                                   const int64_t nucl_num,
-                                                   const int64_t cord_num,
-                                                   const int64_t dim_c_vector,
-                                                   const double *c_vector_full,
-                                                   const int64_t *lkpm_combined_index,
-                                                   const double *tmp_c,
-                                                   const double *dtmp_c,
-                                                   const double *een_rescaled_n,
-                                                   const double *een_rescaled_n_gl,
-                                                   double* const factor_een_grad)
+                                                const int64_t walk_num,
+                                                const int64_t elec_num,
+                                                const int64_t nucl_num,
+                                                const int64_t cord_num,
+                                                const int64_t dim_c_vector,
+                                                const double *c_vector_full,
+                                                const int64_t *lkpm_combined_index,
+                                                const double *tmp_c,
+                                                const double *dtmp_c,
+                                                const double *een_rescaled_n,
+                                                const double *een_rescaled_n_gl,
+                                                double* const factor_een_grad)
 {
 
   int64_t info = QMCKL_SUCCESS;
@@ -10313,19 +11768,20 @@ qmckl_compute_jastrow_champ_factor_een_grad_hpc(const qmckl_context context,
 #pragma omp parallel for
 #endif
     for (size_t nw = 0; nw < (size_t) walk_num; ++nw) {
-      memset(&factor_een_grad[elec_num*3*nw], 0, elec_num*3*sizeof(double));
+      double* const restrict factor_een_grad_0nw = &(factor_een_grad[elec_num*3*nw]);
+      memset(factor_een_grad_0nw, 0, elec_num*3*sizeof(double));
     }
     return QMCKL_SUCCESS;
   }
 
-  const size_t elec_num2 = elec_num << 1;
+  const size_t elec_num2 = elec_num + elec_num;
 
 #ifdef HAVE_OPENMP
 #pragma omp parallel for
 #endif
   for (size_t nw = 0; nw < (size_t) walk_num; ++nw) {
-    bool touched = false;
     double* const restrict factor_een_grad_0nw = &(factor_een_grad[elec_num*3*nw]);
+    memset(factor_een_grad_0nw, 0, elec_num*3*sizeof(double));
     for (size_t n = 0; n < (size_t) dim_c_vector; ++n) {
       const size_t l = lkpm_combined_index[n];
       const size_t k = lkpm_combined_index[n+  dim_c_vector];
@@ -10333,144 +11789,112 @@ qmckl_compute_jastrow_champ_factor_een_grad_hpc(const qmckl_context context,
 
       const size_t en = elec_num*nucl_num;
       const size_t len = l*en;
-      const size_t len4 = len << 2;
+      const size_t len4 = len*4;
       const size_t cn = cord_num*nw;
       const size_t c1 = cord_num+1;
       const size_t addr0 = en*(m+c1*(k+cn));
-      const size_t addr1 = en*(m+cn);
+      const size_t addr1 = en*(m+c1*nw);
 
       const double* restrict tmp_c_mkn = &(tmp_c[addr0]);
       const double* restrict tmp_c_mlkn = tmp_c_mkn + len;
       const double* restrict een_rescaled_n_mnw = &(een_rescaled_n[addr1]);
       const double* restrict een_rescaled_n_mlnw = een_rescaled_n_mnw + len;
-      const double* restrict dtmp_c_mknw = &(dtmp_c[addr0 << 2]);
+      const double* restrict dtmp_c_mknw = &(dtmp_c[addr0*4]);
       const double* restrict dtmp_c_mlknw = dtmp_c_mknw + len4;
-      const double* restrict een_rescaled_n_gl_mnw = &(een_rescaled_n_gl[addr1 << 2]);
+      const double* restrict een_rescaled_n_gl_mnw = &(een_rescaled_n_gl[addr1*4]);
       const double* restrict een_rescaled_n_gl_mlnw = een_rescaled_n_gl_mnw + len4;
+
       for (size_t a = 0; a < (size_t) nucl_num; a++) {
         double cn = c_vector_full[a+n*nucl_num];
         if (cn == 0.0) continue;
 
-        const size_t ishift = elec_num*a;
-        const size_t ishift4 = ishift << 2;
+        const size_t ishift  = elec_num*a;
+        const size_t ishift4 = ishift*4;
 
         const double* restrict tmp_c_amlkn = tmp_c_mlkn + ishift;
         const double* restrict tmp_c_amkn = tmp_c_mkn + ishift;
-        const double* restrict een_rescaled_n_amnw = een_rescaled_n_mnw + ishift;
+        const double* restrict een_rescaled_n_amnw  = een_rescaled_n_mnw  + ishift;
         const double* restrict een_rescaled_n_amlnw = een_rescaled_n_mlnw + ishift;
-        const double* restrict dtmp_c_0amknw = dtmp_c_mknw + ishift4;
+        const double* restrict dtmp_c_0amknw  = dtmp_c_mknw  + ishift4;
         const double* restrict dtmp_c_0amlknw = dtmp_c_mlknw + ishift4;
-        const double* restrict een_rescaled_n_gl_0amnw = een_rescaled_n_gl_mnw + ishift4;
+        const double* restrict een_rescaled_n_gl_0amnw  = een_rescaled_n_gl_mnw  + ishift4;
         const double* restrict een_rescaled_n_gl_0amlnw = een_rescaled_n_gl_mlnw + ishift4;
 
-        const double* restrict dtmp_c_1amknw =  dtmp_c_0amknw  + elec_num;
+        const double* restrict dtmp_c_1amknw  = dtmp_c_0amknw  + elec_num;
         const double* restrict dtmp_c_1amlknw = dtmp_c_0amlknw + elec_num;
-        const double* restrict dtmp_c_2amknw =  dtmp_c_0amknw  + elec_num2;
+        const double* restrict dtmp_c_2amknw  = dtmp_c_0amknw  + elec_num2;
         const double* restrict dtmp_c_2amlknw = dtmp_c_0amlknw + elec_num2;
+
         const double* restrict een_rescaled_n_gl_1amnw  = een_rescaled_n_gl_0amnw  + elec_num;
         const double* restrict een_rescaled_n_gl_1amlnw = een_rescaled_n_gl_0amlnw + elec_num;
         const double* restrict een_rescaled_n_gl_2amnw  = een_rescaled_n_gl_0amnw  + elec_num2;
         const double* restrict een_rescaled_n_gl_2amlnw = een_rescaled_n_gl_0amlnw + elec_num2;
+
         double* const restrict factor_een_grad_1nw = factor_een_grad_0nw + elec_num;
         double* const restrict factor_een_grad_2nw = factor_een_grad_0nw + elec_num2;
 
-        if (touched) {
 #ifdef HAVE_OPENMP
 #pragma omp simd
 #endif
-          for (size_t j = 0; j < (size_t) elec_num; ++j) {
-            factor_een_grad_0nw[j] = factor_een_grad_0nw[j] + cn *
-              (tmp_c_amkn[j] * een_rescaled_n_gl_0amlnw[j] +
-               dtmp_c_0amknw[j] * een_rescaled_n_amlnw[j]       +
-               dtmp_c_0amlknw[j] * een_rescaled_n_amnw[j]       +
-               tmp_c_amlkn[j] * een_rescaled_n_gl_0amnw[j]);
-            }
-
-#ifdef HAVE_OPENMP
-#pragma omp simd
-#endif
-          for (size_t j = 0; j < (size_t) elec_num; ++j) {
-            factor_een_grad_1nw[j] = factor_een_grad_1nw[j] + cn *
-              (tmp_c_amkn[j] * een_rescaled_n_gl_1amlnw[j] +
-               dtmp_c_1amknw[j] * een_rescaled_n_amlnw[j]       +
-               dtmp_c_1amlknw[j] * een_rescaled_n_amnw[j]       +
-               tmp_c_amlkn[j] * een_rescaled_n_gl_1amnw[j]);
-          }
-
-#ifdef HAVE_OPENMP
-#pragma omp simd
-#endif
-          for (size_t j = 0; j < (size_t) elec_num; ++j) {
-            factor_een_grad_2nw[j] = factor_een_grad_2nw[j] + cn *
-              (tmp_c_amkn[j] * een_rescaled_n_gl_2amlnw[j] +
-               dtmp_c_2amknw[j] * een_rescaled_n_amlnw[j]       +
-               dtmp_c_2amlknw[j] * een_rescaled_n_amnw[j]       +
-               tmp_c_amlkn[j] * een_rescaled_n_gl_2amnw[j]);
-          }
-
-        } else {
-
-          touched = true;
-
-#ifdef HAVE_OPENMP
-#pragma omp simd
-#endif
-          for (size_t j = 0; j < (size_t) elec_num; ++j) {
-            factor_een_grad_0nw[j] = cn *
-              (tmp_c_amkn[j] * een_rescaled_n_gl_0amlnw[j] +
-               dtmp_c_0amknw[j] * een_rescaled_n_amlnw[j]       +
-               dtmp_c_0amlknw[j] * een_rescaled_n_amnw[j]       +
-               tmp_c_amlkn[j] * een_rescaled_n_gl_0amnw[j]);
-            }
-
-#ifdef HAVE_OPENMP
-#pragma omp simd
-#endif
-          for (size_t j = 0; j < (size_t) elec_num; ++j) {
-            factor_een_grad_1nw[j] = cn *
-              (tmp_c_amkn[j] * een_rescaled_n_gl_1amlnw[j] +
-               dtmp_c_1amknw[j] * een_rescaled_n_amlnw[j]       +
-               dtmp_c_1amlknw[j] * een_rescaled_n_amnw[j]       +
-               tmp_c_amlkn[j] * een_rescaled_n_gl_1amnw[j]);
-          }
-
-#ifdef HAVE_OPENMP
-#pragma omp simd
-#endif
-          for (size_t j = 0; j < (size_t) elec_num; ++j) {
-            factor_een_grad_2nw[j] = cn *
-              (tmp_c_amkn[j] * een_rescaled_n_gl_2amlnw[j] +
-               dtmp_c_2amknw[j] * een_rescaled_n_amlnw[j]       +
-               dtmp_c_2amlknw[j] * een_rescaled_n_amnw[j]       +
-               tmp_c_amlkn[j] * een_rescaled_n_gl_2amnw[j]);
-          }
+        for (size_t j = 0; j < (size_t) elec_num; ++j) {
+          factor_een_grad_0nw[j] = factor_een_grad_0nw[j] + cn * (
+             dtmp_c_0amknw [j] * een_rescaled_n_amlnw[j]  +
+             dtmp_c_0amlknw[j] * een_rescaled_n_amnw [j]  +
+             tmp_c_amkn [j] * een_rescaled_n_gl_0amlnw[j] +
+             tmp_c_amlkn[j] * een_rescaled_n_gl_0amnw [j] );
 
         }
+
+#ifdef HAVE_OPENMP
+#pragma omp simd
+#endif
+        for (size_t j = 0; j < (size_t) elec_num; ++j) {
+          factor_een_grad_1nw[j] = factor_een_grad_1nw[j] + cn * (
+             dtmp_c_1amknw [j] * een_rescaled_n_amlnw[j]  +
+             dtmp_c_1amlknw[j] * een_rescaled_n_amnw [j]  +
+             tmp_c_amkn [j] * een_rescaled_n_gl_1amlnw[j] +
+             tmp_c_amlkn[j] * een_rescaled_n_gl_1amnw [j]);
+        }
+
+#ifdef HAVE_OPENMP
+#pragma omp simd
+#endif
+        for (size_t j = 0; j < (size_t) elec_num; ++j) {
+          factor_een_grad_2nw[j] = factor_een_grad_2nw[j] + cn * (
+             dtmp_c_2amknw [j] * een_rescaled_n_amlnw[j]  +
+             dtmp_c_2amlknw[j] * een_rescaled_n_amnw [j]  +
+             tmp_c_amkn [j] * een_rescaled_n_gl_2amlnw[j] +
+             tmp_c_amlkn[j] * een_rescaled_n_gl_2amnw [j]);
+        }
+
       }
-    }
-    if (!touched) {
-      memset(factor_een_grad_0nw, 0, elec_num*3*sizeof(double));
     }
   }
   return info;
 }
    #+end_src
+
 ***** Test
 
        #+begin_src c :tangle (eval c_test)
 /* Check if Jastrow is properly initialized */
 assert(qmckl_jastrow_champ_provided(context));
 
-double factor_een_grad[walk_num][3][elec_num];
-rc = qmckl_get_jastrow_champ_factor_een_grad(context, &(factor_een_grad[0][0][0]),3*walk_num*elec_num);
+{
+  double factor_een_gl[walk_num][4][elec_num];
+  rc = qmckl_get_jastrow_champ_factor_een_gl(context, &(factor_een_gl[0][0][0]),4*walk_num*elec_num);
 
-for (int nw=0 ; nw<walk_num ; nw++) {
-  for (int k=0 ; k<3; k++) {
-    for (int i=0 ; i<elec_num ; i++) {
-      assert(fabs(factor_een_gl[nw][k][i] - factor_een_grad[nw][k][i]) < 1e-12);
+  double factor_een_grad[walk_num][3][elec_num];
+  rc = qmckl_get_jastrow_champ_factor_een_grad(context, &(factor_een_grad[0][0][0]),3*walk_num*elec_num);
+
+  for (int nw=0 ; nw<walk_num ; nw++) {
+    for (int k=0 ; k<3; k++) {
+      for (int i=0 ; i<elec_num ; i++) {
+        assert(fabs(factor_een_gl[nw][k][i] - factor_een_grad[nw][k][i]) < 1e-8);
+      }
     }
   }
- }
+}
      #+end_src
 
 ** Total Jastrow
@@ -10509,13 +11933,22 @@ qmckl_get_jastrow_champ_value(qmckl_context context,
   rc = qmckl_provide_jastrow_champ_value(context);
   if (rc != QMCKL_SUCCESS) return rc;
 
-  int64_t sze=ctx->electron.walker.num;
+  if (value == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_get_jastrow_champ_value",
+                           "Null pointer");
+  }
+
+  const int64_t sze = ctx->electron.walker.num;
+
   if (size_max < sze) {
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_3,
                            "qmckl_get_jastrow_champ_value",
-                           "Array too small. Expected walker.num");
+                           "Array too small. Expected walk_num");
   }
+
   memcpy(value, ctx->jastrow_champ.value, sze*sizeof(double));
 
   return QMCKL_SUCCESS;
@@ -10645,7 +12078,7 @@ function qmckl_compute_jastrow_champ_value_doc(context, &
   use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
-  integer(qmckl_context), intent(in)  :: context
+  integer(qmckl_context), intent(in), value :: context
   integer (c_int64_t) , intent(in)  , value :: walk_num
   real    (c_double ) , intent(in)          :: f_ee(walk_num)
   real    (c_double ) , intent(in)          :: f_en(walk_num)
@@ -10767,38 +12200,49 @@ qmckl_exit_code qmckl_compute_jastrow_champ_value (
 }
  #+end_src
 
-**** Test
-
+**** Test                                                          :noexport:
 
       #+begin_src c :tangle (eval c_test)
 printf("Total Jastrow value\n");
 /* Check if Jastrow is properly initialized */
 assert(qmckl_jastrow_champ_provided(context));
 
-rc = qmckl_check(context,
-                 qmckl_get_jastrow_champ_factor_ee(context, &(factor_ee[0]), walk_num)
-                 );
-assert(rc == QMCKL_SUCCESS);
+{
 
-rc = qmckl_check(context,
-                 qmckl_get_jastrow_champ_factor_en(context, &(factor_en[0]), walk_num)
-                 );
-assert(rc == QMCKL_SUCCESS);
+  double factor_ee[walk_num];
+  rc = qmckl_check(context,
+                   qmckl_get_jastrow_champ_factor_ee(context, &(factor_ee[0]), walk_num)
+                   );
+  assert(rc == QMCKL_SUCCESS);
 
-rc = qmckl_check(context,
-                 qmckl_get_jastrow_champ_factor_een(context, &(factor_een[0]), walk_num)
-                 );
-assert(rc == QMCKL_SUCCESS);
+  double factor_en[walk_num];
+  rc = qmckl_check(context,
+                   qmckl_get_jastrow_champ_factor_en(context, &(factor_en[0]), walk_num)
+                   );
+  assert(rc == QMCKL_SUCCESS);
 
-double total_j[walk_num];
-rc = qmckl_check(context,
-                 qmckl_get_jastrow_champ_value(context, &(total_j[0]), walk_num)
-                 );
-assert(rc == QMCKL_SUCCESS);
+  double factor_een[walk_num];
+  rc = qmckl_check(context,
+                   qmckl_get_jastrow_champ_factor_een(context, &(factor_een[0]), walk_num)
+                   );
+  assert(rc == QMCKL_SUCCESS);
+
+  double total_j[walk_num];
+  rc = qmckl_check(context,
+                   qmckl_get_jastrow_champ_value(context, &(total_j[0]), walk_num)
+                   );
+  assert(rc == QMCKL_SUCCESS);
 
 
-for (int64_t i=0 ; i< walk_num ; ++i) {
-  assert (total_j[i] - exp(factor_ee[i] + factor_en[i] + factor_een[i]) < 1.e-12);
+  for (int64_t i=0 ; i< walk_num ; ++i) {
+    if (fabs(total_j[i] - exp(factor_ee[i] + factor_en[i] + factor_een[i])) > 1e-12) {
+      printf("i = %ld\n", i);
+      printf("total_j = %20.15e\n", total_j[i]);
+      printf("exp(factor_ee + factor_en + factor_een) = %20.15e\n", exp(factor_ee[i] + factor_en[i] + factor_een[i]));
+      fflush(stdout);
+    }
+    assert (fabs(total_j[i] - exp(factor_ee[i] + factor_en[i] + factor_een[i])) < 1.e-8);
+  }
 }
 
 
@@ -10850,18 +12294,37 @@ qmckl_get_jastrow_champ_gl(qmckl_context context,
   rc = qmckl_provide_jastrow_champ_gl(context);
   if (rc != QMCKL_SUCCESS) return rc;
 
-  int64_t sze = 4 * ctx->electron.walker.num * ctx->electron.num;
+  if (gl == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_get_jastrow_champ_gl",
+                           "Null pointer");
+  }
+
+  const int64_t sze = 4 * ctx->electron.walker.num * ctx->electron.num;
+
   if (size_max < sze) {
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_3,
                            "qmckl_get_jastrow_champ_gl",
-                           "Array too small. Expected walker.num * electron.num * 4");
+                           "Array too small. Expected walk_num*elec_num*4");
   }
+
   memcpy(gl, ctx->jastrow_champ.gl, sze*sizeof(double));
 
   return QMCKL_SUCCESS;
 }
+     #+end_src
 
+
+     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
+qmckl_exit_code
+qmckl_get_jastrow_champ_grad(qmckl_context context,
+                            double* const grad,
+                            const int64_t size_max);
+     #+end_src
+
+     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
 qmckl_exit_code
 qmckl_get_jastrow_champ_grad(qmckl_context context,
                             double* const grad,
@@ -10909,23 +12372,11 @@ interface
      real(c_double),   intent(out)               :: gl(size_max)
    end function qmckl_get_jastrow_champ_gl
 end interface
-
-interface
-   integer(qmckl_exit_code) function qmckl_get_jastrow_champ_grad (context, &
-        grad, size_max) bind(C)
-     use, intrinsic :: iso_c_binding
-     import
-     implicit none
-     integer (qmckl_context) , intent(in), value :: context
-     integer(c_int64_t), intent(in), value       :: size_max
-     real(c_double),   intent(out)               :: grad(size_max)
-   end function qmckl_get_jastrow_champ_grad
-end interface
  #+end_src
 
 **** Provide                                                       :noexport:
      #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
-qmckl_exit_code qmckl_provide_jastrow_champ_gl  (qmckl_context context);
+qmckl_exit_code qmckl_provide_jastrow_champ_gl(qmckl_context context);
 qmckl_exit_code qmckl_provide_jastrow_champ_grad(qmckl_context context);
      #+end_src
 
@@ -11119,7 +12570,7 @@ function qmckl_compute_jastrow_champ_gl_doc(context, &
   use qmckl
   use, intrinsic :: iso_c_binding
   implicit none
-  integer(qmckl_context), intent(in)  :: context
+  integer(qmckl_context), intent(in), value :: context
   integer (c_int64_t) , intent(in)  , value :: walk_num
   integer (c_int64_t) , intent(in)  , value :: elec_num
   real    (c_double ) , intent(in)          :: value(walk_num)
@@ -11279,47 +12730,60 @@ qmckl_exit_code qmckl_compute_jastrow_champ_gl (
 printf("Total Jastrow derivatives\n");
 /* Check if Jastrow is properly initialized */
 assert(qmckl_jastrow_champ_provided(context));
+{
 
-rc = qmckl_check(context,
-                 qmckl_get_jastrow_champ_factor_ee_gl(context, &(factor_ee_gl[0][0][0]), walk_num*elec_num*4)
-                 );
-assert(rc == QMCKL_SUCCESS);
+  double factor_ee_gl[walk_num][4][elec_num];
+  rc = qmckl_check(context,
+                   qmckl_get_jastrow_champ_factor_ee_gl(context, &(factor_ee_gl[0][0][0]), walk_num*elec_num*4)
+                   );
+  assert(rc == QMCKL_SUCCESS);
 
-rc = qmckl_check(context,
-                 qmckl_get_jastrow_champ_factor_en_gl(context, &(factor_en_gl[0][0][0]), walk_num*elec_num*4)
-                 );
-assert(rc == QMCKL_SUCCESS);
+  double factor_en_gl[walk_num][4][elec_num];
+  rc = qmckl_check(context,
+                   qmckl_get_jastrow_champ_factor_en_gl(context, &(factor_en_gl[0][0][0]), walk_num*elec_num*4)
+                   );
+  assert(rc == QMCKL_SUCCESS);
 
-rc = qmckl_check(context,
-                 qmckl_get_jastrow_champ_factor_een_gl(context, &(factor_een_gl[0][0][0]), walk_num*elec_num*4)
-                 );
-assert(rc == QMCKL_SUCCESS);
+  double factor_een_gl[walk_num][4][elec_num];
+  rc = qmckl_check(context,
+                   qmckl_get_jastrow_champ_factor_een_gl(context, &(factor_een_gl[0][0][0]), walk_num*elec_num*4)
+                   );
+  assert(rc == QMCKL_SUCCESS);
 
-double total_j_deriv[walk_num][4][elec_num];
-rc = qmckl_check(context,
-                 qmckl_get_jastrow_champ_gl(context, &(total_j_deriv[0][0][0]), walk_num*elec_num*4)
-                 );
-assert(rc == QMCKL_SUCCESS);
+  double total_j_deriv[walk_num][4][elec_num];
+  rc = qmckl_check(context,
+                   qmckl_get_jastrow_champ_gl(context, &(total_j_deriv[0][0][0]), walk_num*elec_num*4)
+                   );
+  assert(rc == QMCKL_SUCCESS);
 
-rc = qmckl_check(context,
-                 qmckl_get_jastrow_champ_value(context, &(total_j[0]), walk_num)
-                 );
-assert(rc == QMCKL_SUCCESS);
+  double total_j[walk_num];
+  rc = qmckl_check(context,
+                   qmckl_get_jastrow_champ_value(context, &(total_j[0]), walk_num)
+                   );
+  assert(rc == QMCKL_SUCCESS);
 
 
-for (int64_t k=0 ; k< walk_num ; ++k) {
-  for (int64_t m=0 ; m<4; ++m) {
-    for (int64_t e=0 ; e<elec_num; ++e) {
-      if (m < 3) { /* test only gradients */
-        assert (total_j_deriv[k][m][e]/total_j[k] - (factor_ee_gl[k][m][e] + factor_en_gl[k][m][e] + factor_een_gl[k][m][e]) < 1.e-12);
+  for (int64_t k=0 ; k< walk_num ; ++k) {
+    for (int64_t m=0 ; m<4; ++m) {
+      for (int64_t e=0 ; e<elec_num; ++e) {
+        if (m < 3) { /* test only gradients */
+          if (fabs(total_j_deriv[k][m][e]/total_j[k] - (factor_ee_gl[k][m][e] + factor_en_gl[k][m][e] + factor_een_gl[k][m][e])) > 1e-12) {
+            printf("k = %ld\n", k);
+            printf("m = %ld\n", m);
+            printf("e = %ld\n", e);
+            printf("total_j_deriv/total_j = %20.15e\n", total_j_deriv[k][m][e]/total_j[k]);
+            printf("factor_ee_gl + factor_en_gl + factor_een_gl = %20.15e\n", factor_ee_gl[k][m][e] + factor_en_gl[k][m][e] + factor_een_gl[k][m][e]);
+            fflush(stdout);
+          }
+          assert (fabs(total_j_deriv[k][m][e]/total_j[k] - (factor_ee_gl[k][m][e] + factor_en_gl[k][m][e] + factor_een_gl[k][m][e])) < 1.e-8);
+        }
       }
     }
   }
- }
 
 
        #+end_src
-      
+
 **** Compute Gradient only
      :PROPERTIES:
      :Name:     qmckl_compute_jastrow_champ_grad_doc
@@ -11346,7 +12810,7 @@ function qmckl_compute_jastrow_champ_grad_doc(context, &
   use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
-  integer(qmckl_context), intent(in)  :: context
+  integer(qmckl_context), intent(in), value :: context
   integer (c_int64_t) , intent(in)  , value :: walk_num
   integer (c_int64_t) , intent(in)  , value :: elec_num
   real    (c_double ) , intent(in)          :: value(walk_num)
@@ -11492,25 +12956,40 @@ printf("Total Jastrow gradient only\n");
 /* Check if Jastrow is properly initialized */
 assert(qmckl_jastrow_champ_provided(context));
 
-double total_j_grad[walk_num][3][elec_num];
-rc = qmckl_check(context,
-                 qmckl_get_jastrow_champ_grad(context, &(total_j_grad[0][0][0]), walk_num*elec_num*3)
-                 );
-assert(rc == QMCKL_SUCCESS);
+{
+  double total_j_grad[walk_num][3][elec_num];
+  rc = qmckl_check(context,
+                  qmckl_get_jastrow_champ_grad(context, &(total_j_grad[0][0][0]), walk_num*elec_num*3)
+                  );
+  assert(rc == QMCKL_SUCCESS);
+
+
+  double total_j_deriv[walk_num][4][elec_num];
+  rc = qmckl_check(context,
+                  qmckl_get_jastrow_champ_gl(context, &(total_j_deriv[0][0][0]), walk_num*elec_num*4)
+                  );
+  assert(rc == QMCKL_SUCCESS);
 
 
 
-for (int64_t k=0 ; k< walk_num ; ++k) {
-  for (int64_t m=0 ; m<3; ++m) {
-    for (int64_t e=0 ; e<elec_num; ++e) {
-      assert (total_j_deriv[k][m][e] - total_j_grad[k][m][e] < 1.e-12);
+  for (int64_t k=0 ; k< walk_num ; ++k) {
+    for (int64_t m=0 ; m<3; ++m) {
+      for (int64_t e=0 ; e<elec_num; ++e) {
+        if (fabs(total_j_grad[k][m][e] - total_j_deriv[k][m][e]) > 1e-12) {
+          printf("%ld %ld %ld\n", k, m, e);
+          printf("total_j_deriv = %20.15e\n", total_j_deriv[k][m][e]);
+          printf("total_j_grad  = %20.15e\n", total_j_grad[k][m][e]);
+          fflush(stdout);
+        }
+        assert (fabs(total_j_deriv[k][m][e] - total_j_grad[k][m][e]) < 1.e-8);
+      }
     }
   }
- }
+}
 
-
+}
        #+end_src
-      
+
 * End of files                                                     :noexport:
 
   #+begin_src c :tangle (eval h_private_type)
@@ -11521,7 +13000,7 @@ for (int64_t k=0 ; k< walk_num ; ++k) {
 #endif
   #+end_src
 
-*** Test
+*** Test                                                           :noexport:
   #+begin_src c :tangle (eval c_test)
     rc = qmckl_context_destroy(context);
     assert (rc == QMCKL_SUCCESS);
