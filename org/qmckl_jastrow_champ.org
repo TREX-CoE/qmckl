@@ -65,6 +65,36 @@
   The derivatives are computed with respect to the electron $i$ for
   \[ r_{ij} = |r_i - r_j| \]
 
+** Reformulation of the three-body part
+
+   To accelerate the computation of the three-body part, the Jastrow
+   factor is re-expressed as follows:
+
+\begin{eqnarray*}
+   & & \sum_{\alpha=1}^{N_{\text{nucl}}}
+     \sum_{i=1}^{N_{\text{elec}}}
+      \sum_{j=1}^{i-1}
+           c_{lkp\alpha} \left[ g_\text{e}({r}_{ij}) \right]^k
+             \left[ \left[ g_\alpha({R}_{i\alpha}) \right]^l + \left[ g_\alpha({R}_{j\alpha}) \right]^l \right]
+             \left[ g_\alpha({R}_{i\,\alpha}) \,
+   g_\alpha({R}_{j\alpha}) \right]^{m} \\
+   & = & \frac{1}{2}
+    \sum_{\alpha=1}^{N_{\text{nucl}}}
+     \sum_{i=1}^{N_{\text{elec}}}
+      \sum_{j=1}^{N_{\text{elec}}}
+           c_{lkp\alpha} \left[ g_\text{e}({r}_{ij}) \right]^k
+             \left[ \left[ g_\alpha({R}_{i\alpha}) \right]^l + \left[ g_\alpha({R}_{j\alpha}) \right]^l \right]
+             \left[ g_\alpha({R}_{i\,\alpha}) \, g_\alpha({R}_{j\alpha}) \right]^{m} \\
+   & = & \frac{1}{2}
+    \sum_{\alpha=1}^{N_{\text{nucl}}}
+     \sum_{i=1}^{N_{\text{elec}}}
+      \sum_{j=1}^{N_{\text{elec}}}
+           c_{lkp\alpha} \left[ g_\text{e}({r}_{ij}) \right]^k
+             \left[ \left[ g_\alpha({R}_{i\alpha}) \right]^{l+m} \left[ g_\alpha({R}_{j\alpha}) \right]^{m} +
+                    \left[ g_\alpha({R}_{i\alpha}) \right]^{l} \left[
+    g_\alpha({R}_{j\alpha}) \right]^{l+m} \right] \\
+   \end{eqnarray*}
+
 * Headers                                                          :noexport:
   #+begin_src elisp :noexport :results none
 (org-babel-lob-ingest "../tools/lib.org")
@@ -198,9 +228,12 @@ int main() {
     | ~factor_en_gl_date~            | ~uint64_t~                                                      | Keep track of the date for the en derivative                                                            |
     | ~factor_een_gl~                | ~double[walk_num][4][elec_num]~                                 | Derivative of the Jastrow factor: electron-electron-nucleus  part                                       |
     | ~factor_een_gl_date~           | ~uint64_t~                                                      | Keep track of the date for the een derivative                                                           |
+    | ~factor_een_grad~              | ~double[walk_num][3][elec_num]~                                 | Gradient of the Jastrow factor: electron-electron-nucleus  part                                         |
+    | ~factor_een_grad_date~         | ~uint64_t~                                                      | Keep track of the date for the een derivative                                                           |
     | ~value~                        | ~double[walk_num]~                                              | Value of the Jastrow factor                                                                             |
     | ~value_date~                   | ~uint64_t~                                                      | Keep track of the date                                                                                  |
     | ~gl~                           | ~double[walk_num][4][elec_num]~                                 | Gradient and Laplacian of the Jastrow factor                                                            |
+    | ~grad~                         | ~double[walk_num][3][elec_num]~                                 | Gradient of the Jastrow factor                                                                          |
     | ~value_date~                   | ~uint64_t~                                                      | Keep track of the date                                                                                  |
 
    #+NAME: jastrow_data
@@ -340,12 +373,14 @@ typedef struct qmckl_jastrow_champ_struct{
   double  * restrict factor_ee_gl;
   double  * restrict factor_een;
   double  * restrict factor_een_gl;
+  double  * restrict factor_een_grad;
   double  * restrict factor_en;
   double  * restrict factor_en_gl;
   double  * restrict rescale_factor_en;
   double  * restrict tmp_c;
   double  * restrict value;
   double  * restrict gl;
+  double  * restrict grad;
   int64_t   aord_num;
   int64_t   bord_num;
   int64_t   cord_num;
@@ -368,12 +403,14 @@ typedef struct qmckl_jastrow_champ_struct{
   uint64_t  factor_ee_gl_date;
   uint64_t  factor_een_date;
   uint64_t  factor_een_gl_date;
+  uint64_t  factor_een_grad_date;
   uint64_t  factor_en_date;
   uint64_t  factor_en_gl_date;
   uint64_t  lkpm_combined_index_date;
   uint64_t  tmp_c_date;
   uint64_t  value_date;
   uint64_t  gl_date;
+  uint64_t  grad_date;
   double    rescale_factor_ee;
   int32_t   uninitialized;
   int32_t   spin_independent;
@@ -4514,17 +4551,19 @@ qmckl_exit_code qmckl_provide_jastrow_champ_asymp_jasa(qmckl_context context)
      | ~asymp_jasa~        | ~double[type_nucl_num]~             | out    | Asymptotic value           |
 
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_jastrow_champ_asymp_jasa_f(context, aord_num, type_nucl_num, a_vector, &
+function qmckl_compute_jastrow_champ_asymp_jasa(context, aord_num, type_nucl_num, a_vector, &
      rescale_factor_en, asymp_jasa) &
-     result(info)
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
-  integer(qmckl_context), intent(in)  :: context
-  integer*8             , intent(in)  :: aord_num
-  integer*8             , intent(in)  :: type_nucl_num
-  double precision      , intent(in)  :: a_vector(aord_num + 1, type_nucl_num)
-  double precision      , intent(in)  :: rescale_factor_en(type_nucl_num)
-  double precision      , intent(out) :: asymp_jasa(type_nucl_num)
+  integer(qmckl_context), intent(in)        :: context
+  integer (c_int64_t) , intent(in)  , value :: aord_num
+  integer (c_int64_t) , intent(in)  , value :: type_nucl_num
+  real    (c_double ) , intent(in)          :: a_vector(aord_num+1,type_nucl_num)
+  real    (c_double ) , intent(in)          :: rescale_factor_en(type_nucl_num)
+  real    (c_double ) , intent(out)         :: asymp_jasa(type_nucl_num)
+  integer(qmckl_exit_code)                  :: info
 
   integer*8 :: i, j, p
   double precision   :: kappa_inv, x, asym_one
@@ -4555,33 +4594,8 @@ integer function qmckl_compute_jastrow_champ_asymp_jasa_f(context, aord_num, typ
 
   end do
 
-end function qmckl_compute_jastrow_champ_asymp_jasa_f
+end function qmckl_compute_jastrow_champ_asymp_jasa
      #+end_src
-
-    #+CALL: generate_c_interface(table=qmckl_asymp_jasa_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
-
-    #+RESULTS:
-    #+begin_src f90 :tangle (eval f) :comments org :exports none
-   integer(c_int32_t) function qmckl_compute_jastrow_champ_asymp_jasa &
-       (context, aord_num, type_nucl_num, a_vector, rescale_factor_en, asymp_jasa) &
-       bind(C) result(info)
-
-     use, intrinsic :: iso_c_binding
-     implicit none
-
-     integer (c_int64_t) , intent(in)  , value :: context
-     integer (c_int64_t) , intent(in)  , value :: aord_num
-     integer (c_int64_t) , intent(in)  , value :: type_nucl_num
-     real    (c_double ) , intent(in)          :: a_vector(aord_num+1,type_nucl_num)
-     real    (c_double ) , intent(in)          :: rescale_factor_en(type_nucl_num)
-     real    (c_double ) , intent(out)         :: asymp_jasa(type_nucl_num)
-
-     integer(c_int32_t), external :: qmckl_compute_jastrow_champ_asymp_jasa_f
-     info = qmckl_compute_jastrow_champ_asymp_jasa_f &
-            (context, aord_num, type_nucl_num, a_vector, rescale_factor_en, asymp_jasa)
-
-   end function qmckl_compute_jastrow_champ_asymp_jasa
-    #+end_src
 
     #+CALL: generate_c_header(table=qmckl_asymp_jasa_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
 
@@ -4802,7 +4816,7 @@ function qmckl_compute_en_distance_rescaled_doc(context, &
   real    (c_double ) , intent(in)          :: elec_coord(elec_num,walk_num,3)
   real    (c_double ) , intent(in)          :: nucl_coord(nucl_num,3)
   real    (c_double ) , intent(out)         :: en_distance_rescaled(elec_num,nucl_num,walk_num)
-  integer(qmckl_exit_code)                   :: info
+  integer(qmckl_exit_code)                  :: info
 
   integer*8 :: i, k
   double precision      :: coord(3)
@@ -5204,23 +5218,25 @@ qmckl_exit_code qmckl_provide_en_distance_rescaled_gl(qmckl_context context)
      | ~en_distance_rescaled_gl~ | ~double[walk_num][nucl_num][elec_num][4]~ | out    | Electron-nucleus distance derivatives |
 
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_en_distance_rescaled_gl_doc_f(context, elec_num, nucl_num, &
+function qmckl_compute_en_distance_rescaled_gl_doc(context, elec_num, nucl_num, &
      type_nucl_num, type_nucl_vector, rescale_factor_en, walk_num, elec_coord, &
      nucl_coord, en_distance_rescaled_gl) &
-     result(info)
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
   integer(qmckl_context), intent(in)  :: context
-  integer*8             , intent(in)  :: elec_num
-  integer*8             , intent(in)  :: nucl_num
-  integer*8             , intent(in)  :: type_nucl_num
-  integer*8             , intent(in)  :: type_nucl_vector(nucl_num)
-  double precision      , intent(in)  :: rescale_factor_en(nucl_num)
-  integer*8             , intent(in)  :: walk_num
-  double precision      , intent(in)  :: elec_coord(elec_num,walk_num,3)
-  double precision      , intent(in)  :: nucl_coord(nucl_num,3)
-  double precision      , intent(out) :: en_distance_rescaled_gl(4,elec_num,nucl_num,walk_num)
+  integer (c_int64_t) , intent(in)  , value :: elec_num
+  integer (c_int64_t) , intent(in)  , value :: nucl_num
+  integer (c_int64_t) , intent(in)  , value :: type_nucl_num
+  integer (c_int64_t) , intent(in)          :: type_nucl_vector(nucl_num)
+  real    (c_double ) , intent(in)          :: rescale_factor_en(nucl_num)
+  integer (c_int64_t) , intent(in)  , value :: walk_num
+  real    (c_double ) , intent(in)          :: elec_coord(elec_num,walk_num,3)
+  real    (c_double ) , intent(in)          :: nucl_coord(nucl_num,3)
+  real    (c_double ) , intent(out)         :: en_distance_rescaled_gl(4,elec_num,nucl_num,walk_num)
 
+  integer(qmckl_exit_code)                  :: info
   integer*8 :: i, k
   double precision :: coord(3)
 
@@ -5258,7 +5274,7 @@ integer function qmckl_compute_en_distance_rescaled_gl_doc_f(context, elec_num, 
      end do
   end do
 
-end function qmckl_compute_en_distance_rescaled_gl_doc_f
+end function qmckl_compute_en_distance_rescaled_gl_doc
      #+end_src
 
      #+begin_src c :tangle (eval h_private_func) :comments org :exports none
@@ -5375,52 +5391,6 @@ qmckl_exit_code qmckl_compute_en_distance_rescaled_gl (
     (context, elec_num, nucl_num, type_nucl_num, type_nucl_vector, rescale_factor_en,
      walk_num, elec_coord, nucl_coord, en_distance_rescaled_gl );
 }
-     #+end_src
-     #+CALL: generate_c_interface(table=qmckl_en_distance_rescaled_gl_args,rettyp=get_value("CRetType"),fname="qmckl_compute_en_distance_rescaled_gl_doc")
-
-     #+RESULTS:
-     #+begin_src f90 :tangle (eval f) :comments org :exports none
-     integer(c_int32_t) function qmckl_compute_en_distance_rescaled_gl_doc &
-         (context, &
-          elec_num, &
-          nucl_num, &
-          type_nucl_num, &
-          type_nucl_vector, &
-          rescale_factor_en, &
-          walk_num, &
-          elec_coord, &
-          nucl_coord, &
-          en_distance_rescaled_gl) &
-         bind(C) result(info)
-
-       use, intrinsic :: iso_c_binding
-       implicit none
-
-       integer (c_int64_t) , intent(in)  , value :: context
-       integer (c_int64_t) , intent(in)  , value :: elec_num
-       integer (c_int64_t) , intent(in)  , value :: nucl_num
-       integer (c_int64_t) , intent(in)  , value :: type_nucl_num
-       integer (c_int64_t) , intent(in)          :: type_nucl_vector(nucl_num)
-       real    (c_double ) , intent(in)          :: rescale_factor_en(nucl_num)
-       integer (c_int64_t) , intent(in)  , value :: walk_num
-       real    (c_double ) , intent(in)          :: elec_coord(elec_num,walk_num,3)
-       real    (c_double ) , intent(in)          :: nucl_coord(elec_num,3)
-       real    (c_double ) , intent(out)         :: en_distance_rescaled_gl(4,elec_num,nucl_num,walk_num)
-
-       integer(c_int32_t), external :: qmckl_compute_en_distance_rescaled_gl_doc_f
-       info = qmckl_compute_en_distance_rescaled_gl_doc_f &
-              (context, &
-          elec_num, &
-          nucl_num, &
-          type_nucl_num, &
-          type_nucl_vector, &
-          rescale_factor_en, &
-          walk_num, &
-          elec_coord, &
-          nucl_coord, &
-          en_distance_rescaled_gl)
-
-     end function qmckl_compute_en_distance_rescaled_gl_doc
      #+end_src
 
 **** Test                                                          :noexport:
@@ -6242,7 +6212,7 @@ function qmckl_compute_jastrow_champ_factor_en_gl_doc( &
   real    (c_double ) , intent(in)          :: en_distance_rescaled(elec_num,nucl_num,walk_num)
   real    (c_double ) , intent(in)          :: en_distance_rescaled_gl(4, elec_num,nucl_num,walk_num)
   real    (c_double ) , intent(out)         :: factor_en_gl(elec_num,4,walk_num)
-  integer(qmckl_exit_code)                   :: info
+  integer(qmckl_exit_code)                  :: info
 
   integer*8 :: i, a, k, nw, ii
   double precision   :: x, x1, kf
@@ -6886,19 +6856,22 @@ qmckl_exit_code qmckl_provide_een_rescaled_e(qmckl_context context)
      | ~een_rescaled_e~    | ~double[walk_num][0:cord_num][elec_num][elec_num]~ | out    | Electron-electron rescaled distances for each walker |
 
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_een_rescaled_e_doc_f( &
+function qmckl_compute_een_rescaled_e_doc( &
      context, walk_num, elec_num, cord_num, rescale_factor_ee,  &
      ee_distance, een_rescaled_e) &
-     result(info)
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
   integer(qmckl_context), intent(in)  :: context
-  integer*8             , intent(in)  :: walk_num
-  integer*8             , intent(in)  :: elec_num
-  integer*8             , intent(in)  :: cord_num
-  double precision      , intent(in)  :: rescale_factor_ee
-  double precision      , intent(in)  :: ee_distance(elec_num,elec_num,walk_num)
-  double precision      , intent(out) :: een_rescaled_e(elec_num,elec_num,0:cord_num,walk_num)
+  integer (c_int64_t) , intent(in)  , value :: walk_num
+  integer (c_int64_t) , intent(in)  , value :: elec_num
+  integer (c_int64_t) , intent(in)  , value :: cord_num
+  real    (c_double ) , intent(in)  , value :: rescale_factor_ee
+  real    (c_double ) , intent(in)          :: ee_distance(elec_num,elec_num,walk_num)
+  real    (c_double ) , intent(out)         :: een_rescaled_e(elec_num,elec_num,0:cord_num,walk_num)
+  integer(qmckl_exit_code)                  :: info
+
   double precision,dimension(:,:),allocatable :: een_rescaled_e_ij
   double precision                    :: x
   integer*8                           :: i, j, k, l, nw
@@ -6968,7 +6941,7 @@ integer function qmckl_compute_een_rescaled_e_doc_f( &
 
   end do
 
-end function qmckl_compute_een_rescaled_e_doc_f
+end function qmckl_compute_een_rescaled_e_doc
      #+end_src
 
  #   #+CALL: generate_c_header(table=qmckl_factor_een_rescaled_e_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
@@ -6982,33 +6955,6 @@ end function qmckl_compute_een_rescaled_e_doc_f
           const double rescale_factor_ee,
           const double* ee_distance,
           double* const een_rescaled_e );
-     #+end_src
-
-     #+CALL: generate_c_interface(table=qmckl_factor_een_rescaled_e_args,rettyp=get_value("CRetType"),fname="qmckl_compute_een_rescaled_e_doc")
-
-     #+RESULTS:
-     #+begin_src f90 :tangle (eval f) :comments org :exports none
-    integer(c_int32_t) function qmckl_compute_een_rescaled_e_doc &
-	(context, walk_num, elec_num, cord_num, rescale_factor_ee, &
-        ee_distance, een_rescaled_e) &
-    bind(C) result(info)
-
-      use, intrinsic :: iso_c_binding
-      implicit none
-
-      integer (c_int64_t) , intent(in)  , value :: context
-      integer (c_int64_t) , intent(in)  , value :: walk_num
-      integer (c_int64_t) , intent(in)  , value :: elec_num
-      integer (c_int64_t) , intent(in)  , value :: cord_num
-      real    (c_double ) , intent(in)  , value :: rescale_factor_ee
-      real    (c_double ) , intent(in)          :: ee_distance(elec_num,elec_num,walk_num)
-      real    (c_double ) , intent(out)         :: een_rescaled_e(elec_num,elec_num,0:cord_num,walk_num)
-
-      integer(c_int32_t), external :: qmckl_compute_een_rescaled_e_doc_f
-      info = qmckl_compute_een_rescaled_e_doc_f &
-	     (context, walk_num, elec_num, cord_num, rescale_factor_ee, ee_distance, een_rescaled_e)
-
-    end function qmckl_compute_een_rescaled_e_doc
      #+end_src
 
      #+begin_src c :comments org :tangle (eval c) :noweb yes
@@ -7467,21 +7413,23 @@ qmckl_exit_code qmckl_provide_een_rescaled_e_gl(qmckl_context context)
      | ~een_rescaled_e_gl~ | ~double[walk_num][0:cord_num][elec_num][4][elec_num]~ | out    | Electron-electron rescaled distances |
 
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl_f( &
+function qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl_doc( &
      context, walk_num, elec_num, cord_num, rescale_factor_ee,  &
      coord_ee, ee_distance, een_rescaled_e, een_rescaled_e_gl) &
-     result(info)
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
   integer(qmckl_context), intent(in)  :: context
-  integer*8             , intent(in)  :: walk_num
-  integer*8             , intent(in)  :: elec_num
-  integer*8             , intent(in)  :: cord_num
-  double precision      , intent(in)  :: rescale_factor_ee
-  double precision      , intent(in)  :: coord_ee(elec_num,3,walk_num)
-  double precision      , intent(in)  :: ee_distance(elec_num,elec_num,walk_num)
-  double precision      , intent(in)  :: een_rescaled_e(elec_num,elec_num,0:cord_num,walk_num)
-  double precision      , intent(out) :: een_rescaled_e_gl(elec_num,4,elec_num,0:cord_num,walk_num)
+  integer(c_int64_t)    , intent(in), value  :: walk_num
+  integer(c_int64_t)    , intent(in), value  :: elec_num
+  integer(c_int64_t)    , intent(in), value  :: cord_num
+  real(c_double)        , intent(in), value  :: rescale_factor_ee
+  real(c_double)        , intent(in)  :: coord_ee(elec_num,3,walk_num)
+  real(c_double)        , intent(in)  :: ee_distance(elec_num,elec_num,walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_e(elec_num,elec_num,0:cord_num,walk_num)
+  real(c_double)        , intent(out) :: een_rescaled_e_gl(elec_num,4,elec_num,0:cord_num,walk_num)
+  integer(qmckl_exit_code)            :: info
 
   double precision, allocatable       :: elec_dist_gl(:,:,:)
   double precision                    :: x, kappa_l
@@ -7562,7 +7510,7 @@ integer function qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl_f( &
      end do
   end do
 
-end function qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl_f
+end function qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl_doc
      #+end_src
 
  #  #+CALL: generate_c_header(table=qmckl_factor_een_rescaled_e_gl_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
@@ -7594,50 +7542,6 @@ end function qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl_f
  #+end_src
 
 
-     #+CALL: generate_c_interface(table=qmckl_factor_een_rescaled_e_gl_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
-
-     #+RESULTS:
-     #+begin_src f90 :tangle (eval f) :comments org :exports none
-    integer(c_int32_t) function qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl_doc &
-        (context, &
-         walk_num, &
-         elec_num, &
-         cord_num, &
-         rescale_factor_ee, &
-         coord_ee, &
-         ee_distance, &
-         een_rescaled_e, &
-         een_rescaled_e_gl) &
-        bind(C) result(info)
-
-      use, intrinsic :: iso_c_binding
-      implicit none
-
-      integer (c_int64_t) , intent(in)  , value :: context
-      integer (c_int64_t) , intent(in)  , value :: walk_num
-      integer (c_int64_t) , intent(in)  , value :: elec_num
-      integer (c_int64_t) , intent(in)  , value :: cord_num
-      real    (c_double ) , intent(in)  , value :: rescale_factor_ee
-      real    (c_double ) , intent(in)          :: coord_ee(elec_num,3,walk_num)
-      real    (c_double ) , intent(in)          :: ee_distance(elec_num,elec_num,walk_num)
-      real    (c_double ) , intent(in)          :: een_rescaled_e(elec_num,elec_num,0:cord_num,walk_num)
-      real    (c_double ) , intent(out)         :: een_rescaled_e_gl(elec_num,4,elec_num,0:cord_num,walk_num)
-
-      integer(c_int32_t), external :: qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl_f
-      info = qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl_f &
-             (context, &
-         walk_num, &
-         elec_num, &
-         cord_num, &
-         rescale_factor_ee, &
-         coord_ee, &
-         ee_distance, &
-         een_rescaled_e, &
-         een_rescaled_e_gl)
-
-    end function qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl_doc
-     #+end_src
-
   #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
    qmckl_exit_code qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl_hpc (
          const qmckl_context context,
@@ -7653,8 +7557,7 @@ end function qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl_f
 
  #+begin_src c :comments org :tangle (eval c) :noweb yes
 qmckl_exit_code
-qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl_hpc (
-                                                          const qmckl_context context,
+qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl_hpc (const qmckl_context context,
                                                           const int64_t walk_num,
                                                           const int64_t elec_num,
                                                           const int64_t cord_num,
@@ -7682,7 +7585,7 @@ qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl_hpc (
     assert (elec_dist_gl1 != NULL);
     assert (elec_dist_gl2 != NULL);
     assert (elec_dist_gl3 != NULL);
-      
+
 #ifdef HAVE_OPENMP
 #pragma omp for
 #endif
@@ -7790,7 +7693,7 @@ qmckl_compute_jastrow_champ_factor_een_rescaled_e_gl_hpc (
     free(elec_dist_gl2);
     free(elec_dist_gl3);
   }
-  
+
   return QMCKL_SUCCESS;
 }
 #+end_src
@@ -7875,11 +7778,11 @@ for l in range(0,cord_num+1):
     for i in range(0,elec_num):
       for ii in range(0,4):
         een_rescaled_e_gl[i,ii,j,l] = kappa_l * elec_dist_gl[ii,i,j]
-        een_rescaled_e_gl[i,3,j,l] = een_rescaled_e_gl[i,3,j,l] +        \
-          een_rescaled_e_gl[i,0,j,l] * een_rescaled_e_gl[i,0,j,l] +        \
-          een_rescaled_e_gl[i,1,j,l] * een_rescaled_e_gl[i,1,j,l] +        \
-          een_rescaled_e_gl[i,2,j,l] * een_rescaled_e_gl[i,2,j,l]
-        
+      een_rescaled_e_gl[i,3,j,l] = een_rescaled_e_gl[i,3,j,l] +        \
+      een_rescaled_e_gl[i,0,j,l] * een_rescaled_e_gl[i,0,j,l] +        \
+      een_rescaled_e_gl[i,1,j,l] * een_rescaled_e_gl[i,1,j,l] +        \
+      een_rescaled_e_gl[i,2,j,l] * een_rescaled_e_gl[i,2,j,l]
+
       for ii in range(0,4):
         een_rescaled_e_gl[i,ii,j,l] = een_rescaled_e_gl[i,ii,j,l] * een_rescaled_e[i,j,l]
 
@@ -8233,23 +8136,26 @@ qmckl_exit_code qmckl_provide_een_rescaled_n(qmckl_context context)
      | ~een_rescaled_n~    | ~double[walk_num][0:cord_num][nucl_num][elec_num]~ | out    | Electron-nucleus rescaled distances |
 
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_een_rescaled_n_f( &
+function qmckl_compute_een_rescaled_n( &
      context, walk_num, elec_num, nucl_num, &
      type_nucl_num, type_nucl_vector, cord_num, rescale_factor_en,  &
      en_distance, een_rescaled_n) &
-     result(info)
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
   integer(qmckl_context), intent(in)  :: context
-  integer*8             , intent(in)  :: walk_num
-  integer*8             , intent(in)  :: elec_num
-  integer*8             , intent(in)  :: nucl_num
-  integer*8             , intent(in)  :: type_nucl_num
-  integer*8             , intent(in)  :: type_nucl_vector(nucl_num)
-  integer*8             , intent(in)  :: cord_num
-  double precision      , intent(in)  :: rescale_factor_en(type_nucl_num)
-  double precision      , intent(in)  :: en_distance(nucl_num,elec_num,walk_num)
-  double precision      , intent(out) :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
+  integer (c_int64_t) , intent(in)  , value :: walk_num
+  integer (c_int64_t) , intent(in)  , value :: elec_num
+  integer (c_int64_t) , intent(in)  , value :: nucl_num
+  integer (c_int64_t) , intent(in)  , value :: type_nucl_num
+  integer (c_int64_t) , intent(in)          :: type_nucl_vector(nucl_num)
+  integer (c_int64_t) , intent(in)  , value :: cord_num
+  real    (c_double ) , intent(in)          :: rescale_factor_en(nucl_num)
+  real    (c_double ) , intent(in)          :: en_distance(nucl_num,elec_num,walk_num)
+  real    (c_double ) , intent(out)         :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
+  integer(qmckl_exit_code)                  :: info
+
   double precision                    :: x
   integer*8                           :: i, a, k, l, nw
 
@@ -8301,12 +8207,12 @@ integer function qmckl_compute_een_rescaled_n_f( &
 
   end do
 
-end function qmckl_compute_een_rescaled_n_f
+end function qmckl_compute_een_rescaled_n
      #+end_src
 
      #+begin_src c :comments org :tangle (eval c) :noweb yes
 /*
-qmckl_exit_code qmckl_compute_een_rescaled_n (
+qmckl_exit_code qmckl_compute_een_rescaled_n_hpc (
       const qmckl_context context,
       const int64_t walk_num,
       const int64_t elec_num,
@@ -8368,53 +8274,6 @@ qmckl_exit_code qmckl_compute_een_rescaled_n (
   return QMCKL_SUCCESS;
 }
 */
-     #+end_src
-
-     #+CALL: generate_c_interface(table=qmckl_factor_een_rescaled_n_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
-
-     #+RESULTS:
-     #+begin_src f90 :tangle (eval f) :comments org :exports none
-    integer(c_int32_t) function qmckl_compute_een_rescaled_n &
-        (context, &
-         walk_num, &
-         elec_num, &
-         nucl_num, &
-         type_nucl_num, &
-         type_nucl_vector, &
-         cord_num, &
-         rescale_factor_en, &
-         en_distance, &
-         een_rescaled_n) &
-        bind(C) result(info)
-
-      use, intrinsic :: iso_c_binding
-      implicit none
-
-      integer (c_int64_t) , intent(in)  , value :: context
-      integer (c_int64_t) , intent(in)  , value :: walk_num
-      integer (c_int64_t) , intent(in)  , value :: elec_num
-      integer (c_int64_t) , intent(in)  , value :: nucl_num
-      integer (c_int64_t) , intent(in)  , value :: type_nucl_num
-      integer (c_int64_t) , intent(in)          :: type_nucl_vector(nucl_num)
-      integer (c_int64_t) , intent(in)  , value :: cord_num
-      real    (c_double ) , intent(in)          :: rescale_factor_en(nucl_num)
-      real    (c_double ) , intent(in)          :: en_distance(nucl_num,elec_num,walk_num)
-      real    (c_double ) , intent(out)         :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
-
-      integer(c_int32_t), external :: qmckl_compute_een_rescaled_n_f
-      info = qmckl_compute_een_rescaled_n_f &
-             (context, &
-         walk_num, &
-         elec_num, &
-         nucl_num, &
-         type_nucl_num, &
-         type_nucl_vector, &
-         cord_num, &
-         rescale_factor_en, &
-         en_distance, &
-         een_rescaled_n)
-
-    end function qmckl_compute_een_rescaled_n
      #+end_src
 
  #   #+CALL: generate_c_header(table=qmckl_factor_een_rescaled_n_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
@@ -8664,27 +8523,30 @@ qmckl_exit_code qmckl_provide_een_rescaled_n_gl(qmckl_context context)
      | ~een_rescaled_n_gl~ | ~double[walk_num][0:cord_num][nucl_num][4][elec_num]~ | out    | Electron-nucleus rescaled distances |
 
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_jastrow_champ_factor_een_rescaled_n_gl_f( &
+function qmckl_compute_jastrow_champ_factor_een_rescaled_n_gl( &
      context, walk_num, elec_num, nucl_num, type_nucl_num, type_nucl_vector, &
      cord_num, rescale_factor_en, &
      coord_ee, coord_n, en_distance, een_rescaled_n, een_rescaled_n_gl) &
-     result(info)
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
   integer(qmckl_context), intent(in)  :: context
-  integer*8             , intent(in)  :: walk_num
-  integer*8             , intent(in)  :: elec_num
-  integer*8             , intent(in)  :: nucl_num
-  integer*8             , intent(in)  :: type_nucl_num
-  integer*8             , intent(in)  :: type_nucl_vector(nucl_num)
-  integer*8             , intent(in)  :: cord_num
-  double precision      , intent(in)  :: rescale_factor_en(type_nucl_num)
-  double precision      , intent(in)  :: coord_ee(elec_num,3,walk_num)
-  double precision      , intent(in)  :: coord_n(nucl_num,3)
-  double precision      , intent(in)  :: en_distance(nucl_num,elec_num,walk_num)
-  double precision      , intent(in)  :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
-  double precision      , intent(out) :: een_rescaled_n_gl(elec_num,4,nucl_num,0:cord_num,walk_num)
-  double precision,dimension(:,:,:),allocatable :: elnuc_dist_gl
+  integer (c_int64_t) , intent(in)  , value :: walk_num
+  integer (c_int64_t) , intent(in)  , value :: elec_num
+  integer (c_int64_t) , intent(in)  , value :: nucl_num
+  integer (c_int64_t) , intent(in)  , value :: type_nucl_num
+  integer (c_int64_t) , intent(in)          :: type_nucl_vector(nucl_num)
+  integer (c_int64_t) , intent(in)  , value :: cord_num
+  real    (c_double ) , intent(in)          :: rescale_factor_en(nucl_num)
+  real    (c_double ) , intent(in)          :: coord_ee(elec_num,3,walk_num)
+  real    (c_double ) , intent(in)          :: coord_n(nucl_num,3)
+  real    (c_double ) , intent(in)          :: en_distance(nucl_num,elec_num,walk_num)
+  real    (c_double ) , intent(in)          :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
+  real    (c_double ) , intent(out)         :: een_rescaled_n_gl(elec_num,4,nucl_num,0:cord_num,walk_num)
+  integer(qmckl_exit_code)                  :: info
+
+  double precision,allocatable        :: elnuc_dist_gl(:,:,:)
   double precision                    :: x, ria_inv, kappa_l
   integer*8                           :: i, a, k, l, nw, ii
 
@@ -8759,7 +8621,7 @@ integer function qmckl_compute_jastrow_champ_factor_een_rescaled_n_gl_f( &
      end do
   end do
 
-end function qmckl_compute_jastrow_champ_factor_een_rescaled_n_gl_f
+end function qmckl_compute_jastrow_champ_factor_een_rescaled_n_gl
      #+end_src
 
  #   #+CALL: generate_c_header(table=qmckl_compute_jastrow_champ_factor_een_rescaled_n_gl_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
@@ -8779,62 +8641,6 @@ end function qmckl_compute_jastrow_champ_factor_een_rescaled_n_gl_f
           const double* en_distance,
           const double* een_rescaled_n,
           double* const een_rescaled_n_gl );
-     #+end_src
-
-     #+CALL: generate_c_interface(table=qmckl_compute_jastrow_champ_factor_een_rescaled_n_gl_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
-
-     #+RESULTS:
-     #+begin_src f90 :tangle (eval f) :comments org :exports none
-    integer(c_int32_t) function qmckl_compute_jastrow_champ_factor_een_rescaled_n_gl &
-        (context, &
-         walk_num, &
-         elec_num, &
-         nucl_num, &
-         type_nucl_num, &
-         type_nucl_vector, &
-         cord_num, &
-         rescale_factor_en, &
-         coord_ee, &
-         coord_n, &
-         en_distance, &
-         een_rescaled_n, &
-         een_rescaled_n_gl) &
-        bind(C) result(info)
-
-      use, intrinsic :: iso_c_binding
-      implicit none
-
-      integer (c_int64_t) , intent(in)  , value :: context
-      integer (c_int64_t) , intent(in)  , value :: walk_num
-      integer (c_int64_t) , intent(in)  , value :: elec_num
-      integer (c_int64_t) , intent(in)  , value :: nucl_num
-      integer (c_int64_t) , intent(in)  , value :: type_nucl_num
-      integer (c_int64_t) , intent(in)          :: type_nucl_vector(nucl_num)
-      integer (c_int64_t) , intent(in)  , value :: cord_num
-      real    (c_double ) , intent(in)          :: rescale_factor_en(nucl_num)
-      real    (c_double ) , intent(in)          :: coord_ee(elec_num,3,walk_num)
-      real    (c_double ) , intent(in)          :: coord_n(nucl_num,3)
-      real    (c_double ) , intent(in)          :: en_distance(nucl_num,elec_num,walk_num)
-      real    (c_double ) , intent(in)          :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
-      real    (c_double ) , intent(out)         :: een_rescaled_n_gl(elec_num,4,nucl_num,0:cord_num,walk_num)
-
-      integer(c_int32_t), external :: qmckl_compute_jastrow_champ_factor_een_rescaled_n_gl_f
-      info = qmckl_compute_jastrow_champ_factor_een_rescaled_n_gl_f &
-             (context, &
-         walk_num, &
-         elec_num, &
-         nucl_num, &
-         type_nucl_num, &
-         type_nucl_vector, &
-         cord_num, &
-         rescale_factor_en, &
-         coord_ee, &
-         coord_n, &
-         en_distance, &
-         een_rescaled_n, &
-         een_rescaled_n_gl)
-
-    end function qmckl_compute_jastrow_champ_factor_een_rescaled_n_gl
      #+end_src
 
 **** Test                                                          :noexport:
@@ -8976,14 +8782,17 @@ return [ ("$N_{ord}$", "Number of parameters"), ("","")  ] + \
      | ~dim_c_vector~ | ~int64_t~       | out    | Number of parameters per atom type |
 
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_dim_c_vector_f( &
+function qmckl_compute_dim_c_vector_doc( &
      context, cord_num, dim_c_vector) &
-     result(info)
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
-  integer(qmckl_context), intent(in)  :: context
-  integer*8             , intent(in)  :: cord_num
-  integer*8             , intent(out) :: dim_c_vector
+  integer(qmckl_context), intent(in)        :: context
+  integer (c_int64_t) , intent(in)  , value :: cord_num
+  integer (c_int64_t) , intent(out)         :: dim_c_vector
+  integer(qmckl_exit_code)                  :: info
+
   double precision                    :: x
   integer*8                           :: i, a, k, l, p, lmax
 
@@ -9015,11 +8824,11 @@ integer function qmckl_compute_dim_c_vector_f( &
     end do
   end do
 
-end function qmckl_compute_dim_c_vector_f
+end function qmckl_compute_dim_c_vector_doc
      #+end_src
 
      #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
-qmckl_exit_code qmckl_compute_dim_c_vector (
+qmckl_exit_code qmckl_compute_dim_c_vector_hpc (
       const qmckl_context context,
       const int64_t cord_num,
       int64_t* const dim_c_vector){
@@ -9055,10 +8864,36 @@ qmckl_exit_code qmckl_compute_dim_c_vector (
 }
      #+end_src
 
+     #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
+qmckl_exit_code qmckl_compute_dim_c_vector (
+      const qmckl_context context,
+      const int64_t cord_num,
+      int64_t* const dim_c_vector)
+{
+#ifdef QMCKL_HPC
+  return qmckl_compute_dim_c_vector_hpc
+#else
+  return qmckl_compute_dim_c_vector_doc
+#endif
+    (context, cord_num, dim_c_vector);
+}
+     #+end_src
+
+
  #   #+CALL: generate_c_header(table=qmckl_factor_dim_c_vector_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
 
      #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
-    qmckl_exit_code qmckl_compute_dim_c_vector (
+    qmckl_exit_code qmckl_compute_dim_c_vector(
+          const qmckl_context context,
+          const int64_t cord_num,
+          int64_t* const dim_c_vector );
+
+    qmckl_exit_code qmckl_compute_dim_c_vector_doc(
+          const qmckl_context context,
+          const int64_t cord_num,
+          int64_t* const dim_c_vector );
+
+    qmckl_exit_code qmckl_compute_dim_c_vector_hpc(
           const qmckl_context context,
           const int64_t cord_num,
           int64_t* const dim_c_vector );
@@ -9442,22 +9277,25 @@ qmckl_exit_code qmckl_provide_dtmp_c(qmckl_context context)
      | ~type_nucl_num~    | ~int64_t~                             | in     | dimension of cord full table |
      | ~type_nucl_vector~ | ~int64_t[nucl_num]~                   | in     | dimension of cord full table |
      | ~c_vector~         | ~double[dim_c_vector][type_nucl_num]~ | in     | dimension of cord full table |
-     | ~c_vector_full~    | ~double[nucl_num][dim_c_vector]~      | out    | Full list of coefficients    |
+     | ~c_vector_full~    | ~double[dim_c_vector][nucl_num]~      | out    | Full list of coefficients    |
 
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_c_vector_full_doc_f( &
+function qmckl_compute_c_vector_full_doc( &
      context, nucl_num, dim_c_vector, type_nucl_num,  &
      type_nucl_vector, c_vector, c_vector_full) &
-     result(info)
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
-  integer(qmckl_context), intent(in)  :: context
-  integer*8             , intent(in)  :: nucl_num
-  integer*8             , intent(in)  :: dim_c_vector
-  integer*8             , intent(in)  :: type_nucl_num
-  integer*8             , intent(in)  :: type_nucl_vector(nucl_num)
-  double precision      , intent(in)  :: c_vector(dim_c_vector, type_nucl_num)
-  double precision      , intent(out) :: c_vector_full(nucl_num, dim_c_vector)
+  integer(qmckl_context), intent(in)        :: context
+  integer (c_int64_t) , intent(in)  , value :: nucl_num
+  integer (c_int64_t) , intent(in)  , value :: dim_c_vector
+  integer (c_int64_t) , intent(in)  , value :: type_nucl_num
+  integer (c_int64_t) , intent(in)          :: type_nucl_vector(nucl_num)
+  real    (c_double ) , intent(in)          :: c_vector(dim_c_vector, type_nucl_num)
+  real    (c_double ) , intent(out)         :: c_vector_full(nucl_num,dim_c_vector)
+  integer(qmckl_exit_code)                  :: info
+
   double precision                    :: x
   integer*8                           :: i, a, k, l, nw
 
@@ -9473,33 +9311,7 @@ integer function qmckl_compute_c_vector_full_doc_f( &
     c_vector_full(a,1:dim_c_vector) = c_vector(1:dim_c_vector, type_nucl_vector(a)+1)
   end do
 
-end function qmckl_compute_c_vector_full_doc_f
-     #+end_src
-
-     #+CALL: generate_c_interface(table=qmckl_factor_c_vector_full_args,rettyp=get_value("CRetType"),fname="qmckl_compute_c_vector_full_doc")
-
-     #+RESULTS:
-     #+begin_src f90 :tangle (eval f) :comments org :exports none
-    integer(c_int32_t) function qmckl_compute_c_vector_full_doc &
-	(context, nucl_num, dim_c_vector, type_nucl_num, type_nucl_vector, c_vector, c_vector_full) &
-	bind(C) result(info)
-
-      use, intrinsic :: iso_c_binding
-      implicit none
-
-      integer (c_int64_t) , intent(in)  , value :: context
-      integer (c_int64_t) , intent(in)  , value :: nucl_num
-      integer (c_int64_t) , intent(in)  , value :: dim_c_vector
-      integer (c_int64_t) , intent(in)  , value :: type_nucl_num
-      integer (c_int64_t) , intent(in)          :: type_nucl_vector(nucl_num)
-      real    (c_double ) , intent(in)          :: c_vector(type_nucl_num,dim_c_vector)
-      real    (c_double ) , intent(out)         :: c_vector_full(nucl_num,dim_c_vector)
-
-      integer(c_int32_t), external :: qmckl_compute_c_vector_full_doc_f
-      info = qmckl_compute_c_vector_full_doc_f &
-	     (context, nucl_num, dim_c_vector, type_nucl_num, type_nucl_vector, c_vector, c_vector_full)
-
-    end function qmckl_compute_c_vector_full_doc
+end function qmckl_compute_c_vector_full_doc
      #+end_src
 
      #+begin_src c :comments org :tangle (eval c) :noweb yes
@@ -9601,15 +9413,18 @@ qmckl_exit_code qmckl_compute_c_vector_full (
      | ~lkpm_combined_index~ | ~int64_t[4][dim_c_vector]~ | out    | Full list of combined indices |
 
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_lkpm_combined_index_doc_f( &
+function qmckl_compute_lkpm_combined_index_doc( &
      context, cord_num, dim_c_vector,  lkpm_combined_index) &
-     result(info)
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
-  integer(qmckl_context), intent(in)  :: context
-  integer*8             , intent(in)  :: cord_num
-  integer*8             , intent(in)  :: dim_c_vector
-  integer*8             , intent(out) :: lkpm_combined_index(dim_c_vector, 4)
+  integer(qmckl_context), intent(in)        :: context
+  integer (c_int64_t) , intent(in)  , value :: cord_num
+  integer (c_int64_t) , intent(in)  , value :: dim_c_vector
+  integer (c_int64_t) , intent(out)         :: lkpm_combined_index(dim_c_vector,4)
+  integer(qmckl_exit_code)                  :: info
+
   double precision                    :: x
   integer*8                           :: i, a, k, l, kk, p, lmax, m
 
@@ -9640,7 +9455,7 @@ integer function qmckl_compute_lkpm_combined_index_doc_f( &
     end do
   end do
 
-end function qmckl_compute_lkpm_combined_index_doc_f
+end function qmckl_compute_lkpm_combined_index_doc
      #+end_src
 
      #+begin_src c :comments org :tangle (eval c) :noweb yes
@@ -9680,28 +9495,6 @@ qmckl_exit_code qmckl_compute_lkpm_combined_index_hpc (
 }
      #+end_src
 
-   #+CALL: generate_c_interface(table=lkpm_combined_index_args,rettyp=get_value("CRetType"),fname="qmckl_compute_lkpm_combined_index_doc")
-
-   #+RESULTS:
-   #+begin_src f90 :tangle (eval f) :comments org :exports none
-   integer(c_int32_t) function qmckl_compute_lkpm_combined_index_doc &
-       (context, cord_num, dim_c_vector, lkpm_combined_index) &
-       bind(C) result(info)
-
-     use, intrinsic :: iso_c_binding
-     implicit none
-
-     integer (c_int64_t) , intent(in)  , value :: context
-     integer (c_int64_t) , intent(in)  , value :: cord_num
-     integer (c_int64_t) , intent(in)  , value :: dim_c_vector
-     integer (c_int64_t) , intent(out)         :: lkpm_combined_index(dim_c_vector,4)
-
-     integer(c_int32_t), external :: qmckl_compute_lkpm_combined_index_doc_f
-     info = qmckl_compute_lkpm_combined_index_doc_f &
-            (context, cord_num, dim_c_vector, lkpm_combined_index)
-
-   end function qmckl_compute_lkpm_combined_index_doc
-   #+end_src
 
      #+begin_src c :comments org :tangle (eval c) :noweb yes
 qmckl_exit_code qmckl_compute_lkpm_combined_index (
@@ -9822,20 +9615,23 @@ qmckl_exit_code qmckl_compute_tmp_c (const qmckl_context context,
      #+end_src
 
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_tmp_c_doc_f( &
+function qmckl_compute_tmp_c_doc( &
      context, cord_num, elec_num, nucl_num, &
      walk_num, een_rescaled_e, een_rescaled_n, tmp_c) &
-     result(info)
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
   integer(qmckl_context), intent(in)  :: context
-  integer*8             , intent(in)  :: cord_num
-  integer*8             , intent(in)  :: elec_num
-  integer*8             , intent(in)  :: nucl_num
-  integer*8             , intent(in)  :: walk_num
-  double precision      , intent(in)  :: een_rescaled_e(elec_num, elec_num, 0:cord_num, walk_num)
-  double precision      , intent(in)  :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
-  double precision      , intent(out) :: tmp_c(elec_num, nucl_num,0:cord_num, 0:cord_num-1, walk_num)
+  integer (c_int64_t) , intent(in)  , value :: cord_num
+  integer (c_int64_t) , intent(in)  , value :: elec_num
+  integer (c_int64_t) , intent(in)  , value :: nucl_num
+  integer (c_int64_t) , intent(in)  , value :: walk_num
+  real    (c_double ) , intent(in)          :: een_rescaled_e(elec_num,elec_num,0:cord_num,walk_num)
+  real    (c_double ) , intent(in)          :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
+  real    (c_double ) , intent(out)         :: tmp_c(elec_num,nucl_num,0:cord_num,0:cord_num-1,walk_num)
+  integer(qmckl_exit_code)                  :: info
+
   double precision                    :: x
   integer*8                           :: i, j, a, l, kk, p, lmax, nw
   character                           :: TransA, TransB
@@ -9865,16 +9661,16 @@ integer function qmckl_compute_tmp_c_doc_f( &
   LDC = size(tmp_c,1)
 
   do nw=1, walk_num
-  do i=0, cord_num-1
-  info = qmckl_dgemm(context, TransA, TransB, M, N, K, alpha,     &
-                     een_rescaled_e(1,1,i,nw),LDA*1_8,                     &
-                     een_rescaled_n(1,1,0,nw),LDB*1_8,                     &
-                     beta,                                       &
-                     tmp_c(1,1,0,i,nw),LDC)
-  end do
+    do i=0, cord_num-1
+      info = qmckl_dgemm(context, TransA, TransB, M, N, K, alpha,     &
+                         een_rescaled_e(1,1,i,nw),LDA*1_8,                     &
+                         een_rescaled_n(1,1,0,nw),LDB*1_8,                     &
+                         beta,                                       &
+                         tmp_c(1,1,0,i,nw),LDC)
+    end do
   end do
 
-end function qmckl_compute_tmp_c_doc_f
+end function qmckl_compute_tmp_c_doc
      #+end_src
 
      #+begin_src c :tangle (eval h_private_func) :comments org
@@ -9888,33 +9684,6 @@ qmckl_exit_code qmckl_compute_tmp_c_doc (
           const double* een_rescaled_n,
           double* const tmp_c );
      #+end_src
-
-     #+CALL: generate_c_interface(table=qmckl_factor_tmp_c_args,rettyp=get_value("FRetType"),fname="qmckl_compute_tmp_c_doc")
-
- #+RESULTS:
- #+begin_src f90 :tangle (eval f) :comments org :exports none
-integer(c_int32_t) function qmckl_compute_tmp_c_doc &
-    (context, cord_num, elec_num, nucl_num, walk_num, een_rescaled_e, een_rescaled_n, tmp_c) &
-    bind(C) result(info)
-
-  use, intrinsic :: iso_c_binding
-  implicit none
-
-  integer (c_int64_t) , intent(in)  , value :: context
-  integer (c_int64_t) , intent(in)  , value :: cord_num
-  integer (c_int64_t) , intent(in)  , value :: elec_num
-  integer (c_int64_t) , intent(in)  , value :: nucl_num
-  integer (c_int64_t) , intent(in)  , value :: walk_num
-  real    (c_double ) , intent(in)          :: een_rescaled_e(elec_num,elec_num,0:cord_num,walk_num)
-  real    (c_double ) , intent(in)          :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
-  real    (c_double ) , intent(out)         :: tmp_c(elec_num,nucl_num,0:cord_num,0:cord_num-1,walk_num)
-
-  integer(c_int32_t), external :: qmckl_compute_tmp_c_doc_f
-  info = qmckl_compute_tmp_c_doc_f &
-         (context, cord_num, elec_num, nucl_num, walk_num, een_rescaled_e, een_rescaled_n, tmp_c)
-
-end function qmckl_compute_tmp_c_doc
- #+end_src
 
 ***** CPU                                                          :noexport:
 
@@ -10071,20 +9840,23 @@ qmckl_compute_dtmp_c (const qmckl_context context,
       #+end_src
 
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_dtmp_c_doc_f( &
+function qmckl_compute_dtmp_c_doc( &
      context, cord_num, elec_num, nucl_num, &
      walk_num, een_rescaled_e_gl, een_rescaled_n, dtmp_c) &
-     result(info)
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
-  integer(qmckl_context), intent(in)  :: context
-  integer*8             , intent(in)  :: cord_num
-  integer*8             , intent(in)  :: elec_num
-  integer*8             , intent(in)  :: nucl_num
-  integer*8             , intent(in)  :: walk_num
-  double precision      , intent(in)  :: een_rescaled_e_gl(elec_num, 4, elec_num, 0:cord_num, walk_num)
-  double precision      , intent(in)  :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
-  double precision      , intent(out) :: dtmp_c(elec_num, 4, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
+  integer(qmckl_context), intent(in)        :: context
+  integer (c_int64_t) , intent(in)  , value :: cord_num
+  integer (c_int64_t) , intent(in)  , value :: elec_num
+  integer (c_int64_t) , intent(in)  , value :: nucl_num
+  integer (c_int64_t) , intent(in)  , value :: walk_num
+  real    (c_double ) , intent(in)          :: een_rescaled_e_gl(elec_num,4,elec_num,0:cord_num,walk_num)
+  real    (c_double ) , intent(in)          :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
+  real    (c_double ) , intent(out)         :: dtmp_c(elec_num,4,nucl_num,0:cord_num,0:cord_num-1,walk_num)
+  integer(qmckl_exit_code)                  :: info
+
   double precision                    :: x
   integer*8                           :: i, j, a, l, kk, p, lmax, nw, ii
   character                           :: TransA, TransB
@@ -10122,35 +9894,8 @@ integer function qmckl_compute_dtmp_c_doc_f( &
      end do
   end do
 
-end function qmckl_compute_dtmp_c_doc_f
-     #+end_src
-
-     #+CALL: generate_c_interface(table=qmckl_factor_dtmp_c_args,rettyp=get_value("FRetType"),fname="qmckl_compute_dtmp_c_doc")
-
- #+RESULTS:
- #+begin_src f90 :tangle (eval f) :comments org :exports none
-integer(c_int32_t) function qmckl_compute_dtmp_c_doc &
-    (context, cord_num, elec_num, nucl_num, walk_num, een_rescaled_e_gl, een_rescaled_n, dtmp_c) &
-    bind(C) result(info)
-
-  use, intrinsic :: iso_c_binding
-  implicit none
-
-  integer (c_int64_t) , intent(in)  , value :: context
-  integer (c_int64_t) , intent(in)  , value :: cord_num
-  integer (c_int64_t) , intent(in)  , value :: elec_num
-  integer (c_int64_t) , intent(in)  , value :: nucl_num
-  integer (c_int64_t) , intent(in)  , value :: walk_num
-  real    (c_double ) , intent(in)          :: een_rescaled_e_gl(elec_num,4,elec_num,0:cord_num,walk_num)
-  real    (c_double ) , intent(in)          :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
-  real    (c_double ) , intent(out)         :: dtmp_c(elec_num,nucl_num,0:cord_num,0:cord_num-1,walk_num)
-
-  integer(c_int32_t), external :: qmckl_compute_dtmp_c_doc_f
-  info = qmckl_compute_dtmp_c_doc_f &
-         (context, cord_num, elec_num, nucl_num, walk_num, een_rescaled_e_gl, een_rescaled_n, dtmp_c)
-
 end function qmckl_compute_dtmp_c_doc
- #+end_src
+     #+end_src
 
      #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
 qmckl_exit_code qmckl_compute_dtmp_c_doc (
@@ -10508,20 +10253,26 @@ qmckl_exit_code qmckl_provide_jastrow_champ_factor_een(qmckl_context context)
      | ~factor_een~          | ~double[walk_num]~                                 | out    | Electron-nucleus jastrow             |
 
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_jastrow_champ_factor_een_naive_f( &
+function qmckl_compute_jastrow_champ_factor_een_naive( &
      context, walk_num, elec_num, nucl_num, cord_num,&
      dim_c_vector, c_vector_full, lkpm_combined_index, &
      een_rescaled_e, een_rescaled_n, factor_een) &
-     result(info)
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
-  integer(qmckl_context), intent(in)  :: context
-  integer*8             , intent(in)  :: walk_num, elec_num, cord_num, nucl_num, dim_c_vector
-  integer*8             , intent(in)  :: lkpm_combined_index(dim_c_vector,4)
-  double precision      , intent(in)  :: c_vector_full(nucl_num, dim_c_vector)
-  double precision      , intent(in)  :: een_rescaled_e(elec_num, elec_num, 0:cord_num, walk_num)
-  double precision      , intent(in)  :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
-  double precision      , intent(out) :: factor_een(walk_num)
+  integer(qmckl_context), intent(in)        :: context
+  integer (c_int64_t) , intent(in)  , value :: walk_num
+  integer (c_int64_t) , intent(in)  , value :: elec_num
+  integer (c_int64_t) , intent(in)  , value :: nucl_num
+  integer (c_int64_t) , intent(in)  , value :: cord_num
+  integer (c_int64_t) , intent(in)  , value :: dim_c_vector
+  real    (c_double ) , intent(in)          :: c_vector_full(nucl_num,dim_c_vector)
+  integer (c_int64_t) , intent(in)          :: lkpm_combined_index(dim_c_vector,4)
+  real    (c_double ) , intent(in)          :: een_rescaled_e(elec_num,elec_num,0:cord_num,walk_num)
+  real    (c_double ) , intent(in)          :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
+  real    (c_double ) , intent(out)         :: factor_een(walk_num)
+  integer(qmckl_exit_code)                  :: info
 
   integer*8 :: i, a, j, l, k, p, m, n, nw
   double precision :: accu, accu2, cn
@@ -10560,7 +10311,8 @@ integer function qmckl_compute_jastrow_champ_factor_een_naive_f( &
      end do
   end do
 
-end function qmckl_compute_jastrow_champ_factor_een_naive_f
+end function qmckl_compute_jastrow_champ_factor_een_naive
+
      #+end_src
 
  #   #+CALL: generate_c_header(table=qmckl_factor_een_naive_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
@@ -10578,56 +10330,6 @@ end function qmckl_compute_jastrow_champ_factor_een_naive_f
       const double* een_rescaled_e,
       const double* een_rescaled_n,
       double* const factor_een );
-     #+end_src
-
-     #+CALL: generate_c_interface(table=qmckl_factor_een_naive_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
-
-     #+RESULTS:
-     #+begin_src f90 :tangle (eval f) :comments org :exports none
-    integer(c_int32_t) function qmckl_compute_jastrow_champ_factor_een_naive &
-    (context, &
-         walk_num, &
-         elec_num, &
-         nucl_num, &
-         cord_num, &
-         dim_c_vector, &
-         c_vector_full, &
-         lkpm_combined_index, &
-         een_rescaled_e, &
-         een_rescaled_n, &
-         factor_een) &
-    bind(C) result(info)
-
-      use, intrinsic :: iso_c_binding
-      implicit none
-
-      integer (c_int64_t) , intent(in)  , value :: context
-      integer (c_int64_t) , intent(in)  , value :: walk_num
-      integer (c_int64_t) , intent(in)  , value :: elec_num
-      integer (c_int64_t) , intent(in)  , value :: nucl_num
-      integer (c_int64_t) , intent(in)  , value :: cord_num
-      integer (c_int64_t) , intent(in)  , value :: dim_c_vector
-      real    (c_double ) , intent(in)          :: c_vector_full(nucl_num,dim_c_vector)
-      integer (c_int64_t) , intent(in)          :: lkpm_combined_index(dim_c_vector,4)
-      real    (c_double ) , intent(in)          :: een_rescaled_e(0:cord_num,elec_num,elec_num,walk_num)
-      real    (c_double ) , intent(in)          :: een_rescaled_n(0:cord_num,nucl_num,elec_num,walk_num)
-      real    (c_double ) , intent(out)         :: factor_een(walk_num)
-
-      integer(c_int32_t), external :: qmckl_compute_jastrow_champ_factor_een_naive_f
-      info = qmckl_compute_jastrow_champ_factor_een_naive_f &
-         (context, &
-         walk_num, &
-         elec_num, &
-         nucl_num, &
-         cord_num, &
-         dim_c_vector, &
-         c_vector_full, &
-         lkpm_combined_index, &
-         een_rescaled_e, &
-         een_rescaled_n, &
-         factor_een)
-
-    end function qmckl_compute_jastrow_champ_factor_een_naive
      #+end_src
 
 **** Compute
@@ -10653,22 +10355,28 @@ end function qmckl_compute_jastrow_champ_factor_een_naive_f
      | ~factor_een~          | ~double[walk_num]~                                               | out    | Electron-nucleus jastrow             |
 
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_jastrow_champ_factor_een_doc_f( &
+function qmckl_compute_jastrow_champ_factor_een_doc( &
      context, walk_num, elec_num, nucl_num, cord_num,   &
      dim_c_vector, c_vector_full, lkpm_combined_index, &
      tmp_c, een_rescaled_n, factor_een) &
-     result(info)
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
-  integer(qmckl_context), intent(in)  :: context
-  integer*8             , intent(in)  :: walk_num, elec_num, cord_num, nucl_num, dim_c_vector
-  integer*8             , intent(in)  :: lkpm_combined_index(dim_c_vector,4)
-  double precision      , intent(in)  :: c_vector_full(nucl_num, dim_c_vector)
-  double precision      , intent(in)  :: tmp_c(elec_num, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
-  double precision      , intent(in)  :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
-  double precision      , intent(out) :: factor_een(walk_num)
+  integer(qmckl_context), intent(in)        :: context
+  integer (c_int64_t) , intent(in)  , value :: walk_num
+  integer (c_int64_t) , intent(in)  , value :: elec_num
+  integer (c_int64_t) , intent(in)  , value :: nucl_num
+  integer (c_int64_t) , intent(in)  , value :: cord_num
+  integer (c_int64_t) , intent(in)  , value :: dim_c_vector
+  real    (c_double ) , intent(in)          :: c_vector_full(nucl_num,dim_c_vector)
+  integer (c_int64_t) , intent(in)          :: lkpm_combined_index(dim_c_vector,4)
+  real    (c_double ) , intent(in)          :: tmp_c(elec_num,nucl_num,0:cord_num,0:cord_num-1,walk_num)
+  real    (c_double ) , intent(in)          :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
+  real    (c_double ) , intent(out)         :: factor_een(walk_num)
+  integer(qmckl_exit_code)                  :: info
 
-  integer*8 :: i, a, j, l, k, m, n, nw
+  integer*8 :: i, a, j, l, k, p, m, n, nw
   double precision :: accu, accu2, cn
 
   info = QMCKL_SUCCESS
@@ -10703,7 +10411,7 @@ integer function qmckl_compute_jastrow_champ_factor_een_doc_f( &
      end do
   end do
 
-end function qmckl_compute_jastrow_champ_factor_een_doc_f
+end function qmckl_compute_jastrow_champ_factor_een_doc
      #+end_src
 
 # #+CALL: generate_c_header(table=qmckl_factor_een_args,rettyp=qmckl_exit_code),fname=get_value("Name"))
@@ -10761,58 +10469,8 @@ qmckl_compute_jastrow_champ_factor_een (const qmckl_context context,
      factor_een );
 }
  #+end_src
-   #+CALL: generate_c_interface(table=qmckl_factor_een_args,rettyp=get_value("CRetType"),fname="qmckl_compute_jastrow_champ_factor_een_doc"))
 
-   #+RESULTS:
-   #+begin_src f90 :tangle (eval f) :comments org :exports none
-   integer(c_int32_t) function qmckl_compute_jastrow_champ_factor_een_doc &
-       (context, &
-        walk_num, &
-        elec_num, &
-        nucl_num, &
-        cord_num, &
-        dim_c_vector, &
-        c_vector_full, &
-        lkpm_combined_index, &
-        tmp_c, &
-        een_rescaled_n, &
-        factor_een) &
-       bind(C) result(info)
-
-     use, intrinsic :: iso_c_binding
-     implicit none
-
-     integer (c_int64_t) , intent(in)  , value :: context
-     integer (c_int64_t) , intent(in)  , value :: walk_num
-     integer (c_int64_t) , intent(in)  , value :: elec_num
-     integer (c_int64_t) , intent(in)  , value :: nucl_num
-     integer (c_int64_t) , intent(in)  , value :: cord_num
-     integer (c_int64_t) , intent(in)  , value :: dim_c_vector
-     real    (c_double ) , intent(in)          :: c_vector_full(nucl_num,dim_c_vector)
-     integer (c_int64_t) , intent(in)          :: lkpm_combined_index(dim_c_vector,4)
-     real    (c_double ) , intent(in)          :: tmp_c(elec_num,nucl_num,0:cord_num,0:cord_num-1,walk_num)
-     real    (c_double ) , intent(in)          :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
-     real    (c_double ) , intent(out)         :: factor_een(walk_num)
-
-     integer(c_int32_t), external :: qmckl_compute_jastrow_champ_factor_een_doc_f
-     info = qmckl_compute_jastrow_champ_factor_een_doc_f &
-            (context, &
-        walk_num, &
-        elec_num, &
-        nucl_num, &
-        cord_num, &
-        dim_c_vector, &
-        c_vector_full, &
-        lkpm_combined_index, &
-        tmp_c, &
-        een_rescaled_n, &
-        factor_een)
-
-   end function qmckl_compute_jastrow_champ_factor_een_doc
-   #+end_src
-
-**** Test                                                          :noexport:
-
+**** Test                                      :noexport:
      #+begin_src python :results output :exports none :noweb yes
 import numpy as np
 
@@ -10899,11 +10557,18 @@ qmckl_get_jastrow_champ_factor_een_gl(qmckl_context context,
                                      const int64_t size_max);
      #+end_src
 
+     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
+qmckl_exit_code
+qmckl_get_jastrow_champ_factor_een_grad(qmckl_context context,
+                                        double* const factor_een_grad,
+                                        const int64_t size_max);
+     #+end_src
+
      #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
 qmckl_exit_code
 qmckl_get_jastrow_champ_factor_een_gl(qmckl_context context,
-                                     double* const factor_een_gl,
-                                     const int64_t size_max)
+                                      double* const factor_een_gl,
+                                      const int64_t size_max)
 {
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
     return QMCKL_NULL_CONTEXT;
@@ -11041,18 +10706,18 @@ qmckl_exit_code qmckl_provide_jastrow_champ_factor_een_gl(qmckl_context context)
     }
 
     rc = qmckl_compute_jastrow_champ_factor_een_gl(context,
-                                                        ctx->electron.walker.num,
-                                                        ctx->electron.num,
-                                                        ctx->nucleus.num,
-                                                        ctx->jastrow_champ.cord_num,
-                                                        ctx->jastrow_champ.dim_c_vector,
-                                                        ctx->jastrow_champ.c_vector_full,
-                                                        ctx->jastrow_champ.lkpm_combined_index,
-                                                        ctx->jastrow_champ.tmp_c,
-                                                        ctx->jastrow_champ.dtmp_c,
-                                                        ctx->jastrow_champ.een_rescaled_n,
-                                                        ctx->jastrow_champ.een_rescaled_n_gl,
-                                                        ctx->jastrow_champ.factor_een_gl);
+                                                   ctx->electron.walker.num,
+                                                   ctx->electron.num,
+                                                   ctx->nucleus.num,
+                                                   ctx->jastrow_champ.cord_num,
+                                                   ctx->jastrow_champ.dim_c_vector,
+                                                   ctx->jastrow_champ.c_vector_full,
+                                                   ctx->jastrow_champ.lkpm_combined_index,
+                                                   ctx->jastrow_champ.tmp_c,
+                                                   ctx->jastrow_champ.dtmp_c,
+                                                   ctx->jastrow_champ.een_rescaled_n,
+                                                   ctx->jastrow_champ.een_rescaled_n_gl,
+                                                   ctx->jastrow_champ.factor_een_gl);
 
     if (rc != QMCKL_SUCCESS) {
       return rc;
@@ -11090,22 +10755,28 @@ qmckl_exit_code qmckl_provide_jastrow_champ_factor_een_gl(qmckl_context context)
      | ~factor_een_gl~       | ~double[walk_num][4][elec_num]~                       | out    | Electron-nucleus jastrow             |
 
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_jastrow_champ_factor_een_gl_naive_f( &
+function qmckl_compute_jastrow_champ_factor_een_gl_naive( &
      context, walk_num, elec_num, nucl_num, cord_num, dim_c_vector, &
      c_vector_full, lkpm_combined_index, een_rescaled_e, een_rescaled_n, &
      een_rescaled_e_gl, een_rescaled_n_gl, factor_een_gl)&
-     result(info)
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
-  integer(qmckl_context), intent(in)  :: context
-  integer*8             , intent(in)  :: walk_num, elec_num, cord_num, nucl_num, dim_c_vector
-  integer*8             , intent(in)  :: lkpm_combined_index(dim_c_vector, 4)
-  double precision      , intent(in)  :: c_vector_full(nucl_num, dim_c_vector)
-  double precision      , intent(in)  :: een_rescaled_e(elec_num, elec_num, 0:cord_num, walk_num)
-  double precision      , intent(in)  :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
-  double precision      , intent(in)  :: een_rescaled_e_gl(elec_num, 4, elec_num, 0:cord_num, walk_num)
-  double precision      , intent(in)  :: een_rescaled_n_gl(elec_num, 4, nucl_num, 0:cord_num, walk_num)
-  double precision      , intent(out) :: factor_een_gl(elec_num, 4, walk_num)
+  integer(qmckl_context), intent(in)        :: context
+  integer (c_int64_t) , intent(in)  , value :: walk_num
+  integer (c_int64_t) , intent(in)  , value :: elec_num
+  integer (c_int64_t) , intent(in)  , value :: nucl_num
+  integer (c_int64_t) , intent(in)  , value :: cord_num
+  integer (c_int64_t) , intent(in)  , value :: dim_c_vector
+  real    (c_double ) , intent(in)          :: c_vector_full(nucl_num,dim_c_vector)
+  integer (c_int64_t) , intent(in)          :: lkpm_combined_index(dim_c_vector,4)
+  real    (c_double ) , intent(in)          :: een_rescaled_e(elec_num,elec_num,0:cord_num,walk_num)
+  real    (c_double ) , intent(in)          :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
+  real    (c_double ) , intent(in)          :: een_rescaled_e_gl(elec_num,4,elec_num,0:cord_num,walk_num)
+  real    (c_double ) , intent(in)          :: een_rescaled_n_gl(elec_num,4,nucl_num,0:cord_num,walk_num)
+  real    (c_double ) , intent(out)         :: factor_een_gl(elec_num,4,walk_num)
+  integer(qmckl_exit_code)                  :: info
 
   integer*8 :: i, a, j, l, k, m, n, nw
   double precision :: accu, accu2, cn
@@ -11162,7 +10833,7 @@ integer function qmckl_compute_jastrow_champ_factor_een_gl_naive_f( &
      end do
   end do
 
-end function qmckl_compute_jastrow_champ_factor_een_gl_naive_f
+end function qmckl_compute_jastrow_champ_factor_een_gl_naive
      #+end_src
 
  #   #+CALL: generate_c_header(table=qmckl_factor_een_gl_naive_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
@@ -11184,64 +10855,7 @@ end function qmckl_compute_jastrow_champ_factor_een_gl_naive_f
       double* const factor_een_gl );
      #+end_src
 
-
-     #+CALL: generate_c_interface(table=qmckl_factor_een_gl_naive_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
-
-     #+RESULTS:
-     #+begin_src f90 :tangle (eval f) :comments org :exports none
-    integer(c_int32_t) function qmckl_compute_jastrow_champ_factor_een_gl_naive &
-    (context, &
-         walk_num, &
-         elec_num, &
-         nucl_num, &
-         cord_num, &
-         dim_c_vector, &
-         c_vector_full, &
-         lkpm_combined_index, &
-         een_rescaled_e, &
-         een_rescaled_n, &
-         een_rescaled_e_gl, &
-         een_rescaled_n_gl, &
-         factor_een_gl) &
-    bind(C) result(info)
-
-      use, intrinsic :: iso_c_binding
-      implicit none
-
-      integer (c_int64_t) , intent(in)  , value :: context
-      integer (c_int64_t) , intent(in)  , value :: walk_num
-      integer (c_int64_t) , intent(in)  , value :: elec_num
-      integer (c_int64_t) , intent(in)  , value :: nucl_num
-      integer (c_int64_t) , intent(in)  , value :: cord_num
-      integer (c_int64_t) , intent(in)  , value :: dim_c_vector
-      real    (c_double ) , intent(in)          :: c_vector_full(nucl_num,dim_c_vector)
-      integer (c_int64_t) , intent(in)          :: lkpm_combined_index(dim_c_vector,4)
-      real    (c_double ) , intent(in)          :: een_rescaled_e(0:cord_num,elec_num,elec_num,walk_num)
-      real    (c_double ) , intent(in)          :: een_rescaled_n(0:cord_num,nucl_num,elec_num,walk_num)
-      real    (c_double ) , intent(in)          :: een_rescaled_e_gl(0:cord_num,elec_num,4,elec_num,walk_num)
-      real    (c_double ) , intent(in)          :: een_rescaled_n_gl(0:cord_num,nucl_num,4,elec_num,walk_num)
-      real    (c_double ) , intent(out)         :: factor_een_gl(elec_num,4,walk_num)
-
-      integer(c_int32_t), external :: qmckl_compute_jastrow_champ_factor_een_gl_naive_f
-      info = qmckl_compute_jastrow_champ_factor_een_gl_naive_f &
-         (context, &
-         walk_num, &
-         elec_num, &
-         nucl_num, &
-         cord_num, &
-         dim_c_vector, &
-         c_vector_full, &
-         lkpm_combined_index, &
-         een_rescaled_e, &
-         een_rescaled_n, &
-         een_rescaled_e_gl, &
-         een_rescaled_n_gl, &
-         factor_een_gl)
-
-    end function qmckl_compute_jastrow_champ_factor_een_gl_naive
-     #+end_src
-
-**** Compute
+**** Compute GL
      :PROPERTIES:
      :Name:     qmckl_compute_jastrow_champ_factor_een_gl
      :CRetType: qmckl_exit_code
@@ -11269,22 +10883,28 @@ end function qmckl_compute_jastrow_champ_factor_een_gl_naive_f
 
 
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_jastrow_champ_factor_een_gl_doc_f( &
+function qmckl_compute_jastrow_champ_factor_een_gl_doc( &
      context, walk_num, elec_num, nucl_num, &
      cord_num, dim_c_vector, c_vector_full, lkpm_combined_index, &
      tmp_c, dtmp_c, een_rescaled_n, een_rescaled_n_gl, factor_een_gl)&
-     result(info)
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
-  integer(qmckl_context), intent(in)  :: context
-  integer*8             , intent(in)  :: walk_num, elec_num, cord_num, nucl_num, dim_c_vector
-  integer*8             , intent(in)  :: lkpm_combined_index(dim_c_vector,4)
-  double precision      , intent(in)  :: c_vector_full(nucl_num, dim_c_vector)
-  double precision      , intent(in)  :: tmp_c(elec_num, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
-  double precision      , intent(in)  :: dtmp_c(elec_num, 4, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
-  double precision      , intent(in)  :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
-  double precision      , intent(in)  :: een_rescaled_n_gl(elec_num, 4, nucl_num, 0:cord_num, walk_num)
-  double precision      , intent(out) :: factor_een_gl(elec_num,4,walk_num)
+  integer(qmckl_context), intent(in)        :: context
+  integer (c_int64_t) , intent(in)  , value :: walk_num
+  integer (c_int64_t) , intent(in)  , value :: elec_num
+  integer (c_int64_t) , intent(in)  , value :: nucl_num
+  integer (c_int64_t) , intent(in)  , value :: cord_num
+  integer (c_int64_t) , intent(in)  , value :: dim_c_vector
+  real    (c_double ) , intent(in)          :: c_vector_full(nucl_num,dim_c_vector)
+  integer (c_int64_t) , intent(in)          :: lkpm_combined_index(dim_c_vector,4)
+  real    (c_double ) , intent(in)          :: tmp_c(elec_num,nucl_num,0:cord_num,0:cord_num-1,walk_num)
+  real    (c_double ) , intent(in)          :: dtmp_c(elec_num,4,nucl_num,0:cord_num,0:cord_num-1,walk_num)
+  real    (c_double ) , intent(in)          :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
+  real    (c_double ) , intent(in)          :: een_rescaled_n_gl(elec_num,4,nucl_num,0:cord_num,walk_num)
+  real    (c_double ) , intent(out)         :: factor_een_gl(elec_num,4,walk_num)
+  integer(qmckl_exit_code)                  :: info
 
   integer*8 :: i, a, j, l, k, m, n, nw, ii
   double precision :: accu, accu2, cn
@@ -11340,7 +10960,7 @@ integer function qmckl_compute_jastrow_champ_factor_een_gl_doc_f( &
      end do
   end do
 
-end function qmckl_compute_jastrow_champ_factor_een_gl_doc_f
+end function qmckl_compute_jastrow_champ_factor_een_gl_doc
      #+end_src
 
    #+CALL: generate_private_c_header(table=qmckl_factor_een_gl_args,rettyp=get_value("CRetType"),fname="qmckl_compute_jastrow_champ_factor_een_gl_doc" )
@@ -11362,62 +10982,6 @@ end function qmckl_compute_jastrow_champ_factor_een_gl_doc_f
          const double* een_rescaled_n_gl,
          double* const factor_een_gl );
    #+end_src
-
-     #+CALL: generate_c_interface(table=qmckl_factor_een_gl_args,rettyp=get_value("CRetType"),fname="qmckl_compute_jastrow_champ_factor_een_gl_doc"))
-
-     #+RESULTS:
-     #+begin_src f90 :tangle (eval f) :comments org :exports none
-     integer(c_int32_t) function qmckl_compute_jastrow_champ_factor_een_gl_doc &
-         (context, &
-          walk_num, &
-          elec_num, &
-          nucl_num, &
-          cord_num, &
-          dim_c_vector, &
-          c_vector_full, &
-          lkpm_combined_index, &
-          tmp_c, &
-          dtmp_c, &
-          een_rescaled_n, &
-          een_rescaled_n_gl, &
-          factor_een_gl) &
-         bind(C) result(info)
-
-       use, intrinsic :: iso_c_binding
-       implicit none
-
-       integer (c_int64_t) , intent(in)  , value :: context
-       integer (c_int64_t) , intent(in)  , value :: walk_num
-       integer (c_int64_t) , intent(in)  , value :: elec_num
-       integer (c_int64_t) , intent(in)  , value :: nucl_num
-       integer (c_int64_t) , intent(in)  , value :: cord_num
-       integer (c_int64_t) , intent(in)  , value :: dim_c_vector
-       real    (c_double ) , intent(in)          :: c_vector_full(nucl_num,dim_c_vector)
-       integer (c_int64_t) , intent(in)          :: lkpm_combined_index(dim_c_vector,4)
-       real    (c_double ) , intent(in)          :: tmp_c(elec_num,nucl_num,0:cord_num,0:cord_num-1,walk_num)
-       real    (c_double ) , intent(in)          :: dtmp_c(elec_num,4,nucl_num,0:cord_num,0:cord_num-1,walk_num)
-       real    (c_double ) , intent(in)          :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
-       real    (c_double ) , intent(in)          :: een_rescaled_n_gl(elec_num,4,nucl_num,0:cord_num,walk_num)
-       real    (c_double ) , intent(out)         :: factor_een_gl(elec_num,4,walk_num)
-
-       integer(c_int32_t), external :: qmckl_compute_jastrow_champ_factor_een_gl_doc_f
-       info = qmckl_compute_jastrow_champ_factor_een_gl_doc_f &
-              (context, &
-          walk_num, &
-          elec_num, &
-          nucl_num, &
-          cord_num, &
-          dim_c_vector, &
-          c_vector_full, &
-          lkpm_combined_index, &
-          tmp_c, &
-          dtmp_c, &
-          een_rescaled_n, &
-          een_rescaled_n_gl, &
-          factor_een_gl)
-
-     end function qmckl_compute_jastrow_champ_factor_een_gl_doc
-     #+end_src
 
    #+CALL: generate_private_c_header(table=qmckl_factor_een_gl_args,rettyp=get_value("CRetType"),fname="qmckl_compute_jastrow_champ_factor_een_gl" )
 
@@ -11467,6 +11031,7 @@ qmckl_compute_jastrow_champ_factor_een_gl(const qmckl_context context,
      factor_een_gl);
 }
 #+end_src
+
 ***** HPC implementation                                           :noexport:
    #+CALL: generate_private_c_header(table=qmckl_factor_een_gl_args,rettyp=get_value("CRetType"),fname="qmckl_compute_jastrow_champ_factor_een_gl_hpc" )
 
@@ -11658,7 +11223,7 @@ qmckl_compute_jastrow_champ_factor_een_gl_hpc(const qmckl_context context,
 }
    #+end_src
 
-**** Test                                                          :noexport:
+***** Test                                                          :noexport:
 
      #+begin_src python :results output :exports none :noweb yes
 import numpy as np
@@ -11733,7 +11298,6 @@ assert(fabs(8.996044894431991e-04 - factor_een_gl[0][2][2]) < 1e-12);
 
 printf("%20.15e\n", factor_een_gl[0][3][3]);
 assert(fabs(-1.175028308456619e+00 - factor_een_gl[0][3][3]) < 1e-12);
-TODO
 */
 {
   printf("factor_een_gl_hpc\n");
@@ -11827,6 +11391,7 @@ TODO
   }
 }
       #+end_src
+
 
 ** Total Jastrow
 
@@ -12002,41 +11567,20 @@ qmckl_exit_code qmckl_provide_jastrow_champ_value(qmckl_context context)
      | ~f_een~    | ~double[walk_num]~ | in     | eeN component        |
      | ~value~    | ~double[walk_num]~ | out    | Total Jastrow factor |
 
- #+CALL: generate_c_interface(table=qmckl_jastrow_champ_value_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
-
- #+RESULTS:
- #+begin_src f90 :tangle (eval f) :comments org :exports none
- integer(c_int32_t) function qmckl_compute_jastrow_champ_value_doc &
-     (context, walk_num, f_ee, f_en, f_een, value) &
-     bind(C) result(info)
-
-   use, intrinsic :: iso_c_binding
-   implicit none
-
-   integer (c_int64_t) , intent(in)  , value :: context
-   integer (c_int64_t) , intent(in)  , value :: walk_num
-   real    (c_double ) , intent(in)          :: f_ee(walk_num)
-   real    (c_double ) , intent(in)          :: f_en(walk_num)
-   real    (c_double ) , intent(in)          :: f_een(walk_num)
-   real    (c_double ) , intent(out)         :: value(walk_num)
-
-   integer(c_int32_t), external :: qmckl_compute_jastrow_champ_value_doc_f
-   info = qmckl_compute_jastrow_champ_value_doc_f &
-          (context, walk_num, f_ee, f_en, f_een, value)
-
- end function qmckl_compute_jastrow_champ_value_doc
- #+end_src
-
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_jastrow_champ_value_doc_f(context, &
+function qmckl_compute_jastrow_champ_value_doc(context, &
      walk_num, f_ee, f_en, f_een, value) &
-     result(info)
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
   integer(qmckl_context), intent(in)  :: context
-  integer*8             , intent(in)  :: walk_num
-  double precision      , intent(in)  :: f_ee(walk_num), f_en(walk_num), f_een(walk_num)
-  double precision      , intent(out) :: value(walk_num)
+  integer (c_int64_t) , intent(in)  , value :: walk_num
+  real    (c_double ) , intent(in)          :: f_ee(walk_num)
+  real    (c_double ) , intent(in)          :: f_en(walk_num)
+  real    (c_double ) , intent(in)          :: f_een(walk_num)
+  real    (c_double ) , intent(out)         :: value(walk_num)
+  integer(qmckl_exit_code)                  :: info
 
   integer*8 :: i
 
@@ -12065,7 +11609,7 @@ integer function qmckl_compute_jastrow_champ_value_doc_f(context, &
      endif
   end do
 
-end function qmckl_compute_jastrow_champ_value_doc_f
+end function qmckl_compute_jastrow_champ_value_doc
      #+end_src
 
     #+CALL: generate_private_c_header(table=qmckl_jastrow_champ_value_args,rettyp=get_value("CRetType"),fname="qmckl_compute_jastrow_champ_value")
@@ -12386,47 +11930,23 @@ qmckl_exit_code qmckl_provide_jastrow_champ_gl(qmckl_context context)
      | ~gl_een~   | ~double[walk_num][4][elec_num]~ | in     | eeN component        |
      | ~gl~       | ~double[walk_num][4][elec_num]~ | out    | Total Jastrow factor |
 
- #+CALL: generate_c_interface(table=qmckl_jastrow_champ_gl_args,rettyp=get_value("CRetType"),fname=get_value("Name"))
-
- #+RESULTS:
- #+begin_src f90 :tangle (eval f) :comments org :exports none
- integer(c_int32_t) function qmckl_compute_jastrow_champ_gl_doc &
-     (context, walk_num, elec_num, value, gl_ee, gl_en, gl_een, gl) &
-     bind(C) result(info)
-
-   use, intrinsic :: iso_c_binding
-   implicit none
-
-   integer (c_int64_t) , intent(in)  , value :: context
-   integer (c_int64_t) , intent(in)  , value :: walk_num
-   integer (c_int64_t) , intent(in)  , value :: elec_num
-   real    (c_double ) , intent(in)          :: value(walk_num)
-   real    (c_double ) , intent(in)          :: gl_ee(elec_num,4,walk_num)
-   real    (c_double ) , intent(in)          :: gl_en(elec_num,4,walk_num)
-   real    (c_double ) , intent(in)          :: gl_een(elec_num,4,walk_num)
-   real    (c_double ) , intent(out)         :: gl(elec_num,4,walk_num)
-
-   integer(c_int32_t), external :: qmckl_compute_jastrow_champ_gl_doc_f
-   info = qmckl_compute_jastrow_champ_gl_doc_f &
-          (context, walk_num, elec_num, value, gl_ee, gl_en, gl_een, gl)
-
- end function qmckl_compute_jastrow_champ_gl_doc
- #+end_src
-
  #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_jastrow_champ_gl_doc_f(context, &
+function qmckl_compute_jastrow_champ_gl_doc(context, &
      walk_num, elec_num, value, gl_ee, gl_en, gl_een, gl) &
-     result(info)
+     bind(C) result(info)
   use qmckl
+  use, intrinsic :: iso_c_binding
   implicit none
   integer(qmckl_context), intent(in)  :: context
-  integer*8             , intent(in)  :: walk_num, elec_num
-  double precision      , intent(in)  :: value (walk_num)
-  double precision      , intent(in)  :: gl_ee (elec_num,4,walk_num)
-  double precision      , intent(in)  :: gl_en (elec_num,4,walk_num)
-  double precision      , intent(in)  :: gl_een(elec_num,4,walk_num)
-  double precision      , intent(out) :: gl    (elec_num,4,walk_num)
+  integer (c_int64_t) , intent(in)  , value :: walk_num
+  integer (c_int64_t) , intent(in)  , value :: elec_num
+  real    (c_double ) , intent(in)          :: value(walk_num)
+  real    (c_double ) , intent(in)          :: gl_ee(elec_num,4,walk_num)
+  real    (c_double ) , intent(in)          :: gl_en(elec_num,4,walk_num)
+  real    (c_double ) , intent(in)          :: gl_een(elec_num,4,walk_num)
+  real    (c_double ) , intent(out)         :: gl(elec_num,4,walk_num)
 
+  integer(qmckl_exit_code)                 :: info
   integer*8 :: i, j, k
 
   info = QMCKL_SUCCESS
@@ -12448,16 +11968,16 @@ integer function qmckl_compute_jastrow_champ_gl_doc_f(context, &
         end do
      end do
      do i = 1, elec_num
-         gl(i,4,k) = gl(i,4,k) + &
-                     gl(i,1,k) * gl(i,1,k) + &
-                     gl(i,2,k) * gl(i,2,k) + &
-                     gl(i,3,k) * gl(i,3,k)
+        gl(i,4,k) = gl(i,4,k) + &
+             gl(i,1,k) * gl(i,1,k) + &
+             gl(i,2,k) * gl(i,2,k) + &
+             gl(i,3,k) * gl(i,3,k)
      end do
      gl(:,:,k) = gl(:,:,k) * value(k)
   end do
 
 
-end function qmckl_compute_jastrow_champ_gl_doc_f
+end function qmckl_compute_jastrow_champ_gl_doc
      #+end_src
 
 #+CALL: generate_private_c_header(table=qmckl_jastrow_champ_gl_args,rettyp=get_value("CRetType"),fname="qmckl_compute_jastrow_champ_gl")
@@ -12505,18 +12025,16 @@ qmckl_exit_code qmckl_compute_jastrow_champ_gl_hpc (
       double* const gl );
 #+end_src
 
-
  #+begin_src c   :comments org :tangle (eval c) :noweb yes :exports none
 inline qmckl_exit_code
-qmckl_compute_jastrow_champ_gl_hpc (
-      const qmckl_context context,
-      const int64_t walk_num,
-      const int64_t elec_num,
-      const double* value,
-      const double* gl_ee,
-      const double* gl_en,
-      const double* gl_een,
-      double* const gl)
+qmckl_compute_jastrow_champ_gl_hpc (const qmckl_context context,
+                                    const int64_t walk_num,
+                                    const int64_t elec_num,
+                                    const double* value,
+                                    const double* gl_ee,
+                                    const double* gl_en,
+                                    const double* gl_een,
+                                    double* const gl)
 {
 
   if (context    == QMCKL_NULL_CONTEXT) return QMCKL_INVALID_CONTEXT;
@@ -12532,14 +12050,14 @@ qmckl_compute_jastrow_champ_gl_hpc (
     for (int64_t j = 0; j < 4; ++j) {
       for (int64_t i = 0; i < elec_num; ++i) {
         gl[i + elec_num*(j + k*4)] = gl_ee[i + elec_num*(j + k*4)] +
-        gl_en[i + elec_num*(j + k*4)] + gl_een[i + elec_num*(j + k*4)];
+          gl_en[i + elec_num*(j + k*4)] + gl_een[i + elec_num*(j + k*4)];
       }
     }
     for (int64_t i = 0; i < elec_num; ++i) {
-        gl[i + elec_num*(3 + walk_num*4)] +=
-          gl_ee[i + elec_num*(0 + k*4)] * gl_ee[i + elec_num*(0 + k*4)] +
-          gl_ee[i + elec_num*(1 + k*4)] * gl_ee[i + elec_num*(1 + k*4)] +
-          gl_ee[i + elec_num*(2 + k*4)] * gl_ee[i + elec_num*(2 + k*4)];
+      gl[i + elec_num*(3 + walk_num*4)] +=
+        gl_ee[i + elec_num*(0 + k*4)] * gl_ee[i + elec_num*(0 + k*4)] +
+        gl_ee[i + elec_num*(1 + k*4)] * gl_ee[i + elec_num*(1 + k*4)] +
+        gl_ee[i + elec_num*(2 + k*4)] * gl_ee[i + elec_num*(2 + k*4)];
     }
     for (int64_t j = 0; j < 4; ++j) {
       for (int64_t i = 0; i < elec_num; ++i) {
