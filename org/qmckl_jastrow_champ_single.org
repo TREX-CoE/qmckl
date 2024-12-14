@@ -544,6 +544,7 @@ qmckl_exit_code qmckl_provide_single_ee_distance(qmckl_context context)
 
     qmckl_exit_code rc =
       qmckl_compute_single_ee_distance(context,
+                                ctx->single_point.num,
                                 ctx->electron.num,
                                 ctx->electron.walker.num,
                                 ctx->electron.walker.point.coord.data,
@@ -573,6 +574,7 @@ qmckl_exit_code qmckl_provide_single_ee_distance(qmckl_context context)
     | Variable             | Type                            | In/Out | Description                 |
     |----------------------+---------------------------------+--------+-----------------------------|
     | ~context~            | ~qmckl_context~                 | in     | Global state                |
+    | ~num~           | ~int64_t~                       | in     | Number of electrons         |
     | ~elec_num~           | ~int64_t~                       | in     | Number of electrons         |
     | ~walk_num~           | ~int64_t~                       | in     | Number of walkers           |
     | ~coord~              | ~double[3][walk_num][elec_num]~ | in     | Electron coordinates        |
@@ -581,22 +583,24 @@ qmckl_exit_code qmckl_provide_single_ee_distance(qmckl_context context)
 
     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
 integer(qmckl_exit_code) function qmckl_compute_single_ee_distance(context, &
-     elec_num, walk_num, coord, single_coord, single_ee_distance) &
+     num_in, elec_num, walk_num, coord, single_coord, single_ee_distance) &
      result(info) bind(C)
   use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
   integer(qmckl_context), intent(in)  :: context
-  integer (c_int64_t) , intent(in)  , value :: elec_num
+  integer (c_int64_t) , intent(in)  , value :: elec_num, num_in
   integer (c_int64_t) , intent(in)  , value :: walk_num
   real    (c_double ) , intent(in)          :: coord(elec_num,3,walk_num)
   real    (c_double ) , intent(in)          :: single_coord(3,walk_num)
   real    (c_double ) , intent(out)         :: single_ee_distance(elec_num,walk_num)
 
-  integer*8 :: k, i, j
+  integer*8 :: k, i, j, num
   double precision :: x, y, z
 
   info = QMCKL_SUCCESS
+
+  num = num_in + 1
 
   if (context == QMCKL_NULL_CONTEXT) then
      info = QMCKL_INVALID_CONTEXT
@@ -621,7 +625,10 @@ integer(qmckl_exit_code) function qmckl_compute_single_ee_distance(context, &
      if (info /= QMCKL_SUCCESS) then
         exit
      endif
+     single_ee_distance(num,k) = 0.0d0
   end do
+
+
 
 end function qmckl_compute_single_ee_distance
     #+end_src
@@ -629,6 +636,7 @@ end function qmckl_compute_single_ee_distance
     #+begin_src c :tangle (eval h_private_func) :comments org :exports none
 qmckl_exit_code qmckl_compute_single_ee_distance (
           const qmckl_context context,
+          const int64_t num,
           const int64_t elec_num,
           const int64_t walk_num,
           const double* coord,
@@ -2444,7 +2452,7 @@ assert (rc == QMCKL_SUCCESS);
 
 for (int nw = 0; nw < walk_num; nw++) {
   for (int i = 0; i < elec_num; i++){
-    if (i == 2) continue;
+    //printf("nw %d i %d %f %f\n", nw, i, ee_rescaled[nw][2][i], single_ee_rescaled[nw][i]);
     assert(fabs(ee_rescaled[nw][2][i]-single_ee_rescaled[nw][i]) < 1.e-12);
   }
 }
@@ -4464,7 +4472,7 @@ for (int nw = 0; nw < walk_num; nw++){
     }
   }
 }
-//assert(0);
+
      #+end_src
 
 * Delta grad e-e-n
@@ -6415,88 +6423,222 @@ qmckl_get_jastrow_champ_single_accept(qmckl_context context)
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
-  /*
-  for (nw = 0; nw < ctx->electron.walker.num; nw++) {
-    ctx->jastrow_champ.factor_ee[nw] = ctx->jastrow_champ.factor_ee[nw] + ctx->single_point.delta_ee[nw];
-    ctx->jastrow_champ.factor_en[nw] = ctx->jastrow_champ.factor_en[nw] + ctx->single_point.delta_en[nw];
-    ctx->jastrow_champ.factor_een[nw] = ctx->jastrow_champ.factor_een[nw] + ctx->single_point.delta_een[nw];
 
-    for (l = 0; l <= ctx->jastrow_champ.cord_num; l++){
-      for (a = 0; a < ctx->nucleus.num; a++){
-        for (i = 0; i < ctx->electron.num; i++) {
-          for (m = 0; m < ctx->jastrow_champ.cord_num; m++){
-            ctx->jastrow_champ.tmp_c[nw][m][l][a][i] = ctx->jastrow_champ.tmp_c[nw][m][l][a][i] + ctx->single_point.delta_p[nw][m][l][a][i];
-          }
-        }
-        ctx->jastrow_champ.een_rescaled_n[nw][l][a][ctx->single_point.num] = ctx->single_point.een_rescaled_single_n[nw][l][a][ctx->single_point.num] + ctx->single_point.een_rescaled_delta_n[nw][l][a];
+  for (int nw = 0; nw < ctx->electron.walker.num; nw++) {
+    ctx->jastrow_champ.factor_en[nw] = ctx->jastrow_champ.factor_en[nw] + ctx->single_point.delta_en[nw];
+    ctx->jastrow_champ.factor_ee[nw] = ctx->jastrow_champ.factor_ee[nw] + ctx->single_point.delta_ee[nw];
+    ctx->jastrow_champ.factor_een[nw] = ctx->jastrow_champ.factor_een[nw] + ctx->single_point.delta_een[nw];
+  }
+  for (int i = 0; i < (ctx->electron.walker.num*(ctx->jastrow_champ.cord_num+1)*ctx->nucleus.num*ctx->electron.num*ctx->jastrow_champ.cord_num); i++) {
+    ctx->jastrow_champ.tmp_c[i] = ctx->jastrow_champ.tmp_c[i] + ctx->single_point.delta_p[i];
+  }
+
+  for (int nw = 0; nw < ctx->electron.walker.num; nw++) {
+    for (int l = 0; l <= ctx->jastrow_champ.cord_num; l++){
+      for (int a = 0; a < ctx->nucleus.num; a++){
+        ctx->jastrow_champ.een_rescaled_n[nw*(ctx->jastrow_champ.cord_num+1)*ctx->nucleus.num*ctx->electron.num 
+          + l*ctx->nucleus.num*ctx->electron.num
+          + a*ctx->electron.num
+          + ctx->single_point.num] = 
+        ctx->single_point.een_rescaled_single_n[nw*(ctx->jastrow_champ.cord_num+1)*ctx->nucleus.num
+          + l*ctx->nucleus.num
+          + a];
       }
-      for (i = 0; i < ctx->electron.num; i++) {
-        ctx->jastrow_champ.een_rescaled_e[nw][l][i][ctx->single_point.num] = ctx->single_point.een_rescaled_single_e[nw][l][i][ctx->single_point.num] + ctx->single_point.een_rescaled_delta_e[nw][l][i];
-        ctx->jastrow_champ.een_rescaled_e[nw][l][ctx->single_point.num][i] = ctx->single_point.een_rescaled_single_e[nw][l][ctx->single_point.num][i] + ctx->single_point.een_rescaled_delta_e[nw][l][i];
+      for (int i = 0; i < ctx->electron.num; i++) {
+        ctx->jastrow_champ.een_rescaled_e[nw*(ctx->jastrow_champ.cord_num+1)*ctx->electron.num*ctx->electron.num 
+          + l*ctx->electron.num*ctx->electron.num 
+          + i*ctx->electron.num 
+          + ctx->single_point.num] = 
+        ctx->single_point.een_rescaled_single_e[nw*(ctx->jastrow_champ.cord_num+1)*ctx->electron.num
+          + l*ctx->electron.num
+          + i];
+
+        ctx->jastrow_champ.een_rescaled_e[nw*(ctx->jastrow_champ.cord_num+1)*ctx->electron.num*ctx->electron.num 
+          + l*ctx->electron.num*ctx->electron.num 
+          + ctx->single_point.num*ctx->electron.num 
+          + i] = 
+        ctx->single_point.een_rescaled_single_e[nw*(ctx->jastrow_champ.cord_num+1)*ctx->electron.num
+          + l*ctx->electron.num
+          + i];
       }
     }
+  }
+  for (int i = 0; i < ctx->electron.walker.num * 4 * ctx->electron.num; i++) {
+    ctx->jastrow_champ.factor_een_gl[i] = ctx->jastrow_champ.factor_een_gl[i] + ctx->single_point.delta_een_gl[i];
+  }
+  for (int nw = 0; nw < ctx->electron.walker.num; nw++) {
+    for (int i = 0; i < ctx->electron.num; i++) {
+      ctx->electron.ee_distance[nw*ctx->electron.num*ctx->electron.num
+        + i*ctx->electron.num
+        + ctx->single_point.num] =
+      ctx->single_point.single_ee_distance[nw*ctx->electron.num
+        + i];
 
-    for (k = 0; k < 4; k++) {
-      for (i = 0; i < ctx->electron.num; i++) {
-        ctx->jastrow_champ.factor_ee_gl[nw][k][i] = ctx->jastrow_champ.factor_ee_gl[nw][k][i] + ctx->single_point.delta_ee_gl[nw][k][i];
-        ctx->jastrow_champ.factor_en_gl[nw][k][i] = ctx->jastrow_champ.factor_en_gl[nw][k][i] + ctx->single_point.delta_en_gl[nw][k][i];
-        ctx->jastrow_champ.factor_een_gl[nw][k][i] = ctx->jastrow_champ.factor_een_gl[nw][k][i] + ctx->single_point.delta_een_gl[nw][k][i];
+      ctx->electron.ee_distance[nw*ctx->electron.num*ctx->electron.num
+        + ctx->single_point.num*ctx->electron.num
+        + i] =
+      ctx->single_point.single_ee_distance[nw*ctx->electron.num
+        + i];
 
-        ctx->jastrow_champ.ee_distance_rescaled_gl[nw][i][ctx->single_point.num][k] = ctx->single_point.ee_rescaled_single_gl[nw][i][k];
-        ctx->jastrow_champ.ee_distance_rescaled_gl[nw][ctx->single_point.num][i][k] = ctx->single_point.ee_rescaled_single_gl[nw][i][k];
+      for (int k = 0; k < 4; k++){
+        ctx->jastrow_champ.ee_distance_rescaled_gl[nw*ctx->electron.num*ctx->electron.num*4 
+          + i*ctx->electron.num*4 
+          + ctx->single_point.num*4 
+          + k] = 
+        ctx->single_point.ee_rescaled_single_gl[nw*ctx->electron.num*4 
+          + i*4 
+          + k];
 
-        for (l = 0; l <= ctx->jastrow_champ.cord_num; l++){
-          ctx->jastrow_champ.een_rescaled_e_gl[nw][l][i][k][ctx->single_point.num] = ctx->jastrow_champ.een_rescaled_single_e_gl[nw][l][i][k]; 
-          ctx->jastrow_champ.een_rescaled_e_gl[nw][l][ctx->single_point.num][k][i] = ctx->jastrow_champ.een_rescaled_single_e_gl[nw][l][i][k]; 
-          for (m = 0; m < ctx->jastrow_champ.cord_num; m++){
-            for (a = 0; a < ctx->nucleus.num; a++){
-              ctx->jastrow_champ.dtmp_c[nw][i][k][a][l][m] = ctx->jastrow_champ.dtmp_c[nw][i][k][a][l][m] + ctx->single_point.delta_p_gl[nw][m][l][k][a][i]
+        ctx->jastrow_champ.ee_distance_rescaled_gl[nw*ctx->electron.num*ctx->electron.num*4 
+          + ctx->single_point.num*ctx->electron.num*4 
+          + i*4 
+          + k] =  
+        ctx->single_point.ee_rescaled_single_gl[nw*ctx->electron.num*4 
+          + i*4 
+          + k];
+      }
+    }
+  }
+  for (int nw = 0; nw < ctx->electron.walker.num; nw++) {
+    for (int l = 0; l <= ctx->jastrow_champ.cord_num; l++){
+      for (int i = 0; i < ctx->electron.num; i++) {
+        for (int k = 0; k < 4; k++){
+          ctx->jastrow_champ.een_rescaled_e_gl[nw*(ctx->jastrow_champ.cord_num+1)*ctx->electron.num*4*ctx->electron.num 
+            + l*ctx->electron.num*4*ctx->electron.num 
+            + i*4*ctx->electron.num 
+            + k*ctx->electron.num 
+            + ctx->single_point.num] = 
+          ctx->single_point.een_rescaled_single_e_gl[nw*(ctx->jastrow_champ.cord_num+1)*ctx->electron.num*4
+            + l*ctx->electron.num*4 
+            + i*4 + k]; 
+          ctx->jastrow_champ.een_rescaled_e_gl[nw*(ctx->jastrow_champ.cord_num+1)*ctx->electron.num*4*ctx->electron.num + l*ctx->electron.num*4*ctx->electron.num + ctx->single_point.num*4*ctx->electron.num + k*ctx->electron.num + i] = ctx->single_point.een_rescaled_single_e_gl[nw*(ctx->jastrow_champ.cord_num+1)*ctx->electron.num*4+ l*ctx->electron.num*4 + i*4 + k]; 
+        }
+      }
+    }
+  }
+
+  for (int nw = 0; nw < ctx->electron.walker.num; nw++) {
+    for (int a = 0; a < ctx->nucleus.num; a++) {
+      ctx->electron.en_distance[nw*ctx->electron.num*ctx->nucleus.num
+        + ctx->single_point.num*ctx->nucleus.num
+        + a] =
+      ctx->single_point.single_en_distance[nw*ctx->nucleus.num
+        + a];
+      for (int k = 0; k < 4; k++){
+        ctx->jastrow_champ.en_distance_rescaled_gl[nw*ctx->nucleus.num*4*ctx->electron.num
+          + a*ctx->electron.num*4
+          + ctx->single_point.num*4
+          + k] = 
+        ctx->single_point.en_rescaled_single_gl[nw*ctx->nucleus.num*4
+          + a*4
+          + k];
+        for (int l = 0; l <= ctx->jastrow_champ.cord_num; l++) {
+          ctx->jastrow_champ.een_rescaled_n_gl[nw*(ctx->jastrow_champ.cord_num+1)*ctx->nucleus.num*4*ctx->electron.num
+            + l*ctx->nucleus.num*4*ctx->electron.num
+            + a*4*ctx->electron.num
+            + k*ctx->electron.num
+            + ctx->single_point.num] = 
+          ctx->single_point.een_rescaled_single_n_gl[nw*(ctx->jastrow_champ.cord_num+1)*ctx->nucleus.num*4
+            + l*ctx->nucleus.num*4
+            + a*4
+            + k];
+          for (int i = 0; i < ctx->electron.num; i++) {
+            for (int m = 0; m < ctx->jastrow_champ.cord_num; m++){
+              ctx->jastrow_champ.dtmp_c[nw*ctx->electron.num*4*ctx->nucleus.num*ctx->jastrow_champ.cord_num*(ctx->jastrow_champ.cord_num+1)
+                + m*ctx->electron.num*4*ctx->nucleus.num*(ctx->jastrow_champ.cord_num+1)
+                + l*ctx->electron.num*4*ctx->nucleus.num
+                + a*4*ctx->electron.num
+                + k*ctx->electron.num
+                + i] =
+              ctx->jastrow_champ.dtmp_c[nw*ctx->electron.num*4*ctx->nucleus.num*ctx->jastrow_champ.cord_num*(ctx->jastrow_champ.cord_num+1)
+                + m*ctx->electron.num*4*ctx->nucleus.num*(ctx->jastrow_champ.cord_num+1)
+                + l*ctx->electron.num*4*ctx->nucleus.num
+                + a*4*ctx->electron.num
+                + k*ctx->electron.num
+                + i] +
+              ctx->single_point.delta_p_gl[nw*ctx->electron.num*4*ctx->nucleus.num*ctx->jastrow_champ.cord_num*(ctx->jastrow_champ.cord_num+1)
+                + m*ctx->electron.num*4*ctx->nucleus.num*(ctx->jastrow_champ.cord_num+1)
+                + l*ctx->electron.num*4*ctx->nucleus.num
+                + k*ctx->electron.num*ctx->nucleus.num
+                + a*ctx->electron.num
+                + i];
             }
           }
         }
-        for (a = 0; a < ctx->nucleus.num; a++) {
-          ctx->jastrow_champ.en_distance_rescaled_gl[nw][a][ctx->single_point.num][k] = ctx->single_point.en_rescaled_single_gl[nw][a][k];
-          for (l = 0; l <= ctx->jastrow_champ.cord_num; l++) {
-            ctx->jastorw_champ.een_rescaled_n_gl[nw][l][a][k][ctx->single_point.num] = ctx->single_point.een_rescaled_single_n_gl[nw][l][a][k];
-          }
-        }
-
       }
+      ctx->jastrow_champ.en_distance_rescaled[nw*ctx->nucleus.num*ctx->electron.num
+        + a*ctx->electron.num
+        + ctx->single_point.num] =
+      ctx->single_point.en_rescaled_single[nw*ctx->nucleus.num
+        + a];
     }
-    for (a = 0; a < ctx->nucleus.num; a++) {
-      ctx->jastrow_champ.en_distance_rescaled[nw][a][ctx->single_point.num] = ctx->single_point.en_rescaled_single[nw][a];
-      for (i = 0; i < ctx->electron.num; i++) {
-        ctx->jastrow_champ.ee_distance_rescaled[nw][i][ctx->single_point.num] = ctx->single_point.ee_rescaled_single[nw][i];
-        ctx->jastrow_champ.ee_distance_rescaled[nw][ctx->single_point.num][i] = ctx->single_point.ee_rescaled_single[nw][i];
+    for (int i = 0; i < ctx->electron.num; i++) {
+      ctx->jastrow_champ.ee_distance_rescaled[nw*ctx->electron.num*ctx->electron.num
+        + i*ctx->electron.num
+        + ctx->single_point.num] =
+      ctx->single_point.ee_rescaled_single[nw*ctx->electron.num
+        + i];
+
+      ctx->jastrow_champ.ee_distance_rescaled[nw*ctx->electron.num*ctx->electron.num
+        + ctx->single_point.num*ctx->electron.num
+        + i] =
+      ctx->single_point.ee_rescaled_single[nw*ctx->electron.num
+        + i];
+
+      for (int k = 0; k < 4; k++){
+        ctx->jastrow_champ.factor_ee_gl[nw*4*ctx->electron.num
+          + k*ctx->electron.num
+          + i] = 
+        ctx->jastrow_champ.factor_ee_gl[nw*4*ctx->electron.num
+          + k*ctx->electron.num
+          + i] + 
+        ctx->single_point.delta_ee_gl[nw*4*ctx->electron.num
+          + i*4
+          + k];
+
+        ctx->jastrow_champ.factor_en_gl[nw*4*ctx->electron.num
+          + k*ctx->electron.num
+          + i] = 
+        ctx->jastrow_champ.factor_en_gl[nw*4*ctx->electron.num
+          + k*ctx->electron.num
+          + i] + 
+        ctx->single_point.delta_en_gl[nw*4*ctx->electron.num
+          + i*4
+          + k];
       }
     }
   }
 
-  ctx->jastrow_champ.ee_distance_rescaled_date = ctx->single_point.date;
-  ctx->jastrow_champ.ee_distance_rescaled_gl_date = ctx->single_point.date;
-  ctx->jastrow_champ.en_distance_rescaled_date = ctx->single_point.date;
-  ctx->jastrow_champ.en_distance_rescaled_gl_date = ctx->single_point.date;
-  ctx->jastrow_champ.een_rescaled_n_date = ctx->single_point.date;
-  ctx->jastrow_champ.een_rescaled_e_date = ctx->single_point.date;
-  ctx->jastrow_champ.een_rescaled_e_gl_date = ctx->single_point.date;
-  ctx->jastrow_champ.een_rescaled_n_gl_date = ctx->single_point.date;
-  ctx->jastrow_champ.factor_ee_date = ctx->single_point.date;
-  ctx->jastrow_champ.factor_en_date = ctx->single_point.date;
-  ctx->jastrow_champ.factor_een_date = ctx->single_point.date;
-  ctx->jastrow_champ.factor_ee_gl_date = ctx->single_point.date;
-  ctx->jastrow_champ.factor_en_gl_date = ctx->single_point.date;
-  ctx->jastrow_champ.factor_een_gl_date = ctx->single_point.date;
-  ctx->jastrow_champ.dtmp_c_date = ctx->single_point.date;
-  ctx->jastrow_champ.tmp_c_date = ctx->single_point.date;
-  for (k = 0; k < 3; k++) {
-    ctx->point.coord[k] = ctx->single_point.coord[k];
+  for (int nw = 0; nw < ctx->electron.walker.num; nw++) {
+    for (int k = 0; k < 3; k++) {
+      ctx->point.coord.data[nw*3*ctx->electron.num + k*ctx->electron.num + ctx->single_point.num] = ctx->single_point.coord.data[nw*3 + k];
+    }
   }
-  ctx->point.date = ctx->single_point.date;
-  ctx->electron.walker.point.date = ctx->single_point.date;
-  ctx->date = ctx->single_point.date;
 
-  */
+  //ctx->date = ctx->date + 1UL;
+  ctx->single_point.date = ctx->date;
+  ctx->single_point.een_rescaled_single_e_date = ctx->date;
+  ctx->single_point.een_rescaled_single_n_date = ctx->date;
+  ctx->single_point.single_ee_distance_date = ctx->date;
+  ctx->single_point.single_ee_distance_date = ctx->date;
+  ctx->single_point.delta_een_date = ctx->date;
+  ctx->single_point.delta_p_date = ctx->date;
+  ctx->single_point.ee_rescaled_single_date = ctx->date;
+  ctx->single_point.en_rescaled_single_date = ctx->date;
+  ctx->single_point.delta_en_date = ctx->date;
+  ctx->single_point.delta_ee_date = ctx->date;
+  ctx->single_point.een_rescaled_single_e_gl_date = ctx->date;
+  ctx->single_point.een_rescaled_single_n_gl_date = ctx->date;
+  ctx->single_point.delta_p_gl_date = ctx->date;
+  ctx->single_point.delta_een_gl_date = ctx->date;
+  ctx->single_point.ee_rescaled_single_gl_date = ctx->date;
+  ctx->single_point.en_rescaled_single_gl_date = ctx->date;
+  ctx->single_point.delta_en_gl_date = ctx->date;
+  ctx->single_point.delta_ee_gl_date = ctx->date;
 
+  // TODO iets met de normale unrescaled afstanden
+
+  
   return QMCKL_SUCCESS;
 }
      #+end_src
@@ -6512,6 +6654,309 @@ interface
    end function qmckl_get_jastrow_champ_single_accept
 end interface
  #+end_src
+
+** Test
+
+      #+begin_src c :tangle (eval c_test)
+
+
+/* Check if Jastrow is properly initialized */
+assert(qmckl_jastrow_champ_provided(context));
+
+rc = qmckl_set_point(context, 'N', elec_num, elec_coord, walk_num*elec_num*3);
+assert(rc == QMCKL_SUCCESS);
+
+rc = qmckl_get_jastrow_champ_factor_en(context, &jastrow_en_old[0], walk_num);
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_get_jastrow_champ_factor_ee(context, &jastrow_ee_old[0], walk_num);
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_get_jastrow_champ_factor_een(context, &jastrow_een_old[0], walk_num);
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_get_jastrow_champ_factor_en_gl(context, &en_gl_old[0][0][0], walk_num*4*elec_num);
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_get_jastrow_champ_factor_ee_gl(context, &ee_gl_old[0][0][0], walk_num*4*elec_num);
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_get_jastrow_champ_factor_een_gl(context, &een_gl_old[0][0][0], walk_num*4*elec_num);
+assert (rc == QMCKL_SUCCESS);
+
+
+
+rc = qmckl_get_jastrow_champ_tmp_c(context,  &p_old[0][0][0][0][0]);
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_get_jastrow_champ_dtmp_c(context,  &p_gl_old[0][0][0][0][0][0]);
+assert (rc == QMCKL_SUCCESS);
+
+
+
+// ----------------------------
+
+rc = qmckl_get_electron_coord(context, 'N', &coords[0][0][0], walk_num*elec_num*3);
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_set_single_point(context, 'N', 2, new_coords, 3);
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_get_jastrow_champ_single_en(context, &delta_en[0], walk_num);
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_get_jastrow_champ_single_ee(context, &delta_ee[0], walk_num);
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_get_jastrow_champ_single_een(context, &delta_een[0], walk_num);
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_get_jastrow_champ_single_en_gl(context, &delta_en_gl[0][0][0], walk_num*4*elec_num);
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_get_jastrow_champ_single_ee_gl(context, &delta_ee_gl[0][0][0], walk_num*4*elec_num);
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_get_jastrow_champ_single_een_gl(context, &delta_een_gl[0][0][0], walk_num*4*elec_num);
+assert (rc == QMCKL_SUCCESS);
+
+
+
+rc = qmckl_get_een_rescaled_single_e(context, &single_rescaled_een_ee_distance[0][0][0], walk_num*(cord_num+1)*elec_num);
+assert (rc == QMCKL_SUCCESS);
+rc = qmckl_get_een_rescaled_single_n(context, &single_rescaled_een_en_distance[0][0][0], walk_num*(cord_num+1)*nucl_num);
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_get_jastrow_champ_delta_p(context, &delta_p[0][0][0][0][0], walk_num*cord_num*(cord_num+1)*nucl_num*elec_num);
+assert (rc == QMCKL_SUCCESS);
+
+
+rc = qmckl_get_ee_rescaled_single(context, &single_ee_rescaled[0][0], walk_num*elec_num);
+assert (rc == QMCKL_SUCCESS);
+rc = qmckl_get_en_rescaled_single(context, &single_en_rescaled[0][0], walk_num*nucl_num);
+assert (rc == QMCKL_SUCCESS);
+
+
+rc = qmckl_get_een_rescaled_single_n_gl(context, &een_rescaled_single_n_gl[0][0][0][0], walk_num*(cord_num+1)*nucl_num*4);
+assert (rc == QMCKL_SUCCESS);
+rc = qmckl_get_een_rescaled_single_e_gl(context, &een_rescaled_single_e_gl[0][0][0][0], walk_num*(cord_num+1)*elec_num*4);
+assert (rc == QMCKL_SUCCESS);
+
+
+rc = qmckl_get_jastrow_champ_delta_p_gl(context, &delta_p_gl[0][0][0][0][0][0], 4*walk_num*cord_num*(cord_num+1)*nucl_num*elec_num);
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_get_ee_rescaled_single_gl(context, &single_ee_rescaled_gl[0][0][0]);
+assert (rc == QMCKL_SUCCESS);
+rc = qmckl_get_en_rescaled_single_gl(context, &single_en_rescaled_gl[0][0][0]);
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_get_single_electron_ee_distance(context, &single_ee_distance[0][0]);
+assert (rc == QMCKL_SUCCESS);
+rc = qmckl_get_single_electron_en_distance(context, &single_en_distance[0]);
+assert (rc == QMCKL_SUCCESS);
+
+// ----------------------------
+
+coords[0][2][0] = new_coords[0];
+coords[0][2][1] = new_coords[1];
+coords[0][2][2] = new_coords[2];
+
+rc = qmckl_get_jastrow_champ_single_accept(context);
+assert (rc == QMCKL_SUCCESS);
+
+//rc = qmckl_context_touch(context);
+
+rc = qmckl_get_jastrow_champ_factor_en(context, &jastrow_en_new[0], walk_num);
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_get_jastrow_champ_factor_ee(context, &jastrow_ee_new[0], walk_num);
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_get_jastrow_champ_factor_een(context, &jastrow_een_new[0], walk_num);
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_get_jastrow_champ_factor_en_gl(context, &en_gl_new[0][0][0], walk_num*4*elec_num);
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_get_jastrow_champ_factor_ee_gl(context, &ee_gl_new[0][0][0], walk_num*4*elec_num);
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_get_jastrow_champ_factor_een_gl(context, &een_gl_new[0][0][0], walk_num*4*elec_num);
+assert (rc == QMCKL_SUCCESS);
+
+
+
+rc = qmckl_get_jastrow_champ_een_rescaled_e(context, &rescaled_een_ee_distance[0][0][0][0], walk_num*(cord_num+1)*elec_num*elec_num);
+assert (rc == QMCKL_SUCCESS);
+rc = qmckl_get_jastrow_champ_een_rescaled_n(context, &rescaled_een_en_distance[0][0][0][0], walk_num*(cord_num+1)*elec_num*nucl_num);
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_get_jastrow_champ_tmp_c(context,  &p_new[0][0][0][0][0]);
+assert (rc == QMCKL_SUCCESS);
+
+
+rc = qmckl_get_jastrow_champ_ee_distance_rescaled(context, &ee_rescaled[0][0][0]);
+assert (rc == QMCKL_SUCCESS);
+rc = qmckl_get_electron_en_distance_rescaled(context, &en_rescaled[0][0][0]);
+assert (rc == QMCKL_SUCCESS);
+
+
+rc = qmckl_get_jastrow_champ_een_rescaled_n_gl(context, &een_rescaled_en_gl[0][0][0][0][0], walk_num*(cord_num+1)*nucl_num*elec_num*4);
+assert (rc == QMCKL_SUCCESS);
+rc = qmckl_get_jastrow_champ_een_rescaled_e_gl(context, &een_rescaled_ee_gl[0][0][0][0][0], walk_num*(cord_num+1)*elec_num*elec_num*4);
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_get_jastrow_champ_dtmp_c(context,  &p_gl_new[0][0][0][0][0][0]);
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_get_jastrow_champ_ee_distance_rescaled_gl(context, &ee_rescaled_gl[0][0][0][0]);
+assert (rc == QMCKL_SUCCESS);
+rc = qmckl_get_electron_en_distance_rescaled_gl(context, &en_rescaled_gl[0][0][0][0]);
+assert (rc == QMCKL_SUCCESS);
+
+rc = qmckl_get_electron_ee_distance(context, &ee_distance[0][0][0]);
+assert (rc == QMCKL_SUCCESS);
+rc = qmckl_get_electron_en_distance(context, &en_distance[0][0]);
+assert (rc == QMCKL_SUCCESS);
+
+
+for (int nw = 0; nw < walk_num; nw++) {
+  //printf("jastrow_en_new[%d] = %f\n", nw, jastrow_en_new[nw]);
+  //printf("jastrow_en_old[%d] = %f\n", nw, jastrow_en_old[nw]);
+  //printf("delta_en[%d] = %f\n", nw, delta_en[nw]);
+  assert(fabs((jastrow_en_new[nw] - jastrow_en_old[nw]) - delta_en[nw]) < 1.e-12);
+  assert(fabs((jastrow_ee_new[nw] - jastrow_ee_old[nw]) - delta_ee[nw]) < 1.e-12);
+  assert(fabs((jastrow_een_new[nw] - jastrow_een_old[nw]) - delta_een[nw]) < 1.e-12);
+  for (int i = 0; i < elec_num; i++){
+    for (int k = 0; k < 4; k++){
+      //printf("en_gl_new[%d][%d][%d] = %f\n", nw, k, i, en_gl_new[nw][k][i]);
+      //printf("en_gl_old[%d][%d][%d] = %f\n", nw, k, i, en_gl_old[nw][k][i]);
+      //printf("delta_en_gl[%d][%d][%d] = %f\n", nw, i, k, delta_en_gl[nw][i][k]);
+      assert(fabs((en_gl_new[nw][k][i] - en_gl_old[nw][k][i]) - delta_en_gl[nw][i][k]) < 1.e-12);
+      assert(fabs((ee_gl_new[nw][k][i] - ee_gl_old[nw][k][i]) - delta_ee_gl[nw][i][k]) < 1.e-12);
+      assert(fabs((een_gl_new[nw][k][i] - een_gl_old[nw][k][i]) - delta_een_gl[nw][k][i]) < 1.e-12);
+    }
+  }
+}
+
+for (int nw = 0; nw < walk_num; nw++){
+  for (int l = 0; l <= cord_num; l++){
+    for (int i = 0; i < elec_num; i++) {
+      //printf("rescaled_een_ee_distance[%d][%d][2][%d] = %f\n", nw, l, i, rescaled_een_ee_distance[nw][l][2][i]);
+      //printf("single_rescaled_een_ee_distance[%d][%d][%d] = %f\n", nw, l, i, single_rescaled_een_ee_distance[nw][l][i]);
+      assert(fabs((rescaled_een_ee_distance[nw][l][2][i]-single_rescaled_een_ee_distance[nw][l][i])) < 1.e-12);
+      assert(fabs((rescaled_een_ee_distance[nw][l][i][2]-single_rescaled_een_ee_distance[nw][l][i])) < 1.e-12);
+    }
+  }
+}
+
+for (int nw = 0; nw < walk_num; nw++){
+  for (int l = 0; l <= cord_num; l++){
+    for (int a = 0; a < nucl_num; a++) {
+      //printf("rescaled_een_en_distance[%d][%d][%d][2] = %f\n", nw, l, a, rescaled_een_en_distance[nw][l][a][2]);
+      //printf("single_rescaled_een_en_distance[%d][%d][%d] = %f\n", nw, l, a, single_rescaled_een_en_distance[nw][l][a]);
+      assert(fabs((rescaled_een_en_distance[nw][l][a][2]-single_rescaled_een_en_distance[nw][l][a])) < 1.e-12);
+    }
+  }
+}
+for (int nw = 0; nw < walk_num; nw++){
+  for (int l = 0; l < cord_num; l++){
+    for (int m = 0; m <= cord_num; m++){
+      for (int a = 0; a < nucl_num; a++) {
+        for (int i = 0; i < elec_num; i++){
+          assert(fabs(((p_new[nw][l][m][a][i]-p_old[nw][l][m][a][i])-delta_p[nw][l][m][a][i])) < 1.e-12);
+        }
+      }
+    }
+  }
+}
+
+for (int nw = 0; nw < walk_num; nw++) {
+  for (int i = 0; i < elec_num; i++){
+    assert(fabs(ee_rescaled[nw][2][i]-single_ee_rescaled[nw][i]) < 1.e-12);
+  }
+}
+for (int nw = 0; nw < walk_num; nw++) {
+  for (int a = 0; a < nucl_num; a++){
+    assert(fabs(en_rescaled[nw][a][2]-single_en_rescaled[nw][a]) < 1.e-12);
+  }
+}
+
+for (int l = 0; l < cord_num+1; l++) {
+  for (int nw = 0; nw < walk_num; nw++) {
+    for (int a = 0; a < nucl_num; a++) {
+        for (int m = 0; m < 4; m++) {
+          assert(fabs(een_rescaled_en_gl[nw][l][a][m][2] - een_rescaled_single_n_gl[nw][l][a][m]) < 1.e-12);
+        
+        }
+      }
+    }
+}
+
+for (int l = 0; l < cord_num+1; l++) {
+  for (int nw = 0; nw < walk_num; nw++) {
+    for (int i = 0; i < elec_num; i++) {
+        for (int m = 0; m < 4; m++) {
+          //printf("een_rescaled_ee_gl[nw][l][i][m][2] %i %i %i %f \n", l, m ,i, een_rescaled_ee_gl[nw][l][i][m][2]);
+          //printf("een_rescaled_single_e_gl[nw][l][i][m] %i %i %i %f\n", l, m, i,een_rescaled_single_e_gl[nw][l][i][m]);
+          assert(fabs(een_rescaled_ee_gl[nw][l][i][m][2] - een_rescaled_single_e_gl[nw][l][i][m]) < 1.e-12);
+        
+        }
+      }
+    }
+}
+
+for (int nw = 0; nw < walk_num; nw++){
+  for (int l = 0; l < cord_num; l++){
+    for (int m = 0; m <= cord_num; m++){
+      for (int a = 0; a < nucl_num; a++) {
+        for (int i = 0; i < elec_num; i++){
+          for (int k = 0; k < 4; k++){
+            //printf("p_gl[%d][%d][%d][%d][%d][%d] = %f\n", nw, l, m, a, k, i, p_gl_new[nw][l][m][a][k][i] - p_gl_old[nw][l][m][a][k][i]);
+            //printf("delta_p_gl[%d][%d][%d][%d][%d][%d] = %f\n", nw, l, m, a, k, i, delta_p_gl[nw][l][m][k][a][i]);
+            assert(fabs(((p_gl_new[nw][l][m][a][k][i]-p_gl_old[nw][l][m][a][k][i])-delta_p_gl[nw][l][m][k][a][i])) < 1.e-12);
+          }
+        }
+      }
+    }
+  }
+}
+
+for (int nw = 0; nw < walk_num; nw++) {
+  for (int i = 0; i < elec_num; i++) {
+      for (int m = 0; m < 4; m++) {
+        if (i == 2) continue;
+        //printf("%f\n", ee_rescaled_gl[nw][2][i][m]);
+        //printf("%f\n", single_ee_rescaled_gl[nw][i][m]);
+        assert(fabs(ee_rescaled_gl[nw][2][i][m] - single_ee_rescaled_gl[nw][i][m]) < 1.e-12);
+      
+      }
+    }
+  }
+
+for (int nw = 0; nw < walk_num; nw++) {
+  for (int a = 0; a < nucl_num; a++) {
+      for (int m = 0; m < 4; m++) {
+        assert(fabs(en_rescaled_gl[nw][a][2][m] - single_en_rescaled_gl[nw][a][m]) < 1.e-12);
+      
+      }
+    }
+  }
+
+for (int nw = 0; nw < walk_num; nw++){
+  for (int i = 0; i < elec_num; i++) {
+    if (i == 2) continue;
+    assert(fabs((ee_distance[nw][2][i]-single_ee_distance[nw][i])) < 1.e-12);
+  }
+}
+
+for (int a = 0; a < nucl_num; a++){
+      assert(fabs((en_distance[2][a]-single_en_distance[a])) < 1.e-12);
+}
+
+      #+end_src
+
 
 * End of files                                                     :noexport:
 
