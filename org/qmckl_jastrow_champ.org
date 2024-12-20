@@ -6768,7 +6768,9 @@ for p in range(0, cord_num+1):
     pairs of electrons and raised to the power \(p\) defined by ~cord_num~:
 
     \[
-    [g_e(r)_{ij}]^p = \exp\left(-p\,\kappa_\text{e}\, r_{ij}\right)
+    [g_e(r)_{ij}]^p = \begin{cases}
+     \exp\left(-p\,\kappa_\text{e}\, r_{ij}\right) & \text{for } i \ne j \\
+     0 &  \text{for } i = j 
     \]
 
    where \(r_{ij}\) is the matrix of electron-electron distances.
@@ -6959,6 +6961,7 @@ function qmckl_compute_een_rescaled_e_doc( &
            do i = 1, elec_num
               een_rescaled_e(i, j, l, nw) = dexp(-rescale_factor_ee * ee_distance(i, j, nw))**l
            end do
+           een_rescaled_e(j, j, l, nw) = 0.d0
         end do
      end do
   end do
@@ -7046,9 +7049,9 @@ return qmckl_compute_een_rescaled_e_doc (context,
 #pragma omp simd
 #endif
       for (size_t j = 0; j < i; ++j) {
-//        een_rescaled_e_ij[j + kk + elec_pairs] = -rescale_factor_ee * ee_distance[j + i*elec_num + nw*e2];
         ee1[j] = -rescale_factor_ee * ee2[j];
       }
+      ee1[i] = 0.;
       kk += i;
     }
 
@@ -7193,6 +7196,7 @@ for i in range(elec_num):
   for j in range(elec_num):
     for p in range(0, cord_num+1):
       een_rescaled_e[p,i,j] = np.exp(-kappa_e * p * elec_dist[i,j])
+  een_rescaled_e[:,i,i] = 0.0
      #+end_src
 
      #+NAME:test_ee
@@ -7771,7 +7775,6 @@ assert(qmckl_electron_provided(context));
       for (int i=0 ; i < elec_num ; i++) {
         for (int j=0 ; j < elec_num ; j++) {
           for (int k=0 ; k < 4 ; k++) {
-              printf("nw=%d c=%d i=%d k=%d j=%d doc=%e hpc=%e\n", nw, c, i, k, j, een_rescaled_e_gl_doc[nw*(cord_num + 1)*elec_num*4*elec_num + c*elec_num*4*elec_num + i*4*elec_num + k*elec_num + j], een_rescaled_e_gl_hpc[nw*(cord_num + 1)*elec_num*4*elec_num + c*elec_num*4*elec_num + i*4*elec_num + k*elec_num + j]);
             if (fabs(een_rescaled_e_gl_doc[nw*(cord_num + 1)*elec_num*4*elec_num + c*elec_num*4*elec_num + i*4*elec_num + k*elec_num + j] - een_rescaled_e_gl_hpc[nw*(cord_num + 1)*elec_num*4*elec_num + c*elec_num*4*elec_num + i*4*elec_num + k*elec_num + j]) > 1.e-12) {
               printf("nw=%d c=%d i=%d k=%d j=%d doc=%e hpc=%e\n", nw, c, i, k, j, een_rescaled_e_gl_doc[nw*(cord_num + 1)*elec_num*4*elec_num + c*elec_num*4*elec_num + i*4*elec_num + k*elec_num + j], een_rescaled_e_gl_hpc[nw*(cord_num + 1)*elec_num*4*elec_num + c*elec_num*4*elec_num + i*4*elec_num + k*elec_num + j]);
               fflush(stdout);
@@ -10158,6 +10161,7 @@ qmckl_exit_code qmckl_provide_jastrow_champ_factor_een(qmckl_context context)
      :END:
 
      #+NAME: qmckl_factor_een_naive_args
+     |-----------------------+----------------------------------------------------+--------+--------------------------------------|
      | Variable              | Type                                               | In/Out | Description                          |
      |-----------------------+----------------------------------------------------+--------+--------------------------------------|
      | ~context~             | ~qmckl_context~                                    | in     | Global state                         |
@@ -10171,6 +10175,7 @@ qmckl_exit_code qmckl_provide_jastrow_champ_factor_een(qmckl_context context)
      | ~een_rescaled_e~      | ~double[walk_num][0:cord_num][elec_num][elec_num]~ | in     | Electron-nucleus rescaled            |
      | ~een_rescaled_n~      | ~double[walk_num][0:cord_num][nucl_num][elec_num]~ | in     | Electron-nucleus rescaled factor     |
      | ~factor_een~          | ~double[walk_num]~                                 | out    | Electron-nucleus jastrow             |
+     |-----------------------+----------------------------------------------------+--------+--------------------------------------|
 
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
 function qmckl_compute_jastrow_champ_factor_een_naive( &
@@ -10194,8 +10199,8 @@ function qmckl_compute_jastrow_champ_factor_een_naive( &
   real    (c_double ) , intent(out)         :: factor_een(walk_num)
   integer(qmckl_exit_code)                  :: info
 
-  integer*8 :: i, a, j, l, k, p, m, n, nw
-  double precision :: accu, accu2, cn
+  integer*8 :: i, a, j, l, k, m, n, p, nw
+  double precision :: cn
 
   info = QMCKL_SUCCESS
 
@@ -10211,22 +10216,20 @@ function qmckl_compute_jastrow_champ_factor_een_naive( &
      do n = 1, dim_c_vector
         l = lkpm_combined_index(n, 1)
         k = lkpm_combined_index(n, 2)
+        p = lkpm_combined_index(n, 3)
         m = lkpm_combined_index(n, 4)
 
         do a = 1, nucl_num
-           accu2 = 0.0d0
            cn = c_vector_full(a, n)
+           if (cn == 0.d0) cycle
            do j = 1, elec_num
-              accu = 0.0d0
               do i = 1, j-1
-
-                 accu = accu + een_rescaled_e(i,j,k,nw) *       &
+                 factor_een(nw) = factor_een(nw) + cn*( &
+                      een_rescaled_e(i,j,k,nw) *       &
                       (een_rescaled_n(i,a,l,nw) + een_rescaled_n(j,a,l,nw)) * &
-                      (een_rescaled_n(i,a,m,nw) * een_rescaled_n(j,a,m,nw))
+                      (een_rescaled_n(i,a,m,nw) * een_rescaled_n(j,a,m,nw)) )
               end do
-              accu2 = accu2 + accu
            end do
-           factor_een(nw) = factor_een(nw) + accu2 * cn
         end do
      end do
   end do
@@ -10391,7 +10394,8 @@ qmckl_compute_jastrow_champ_factor_een (const qmckl_context context,
  #+end_src
 
 **** Test                                      :noexport:
-     #+begin_src python :results output :exports none :noweb yes
+     #+NAME: test_factor_een
+     #+begin_src python :exports none :noweb yes
 import numpy as np
 
 <<jastrow_data>>
@@ -10414,26 +10418,26 @@ for n in range(0, dim_c_vector):
     for j in range(0, elec_num):
       accu = 0.0
       for i in range(0, elec_num):
-        accu = accu + een_rescaled_e[i,j,k] *       \
-                      een_rescaled_n[a,i,m]
-      accu2 = accu2 + accu * een_rescaled_n[a,j,m+l]
+        accu = accu + een_rescaled_e[k,j,i] *       \
+                      een_rescaled_n[m,a,i]
+      accu2 = accu2 + accu * een_rescaled_n[m+l,a,j]
     factor_een = factor_een + accu2 * cn
 
-print("factor_een:",factor_een)
+return factor_een
      #+end_src
 
-     #+RESULTS:
-     : factor_een: -0.382580260174321
+     #+RESULTS: test_factor_een
+     : -0.06433795806199133
 
 
-      #+begin_src c :tangle (eval c_test)
+      #+begin_src c :tangle (eval c_test) :noweb yes
 /* Check if Jastrow is properly initialized */
 assert(qmckl_jastrow_champ_provided(context));
 
 double factor_een[walk_num];
 rc = qmckl_get_jastrow_champ_factor_een(context, &(factor_een[0]),walk_num);
 
-assert(fabs(factor_een[0] + 0.382580260174321) < 1e-12);
+assert(fabs(factor_een[0] - (<<test_factor_een()>>)) < 1e-12);
 
 {
   double factor_een_naive[walk_num];
