@@ -55,7 +55,7 @@ AC_ARG_WITH([ifort],
 
 AS_IF([test "x$with_ifort" = "xyes"], [
   FC=ifort
-  FCFLAGS="-march=native -ip -Ofast -ftz -finline -g -mkl=sequential" ])
+  FCFLAGS="-march=native -ip -O3 -finline -g -mkl=sequential" ])
 
 # Intel C compiler
 AC_ARG_WITH([icx],
@@ -66,7 +66,7 @@ AC_ARG_WITH([icx],
 
 AS_IF([test "x$with_icx" = "xyes"], [
   CC=icx
-  CFLAGS="-march=native -Ofast -finline -g -qmkl=sequential" ])
+  CFLAGS="-march=native -O3 -finline -g -qmkl=sequential" ])
 
 AS_IF([test "x$with_icx.$with_ifort" = "xyes.yes"], [
   ax_blas_ok="yes"
@@ -82,7 +82,7 @@ AC_ARG_WITH([icc],
 
 AS_IF([test "x$with_icc" = "xyes"], [
   CC=icc
-  CFLAGS="-march=native -ip -Ofast -ftz -finline -g -mkl=sequential" ])
+  CFLAGS="-march=native -ip -O3 -finline -g -mkl=sequential" ])
 
 AS_IF([test "x$with_icc.$with_ifort" = "xyes.yes"], [
   ax_blas_ok="yes"
@@ -357,6 +357,13 @@ AS_IF([test "x$ok" = "xyes"], [
 	AC_CHECK_LIB([efence], [malloc])
         ARGS="${ARGS} efence"
 ])
+
+
+AC_ARG_ENABLE(sanitizer, [AS_HELP_STRING([--enable-sanitizer],[enable sanitizer debug flags])], ok=$enableval, ok=no)
+if test "$ok" = "yes"; then
+  CFLAGS="${CFLAGS} -fsanitize=address -fsanitize=undefined -fsanitize=leak -fsanitize=pointer-compare -fsanitize=pointer-subtract -fsanitize=bounds -fsanitize=bounds-strict"
+  FCFLAGS="${FCFLAGS} -fsanitize=address -fsanitize=undefined -fsanitize=leak -fsanitize=pointer-compare -fsanitize=pointer-subtract -fsanitize=bounds -fsanitize=bounds-strict"
+fi
 
 
 
