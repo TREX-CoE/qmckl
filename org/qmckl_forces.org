@@ -4360,6 +4360,10 @@ qmckl_get_forces_mo_value(qmckl_context context,
 
 ** Provide
 
+      #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_provide_forces_mo_value(qmckl_context context);
+      #+end_src
+
 #+begin_src c :comments org :tangle (eval c) :noweb yes :export none
 qmckl_exit_code qmckl_provide_forces_mo_value(qmckl_context context)
 {
@@ -4457,12 +4461,6 @@ qmckl_exit_code qmckl_provide_forces_mo_value(qmckl_context context)
     | ~forces_mo_value~            | ~double[nucl_num][3][point_num][mo_num]~ | out    | Value, gradients and Laplacian of the MOs       |
 
 
-    The matrix of AO values is very sparse, so we use a sparse-dense
-    matrix multiplication instead of a dgemm, as exposed in
-    https://dx.doi.org/10.1007/978-3-642-38718-0_14.
-
-
-
     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
 integer(qmckl_exit_code)  function qmckl_compute_forces_mo_value_doc(context, &
      nucl_num,ao_num, mo_num, point_num, &
@@ -4527,7 +4525,6 @@ rc = qmckl_get_forces_mo_value(context, &forces_mo_value[0][0][0][0], 3*nucl_num
 assert(rc == QMCKL_SUCCESS);
 
 double finite_difference_force_mo_value[3][nucl_num][point_num][mo_num];
-printf("Mo num %ld %ld\n", mo_num, ao_num);
 
 nucleus_coord = (double*) malloc(3 * nucl_num * sizeof(double));
 if (nucleus_coord == NULL) {
@@ -4541,13 +4538,19 @@ if (temp_coord == NULL) {
   free(nucleus_coord);
   return QMCKL_ALLOCATION_FAILED;
 }
-double mo_output[point_num][mo_num];
+
+double* mo_output = (double*) malloc(point_num * mo_num * sizeof(double));
+if (mo_output == NULL) {
+  free(temp_coord);
+  free(nucleus_coord);
+  return QMCKL_ALLOCATION_FAILED;
+}
+
 
 // Copy original coordinates
 for (int i = 0; i < 3 * nucl_num; i++) {
   temp_coord[i] = nucleus_coord[i];
 }
-
 
 
 for (int64_t a = 0; a < nucl_num; a++) {
@@ -4565,7 +4568,7 @@ for (int64_t a = 0; a < nucl_num; a++) {
       assert(rc == QMCKL_SUCCESS);
 
       // Call the provided function
-      rc = qmckl_get_mo_basis_mo_value(context,&mo_output[0][0], point_num*mo_num);
+      rc = qmckl_get_mo_basis_mo_value(context,&mo_output[0], point_num*mo_num);
       assert(rc == QMCKL_SUCCESS);
 
       // Accumulate derivative using finite-difference coefficients
@@ -4574,7 +4577,7 @@ for (int64_t a = 0; a < nucl_num; a++) {
           if (m == -4) {
             finite_difference_force_mo_value[k][a][i][j] = 0.0;
           }
-          finite_difference_force_mo_value[k][a][i][j] += coef[m + 4] * mo_output[i][j]/delta_x;
+          finite_difference_force_mo_value[k][a][i][j] += coef[m + 4] * mo_output[i*mo_num+ j]/delta_x;
         }
       }
     }
@@ -4591,18 +4594,18 @@ assert(rc == QMCKL_SUCCESS);
 
 free(nucleus_coord);
 free(temp_coord);
+free(mo_output);
 
 
 for (int j = 0; j < mo_num; j++){
   for (int i = 0; i < point_num; i++){
-      for (int a = 0; a < nucl_num; a++) {
-        for (int k = 0; k < 3; k++){
-            //printf("k=%i a=%i i=%i j=%i\n", k, a, i, j);
-            printf("%.10f\t", finite_difference_force_mo_value[k][a][i][j]);
-            printf("%.10f\n", forces_mo_value[a][k][i][j]);
-            assert(fabs(finite_difference_force_mo_value[k][a][i][j] -  forces_mo_value[a][k][i][j]) < 1.e-10);
-
-        }
+    for (int a = 0; a < nucl_num; a++) {
+      for (int k = 0; k < 3; k++){
+        //printf("k=%i a=%i i=%i j=%i\n", k, a, i, j);
+        //printf("%.10f\t", finite_difference_force_mo_value[k][a][i][j]);
+        //printf("%.10f\n", forces_mo_value[a][k][i][j]);
+        assert(fabs(finite_difference_force_mo_value[k][a][i][j] -  forces_mo_value[a][k][i][j]) < 1.e-9);
+      }
     }
   }
 }
