@@ -102,6 +102,8 @@ typedef struct qmckl_forces_struct{
     uint64_t  forces_ao_value_date;
     double  * restrict forces_mo_value;
     uint64_t  forces_mo_value_date;
+    double  * restrict forces_mo_g;
+    uint64_t  forces_mo_g_date;
 } qmckl_forces_struct;
     #+end_src
 
@@ -4614,6 +4616,328 @@ printf("OK\n");
 
       #+end_src
 
+* Force of MO value
+
+** Get
+
+    #+begin_src c :comments org :tangle (eval h_func) :noweb yes
+qmckl_exit_code
+qmckl_get_forces_mo_g(qmckl_context context,
+                          double* const forces_mo_g,
+                          const int64_t size_max);
+    #+end_src
+
+    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code
+qmckl_get_forces_mo_g(qmckl_context context,
+                          double* const forces_mo_g,
+                          const int64_t size_max)
+{
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_exit_code rc;
+
+  rc = qmckl_provide_forces_mo_g(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  const int64_t sze = ctx->point.num * 3 * 3 * ctx->mo_basis.mo_num * ctx->nucleus.num;
+  if (size_max < sze) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_3,
+                           "qmckl_get_forces_mo_g",
+                           "input array too small");
+  }
+
+  memcpy(forces_mo_g, ctx->forces.forces_mo_g, sze * sizeof(double));
+
+  return QMCKL_SUCCESS;
+}
+    #+end_src
+
+    #+begin_src f90 :tangle (eval fh_func) :comments org :exports none
+  interface
+     integer(qmckl_exit_code) function qmckl_get_forces_mo_g (context, &
+          forces_mo_g, size_max) bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       implicit none
+
+       integer (c_int64_t) , intent(in)  , value :: context
+       real(c_double),       intent(out)         :: forces_mo_g(*)
+       integer (c_int64_t) , intent(in)  , value :: size_max
+     end function qmckl_get_forces_mo_g
+  end interface
+    #+end_src
+
+** Provide
+
+      #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_provide_forces_mo_g(qmckl_context context);
+      #+end_src
+
+#+begin_src c :comments org :tangle (eval c) :noweb yes :export none
+qmckl_exit_code qmckl_provide_forces_mo_g(qmckl_context context)
+{
+
+  qmckl_exit_code rc = QMCKL_SUCCESS;
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_provide_forces_mo_g",
+                           NULL);
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  if (!ctx->mo_basis.provided) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_provide_mo_basis_mo_vgl",
+                           NULL);
+  }
+
+  /* Compute if necessary */
+  if (ctx->point.date > ctx->forces.forces_mo_g_date) {
+
+    qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+    mem_info.size = 3 * 3 * ctx->mo_basis.mo_num * ctx->point.num * ctx->nucleus.num * sizeof(double);
+
+    if (ctx->forces.forces_mo_g != NULL) {
+      qmckl_memory_info_struct mem_info_test = qmckl_memory_info_struct_zero;
+      rc = qmckl_get_malloc_info(context, ctx->forces.forces_mo_g, &mem_info_test);
+
+      /* if rc != QMCKL_SUCCESS, we are maybe in an _inplace function because the
+         memory was not allocated with qmckl_malloc */
+
+      if ((rc == QMCKL_SUCCESS) && (mem_info_test.size != mem_info.size)) {
+        rc = qmckl_free(context, ctx->forces.forces_mo_value);
+        assert (rc == QMCKL_SUCCESS);
+        ctx->forces.forces_mo_value = NULL;
+      }
+    }
+
+    /* Allocate array */
+    if (ctx->forces.forces_mo_g == NULL) {
+
+      double* forces_mo_g = (double*) qmckl_malloc(context, mem_info);
+
+      if (forces_mo_g == NULL) {
+        return qmckl_failwith( context,
+                               QMCKL_ALLOCATION_FAILED,
+                               "qmckl_forces_mo_g",
+                               NULL);
+      }
+      ctx->forces.forces_mo_g = forces_mo_g;
+    }
+
+    rc = qmckl_provide_ao_basis_ao_hessian(context);
+    if (rc != QMCKL_SUCCESS) {
+      return qmckl_failwith( context,
+                             QMCKL_NOT_PROVIDED,
+                             "qmckl_ao_basis_ao_hessian",
+                             NULL);
+    }
+
+    rc = qmckl_compute_forces_mo_g_doc(context,
+                                         ctx->ao_basis.ao_num,
+                                         ctx->mo_basis.mo_num,
+                                         ctx->point.num,
+                                         ctx->nucleus.num,
+                                         ctx->mo_basis.coefficient_t,
+                                         ctx->ao_basis.ao_hessian,
+                                         ctx->forces.forces_mo_g);
+
+  }
+}
+#+end_src
+
+** Compute
+   :PROPERTIES:
+   :Name:     qmckl_compute_forces_mo_g
+   :CRetType: qmckl_exit_code
+   :FRetType: qmckl_exit_code
+   :END:
+
+    #+NAME: qmckl_compute_forces_mo_g_args
+    | Variable        | Type                           | In/Out | Description                                     |
+    |-----------------+--------------------------------+--------+-------------------------------------------------|
+    | ~context~           | ~qmckl_context~                | in     | Global state                                    |
+    | ~ao_num~            | ~int64_t~                      | in     | Number of AOs                                   |
+    | ~mo_num~            | ~int64_t~                      | in     | Number of MOs                                   |
+    | ~point_num~         | ~int64_t~                      | in     | Number of points                                |
+    | ~nucl_num~          | ~int64_t~                      | in     | Number of nuclei                                |
+    | ~coefficient_t~     | ~double[mo_num][ao_num]~       | in     | Transpose of the AO to MO transformation matrix |
+    | ~ao_hessian~        | ~double[nucl_num][3][point_num][3][ao_num]~ | in     | Value, gradients and Laplacian of the AOs       |
+    | ~forces_mo_g~        | ~double[nucl_num][3][point_num][3][mo_num]~ | out    | Value, gradients and Laplacian of the MOs       |
+    |-----------------+--------------------------------+--------+-------------------------------------------------|
+
+
+
+    #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+integer function qmckl_compute_forces_mo_g_doc(context, &
+     ao_num, mo_num, point_num, nucl_num, &
+     coefficient_t, ao_hessian, forces_mo_g) &
+     bind(C) result(info) 
+  use qmckl
+  implicit none
+  integer(qmckl_context), intent(in), value  :: context
+  integer (c_int64_t)   , intent(in), value  :: nucl_num, ao_num, mo_num, point_num
+  real    (c_double )   , intent(in)         :: coefficient_t(mo_num,ao_num)
+  real    (c_double )   , intent(in)         :: ao_hessian(ao_num,3,point_num,3,nucl_num)
+  real    (c_double )   , intent(out)        :: forces_mo_g(mo_num,3,point_num,3,nucl_num)
+  integer*8 :: i,j,k, m, n,a
+
+  info = QMCKL_SUCCESS
+
+  do j=1,point_num
+     forces_mo_g(:,:,j,:,:) = 0.d0
+     do k=1,ao_num
+        do i=1,mo_num
+          do a=1, nucl_num
+            do m = 1, 3 
+              do n = 1, 3
+               forces_mo_g(i, m, j, n, a) = forces_mo_g(i, m, j, n, a) - coefficient_t(i,k) * ao_hessian(k, m, j, n, a)
+              end do
+            end do
+          end do
+        end do
+     end do
+  end do
+
+
+end function qmckl_compute_forces_mo_g_doc
+    #+end_src
+
+   #+RESULTS:
+   #+begin_src c :tangle (eval h_func) :comments org
+   qmckl_exit_code qmckl_compute_forces_mo_g_doc (
+         const qmckl_context context,
+         const int64_t ao_num,
+         const int64_t mo_num,
+         const int64_t point_num,
+         const int64_t nucl_num,
+         const double* coefficient_t,
+         const double* ao_hessian,
+         double* const forces_mo_g );
+   #+end_src
+
+** Test
+
+   #+begin_src c :tangle (eval c_test)
+printf("Forces MO gradient\n");
+
+rc = qmckl_set_nucleus_coord(context, 'T', &(nucl_coord[0]), 3*nucl_num);
+assert(rc == QMCKL_SUCCESS);
+
+double * forces_mo_g = (double*) malloc(nucl_num* 3 * point_num* 3 * mo_num *sizeof(double));
+rc = qmckl_get_forces_mo_g(context, &forces_mo_g[0], 3*3*nucl_num*mo_num*point_num);
+assert(rc == QMCKL_SUCCESS);
+
+double * finite_difference_force_mo_g = (double*) malloc(nucl_num* 3 * point_num* 3 * mo_num * sizeof(double));
+
+nucleus_coord = (double*) malloc(3 * nucl_num * sizeof(double));
+if (nucleus_coord == NULL) {
+  return QMCKL_ALLOCATION_FAILED;
+}
+
+rc = qmckl_get_nucleus_coord(context, 'N', nucleus_coord, 3*nucl_num);
+
+temp_coord = (double*) malloc(3 * nucl_num * sizeof(double));
+if (temp_coord == NULL) {
+  free(nucleus_coord);
+  return QMCKL_ALLOCATION_FAILED;
+}
+
+mo_output = (double*) malloc(5 * point_num * mo_num * sizeof(double));
+if (mo_output == NULL) {
+  free(temp_coord);
+  free(nucleus_coord);
+  return QMCKL_ALLOCATION_FAILED;
+}
+
+
+// Copy original coordinates
+for (int i = 0; i < 3 * nucl_num; i++) {
+  temp_coord[i] = nucleus_coord[i];
+}
+
+
+for (int64_t a = 0; a < nucl_num; a++) {
+  for (int64_t k = 0; k < 3; k++) {
+    for (int64_t m = -4; m <= 4; m++) {
+
+      // Apply finite difference displacement
+      temp_coord[k+a*3] = nucleus_coord[k+3*a] + (double) m * delta_x;
+
+      // Update coordinates in the context
+      rc = qmckl_set_nucleus_coord(context, 'N', temp_coord, 3*nucl_num);
+      assert(rc == QMCKL_SUCCESS);
+
+      rc = qmckl_context_touch(context);
+      assert(rc == QMCKL_SUCCESS);
+
+      // Call the provided function
+      rc = qmckl_get_mo_basis_mo_vgl(context,&mo_output[0], 5*point_num*mo_num);
+      assert(rc == QMCKL_SUCCESS);
+
+      // Accumulate derivative using finite-difference coefficients
+      for (int i = 0; i < point_num; i++) {
+        for (int n = 0; n < 3; n++){
+          for (int j = 0; j < mo_num; j++) {
+            if (m == -4) {
+              finite_difference_force_mo_g[k*3*mo_num*point_num*nucl_num + a*3*mo_num*point_num + i*3*mo_num + n*mo_num + j] = 0.0;
+            }
+            finite_difference_force_mo_g[k*3*mo_num*point_num*nucl_num + a*3*mo_num*point_num + i*3*mo_num + n*mo_num + j] += coef[m + 4] * mo_output[i*mo_num*5 + (n+1)*mo_num + j]/delta_x;
+          }
+        }
+      }
+    }
+    temp_coord[k+a*3] = nucleus_coord[k+3*a];
+  }
+}
+
+// Reset coordinates in the context
+rc = qmckl_set_nucleus_coord(context, 'N', temp_coord, 3*nucl_num);
+assert(rc == QMCKL_SUCCESS);
+
+rc = qmckl_context_touch(context);
+assert(rc == QMCKL_SUCCESS);
+
+free(nucleus_coord);
+free(temp_coord);
+free(mo_output);
+
+
+
+for (int j = 0; j < mo_num; j++){
+  for (int n = 0; n < 3; n++){
+    for (int i = 0; i < point_num; i++){
+      for (int a = 0; a < nucl_num; a++) {
+        for (int k = 0; k < 3; k++){
+          //printf("k=%i a=%i i=%i n=%i j=%i\n", k, a, i, n, j);
+          //printf("%.10f\t", finite_difference_force_mo_g[k*3*mo_num*point_num*nucl_num + a*3*mo_num*point_num + i*3*mo_num + n*mo_num + j]);
+          //printf("%.10f\n", forces_mo_g[a*9*mo_num*point_num + k*3*mo_num*point_num + i*3*mo_num + n*mo_num + j]);
+          assert(fabs(finite_difference_force_mo_g[k*3*mo_num*point_num*nucl_num + a*3*mo_num*point_num + i*3*mo_num + n*mo_num + j] -  forces_mo_g[a*9*mo_num*point_num + k*3*mo_num*point_num + i*3*mo_num + n*mo_num + j]) < 1.e-9);
+        }
+      }
+    }
+  }
+}
+
+free(forces_mo_g);
+free(finite_difference_force_mo_g);
+
+printf("OK\n");
+
+      #+end_src
 
 * End of files                                                     :noexport:
 
