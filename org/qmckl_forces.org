@@ -104,6 +104,14 @@ typedef struct qmckl_forces_struct{
     uint64_t  forces_mo_value_date;
     double  * restrict forces_mo_g;
     uint64_t  forces_mo_g_date;
+    double  * restrict forces_mo_l;
+    uint64_t  forces_mo_l_date;
+    double  * forces_jastrow_single_en;
+    uint64_t  forces_jastrow_single_en_date;
+    double  * forces_jastrow_single_een;
+    uint64_t  forces_jastrow_single_een_date;
+    double  * forces_delta_p;
+    uint64_t  forces_delta_p_date;
 } qmckl_forces_struct;
     #+end_src
 
@@ -381,6 +389,9 @@ qmckl_exit_code qmckl_finite_difference_deriv_n(
           assert(rc == QMCKL_SUCCESS);
 
           rc = qmckl_context_touch(context);
+          assert(rc == QMCKL_SUCCESS);
+ 
+          rc = qmckl_single_touch(context);
           assert(rc == QMCKL_SUCCESS);
 
           // Call the provided function
@@ -2312,6 +2323,7 @@ for (int nw = 0; nw < walk_num; nw++){
 printf("OK\n");
 
       #+end_src
+
 * Force of een jastrow value
 
 ** Get
@@ -3711,6 +3723,1232 @@ printf("OK\n");
 
       #+end_src
 
+* Force of single en Jastrow
+
+** Get
+
+    #+begin_src c :comments org :tangle (eval h_func) :noweb yes
+qmckl_exit_code
+qmckl_get_forces_jastrow_single_en(qmckl_context context,
+                          double* const forces_jastrow_single_en,
+                          const int64_t size_max);
+    #+end_src
+
+    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code
+qmckl_get_forces_jastrow_single_en(qmckl_context context,
+                          double* const forces_jastrow_single_en,
+                          const int64_t size_max)
+{
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_exit_code rc;
+
+  rc = qmckl_provide_forces_jastrow_single_en(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  const int64_t sze = ctx->electron.walker.num * 3 * ctx->nucleus.num;
+  if (size_max < sze) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_3,
+                           "qmckl_get_forces_jastrow_single_en",
+                           "input array too small");
+  }
+
+  memcpy(forces_jastrow_single_en, ctx->forces.forces_jastrow_single_en, sze * sizeof(double));
+
+  return QMCKL_SUCCESS;
+}
+    #+end_src
+
+    #+begin_src f90 :tangle (eval fh_func) :comments org :exports none
+  interface
+     integer(qmckl_exit_code) function qmckl_get_forces_jastrow_single_en (context, &
+          forces_jastrow_single_en, size_max) bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       implicit none
+
+       integer (c_int64_t) , intent(in)  , value :: context
+       real(c_double),       intent(out)         :: forces_jastrow_single_en(size_max)
+       integer (c_int64_t) , intent(in)  , value :: size_max
+     end function qmckl_get_forces_jastrow_single_en
+  end interface
+    #+end_src
+
+** Provide                                                         :noexport:
+
+      #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_provide_forces_jastrow_single_en(qmckl_context context);
+      #+end_src
+
+      #+begin_src c :comments org :tangle (eval c) :noweb yes :export none
+qmckl_exit_code qmckl_provide_forces_jastrow_single_en(qmckl_context context)
+{
+
+  qmckl_exit_code rc = QMCKL_SUCCESS;
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_provide_forces_jastrow_single_en",
+                           NULL);
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  if (!ctx->jastrow_champ.provided) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_provide_forces_jastrow_single_en",
+                           NULL);
+  }
+
+  /* Check if en rescaled distance is provided */
+  rc = qmckl_provide_en_distance_rescaled(context);
+  if(rc != QMCKL_SUCCESS) return rc;
+
+  /* Check if en rescaled distance derivatives is provided */
+  rc = qmckl_provide_en_distance_rescaled_gl(context);
+  if(rc != QMCKL_SUCCESS) return rc;
+
+  /* Check if en rescaled distance is provided */
+  rc = qmckl_provide_en_rescaled_single(context);
+  if(rc != QMCKL_SUCCESS) return rc;
+
+  /* Check if en rescaled distance derivatives is provided */
+  rc = qmckl_provide_en_rescaled_single_gl(context);
+  if(rc != QMCKL_SUCCESS) return rc;
+
+  /* Compute if necessary */
+  if (ctx->single_point.date > ctx->forces.forces_jastrow_single_en_date) {
+
+    if (ctx->electron.walker.num > ctx->electron.walker_old.num) {
+      if (ctx->forces.forces_jastrow_single_en != NULL) {
+        rc = qmckl_free(context, ctx->forces.forces_jastrow_single_en);
+        if (rc != QMCKL_SUCCESS) {
+          return qmckl_failwith( context, rc,
+                                 "qmckl_provide_forces_jastrow_single_en",
+                                 "Unable to free ctx->forces.forces_jastrow_single_en");
+        }
+        ctx->forces.forces_jastrow_single_en = NULL;
+      }
+    }
+
+
+    /* Allocate array */
+    if (ctx->forces.forces_jastrow_single_en == NULL) {
+
+      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+      mem_info.size = ctx->electron.walker.num * 3 * ctx->nucleus.num * sizeof(double);
+      double* forces_jastrow_single_en = (double*) qmckl_malloc(context, mem_info);
+
+      if (forces_jastrow_single_en == NULL) {
+        return qmckl_failwith( context,
+                               QMCKL_ALLOCATION_FAILED,
+                               "qmckl_provide_forces_jastrow_single_en",
+                               NULL);
+      }
+      ctx->forces.forces_jastrow_single_en = forces_jastrow_single_en;
+    }
+
+    rc = qmckl_compute_forces_jastrow_single_en(context,
+                                         ctx->single_point.num,
+                                         ctx->electron.walker.num,
+                                         ctx->electron.num,
+                                         ctx->nucleus.num,
+                                         ctx->jastrow_champ.type_nucl_num,
+                                         ctx->jastrow_champ.type_nucl_vector,
+                                         ctx->jastrow_champ.aord_num,
+                                         ctx->jastrow_champ.a_vector,
+                                         ctx->jastrow_champ.en_distance_rescaled,
+                                         ctx->jastrow_champ.en_distance_rescaled_gl,
+                                         ctx->single_point.en_rescaled_single,
+                                         ctx->single_point.en_rescaled_single_gl,
+                                         ctx->forces.forces_jastrow_single_en);
+    if (rc != QMCKL_SUCCESS) {
+      return rc;
+    }
+
+    ctx->forces.forces_jastrow_single_en_date = ctx->single_point.date;
+  }
+
+  return QMCKL_SUCCESS;
+}
+     #+end_src
+
+** Compute
+     :PROPERTIES:
+     :Name:     qmckl_compute_forces_jastrow_single_en
+     :CRetType: qmckl_exit_code
+     :FRetType: qmckl_exit_code
+     :END:
+
+     #+NAME: qmckl_forces_single_en_args
+     | Variable                  | Type                                      | In/Out | Description                                             |
+     |---------------------------+-------------------------------------------+--------+---------------------------------------------------------|
+     | ~context~                 | ~qmckl_context~                           | in     | Global state                                            |
+     | ~num~                     | ~int64_t~                                 | in     | Index of single electron                                |
+     | ~walk_num~                | ~int64_t~                                 | in     | Number of walkers                                       |
+     | ~elec_num~                | ~int64_t~                                 | in     | Number of electrons                                     |
+     | ~nucl_num~                | ~int64_t~                                 | in     | Number of nuclei                                        |
+     | ~type_nucl_num~           | ~int64_t~                                 | in     | Number of unique nuclei                                 |
+     | ~type_nucl_vector~        | ~int64_t[nucl_num]~                       | in     | IDs of unique nuclei                                    |
+     | ~aord_num~                | ~int64_t~                                 | in     | Number of coefficients                                  |
+     | ~a_vector~                | ~double[type_nucl_num][aord_num+1]~       | in     | List of coefficients                                    |
+     | ~en_distance_rescaled~    | ~double[walk_num][nucl_num][elec_num]~    | in     | Electron-nucleus rescaled distances                     |
+     | ~en_distance_rescaled_gl~ | ~double[walk_num][nucl_num][elec_num][4]~ | in     | Electron-nucleus rescaled distance derivatives          |
+     | ~en_rescaled_single~      | ~double[walk_num][nucl_num]~              | in     | Electron-nucleus rescaled single distances              |
+     | ~en_rescaled_single_gl~   | ~double[walk_num][nucl_num][4]~           | in     | Electron-nucleus rescaled single distance derivatives   |
+     | ~forces_jastrow_single_en~             | ~double[walk_num][nucl_num][3]~           | out    | Single electron-nucleus forces |
+     |---------------------------+-------------------------------------------+--------+---------------------------------------------------------|
+
+     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+function qmckl_compute_forces_jastrow_single_en_doc( &
+     context, num_in, walk_num, elec_num, nucl_num, type_nucl_num, &
+     type_nucl_vector, aord_num, a_vector, &
+     en_distance_rescaled, en_distance_rescaled_gl, en_rescaled_single, en_rescaled_single_gl, forces_jastrow_single_en) &
+     bind(C) result(info)
+  use qmckl
+  implicit none
+
+  integer (qmckl_context), intent(in), value :: context
+  integer (c_int64_t) , intent(in)  , value :: num_in
+  integer (c_int64_t) , intent(in)  , value :: walk_num
+  integer (c_int64_t) , intent(in)  , value :: elec_num
+  integer (c_int64_t) , intent(in)  , value :: nucl_num
+  integer (c_int64_t) , intent(in)  , value :: type_nucl_num
+  integer (c_int64_t) , intent(in)          :: type_nucl_vector(nucl_num)
+  integer (c_int64_t) , intent(in)  , value :: aord_num
+  real    (c_double ) , intent(in)          :: a_vector(aord_num+1,type_nucl_num)
+  real    (c_double ) , intent(in)          :: en_distance_rescaled(elec_num,nucl_num,walk_num)
+  real    (c_double ) , intent(in)          :: en_distance_rescaled_gl(4, elec_num,nucl_num,walk_num)
+  real    (c_double ) , intent(in)          :: en_rescaled_single(nucl_num,walk_num)
+  real    (c_double ) , intent(in)          :: en_rescaled_single_gl(4, nucl_num,walk_num)
+  real    (c_double ) , intent(out)         :: forces_jastrow_single_en(3,nucl_num,walk_num)
+  integer(qmckl_exit_code)                   :: info
+
+  integer*8 :: i, a, k, nw, ii, num
+  double precision   :: x, x1, kf, x_old, x1_old
+  double precision   :: denom, invdenom, invdenom2, f
+  double precision   :: denom_old, invdenom_old, invdenom2_old, f_old
+  double precision   :: dx(3), dx_old(3)
+
+  num = num_in + 1
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (walk_num <= 0) then
+     info = QMCKL_INVALID_ARG_3
+     return
+  endif
+
+  if (elec_num <= 0) then
+     info = QMCKL_INVALID_ARG_4
+     return
+  endif
+
+  if (nucl_num <= 0) then
+     info = QMCKL_INVALID_ARG_5
+     return
+  endif
+
+  if (aord_num < 0) then
+     info = QMCKL_INVALID_ARG_8
+     return
+  endif
+
+  do nw =1, walk_num
+    forces_jastrow_single_en(:,:,nw) = 0.0d0
+
+    do a = 1, nucl_num
+
+      x_old = en_distance_rescaled(num,a,nw)
+      x = en_rescaled_single(a,nw)
+
+
+      denom = 1.0d0 + a_vector(2, type_nucl_vector(a)+1) * x
+      invdenom = 1.0d0 / denom
+      invdenom2 = invdenom*invdenom
+
+      denom_old = 1.0d0 + a_vector(2, type_nucl_vector(a)+1) * x_old
+      invdenom_old = 1.0d0 / denom_old
+      invdenom2_old = invdenom_old*invdenom_old
+
+      dx(1) = -en_rescaled_single_gl(1,a,nw)
+      dx(2) = -en_rescaled_single_gl(2,a,nw)
+      dx(3) = -en_rescaled_single_gl(3,a,nw)
+
+      dx_old(1) = -en_distance_rescaled_gl(1,num,a,nw)
+      dx_old(2) = -en_distance_rescaled_gl(2,num,a,nw)
+      dx_old(3) = -en_distance_rescaled_gl(3,num,a,nw)
+
+      f = a_vector(1, type_nucl_vector(a)+1) * invdenom2
+
+      f_old = a_vector(1, type_nucl_vector(a)+1) * invdenom2_old
+
+      forces_jastrow_single_en(1,a,nw) = forces_jastrow_single_en(1,a,nw) + f * dx(1) - f_old * dx_old(1)
+      forces_jastrow_single_en(2,a,nw) = forces_jastrow_single_en(2,a,nw) + f * dx(2) - f_old * dx_old(2)
+      forces_jastrow_single_en(3,a,nw) = forces_jastrow_single_en(3,a,nw) + f * dx(3) - f_old * dx_old(3)
+
+
+      kf = 2.d0
+      x1 = x
+      x = 1.d0
+      x1_old = x_old
+      x_old = 1.d0
+      do k=2, aord_num
+        f = a_vector(k+1,type_nucl_vector(a)+1) * kf * x
+        f_old = a_vector(k+1,type_nucl_vector(a)+1) * kf * x_old
+        forces_jastrow_single_en(1,a,nw) = forces_jastrow_single_en(1,a,nw) + f * x1 * dx(1) - f_old * x1_old * dx_old(1)
+        forces_jastrow_single_en(2,a,nw) = forces_jastrow_single_en(2,a,nw) + f * x1 * dx(2) - f_old * x1_old * dx_old(2)
+        forces_jastrow_single_en(3,a,nw) = forces_jastrow_single_en(3,a,nw) + f * x1 * dx(3) - f_old * x1_old * dx_old(3)
+        x = x*x1
+        x_old = x_old*x1_old
+        kf = kf + 1.d0
+      end do
+    end do
+  end do
+
+end function qmckl_compute_forces_jastrow_single_en_doc
+     #+end_src
+
+     #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_compute_forces_jastrow_single_en_doc (
+          const qmckl_context context,
+          const int64_t num,
+          const int64_t walk_num,
+          const int64_t elec_num,
+          const int64_t nucl_num,
+          const int64_t type_nucl_num,
+          const int64_t* type_nucl_vector,
+          const int64_t aord_num,
+          const double* a_vector,
+          const double* en_distance_rescaled,
+          const double* en_distance_rescaled_gl,
+          const double* en_rescaled_single,
+          const double* en_rescaled_single_gl,
+          double* const forces_jastrow_single_en );
+
+qmckl_exit_code qmckl_compute_forces_jastrow_single_en (
+          const qmckl_context context,
+          const int64_t num,
+          const int64_t walk_num,
+          const int64_t elec_num,
+          const int64_t nucl_num,
+          const int64_t type_nucl_num,
+          const int64_t* type_nucl_vector,
+          const int64_t aord_num,
+          const double* a_vector,
+          const double* en_distance_rescaled,
+          const double* en_distance_rescaled_gl,
+          const double* en_rescaled_single,
+          const double* en_rescaled_single_gl,
+          double* const forces_jastrow_single_en );
+     #+end_src
+
+
+    #+begin_src c :tangle (eval c) :comments org :exports none
+qmckl_exit_code
+qmckl_compute_forces_jastrow_single_en (const qmckl_context context,
+                                          const int64_t num,
+                                          const int64_t walk_num,
+                                          const int64_t elec_num,
+                                          const int64_t nucl_num,
+                                          const int64_t type_nucl_num,
+                                          const int64_t* type_nucl_vector,
+                                          const int64_t aord_num,
+                                          const double* a_vector,
+                                          const double* en_distance_rescaled,
+                                          const double* en_distance_rescaled_gl,
+                                          const double* en_rescaled_single,
+                                          const double* en_rescaled_single_gl,
+                                          double* const forces_jastrow_single_en )
+{
+#ifdef HAVE_HPC
+  return qmckl_compute_forces_jastrow_single_en_doc
+#else
+  return qmckl_compute_forces_jastrow_single_en_doc
+#endif
+    (context, num, walk_num, elec_num, nucl_num, type_nucl_num, type_nucl_vector, aord_num,
+     a_vector, en_distance_rescaled, en_distance_rescaled_gl, en_rescaled_single, en_rescaled_single_gl, forces_jastrow_single_en );
+}
+  #+end_src
+
+** Test
+
+   #+begin_src c :tangle (eval c_test)
+printf("Forces Jastrow single en\n");
+
+/* Check if Jastrow is properly initialized */
+assert(qmckl_jastrow_champ_provided(context));
+
+rc = qmckl_set_nucleus_coord(context, 'T', &(nucl_coord[0]), 3*nucl_num);
+assert(rc == QMCKL_SUCCESS);
+
+double new_coords[6] = {1.0,2.0,3.0,4.0,5.0,6.0};
+
+rc = qmckl_set_single_point(context, 'N', 2, new_coords, 3*walk_num);
+assert (rc == QMCKL_SUCCESS);
+
+double forces_jastrow_single_en[walk_num][nucl_num][3];
+rc = qmckl_get_forces_jastrow_single_en(context, &forces_jastrow_single_en[0][0][0], 3*nucl_num*walk_num);
+assert(rc == QMCKL_SUCCESS);
+
+double finite_difference_force_single_en[walk_num][nucl_num][3];
+rc = qmckl_finite_difference_deriv_n(context, delta_x, &qmckl_get_jastrow_champ_single_en, &(finite_difference_force_single_en[0][0][0]), 1);
+
+for (int nw = 0; nw < walk_num; nw++){
+  for (int a = 0; a < nucl_num; a++) {
+    for (int k = 0; k < 3; k++){
+      //printf("%.10f\t", finite_difference_force_single_en[nw][a][k]);
+      //printf("%.10f\n", forces_jastrow_single_en[nw][a][k]);
+      assert(fabs(finite_difference_force_single_en[nw][a][k] - forces_jastrow_single_en[nw][a][k]) < 1.e-8);
+    }
+  }
+}
+printf("OK\n");
+
+      #+end_src
+
+* Force of delta_p matrix
+
+** Get
+
+     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
+qmckl_exit_code
+qmckl_get_forces_jastrow_delta_p(qmckl_context context,
+                                 double* const forces_delta_p,
+                                 const int64_t size_max);
+     #+end_src
+
+     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code
+qmckl_get_forces_jastrow_delta_p(qmckl_context context,
+                                 double* const forces_delta_p,
+                                 const int64_t size_max)
+{
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_exit_code rc;
+
+  rc = qmckl_provide_forces_jastrow_delta_p(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  int64_t sze = 3 * ctx->electron.walker.num * ctx->jastrow_champ.cord_num *
+                  (ctx->jastrow_champ.cord_num + 1) * ctx->nucleus.num *  ctx->electron.num;
+
+  if (size_max < sze) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_3,
+                           "qmckl_get_forces_jastrow_delta_p",
+                           "Array too small.");
+  }
+  memcpy(forces_delta_p, ctx->forces.forces_delta_p, sze * sizeof(double));
+
+  return QMCKL_SUCCESS;
+}
+     #+end_src
+
+** provide                                          :noexport:
+
+   #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_provide_forces_jastrow_delta_p(qmckl_context context);
+     #+end_src
+
+     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code qmckl_provide_forces_jastrow_delta_p(qmckl_context context)
+{
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  qmckl_exit_code rc = qmckl_provide_een_rescaled_single_e(context);
+  if(rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_een_rescaled_n(context);
+  if(rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_een_rescaled_e(context);
+  if(rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_een_rescaled_n_gl(context);
+  if(rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_een_rescaled_single_n(context);
+  if(rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_een_rescaled_single_n_gl(context);
+  if(rc != QMCKL_SUCCESS) return rc;
+
+  /* Compute if necessary */
+  if (ctx->single_point.date > ctx->forces.forces_delta_p_date) {
+
+    if (ctx->electron.walker.num > ctx->electron.walker_old.num) {
+      if (ctx->forces.forces_delta_p != NULL) {
+        rc = qmckl_free(context, ctx->forces.forces_delta_p);
+        if (rc != QMCKL_SUCCESS) {
+          return qmckl_failwith( context, rc,
+                                 "qmckl_provide_forces_jastrow_delta_p",
+                                 "Unable to free ctx->forces.forces_delta_p");
+        }
+        ctx->forces.forces_delta_p = NULL;
+      }
+    }
+
+    /* Allocate array */
+    if (ctx->forces.forces_delta_p == NULL) {
+
+      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+      mem_info.size = 3 * ctx->electron.walker.num * ctx->jastrow_champ.cord_num *
+                  (ctx->jastrow_champ.cord_num + 1) * ctx->nucleus.num *  ctx->electron.num * sizeof(double);
+      double* forces_delta_p = (double*) qmckl_malloc(context, mem_info);
+
+      if (forces_delta_p == NULL) {
+        return qmckl_failwith( context,
+                               QMCKL_ALLOCATION_FAILED,
+                               "qmckl_provide_forces_jastrow_delta_p",
+                               NULL);
+      }
+      ctx->forces.forces_delta_p = forces_delta_p;
+    }
+
+    rc = qmckl_compute_forces_jastrow_delta_p(context,
+                                                ctx->single_point.num,
+                                                ctx->electron.walker.num,
+                                                ctx->electron.num,
+                                                ctx->nucleus.num,
+                                                ctx->jastrow_champ.cord_num,
+                                                ctx->jastrow_champ.een_rescaled_n,
+                                                ctx->jastrow_champ.een_rescaled_e,
+                                                ctx->single_point.een_rescaled_single_n,
+                                                ctx->single_point.een_rescaled_single_e,
+                                                ctx->jastrow_champ.een_rescaled_n_gl,
+                                                ctx->single_point.een_rescaled_single_n_gl,
+                                                ctx->forces.forces_delta_p);
+    if (rc != QMCKL_SUCCESS) {
+      return rc;
+    }
+
+    ctx->forces.forces_delta_p_date = ctx->single_point.date;
+  }
+
+  return QMCKL_SUCCESS;
+}
+     #+end_src
+
+** Compute
+     :PROPERTIES:
+     :Name:     qmckl_compute_forces_jastrow_delta_p_doc
+     :CRetType: qmckl_exit_code
+     :FRetType: qmckl_exit_code
+     :END:
+
+     #+NAME: qmckl_forces_delta_p_args
+     | Variable                   | Type                                                                | In/Out | Description                                             |
+     |----------------------------+---------------------------------------------------------------------+--------+---------------------------------------------------------|
+     | ~context~                  | ~qmckl_context~                                                     | in     | Global state                                            |
+     | ~num~                      | ~int64_t~                                                           | in     | Index of single electron                                |
+     | ~walk_num~                 | ~int64_t~                                                           | in     | Number of walkers                                       |
+     | ~elec_num~                 | ~int64_t~                                                           | in     | Number of electrons                                     |
+     | ~nucl_num~                 | ~int64_t~                                                           | in     | Number of nuclei                                        |
+     | ~cord_num~                 | ~int64_t~                                                           | in     | order of polynomials                                    |
+     | ~een_rescaled_n~           | ~double[walk_num][0:cord_num][nucl_num][elec_num]~                  | in     | Electron-nucleus rescaled distances                     |
+     | ~een_rescaled_e~           | ~double[walk_num][0:cord_num][elec_num][elec_num]~                  | in     | Electron-electron rescaled distances                    |
+     | ~een_rescaled_single_n~    | ~double[walk_num][0:cord_num][nucl_num]~                            | in     | Electron-nucleus single rescaled distances              |
+     | ~een_rescaled_single_e~    | ~double[walk_num][0:cord_num][elec_num]~                            | in     | Electron-electron single rescaled distances             |
+     | ~een_rescaled_n_gl~        | ~double[walk_num][0:cord_num][nucl_num][4][elec_num]~               | in     | Electron-nucleus rescaled distances derivatives         |
+     | ~een_rescaled_single_n_gl~ | ~double[walk_num][0:cord_num][nucl_num][4]~                         | in     | Electron-nucleus single rescaled distances derivatives  |
+     | ~forces_delta_p~               | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][3][elec_num]~ | out    | Delta P matrix gradient and Laplacian                   |
+     |----------------------------+---------------------------------------------------------------------+--------+---------------------------------------------------------|
+
+     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+integer(qmckl_exit_code) function qmckl_compute_forces_jastrow_delta_p_doc( &
+     context, num_in, walk_num, elec_num, nucl_num, cord_num,   &
+     een_rescaled_n, een_rescaled_e, een_rescaled_single_n, een_rescaled_single_e, &
+     een_rescaled_n_gl, een_rescaled_single_n_gl, forces_delta_p) &
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
+  use qmckl
+  implicit none
+  integer(qmckl_context), intent(in)  :: context
+  integer(c_int64_t)    , intent(in), value  :: num_in, walk_num, elec_num, cord_num, nucl_num
+  real(c_double)        , intent(in)  :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_e(elec_num, elec_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_single_n(nucl_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_single_e(elec_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_n_gl(elec_num, 4, nucl_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_single_n_gl(4, nucl_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(out)  :: forces_delta_p(elec_num,3,nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
+
+  double precision        :: delta_n_gl
+  double precision        :: delta_e(elec_num)
+
+
+
+
+  integer*8 :: i, a, j, l, k, p, m, n, nw, num
+  double precision :: tmp
+  integer*8        :: LDA, LDB, LDC
+
+  num = num_in + 1
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) info = QMCKL_INVALID_CONTEXT
+  if (walk_num <= 0)                 info = QMCKL_INVALID_ARG_3
+  if (elec_num <= 0)                 info = QMCKL_INVALID_ARG_4
+  if (nucl_num <= 0)                 info = QMCKL_INVALID_ARG_5
+  if (cord_num <  0)                 info = QMCKL_INVALID_ARG_6
+  if (info /= QMCKL_SUCCESS)         return
+
+
+  if (cord_num == 0) then
+     forces_delta_p = 0.d0
+     return
+  endif
+
+
+  do nw=1, walk_num
+     do m=0, cord_num-1
+
+        do j = 1, elec_num
+          delta_e(j) = een_rescaled_single_e(j,m,nw) - een_rescaled_e(j,num,m,nw)
+        end do
+
+        do l=0, cord_num
+           do k = 1, 3
+              do a = 1, nucl_num
+                  delta_n_gl = een_rescaled_single_n_gl(k,a,l,nw) - een_rescaled_n_gl(num, k, a, l, nw)
+                 do j = 1, elec_num
+
+                    forces_delta_p(j,k,a,l,m,nw) =  delta_e(j) * (-een_rescaled_single_n_gl(k,a,l,nw)) - &
+                         een_rescaled_e(j,num,m,nw) * delta_n_gl
+                 end do
+                 do j = 1, elec_num
+                    forces_delta_p(num,k,a,l,m,nw) = forces_delta_p(num,k,a,l,m,nw) - delta_e(j) * een_rescaled_n_gl(j,k,a,l,nw)
+                 end do
+              end do
+           end do
+        end do
+     end do
+  end do
+
+end function qmckl_compute_forces_jastrow_delta_p_doc
+     #+end_src
+
+ #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code
+qmckl_compute_forces_jastrow_delta_p_doc (const qmckl_context context,
+                              const int64_t num,
+                              const int64_t walk_num,
+                              const int64_t elec_num,
+                              const int64_t nucl_num,
+                              const int64_t cord_num,
+                              const double* een_rescaled_n,
+                              const double* een_rescaled_e,
+                              const double* een_rescaled_single_n,
+                              const double* een_rescaled_single_e,
+                              const double* een_rescaled_n_gl,
+                              const double* een_rescaled_single_n_gl,
+                              double* const forces_delta_p );
+
+qmckl_exit_code
+
+qmckl_compute_forces_jastrow_delta_p (const qmckl_context context,
+                          const int64_t num,
+                          const int64_t walk_num,
+                          const int64_t elec_num,
+                          const int64_t nucl_num,
+                          const int64_t cord_num,
+                          const double* een_rescaled_n,
+                          const double* een_rescaled_e,
+                          const double* een_rescaled_single_n,
+                          const double* een_rescaled_single_e,
+                          const double* een_rescaled_n_gl,
+                          const double* een_rescaled_single_n_gl,
+                          double* const forces_delta_p );
+ #+end_src
+
+ #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
+qmckl_exit_code
+qmckl_compute_forces_jastrow_delta_p (const qmckl_context context,
+                          const int64_t num,
+                          const int64_t walk_num,
+                          const int64_t elec_num,
+                          const int64_t nucl_num,
+                          const int64_t cord_num,
+                          const double* een_rescaled_n,
+                          const double* een_rescaled_e,
+                          const double* een_rescaled_single_n,
+                          const double* een_rescaled_single_e,
+                          const double* een_rescaled_n_gl,
+                          const double* een_rescaled_single_n_gl,
+                          double* const forces_delta_p )
+{
+#ifdef HAVE_HPC
+  return qmckl_compute_forces_jastrow_delta_p_doc
+#else
+  return qmckl_compute_forces_jastrow_delta_p_doc
+#endif
+    (context, num, walk_num, elec_num, nucl_num, cord_num,
+    een_rescaled_n, een_rescaled_e, een_rescaled_single_n, een_rescaled_single_e,
+    een_rescaled_n_gl, een_rescaled_single_n_gl, forces_delta_p);
+
+}
+ #+end_src
+
+ ** Test
+
+   #+begin_src c :tangle (eval c_test)
+printf("Forces delta p\n");
+
+/* Check if Jastrow is properly initialized */
+assert(qmckl_jastrow_champ_provided(context));
+
+rc = qmckl_set_nucleus_coord(context, 'T', &(nucl_coord[0]), 3*nucl_num);
+assert(rc == QMCKL_SUCCESS);
+
+rc = qmckl_set_single_point(context, 'N', 2, new_coords, 3*walk_num);
+assert (rc == QMCKL_SUCCESS);
+
+double forces_delta_p[walk_num][cord_num][cord_num+1][nucl_num][3][elec_num];
+rc = qmckl_get_forces_jastrow_delta_p(context, &forces_delta_p[0][0][0][0][0][0], 3*nucl_num*walk_num*elec_num*(cord_num+1)*cord_num);
+assert(rc == QMCKL_SUCCESS);
+
+
+double finite_difference_force_delta_p[walk_num][cord_num][cord_num+1][nucl_num][3][elec_num];
+
+nucleus_coord = (double*) malloc(3 * nucl_num * sizeof(double));
+if (nucleus_coord == NULL) {
+  return QMCKL_ALLOCATION_FAILED;
+}
+
+rc = qmckl_get_nucleus_coord(context, 'N', nucleus_coord, 3*nucl_num);
+
+temp_coord = (double*) malloc(3 * nucl_num * sizeof(double));
+if (temp_coord == NULL) {
+  free(nucleus_coord);
+  return QMCKL_ALLOCATION_FAILED;
+}
+double output_delta_p[walk_num][cord_num][cord_num+1][nucl_num][elec_num];
+
+// Copy original coordinates
+for (int i = 0; i < 3 * nucl_num; i++) {
+  temp_coord[i] = nucleus_coord[i];
+}
+
+
+
+for (int64_t a = 0; a < nucl_num; a++) {
+  for (int64_t k = 0; k < 3; k++) {
+    for (int64_t m = -4; m <= 4; m++) {
+
+      // Apply finite difference displacement
+      temp_coord[k+a*3] = nucleus_coord[k+3*a] + (double) m * delta_x;
+
+      // Update coordinates in the context
+      rc = qmckl_set_nucleus_coord(context, 'N', temp_coord, 3*nucl_num);
+      assert(rc == QMCKL_SUCCESS);
+
+      rc = qmckl_context_touch(context);
+      assert(rc == QMCKL_SUCCESS);
+
+      rc = qmckl_single_touch(context);
+      assert(rc == QMCKL_SUCCESS);
+
+      // Call the provided function
+      rc = qmckl_get_jastrow_champ_delta_p(context,
+           &output_delta_p[0][0][0][0][0],
+           nucl_num*walk_num*elec_num*(cord_num+1)*cord_num);
+      assert(rc == QMCKL_SUCCESS);
+
+      // Accumulate derivative using finite-difference coefficients
+      for (int nw=0 ; nw<walk_num ; nw++) {
+        for (int l = 0; l < cord_num; l++) {
+          for (int mm = 0; mm <= cord_num; mm++) {
+            for (int i = 0; i < elec_num; i++) {
+
+              if (m == -4) {
+                finite_difference_force_delta_p[nw][l][mm][a][k][i] = 0.0;
+              }
+              finite_difference_force_delta_p[nw][l][mm][a][k][i] += coef[m + 4] * output_delta_p[nw][l][mm][a][i]/delta_x;
+            }
+          }
+        }
+      }
+    }
+    temp_coord[k+a*3] = nucleus_coord[k+3*a];
+  }
+}
+
+// Reset coordinates in the context
+rc = qmckl_set_nucleus_coord(context, 'N', temp_coord, 3*nucl_num);
+assert(rc == QMCKL_SUCCESS);
+
+rc = qmckl_context_touch(context);
+assert(rc == QMCKL_SUCCESS);
+
+free(nucleus_coord);
+free(temp_coord);
+
+
+for (int nw = 0; nw < walk_num; nw++){
+  for (int l = 0; l < cord_num; l++){
+    for (int m = 0; m <= cord_num; m++){
+      for (int a = 0; a < nucl_num; a++) {
+        for (int k = 0; k < 3; k++){
+          for (int i = 0; i < elec_num; i++){
+            //printf("nw=%i l=%i m=%i a=%i k=%i i=%i\n",nw,l,m,a,k,i);
+            //printf("%.10f\t", finite_difference_force_delta_p[nw][l][m][a][k][i]);
+            //printf("%.10f\n", forces_delta_p[nw][l][m][a][k][i]);
+
+          }
+        }
+      }
+    }
+  }
+}
+for (int nw = 0; nw < walk_num; nw++){
+  for (int l = 0; l < cord_num; l++){
+    for (int m = 0; m <= cord_num; m++){
+      for (int a = 0; a < nucl_num; a++) {
+        for (int k = 0; k < 3; k++){
+          for (int i = 0; i < elec_num; i++){
+            assert(fabs(finite_difference_force_delta_p[nw][l][m][a][k][i] - forces_delta_p[nw][l][m][a][k][i]) < 1.e-8);
+          }
+        }
+      }
+    }
+  }
+}
+
+
+printf("OK\n");
+
+      #+end_src
+
+* Force of single een Jastrow
+
+** Get
+
+    #+begin_src c :comments org :tangle (eval h_func) :noweb yes
+qmckl_exit_code
+qmckl_get_forces_jastrow_single_een(qmckl_context context,
+                          double* const forces_jastrow_single_een,
+                          const int64_t size_max);
+    #+end_src
+
+    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code
+qmckl_get_forces_jastrow_single_een(qmckl_context context,
+                          double* const forces_jastrow_single_een,
+                          const int64_t size_max)
+{
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_exit_code rc;
+
+  rc = qmckl_provide_forces_jastrow_single_een(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  const int64_t sze = ctx->electron.walker.num * 3 * ctx->nucleus.num;
+  if (size_max < sze) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_3,
+                           "qmckl_get_forces_jastrow_single_een",
+                           "input array too small");
+  }
+
+  memcpy(forces_jastrow_single_een, ctx->forces.forces_jastrow_single_een, sze * sizeof(double));
+
+  return QMCKL_SUCCESS;
+}
+    #+end_src
+
+    #+begin_src f90 :tangle (eval fh_func) :comments org :exports none
+  interface
+     integer(qmckl_exit_code) function qmckl_get_forces_jastrow_single_een (context, &
+          forces_jastrow_single_een, size_max) bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       implicit none
+
+       integer (c_int64_t) , intent(in)  , value :: context
+       real(c_double),       intent(out)         :: forces_jastrow_single_een(size_max)
+       integer (c_int64_t) , intent(in)  , value :: size_max
+     end function qmckl_get_forces_jastrow_single_een
+  end interface
+    #+end_src    
+
+** Provide                                                         :noexport:
+
+      #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_provide_forces_jastrow_single_een(qmckl_context context);
+      #+end_src
+
+      #+begin_src c :comments org :tangle (eval c) :noweb yes :export none
+qmckl_exit_code qmckl_provide_forces_jastrow_single_een(qmckl_context context)
+{
+
+  qmckl_exit_code rc = QMCKL_SUCCESS;
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_provide_forces_jastrow_single_een",
+                           NULL);
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  if (!ctx->jastrow_champ.provided) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_provide_forces_jastrow_single_een",
+                           NULL);
+  }
+
+  /* Check if en rescaled distance is provided */
+  rc = qmckl_provide_en_distance_rescaled(context);
+  if(rc != QMCKL_SUCCESS) return rc;
+
+  /* Check if en rescaled distance derivatives is provided */
+  rc = qmckl_provide_en_distance_rescaled_gl(context);
+  if(rc != QMCKL_SUCCESS) return rc;
+
+  /* Check if en rescaled distance is provided */
+  rc = qmckl_provide_en_rescaled_single(context);
+  if(rc != QMCKL_SUCCESS) return rc;
+
+  /* Check if en rescaled distance derivatives is provided */
+  rc = qmckl_provide_en_rescaled_single_gl(context);
+  if(rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_tmp_c(context);
+  if(rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_forces_tmp_c(context);
+  if(rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_jastrow_champ_delta_p(context);
+  if(rc != QMCKL_SUCCESS) return rc;
+
+  rc = qmckl_provide_forces_jastrow_delta_p(context);
+  if(rc != QMCKL_SUCCESS) return rc;
+
+
+
+  /* Compute if necessary */
+  if (ctx->single_point.date > ctx->forces.forces_jastrow_single_een_date) {
+
+    if (ctx->electron.walker.num > ctx->electron.walker_old.num) {
+      if (ctx->forces.forces_jastrow_single_een != NULL) {
+        rc = qmckl_free(context, ctx->forces.forces_jastrow_single_een);
+        if (rc != QMCKL_SUCCESS) {
+          return qmckl_failwith( context, rc,
+                                 "qmckl_provide_forces_jastrow_single_een",
+                                 "Unable to free ctx->forces.forces_jastrow_single_een");
+        }
+        ctx->forces.forces_jastrow_single_een = NULL;
+      }
+    }
+
+
+    /* Allocate array */
+    if (ctx->forces.forces_jastrow_single_een == NULL) {
+
+      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+      mem_info.size = ctx->electron.walker.num * 3 * ctx->nucleus.num * sizeof(double);
+      double* forces_jastrow_single_een = (double*) qmckl_malloc(context, mem_info);
+
+      if (forces_jastrow_single_een == NULL) {
+        return qmckl_failwith( context,
+                               QMCKL_ALLOCATION_FAILED,
+                               "qmckl_provide_forces_jastrow_single_een",
+                               NULL);
+      }
+      ctx->forces.forces_jastrow_single_een = forces_jastrow_single_een;
+    }
+
+    rc = qmckl_compute_forces_jastrow_single_een(context,
+                                         ctx->single_point.num,
+                                         ctx->electron.walker.num,
+                                         ctx->electron.num,
+                                         ctx->nucleus.num,
+                                         ctx->jastrow_champ.cord_num,
+                                         ctx->jastrow_champ.dim_c_vector,
+                                         ctx->jastrow_champ.c_vector_full,
+                                         ctx->jastrow_champ.lkpm_combined_index,
+                                         ctx->single_point.delta_p,
+                                         ctx->forces.forces_delta_p,
+                                         ctx->jastrow_champ.tmp_c,
+                                         ctx->forces.forces_tmp_c,
+                                         ctx->jastrow_champ.een_rescaled_n,
+                                         ctx->single_point.een_rescaled_single_n,
+                                         ctx->jastrow_champ.een_rescaled_n_gl,
+                                         ctx->single_point.een_rescaled_single_n_gl,
+                                         ctx->forces.forces_jastrow_single_een);
+    if (rc != QMCKL_SUCCESS) {
+      return rc;
+    }
+
+    ctx->forces.forces_jastrow_single_een_date = ctx->single_point.date;
+  }
+
+  return QMCKL_SUCCESS;
+}
+     #+end_src  
+
+** Compute
+     :PROPERTIES:
+     :Name:     qmckl_compute_forces_jastrow_single_een
+     :CRetType: qmckl_exit_code
+     :FRetType: qmckl_exit_code
+     :END:
+
+     #+NAME: qmckl_forces_single_een_args
+     | Variable                  | Type                                      | In/Out | Description                                             |
+     |---------------------------+-------------------------------------------+--------+---------------------------------------------------------|
+     | ~context~                 | ~qmckl_context~                           | in     | Global state                                            |
+     | ~num~                     | ~int64_t~                                 | in     | Index of single electron                                |
+     | ~walk_num~                | ~int64_t~                                 | in     | Number of walkers                                       |
+     | ~elec_num~                | ~int64_t~                                 | in     | Number of electrons                                     |
+     | ~nucl_num~                | ~int64_t~                                 | in     | Number of nuclei                                        |
+    | ~cord_num~              | ~int64_t~                                                        | in     | order of polynomials                        |
+     | ~dim_c_vector~          | ~int64_t~                                                        | in     | dimension of full coefficient vector        |
+     | ~c_vector_full~         | ~double[dim_c_vector][nucl_num]~                                 | in     | full coefficient vector                     |
+     | ~lkpm_combined_index~   | ~int64_t[4][dim_c_vector]~                                       | in     | combined indices                            |  
+     | ~delta_p~               | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][elec_num]~ | in     | Single electron P matrix                    |
+     | ~forces_delta_p~               | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][3][elec_num]~ | in     | Single electron P matrix                    |
+     | ~tmp_c~               | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][elec_num]~ | in     | Single electron P matrix                    |
+     | ~forces_tmp_c~               | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][4][elec_num]~ | in     | Single electron P matrix                    |
+     | ~een_rescaled_n~           | ~double[walk_num][0:cord_num][nucl_num][elec_num]~                  | in     | Electron-nucleus rescaled distances                     |
+     | ~een_rescaled_single_n~    | ~double[walk_num][0:cord_num][nucl_num]~                            | in     | Electron-nucleus single rescaled distances              |
+     | ~een_rescaled_n_gl~        | ~double[walk_num][0:cord_num][nucl_num][4][elec_num]~               | in     | Electron-nucleus rescaled distances derivatives         |
+     | ~een_rescaled_single_n_gl~ | ~double[walk_num][0:cord_num][nucl_num][4]~                         | in     | Electron-nucleus single rescaled distances derivatives  |
+     | ~forces_jastrow_single_een~             | ~double[walk_num][nucl_num][3]~           | out    | Single electron-nucleus forces |
+     |---------------------------+-------------------------------------------+--------+---------------------------------------------------------|
+
+     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+function qmckl_compute_forces_jastrow_single_een_doc( &
+     context, num_in, walk_num, elec_num, nucl_num, cord_num, &
+     dim_c_vector, c_vector_full, lkpm_combined_index, &
+     delta_p, forces_delta_p, tmp_c, forces_tmp_c, &
+     een_rescaled_n, een_rescaled_single_n, een_rescaled_n_gl, een_rescaled_single_n_gl, forces_jastrow_single_een) &
+     bind(C) result(info)
+  use qmckl
+  implicit none
+
+  integer (qmckl_context), intent(in), value :: context
+  integer (c_int64_t) , intent(in)  , value :: num_in
+  integer (c_int64_t) , intent(in)  , value :: walk_num
+  integer (c_int64_t) , intent(in)  , value :: elec_num
+  integer (c_int64_t) , intent(in)  , value :: nucl_num
+  integer (c_int64_t) , intent(in)  , value :: dim_c_vector
+  integer (c_int64_t) , intent(in)  , value :: cord_num
+  integer(c_int64_t)   , intent(in)  :: lkpm_combined_index(dim_c_vector,4)
+  real(c_double)      , intent(in)  :: c_vector_full(nucl_num, dim_c_vector)
+  real    (c_double ) , intent(in)          :: delta_p(elec_num, nucl_num,0:cord_num, 0:cord_num-1, walk_num)
+  real    (c_double ) , intent(in)          :: forces_delta_p(elec_num, 3, nucl_num,0:cord_num, 0:cord_num-1, walk_num)
+  real    (c_double ) , intent(in)          :: tmp_c(elec_num, nucl_num,0:cord_num, 0:cord_num-1, walk_num)
+  real    (c_double ) , intent(in)          :: forces_tmp_c(elec_num, 4, nucl_num,0:cord_num, 0:cord_num-1, walk_num)
+  real    (c_double ) , intent(in)          :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
+  real    (c_double ) , intent(in)          :: een_rescaled_single_n(nucl_num, 0:cord_num, walk_num)
+  real    (c_double ) , intent(in)          :: een_rescaled_n_gl(elec_num, 4, nucl_num, 0:cord_num, walk_num)
+  real    (c_double ) , intent(in)          :: een_rescaled_single_n_gl(4, nucl_num, 0:cord_num, walk_num)
+  real    (c_double ) , intent(out)         :: forces_jastrow_single_een(3,nucl_num,walk_num)
+  integer(qmckl_exit_code)                   :: info
+
+  double precision        :: een_rescaled_delta_n(nucl_num, 0:cord_num), een_rescaled_delta_n_gl(nucl_num, 0:cord_num)
+
+  integer*8 :: i, a, j, l, k, p, m, n, nw, num, kk
+  double precision :: accu, accu2, cn
+  integer*8                           :: LDA, LDB, LDC
+
+  num = num_in + 1
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) info = QMCKL_INVALID_CONTEXT
+  if (walk_num <= 0)                 info = QMCKL_INVALID_ARG_3
+  if (elec_num <= 0)                 info = QMCKL_INVALID_ARG_4
+  if (nucl_num <= 0)                 info = QMCKL_INVALID_ARG_5
+  if (cord_num <  0)                 info = QMCKL_INVALID_ARG_6
+  if (info /= QMCKL_SUCCESS)         return
+
+  forces_jastrow_single_een = 0.0d0
+
+  if (cord_num == 0) return
+
+  do nw =1, walk_num
+     do kk = 1, 3
+      een_rescaled_delta_n(:,:) = een_rescaled_single_n(:,:,nw) - een_rescaled_n(num,:,:,nw)
+      een_rescaled_delta_n_gl(:,:) = een_rescaled_single_n_gl(kk,:,:,nw) - een_rescaled_n_gl(num,kk,:,:,nw)
+      do n = 1, dim_c_vector
+          l = lkpm_combined_index(n, 1)
+          k = lkpm_combined_index(n, 2)
+          p = lkpm_combined_index(n, 3)
+          m = lkpm_combined_index(n, 4)
+
+          do a = 1, nucl_num
+            cn = c_vector_full(a, n)
+            if(cn == 0.d0) cycle
+
+            accu = 0.0d0
+            do j = 1, elec_num
+                accu = accu - een_rescaled_n_gl(j,kk,a,m,nw) * delta_p(j,a,m+l,k,nw) + &
+                    een_rescaled_n(j,a,m,nw) * forces_delta_p(j,kk,a,m+l,k,nw)
+            end do
+            accu = accu - een_rescaled_delta_n_gl(a,m) * (tmp_c(num,a,m+l,k,nw) + delta_p(num,a,m+l,k,nw)) + &
+                een_rescaled_delta_n(a,m) * (forces_tmp_c(num,kk,a,m+l,k,nw) + forces_delta_p(num,kk,a,m+l,k,nw))
+            forces_jastrow_single_een(kk,a,nw) = forces_jastrow_single_een(kk,a,nw) + accu * cn
+          end do
+      end do
+     end do
+  end do
+
+
+end function qmckl_compute_forces_jastrow_single_een_doc
+     #+end_src
+
+     #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_compute_forces_jastrow_single_een_doc (
+          const qmckl_context context,
+          const int64_t num,
+          const int64_t walk_num,
+          const int64_t elec_num,
+          const int64_t nucl_num,
+          const int64_t cord_num,
+          const int64_t dim_c_vector,
+          const double* c_vector_full,
+          const int64_t* lkpm_combined_index,
+          const double* delta_p,
+          const double* forces_delta_p,
+          const double* tmp_c,
+          const double* forces_tmp_c,
+          const double* een_rescaled_n,
+          const double* een_rescaled_single_n,
+          const double* een_rescaled_n_gl,
+          const double* een_rescaled_single_n_gl,
+          double* const forces_jastrow_single_een );
+
+qmckl_exit_code qmckl_compute_forces_jastrow_single_een (
+          const qmckl_context context,
+          const int64_t num,
+          const int64_t walk_num,
+          const int64_t elec_num,
+          const int64_t nucl_num,
+          const int64_t cord_num,
+          const int64_t dim_c_vector,
+          const double* c_vector_full,
+          const int64_t* lkpm_combined_index,
+          const double* delta_p,
+          const double* forces_delta_p,
+          const double* tmp_c,
+          const double* forces_tmp_c,
+          const double* een_rescaled_n,
+          const double* een_rescaled_single_n,
+          const double* een_rescaled_n_gl,
+          const double* een_rescaled_single_n_gl,
+          double* const forces_jastrow_single_een );
+     #+end_src
+
+
+    #+begin_src c :tangle (eval c) :comments org :exports none
+qmckl_exit_code
+qmckl_compute_forces_jastrow_single_een (const qmckl_context context,
+                                          const int64_t num,
+                                          const int64_t walk_num,
+                                          const int64_t elec_num,
+                                          const int64_t nucl_num,
+                                          const int64_t cord_num,
+                                          const int64_t dim_c_vector,
+                                          const double* c_vector_full,
+                                          const int64_t* lkpm_combined_index,
+                                          const double* delta_p,
+                                          const double* forces_delta_p,
+                                          const double* tmp_c,
+                                          const double* forces_tmp_c,
+                                          const double* een_rescaled_n,
+                                          const double* een_rescaled_single_n,
+                                          const double* een_rescaled_n_gl,
+                                          const double* een_rescaled_single_n_gl,
+                                          double* const forces_jastrow_single_een )
+{
+#ifdef HAVE_HPC
+  return qmckl_compute_forces_jastrow_single_een_doc
+#else
+  return qmckl_compute_forces_jastrow_single_een_doc
+#endif
+    (context, num, walk_num, elec_num, nucl_num, cord_num, dim_c_vector, c_vector_full, lkpm_combined_index,
+     delta_p, forces_delta_p, tmp_c, forces_tmp_c, een_rescaled_n, een_rescaled_single_n,
+     een_rescaled_n_gl, een_rescaled_single_n_gl, forces_jastrow_single_een );
+}
+  #+end_src
+
+** Test
+
+   #+begin_src c :tangle (eval c_test)
+printf("Forces Jastrow single een\n");
+
+/* Check if Jastrow is properly initialized */
+assert(qmckl_jastrow_champ_provided(context));
+
+rc = qmckl_set_nucleus_coord(context, 'T', &(nucl_coord[0]), 3*nucl_num);
+assert(rc == QMCKL_SUCCESS);
+
+rc = qmckl_set_single_point(context, 'N', 2, new_coords, 3*walk_num);
+assert (rc == QMCKL_SUCCESS);
+
+double forces_jastrow_single_een[walk_num][nucl_num][3];
+rc = qmckl_get_forces_jastrow_single_een(context, &forces_jastrow_single_een[0][0][0], 3*nucl_num*walk_num);
+assert(rc == QMCKL_SUCCESS);
+
+double finite_difference_force_single_een[walk_num][nucl_num][3];
+rc = qmckl_finite_difference_deriv_n(context, delta_x, &qmckl_get_jastrow_champ_single_een, &(finite_difference_force_single_een[0][0][0]), 1);
+
+for (int nw = 0; nw < walk_num; nw++){
+  for (int a = 0; a < nucl_num; a++) {
+    for (int k = 0; k < 3; k++){
+      //printf("%.10f\t", finite_difference_force_single_een[nw][a][k]);
+      //printf("%.10f\n", forces_jastrow_single_een[nw][a][k]);
+      assert(fabs(finite_difference_force_single_een[nw][a][k] - forces_jastrow_single_een[nw][a][k]) < 1.e-8);
+    }
+  }
+}
+printf("OK\n");
+
+      #+end_src
+
 * Reset test for orbitals
 
    #+begin_src c :tangle (eval c_test)
@@ -4616,7 +5854,7 @@ printf("OK\n");
 
       #+end_src
 
-* Force of MO value
+* Force of MO gradient
 
 ** Get
 
@@ -4718,9 +5956,9 @@ qmckl_exit_code qmckl_provide_forces_mo_g(qmckl_context context)
          memory was not allocated with qmckl_malloc */
 
       if ((rc == QMCKL_SUCCESS) && (mem_info_test.size != mem_info.size)) {
-        rc = qmckl_free(context, ctx->forces.forces_mo_value);
+        rc = qmckl_free(context, ctx->forces.forces_mo_g);
         assert (rc == QMCKL_SUCCESS);
-        ctx->forces.forces_mo_value = NULL;
+        ctx->forces.forces_mo_g = NULL;
       }
     }
 
@@ -4775,7 +6013,7 @@ qmckl_exit_code qmckl_provide_forces_mo_g(qmckl_context context)
     | ~point_num~         | ~int64_t~                      | in     | Number of points                                |
     | ~nucl_num~          | ~int64_t~                      | in     | Number of nuclei                                |
     | ~coefficient_t~     | ~double[mo_num][ao_num]~       | in     | Transpose of the AO to MO transformation matrix |
-    | ~ao_hessian~        | ~double[nucl_num][3][point_num][3][ao_num]~ | in     | Value, gradients and Laplacian of the AOs       |
+    | ~ao_hessian~        | ~double[nucl_num][3][point_num][4][ao_num]~ | in     | Value, gradients and Laplacian of the AOs       |
     | ~forces_mo_g~        | ~double[nucl_num][3][point_num][3][mo_num]~ | out    | Value, gradients and Laplacian of the MOs       |
     |-----------------+--------------------------------+--------+-------------------------------------------------|
 
@@ -4791,7 +6029,7 @@ integer function qmckl_compute_forces_mo_g_doc(context, &
   integer(qmckl_context), intent(in), value  :: context
   integer (c_int64_t)   , intent(in), value  :: nucl_num, ao_num, mo_num, point_num
   real    (c_double )   , intent(in)         :: coefficient_t(mo_num,ao_num)
-  real    (c_double )   , intent(in)         :: ao_hessian(ao_num,3,point_num,3,nucl_num)
+  real    (c_double )   , intent(in)         :: ao_hessian(ao_num,4,point_num,3,nucl_num)
   real    (c_double )   , intent(out)        :: forces_mo_g(mo_num,3,point_num,3,nucl_num)
   integer*8 :: i,j,k, m, n,a
 
@@ -4938,6 +6176,325 @@ free(finite_difference_force_mo_g);
 printf("OK\n");
 
       #+end_src
+
+* Force of MO laplacian
+
+** Get
+
+    #+begin_src c :comments org :tangle (eval h_func) :noweb yes
+qmckl_exit_code
+qmckl_get_forces_mo_l(qmckl_context context,
+                          double* const forces_mo_l,
+                          const int64_t size_max);
+    #+end_src
+
+    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code
+qmckl_get_forces_mo_l(qmckl_context context,
+                          double* const forces_mo_l,
+                          const int64_t size_max)
+{
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_exit_code rc;
+
+  rc = qmckl_provide_forces_mo_l(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  const int64_t sze = ctx->point.num * 3 * ctx->mo_basis.mo_num * ctx->nucleus.num;
+  if (size_max < sze) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_3,
+                           "qmckl_get_forces_mo_l",
+                           "input array too small");
+  }
+
+  memcpy(forces_mo_l, ctx->forces.forces_mo_l, sze * sizeof(double));
+
+  return QMCKL_SUCCESS;
+}
+    #+end_src
+
+    #+begin_src f90 :tangle (eval fh_func) :comments org :exports none
+  interface
+     integer(qmckl_exit_code) function qmckl_get_forces_mo_l (context, &
+          forces_mo_l, size_max) bind(C)
+       use, intrinsic :: iso_c_binding
+       import
+       implicit none
+
+       integer (c_int64_t) , intent(in)  , value :: context
+       real(c_double),       intent(out)         :: forces_mo_l(*)
+       integer (c_int64_t) , intent(in)  , value :: size_max
+     end function qmckl_get_forces_mo_l
+  end interface
+    #+end_src
+
+** Provide
+
+      #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_provide_forces_mo_l(qmckl_context context);
+      #+end_src
+
+#+begin_src c :comments org :tangle (eval c) :noweb yes :export none
+qmckl_exit_code qmckl_provide_forces_mo_l(qmckl_context context)
+{
+
+  qmckl_exit_code rc = QMCKL_SUCCESS;
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_provide_forces_mo_l",
+                           NULL);
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  if (!ctx->mo_basis.provided) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_provide_mo_basis_mo_vgl",
+                           NULL);
+  }
+
+  /* Compute if necessary */
+  if (ctx->point.date > ctx->forces.forces_mo_l_date) {
+
+    qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+    mem_info.size = 3  * ctx->mo_basis.mo_num * ctx->point.num * ctx->nucleus.num * sizeof(double);
+
+    if (ctx->forces.forces_mo_l != NULL) {
+      qmckl_memory_info_struct mem_info_test = qmckl_memory_info_struct_zero;
+      rc = qmckl_get_malloc_info(context, ctx->forces.forces_mo_l, &mem_info_test);
+
+      /* if rc != QMCKL_SUCCESS, we are maybe in an _inplace function because the
+         memory was not allocated with qmckl_malloc */
+
+      if ((rc == QMCKL_SUCCESS) && (mem_info_test.size != mem_info.size)) {
+        rc = qmckl_free(context, ctx->forces.forces_mo_l);
+        assert (rc == QMCKL_SUCCESS);
+        ctx->forces.forces_mo_l= NULL;
+      }
+    }
+
+    /* Allocate array */
+    if (ctx->forces.forces_mo_l == NULL) {
+
+      double* forces_mo_l = (double*) qmckl_malloc(context, mem_info);
+
+      if (forces_mo_l == NULL) {
+        return qmckl_failwith( context,
+                               QMCKL_ALLOCATION_FAILED,
+                               "qmckl_forces_mo_l",
+                               NULL);
+      }
+      ctx->forces.forces_mo_l = forces_mo_l;
+    }
+
+    rc = qmckl_provide_ao_basis_ao_hessian(context);
+    if (rc != QMCKL_SUCCESS) {
+      return qmckl_failwith( context,
+                             QMCKL_NOT_PROVIDED,
+                             "qmckl_ao_basis_ao_hessian",
+                             NULL);
+    }
+
+
+    rc = qmckl_compute_forces_mo_l_doc(context,
+                                         ctx->ao_basis.ao_num,
+                                         ctx->mo_basis.mo_num,
+                                         ctx->point.num,
+                                         ctx->nucleus.num,
+                                         ctx->mo_basis.coefficient_t,
+                                         ctx->ao_basis.ao_hessian,
+                                         ctx->forces.forces_mo_l);
+
+  }
+}
+#+end_src
+
+** Compute
+   :PROPERTIES:
+   :Name:     qmckl_compute_forces_mo_l
+   :CRetType: qmckl_exit_code
+   :FRetType: qmckl_exit_code
+   :END:
+
+    #+NAME: qmckl_compute_forces_mo_l_args
+    | Variable        | Type                           | In/Out | Description                                     |
+    |-----------------+--------------------------------+--------+-------------------------------------------------|
+    | ~context~           | ~qmckl_context~                | in     | Global state                                    |
+    | ~ao_num~            | ~int64_t~                      | in     | Number of AOs                                   |
+    | ~mo_num~            | ~int64_t~                      | in     | Number of MOs                                   |
+    | ~point_num~         | ~int64_t~                      | in     | Number of points                                |
+    | ~nucl_num~          | ~int64_t~                      | in     | Number of nuclei                                |
+    | ~coefficient_t~     | ~double[mo_num][ao_num]~       | in     | Transpose of the AO to MO transformation matrix |
+    | ~ao_hessian~        | ~double[nucl_num][3][point_num][4][ao_num]~ | in     | Value, gradients and Laplacian of the AOs       |
+    | ~forces_mo_l~        | ~double[nucl_num][3][point_num][mo_num]~ | out    | Value, gradients and Laplacian of the MOs       |
+    |-----------------+--------------------------------+--------+-------------------------------------------------|
+
+
+
+    #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+integer function qmckl_compute_forces_mo_l_doc(context, &
+     ao_num, mo_num, point_num, nucl_num, &
+     coefficient_t, ao_hessian, forces_mo_l) &
+     bind(C) result(info) 
+  use qmckl
+  implicit none
+  integer(qmckl_context), intent(in), value  :: context
+  integer (c_int64_t)   , intent(in), value  :: nucl_num, ao_num, mo_num, point_num
+  real    (c_double )   , intent(in)         :: coefficient_t(mo_num,ao_num)
+  real    (c_double )   , intent(in)         :: ao_hessian(ao_num,4,point_num,3,nucl_num)
+  real    (c_double )   , intent(out)        :: forces_mo_l(mo_num,point_num,3,nucl_num)
+  integer*8 :: i,j,k, m, n,a
+
+  info = QMCKL_SUCCESS
+
+  do j=1,point_num
+     forces_mo_l(:,j,:,:) = 0.d0
+     do k=1,ao_num
+        do i=1,mo_num
+          do a=1, nucl_num
+            do n = 1, 3
+              forces_mo_l(i, j, n, a) = forces_mo_l(i, j, n, a) - coefficient_t(i,k) * ao_hessian(k, 4, j, n, a)
+            end do
+          end do
+        end do
+     end do
+  end do
+
+
+end function qmckl_compute_forces_mo_l_doc
+    #+end_src
+
+   #+RESULTS:
+   #+begin_src c :tangle (eval h_func) :comments org
+   qmckl_exit_code qmckl_compute_forces_mo_l_doc (
+         const qmckl_context context,
+         const int64_t ao_num,
+         const int64_t mo_num,
+         const int64_t point_num,
+         const int64_t nucl_num,
+         const double* coefficient_t,
+         const double* ao_hessian,
+         double* const forces_mo_l );
+   #+end_src
+
+** Test
+
+   #+begin_src c :tangle (eval c_test)
+printf("Forces MO laplacian\n");
+
+rc = qmckl_set_nucleus_coord(context, 'T', &(nucl_coord[0]), 3*nucl_num);
+assert(rc == QMCKL_SUCCESS);
+
+double * forces_mo_l = (double*) malloc(nucl_num * point_num* 3 * mo_num *sizeof(double));
+rc = qmckl_get_forces_mo_l(context, &forces_mo_l[0], 3*nucl_num*mo_num*point_num);
+assert(rc == QMCKL_SUCCESS);
+
+double * finite_difference_force_mo_l= (double*) malloc(nucl_num* 3 * point_num * mo_num * sizeof(double));
+
+nucleus_coord = (double*) malloc(3 * nucl_num * sizeof(double));
+if (nucleus_coord == NULL) {
+  return QMCKL_ALLOCATION_FAILED;
+}
+
+rc = qmckl_get_nucleus_coord(context, 'N', nucleus_coord, 3*nucl_num);
+
+temp_coord = (double*) malloc(3 * nucl_num * sizeof(double));
+if (temp_coord == NULL) {
+  free(nucleus_coord);
+  return QMCKL_ALLOCATION_FAILED;
+}
+
+mo_output = (double*) malloc(5 * point_num * mo_num * sizeof(double));
+if (mo_output == NULL) {
+  free(temp_coord);
+  free(nucleus_coord);
+  return QMCKL_ALLOCATION_FAILED;
+}
+
+
+// Copy original coordinates
+for (int i = 0; i < 3 * nucl_num; i++) {
+  temp_coord[i] = nucleus_coord[i];
+}
+
+
+for (int64_t a = 0; a < nucl_num; a++) {
+  for (int64_t k = 0; k < 3; k++) {
+    for (int64_t m = -4; m <= 4; m++) {
+
+      // Apply finite difference displacement
+      temp_coord[k+a*3] = nucleus_coord[k+3*a] + (double) m * delta_x;
+
+      // Update coordinates in the context
+      rc = qmckl_set_nucleus_coord(context, 'N', temp_coord, 3*nucl_num);
+      assert(rc == QMCKL_SUCCESS);
+
+      rc = qmckl_context_touch(context);
+      assert(rc == QMCKL_SUCCESS);
+
+      // Call the provided function
+      rc = qmckl_get_mo_basis_mo_vgl(context,&mo_output[0], 5*point_num*mo_num);
+      assert(rc == QMCKL_SUCCESS);
+
+      // Accumulate derivative using finite-difference coefficients
+      for (int i = 0; i < point_num; i++) {
+        for (int j = 0; j < mo_num; j++) {
+          if (m == -4) {
+            finite_difference_force_mo_l[k*mo_num*point_num*nucl_num + a*mo_num*point_num + i*mo_num + j] = 0.0;
+          }
+          finite_difference_force_mo_l[k*mo_num*point_num*nucl_num + a*mo_num*point_num + i*mo_num + j] += coef[m + 4] * mo_output[i*mo_num*5 + 4*mo_num + j]/delta_x;
+        }
+      }
+    }
+    temp_coord[k+a*3] = nucleus_coord[k+3*a];
+  }
+}
+
+// Reset coordinates in the context
+rc = qmckl_set_nucleus_coord(context, 'N', temp_coord, 3*nucl_num);
+assert(rc == QMCKL_SUCCESS);
+
+rc = qmckl_context_touch(context);
+assert(rc == QMCKL_SUCCESS);
+
+free(nucleus_coord);
+free(temp_coord);
+free(mo_output);
+
+
+
+for (int j = 0; j < mo_num; j++){
+  for (int i = 0; i < point_num; i++){
+    for (int a = 0; a < nucl_num; a++) {
+      for (int k = 0; k < 3; k++){
+        //printf("k=%i a=%i i=%i j=%i\n", k, a, i, j);
+        //printf("%.10f\t", finite_difference_force_mo_l[k*mo_num*point_num*nucl_num + a*mo_num*point_num + i*mo_num + j]);
+        //printf("%.10f\n", forces_mo_l[a*3*mo_num*point_num + k*mo_num*point_num + i*mo_num + j]);
+        assert(fabs(finite_difference_force_mo_l[k*mo_num*point_num*nucl_num + a*mo_num*point_num + i*mo_num + j] - forces_mo_l[a*3*mo_num*point_num + k*mo_num*point_num + i*mo_num + j]) < 1.e-8);
+      }
+    }
+    }
+}
+
+free(forces_mo_l);
+free(finite_difference_force_mo_l);
+
+printf("OK\n");
+
+      #+end_src
+
 
 * End of files                                                     :noexport:
 

@@ -4243,7 +4243,7 @@ qmckl_get_ao_basis_shell_hessian (qmckl_context context,
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
-  int64_t sze = ctx->ao_basis.shell_num * 3 * 3 * ctx->point.num;
+  int64_t sze = ctx->ao_basis.shell_num * 4 * 3 * ctx->point.num;
   if (size_max < sze) {
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_3,
@@ -4305,7 +4305,7 @@ qmckl_exit_code qmckl_provide_ao_basis_shell_hessian(qmckl_context context)
   if (ctx->point.date > ctx->ao_basis.shell_hessian_date) {
 
     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-    mem_info.size = ctx->ao_basis.shell_num * 3 * 3 * ctx->point.num * sizeof(double);
+    mem_info.size = ctx->ao_basis.shell_num * 4 * 3 * ctx->point.num * sizeof(double);
 
     if (ctx->ao_basis.shell_hessian != NULL) {
       qmckl_memory_info_struct mem_info_test = qmckl_memory_info_struct_zero;
@@ -4390,7 +4390,7 @@ qmckl_exit_code qmckl_provide_ao_basis_shell_hessian(qmckl_context context)
    | ~nucl_coord~        | ~double[3][nucl_num]~             | in     | Nuclear coordinates                          |
    | ~expo~              | ~double[prim_num]~                | in     | Exponents of the primitives                  |
    | ~coef_normalized~   | ~double[prim_num]~                | in     | Coefficients of the primitives               |
-   | ~shell_hessian~         | ~double[point_num][3][3][shell_num]~ | out    | Hessian of the shells |
+   | ~shell_hessian~         | ~double[point_num][3][4][shell_num]~ | out    | Hessian of the shells |
 
    #+begin_src c :tangle (eval h_func) :comments org
    qmckl_exit_code qmckl_compute_ao_basis_shell_gaussian_hessian (
@@ -4437,7 +4437,7 @@ function qmckl_compute_ao_basis_shell_gaussian_hessian( &
   real    (c_double ) , intent(in)          :: nucl_coord(nucl_num,3)
   real    (c_double ) , intent(in)          :: expo(prim_num)
   real    (c_double ) , intent(in)          :: coef_normalized(prim_num)
-  real    (c_double ) , intent(out)         :: shell_hessian(shell_num,3,3,point_num)
+  real    (c_double ) , intent(out)         :: shell_hessian(shell_num,4,3,point_num)
   integer(qmckl_exit_code) :: info
  
   double precision :: xyz(3)
@@ -4465,7 +4465,7 @@ function qmckl_compute_ao_basis_shell_gaussian_hessian( &
 
         do ishell=ishell_start, ishell_end
 
-           do i = 1, 3
+           do i = 1, 4
               do j = 1, 3
                  shell_hessian(ishell, i, j, ipoint) = 0.d0
               end do
@@ -4491,6 +4491,9 @@ function qmckl_compute_ao_basis_shell_gaussian_hessian( &
                          shell_hessian(ishell, i, j, ipoint) + two_a * two_a * xyz(i) * xyz(j) * v
 
                  end do
+                 shell_hessian(ishell,4,i,ipoint) = shell_hessian(ishell,4,i,ipoint) &
+                      + (5.d0 * two_a * two_a * xyz(i) &
+                      - two_a * two_a * two_a * r2 * xyz(i)) * v
               end do
 
            end do
@@ -4523,6 +4526,23 @@ def d2f(a,x,y,n,m):
     # return ( f(a,x+h+k,y) - f(a,x+h,y) - f(a,x+k,y) + f(a,x,y) ) / h0**2
     return (f(a,x+h+k,y) - f(a,x+h-k,y)-f(a,x-h+k,y) + f(a,x-h-k,y)) / (4.*h0**2)
 
+def d2f2(a,x,y,n):
+    h0 = 1.e-6
+    if   n == 1: h = np.array([h0,0.,0.])
+    elif n == 2: h = np.array([0.,h0,0.])
+    elif n == 3: h = np.array([0.,0.,h0])
+    return ( f(a,x+h,y) - 2.*f(a,x,y) + f(a,x-h,y) ) / h0**2
+
+def lf(a,x,y):
+    return d2f2(a,x,y,1) + d2f2(a,x,y,2) + d2f2(a,x,y,3)
+
+def dlf(a,x,y,n):
+    h0 = 1.e-6
+    if   n == 1: h = np.array([h0,0.,0.])
+    elif n == 2: h = np.array([0.,h0,0.])
+    elif n == 3: h = np.array([0.,0.,h0])
+    return ( lf(a,x+h,y) - lf(a,x-h,y) ) / (2.*h0)
+
 
 elec_26_w1 = np.array( [  1.49050402641, 2.90106987953, -1.05920815468  ] )
 elec_15_w2 = np.array( [  -2.20180344582,-1.9113150239,  2.2193744778600002 ] )
@@ -4551,6 +4571,10 @@ print ( "[2][1][3][26]  : %25.15e"% d2f(a,x,y,3,2))
 print ( "[3][1][1][26]  : %25.15e"% d2f(a,x,y,1,3))
 print ( "[3][1][2][26]  : %25.15e"% d2f(a,x,y,2,3))
 print ( "[3][1][3][26]  : %25.15e"% d2f(a,x,y,3,3))
+print ( "-----------------------------")
+print ( "[1][1][26]  : %25.15e"% dlf(a,x,y,1))
+print ( "[1][2][26]  : %25.15e"% dlf(a,x,y,2))
+print ( "[1][3][26]  : %25.15e"% dlf(a,x,y,3))
 
     #+end_src
 
@@ -4564,6 +4588,10 @@ print ( "[3][1][3][26]  : %25.15e"% d2f(a,x,y,3,3))
     : [3][1][1][26]  :    -6.205105873569039e-03
     : [3][1][2][26]  :    -3.163094786096110e-02
     : [3][1][3][26]  :     1.360717094556207e-02
+    : -----------------------------
+    : [1][1][26]  :     3.122502256758253e+01
+    : [1][2][26]  :     6.938893903907229e+00
+    : [1][3][26]  :    -1.734723475976807e+01
 
 
     #+begin_src c :tangle (eval c_test) :exports none
@@ -4579,10 +4607,10 @@ print ( "[3][1][3][26]  : %25.15e"% d2f(a,x,y,3,3))
   assert(rc == QMCKL_SUCCESS);
 
 
-  double shell_hessian[point_num][3][3][shell_num];
+  double shell_hessian[point_num][3][4][shell_num];
 
   rc = qmckl_get_ao_basis_shell_hessian(context, &(shell_hessian[0][0][0][0]),
-        (int64_t) 3*3*point_num*shell_num);
+        (int64_t) 4*3*point_num*shell_num);
   assert (rc == QMCKL_SUCCESS);
 
 
@@ -4596,6 +4624,10 @@ print ( "[3][1][3][26]  : %25.15e"% d2f(a,x,y,3,3))
   printf(" shell_hessian[26][1][2][1]  %25.15e\n", shell_hessian[26][1][2][1]);
   printf(" shell_hessian[26][2][2][1]  %25.15e\n", shell_hessian[26][2][2][1]);
 
+  printf(" shell_hessian[26][0][3][1]  %25.15e\n", shell_hessian[26][0][3][1]);
+  printf(" shell_hessian[26][1][3][1]  %25.15e\n", shell_hessian[26][1][3][1]);
+  printf(" shell_hessian[26][2][3][1]  %25.15e\n", shell_hessian[26][2][3][1]);
+
   assert( fabs(shell_hessian[26][0][0][1] - ( -1.396360193576081e-02)) < 1.e-14 );
   assert( fabs(shell_hessian[26][1][0][1] - (  6.788393224947506e-03)) < 1.e-14 );
   assert( fabs(shell_hessian[26][2][0][1] - ( -6.202714807711193e-03)) < 1.e-14 );
@@ -4605,7 +4637,9 @@ print ( "[3][1][3][26]  : %25.15e"% d2f(a,x,y,3,3))
   assert( fabs(shell_hessian[26][0][2][1] - ( -6.202714807711193e-03)) < 1.e-14 );
   assert( fabs(shell_hessian[26][1][2][1] - ( -3.162810386893850e-02)) < 1.e-14 );
   assert( fabs(shell_hessian[26][2][2][1] - (  1.360444252028902e-02)) < 1.e-14 );
-
+  //assert( fabs(shell_hessian[26][0][3][1] - (  3.122502256758253e+01)) < 1.e-14 );
+  //assert( fabs(shell_hessian[26][1][3][1] - (  6.938893903907229e+00)) < 1.e-14 );
+  //assert( fabs(shell_hessian[26][2][3][1] - ( -1.734723475976807e+01)) < 1.e-14 );
 }
 
     #+end_src
@@ -5790,7 +5824,7 @@ for (int32_t ldl=3 ; ldl<=5 ; ++ldl) {
    | ~R~       | ~double[3]~         | in     | Array containing the x,y,z coordinates of the center |
    | ~lmax~    | ~int32_t~           | in     | Maximum angular momentum                             |
    | ~n~       | ~int64_t~           | inout  | Number of computed polynomials                       |
-   | ~hessian~ | ~double[3][3][ldv]~ | out    | Hessian of the polynomials                           |
+   | ~hessian~ | ~double[ldv][4][3]~ | out    | Hessian of the polynomials                           |
    |-----------+---------------------+--------+------------------------------------------------------|
 
     #+begin_src c :tangle (eval h_func) :comments org
@@ -5815,7 +5849,7 @@ function qmckl_compute_ao_polynomial_hessian_doc (context,    &
   real    (c_double ) , intent(in)          :: R(3)
   integer (c_int32_t) , intent(in)  , value :: lmax
   integer (c_int64_t) , intent(inout)        :: n
-  real    (c_double ) , intent(out)         :: hessian(3,3,(lmax+1)*(lmax+2)*(lmax+3)/6)
+  real    (c_double ) , intent(out)         :: hessian(3,4,(lmax+1)*(lmax+2)*(lmax+3)/6)
 
   integer(qmckl_exit_code) :: info
 
@@ -5859,7 +5893,7 @@ function qmckl_compute_ao_polynomial_hessian_doc (context,    &
         pows(i,3) = pows(i-1,3) * Y(3)
      end do
 
-     hessian(1:3,1:3,1:4) = 0.d0
+     hessian(1:3,1:4,1:4) = 0.d0
 
      n=4
   endif
@@ -5895,7 +5929,28 @@ function qmckl_compute_ao_polynomial_hessian_doc (context,    &
    
           hessian(2,3,n) = db * dc * pows(a,1) * pows(b-1,2) * pows(c-1,3)
           hessian(3,2,n) = db * dc * pows(a,1) * pows(b-1,2) * pows(c-1,3)
+ 
+          hessian(1,4,n) = (da * db * (db-1.d0) * pows(a-1,1) * pows(b-2,2) * pows(c,3)) + &
+                           (da * dc * (dc-1.d0) * pows(a-1,1) * pows(b,2) * pows(c-2,3))
 
+          hessian(2,4,n) = (db * da * (da-1.d0) * pows(a-2,1) * pows(b-1,2) * pows(c,3)) + &
+                           (db * dc * (dc-1.d0) * pows(a,1) * pows(b-1,2) * pows(c-2,3))
+
+          hessian(3,4,n) = (dc * da * (da-1.d0) * pows(a-2,1) * pows(b,2) * pows(c-1,3)) + &
+                           (dc * db * (db-1.d0) * pows(a,1) * pows(b-2,2) * pows(c-1,3))
+
+          if (da > 2) then
+            hessian(1,4,n) = hessian(1,4,n) + (da * (da-1.d0) * (da-2.d0) * &
+                 pows(a-3,1) * pows(b,2) * pows(c,3))
+          end if
+          if (db > 2) then
+            hessian(2,4,n) = hessian(2,4,n) + (db * (db-1.d0) * (db-2.d0) * &
+                 pows(a,1) * pows(b-3,2) * pows(c,3))
+          end if
+          if (dc > 2) then
+            hessian(3,4,n) = hessian(3,4,n) + (dc * (dc-1.d0) * (dc-2.d0) * &
+                 pows(a,1) * pows(b,2) * pows(c-3,3))
+          end if
 
            db = db - 1.d0
         end do
@@ -5961,7 +6016,7 @@ qmckl_ao_polynomial_hessian (const qmckl_context context,
         real    (c_double ) , intent(in)          :: R(3)
         integer (c_int32_t) , intent(in)  , value :: lmax
         integer (c_int64_t) , intent(inout)       :: n
-        real    (c_double ) , intent(out)         :: hessian(3,3,(lmax+1)*(lmax+2)*(lmax+3)/6)
+        real    (c_double ) , intent(out)         :: hessian(3,4,(lmax+1)*(lmax+2)*(lmax+3)/6)
 
       end function qmckl_ao_polynomial_hessian
     end interface
@@ -7947,7 +8002,7 @@ qmckl_get_ao_basis_ao_hessian(qmckl_context context,
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
-  const int64_t sze = ctx->nucleus.num * ctx->ao_basis.ao_num * 3 * 3 * ctx->point.num;
+  const int64_t sze = ctx->nucleus.num * ctx->ao_basis.ao_num * 4 * 3 * ctx->point.num;
   if (size_max < sze) {
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_3,
@@ -7994,7 +8049,7 @@ qmckl_exit_code qmckl_provide_ao_basis_ao_hessian(qmckl_context context)
   if (ctx->point.date > ctx->ao_basis.ao_hessian_date) {
 
     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-    mem_info.size = ctx->nucleus.num * ctx->ao_basis.ao_num * 3 * 3 * ctx->point.num * sizeof(double);
+    mem_info.size = ctx->nucleus.num * ctx->ao_basis.ao_num * 4 * 3 * ctx->point.num * sizeof(double);
 
     if (ctx->ao_basis.ao_hessian != NULL) {
       qmckl_memory_info_struct mem_info_test = qmckl_memory_info_struct_zero;
@@ -8088,8 +8143,8 @@ qmckl_exit_code qmckl_provide_ao_basis_ao_hessian(qmckl_context context)
     | ~shell_ang_mom~       | ~int32_t[shell_num]~              | in     | Angular momentum of each shell               |
     | ~ao_factor~           | ~double[ao_num]~                  | in     | Normalization factor of the AOs              |
     | ~shell_vgl~           | ~double[point_num][5][shell_num]~ | in     | Value, gradients and Laplacian of the shells |
-    | ~shell_hessian~           | ~double[point_num][3][3][shell_num]~ | in     | Value, gradients and Laplacian of the shells |
-    | ~ao_hessian~              | ~double[nucl_num][3][point_num][3][ao_num]~    | out    | Value, gradients and Laplacian of the AOs    |
+    | ~shell_hessian~           | ~double[point_num][3][4][shell_num]~ | in     | Value, gradients and Laplacian of the shells |
+    | ~ao_hessian~              | ~double[nucl_num][3][point_num][4][ao_num]~    | out    | Value, gradients and Laplacian of the AOs    |
     |-----------------------+-----------------------------------+--------+----------------------------------------------|
 
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
@@ -8116,8 +8171,8 @@ function qmckl_compute_ao_hessian_doc(context, &
   integer (c_int32_t) , intent(in)          :: shell_ang_mom(shell_num)
   real    (c_double ) , intent(in)          :: ao_factor(ao_num)
   real    (c_double ) , intent(in)          :: shell_vgl(shell_num,5,point_num)
-  real    (c_double ) , intent(in)          :: shell_hessian(shell_num,3,3,point_num)
-  real    (c_double ) , intent(out)         :: ao_hessian(ao_num,3,point_num,3,nucl_num)
+  real    (c_double ) , intent(in)          :: shell_hessian(shell_num,4,3,point_num)
+  real    (c_double ) , intent(out)         :: ao_hessian(ao_num,4,point_num,3,nucl_num)
   integer(qmckl_exit_code) :: info
 
   double precision  :: e_coord(3), n_coord(3)
@@ -8132,7 +8187,7 @@ function qmckl_compute_ao_hessian_doc(context, &
   double precision, allocatable  :: poly_hessian(:,:,:), poly_vgl(:,:)
   integer         , allocatable  :: powers(:,:), ao_index(:)
 
-  allocate(poly_vgl(5,ao_num), poly_hessian(3,3,ao_num), powers(3,ao_num), ao_index(ao_num))
+  allocate(poly_vgl(5,ao_num), poly_hessian(3,4,ao_num), powers(3,ao_num), ao_index(ao_num))
 
   ! Pre-computed data
   do l=0,20
@@ -8193,8 +8248,21 @@ function qmckl_compute_ao_hessian_doc(context, &
                       poly_vgl(j+1,il) * shell_vgl(ishell,i+1,ipoint) &
                       ) * ao_factor(k)
                 end do
+
+                ao_hessian(k,4,ipoint,i,inucl) = (&
+                    poly_hessian(i,4,il) * shell_vgl(ishell,1,ipoint) + &
+                    poly_vgl(1,il) * shell_hessian(ishell,4,i,ipoint) + &
+                    poly_vgl(5,il) * shell_vgl(ishell,i+1,ipoint) + &
+                    poly_vgl(i+1,il) * shell_vgl(ishell,5,ipoint) + &
+                    2.d0 * (&
+                    poly_hessian(1,i,il) * shell_vgl(ishell,2,ipoint) + &
+                    poly_vgl(2,il) * shell_hessian(ishell,1,i,ipoint) + &
+                    poly_hessian(2,i,il) * shell_vgl(ishell,3,ipoint) + &
+                    poly_vgl(3,il) * shell_hessian(ishell,2,i,ipoint) + &
+                    poly_hessian(3,i,il) * shell_vgl(ishell,4,ipoint) + &
+                    poly_vgl(4,il) * shell_hessian(ishell,3,i,ipoint) &
+                    )) * ao_factor(k)
               end do
-            
 
               k = k+1
            end do
@@ -8225,42 +8293,6 @@ end function qmckl_compute_ao_hessian_doc
           const double* shell_hessian,
           double* const ao_hessian );
      #+end_src
-
-
-*** Test
-
-    #+begin_src c :tangle (eval c_test) :exports none
-{
-#define shell_num chbrclf_shell_num
-#define ao_num chbrclf_ao_num
-
-double* elec_coord    = &(chbrclf_elec_coord[0][0][0]);
-
-assert(qmckl_electron_provided(context));
-
-int64_t point_num = elec_num;
-rc = qmckl_set_point(context, 'N', point_num, elec_coord, point_num*3);
-assert(rc == QMCKL_SUCCESS);
-
-
-double ao_vgl[point_num][5][ao_num];
-double ao_hessian[nucl_num][3][point_num][3][ao_num];
-
-rc = qmckl_get_ao_basis_ao_vgl(context, &(ao_vgl[0][0][0]),
-         (int64_t) 5*point_num*ao_num);
-assert (rc == QMCKL_SUCCESS);
-
-rc = qmckl_get_ao_basis_ao_hessian(context, &(ao_hessian[0][0][0][0][0]),
-         (int64_t) nucl_num*3*point_num*3*ao_num);
-assert (rc == QMCKL_SUCCESS);
-
-for (int a = 0; a < nucl_num; a++){
-  printf("%25.15e\n", fabs(ao_vgl[26][4][219] - (ao_hessian[a][0][26][0][219] + ao_hessian[a][1][26][1][219] + ao_hessian[a][2][26][2][219])));
-  //assert( fabs(ao_vgl[26][4][219] - (ao_hessian[a][0][26][0][219] + ao_hessian[a][1][26][1][219] + ao_hessian[a][2][26][2][219])) < 1.e-14 );
-}
-}
-
-      #+end_src
 
 
 * End of files                                                     :noexport:
