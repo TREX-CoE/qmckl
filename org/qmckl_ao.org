@@ -4449,6 +4449,9 @@ function qmckl_compute_ao_basis_shell_gaussian_hessian( &
 
   info = QMCKL_SUCCESS
 
+  ! Don't compute exponentials when the result will be almost zero.
+  <<fortran_cutoff>>
+
   do ipoint = 1, point_num
 
      do inucl=1,nucl_num
@@ -4458,6 +4461,10 @@ function qmckl_compute_ao_basis_shell_gaussian_hessian( &
         xyz(3) = coord(ipoint,3) - nucl_coord(inucl,3)
 
         r2 = xyz(1)*xyz(1) + xyz(2)*xyz(2) + xyz(3)*xyz(3)
+
+        if (r2 > cutoff*nucleus_range(inucl)) then
+           cycle
+        end if
 
         ! C is zero-based, so shift bounds by one
         ishell_start = nucleus_index(inucl) + 1
@@ -4477,6 +4484,9 @@ function qmckl_compute_ao_basis_shell_gaussian_hessian( &
            do iprim = iprim_start, iprim_end
 
               ar2 = expo(iprim)*r2
+              if (ar2 > cutoff) then
+                 cycle
+              end if
 
               v = coef_normalized(iprim) * dexp(-ar2)
               two_a = 2.d0 * expo(iprim)
@@ -4528,20 +4538,20 @@ def d2f(a,x,y,n,m):
 
 def d2f2(a,x,y,n):
     h0 = 1.e-6
-    if   n == 1: h = np.array([h0,0.,0.])
-    elif n == 2: h = np.array([0.,h0,0.])
-    elif n == 3: h = np.array([0.,0.,h0])
-    return ( f(a,x+h,y) - 2.*f(a,x,y) + f(a,x-h,y) ) / h0**2
+    if   n == 1: h1 = np.array([h0,0.,0.])
+    elif n == 2: h1 = np.array([0.,h0,0.])
+    elif n == 3: h1 = np.array([0.,0.,h0])
+    return ( f(a,x+h1,y) - 2.*f(a,x,y) + f(a,x-h1,y) ) / h0**2
 
 def lf(a,x,y):
     return d2f2(a,x,y,1) + d2f2(a,x,y,2) + d2f2(a,x,y,3)
 
 def dlf(a,x,y,n):
     h0 = 1.e-6
-    if   n == 1: h = np.array([h0,0.,0.])
-    elif n == 2: h = np.array([0.,h0,0.])
-    elif n == 3: h = np.array([0.,0.,h0])
-    return ( lf(a,x+h,y) - lf(a,x-h,y) ) / (2.*h0)
+    if   n == 1: h2 = np.array([h0,0.,0.])
+    elif n == 2: h2 = np.array([0.,h0,0.])
+    elif n == 3: h2 = np.array([0.,0.,h0])
+    return ( lf(a,x+h2,y) - lf(a,x-h2,y) ) / (2.*h0)
 
 
 elec_26_w1 = np.array( [  1.49050402641, 2.90106987953, -1.05920815468  ] )
@@ -8206,6 +8216,9 @@ function qmckl_compute_ao_hessian_doc(context, &
   end do
   info = QMCKL_SUCCESS
 
+  ! Don't compute polynomials when the radial part is zero.
+  <<fortran_cutoff>>
+
   do ipoint = 1, point_num
      e_coord(1) = coord(ipoint,1)
      e_coord(2) = coord(ipoint,2)
@@ -8222,6 +8235,9 @@ function qmckl_compute_ao_hessian_doc(context, &
         z = e_coord(3) - n_coord(3)
 
         r2 = x*x + y*y + z*z
+        if (r2 > cutoff*nucleus_range(inucl)) then
+           cycle
+        end if
 
         ! Compute polynomials
         info = qmckl_ao_polynomial_hessian(context, e_coord, n_coord, &
@@ -8262,6 +8278,25 @@ function qmckl_compute_ao_hessian_doc(context, &
                     poly_hessian(3,i,il) * shell_vgl(ishell,4,ipoint) + &
                     poly_vgl(4,il) * shell_hessian(ishell,3,i,ipoint) &
                     )) * ao_factor(k)
+                
+                ! only p gggp wrong
+                !ao_hessian(k,4,ipoint,i,inucl) = (&
+                !    poly_vgl(1,il) * shell_hessian(ishell,4,i,ipoint) ) * ao_factor(k)
+
+                !ao_hessian(k,4,ipoint,i,inucl) = (&
+                !    poly_vgl(5,il) * shell_vgl(ishell,i+1,ipoint) + &
+                !    poly_vgl(i+1,il) * shell_vgl(ishell,5,ipoint)) * ao_factor(k)
+
+                !ao_hessian(k,4,ipoint,i,inucl) = (&
+                !    2.d0 * (&
+                !    poly_hessian(1,i,il) * shell_vgl(ishell,2,ipoint) + &
+                !    poly_vgl(2,il) * shell_hessian(ishell,1,i,ipoint) + &
+                !    poly_hessian(2,i,il) * shell_vgl(ishell,3,ipoint) + &
+                !    poly_vgl(3,il) * shell_hessian(ishell,2,i,ipoint) + &
+                !    poly_hessian(3,i,il) * shell_vgl(ishell,4,ipoint) + &
+                !    poly_vgl(4,il) * shell_hessian(ishell,3,i,ipoint) &
+                !    )) * ao_factor(k)
+                
               end do
 
               k = k+1

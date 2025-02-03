@@ -115,6 +115,8 @@ typedef struct qmckl_jastrow_champ_single_struct{
   uint64_t     delta_p_gl_date;
   double*      delta_een_gl;
   uint64_t     delta_een_gl_date;
+  double*      delta_een_g;
+  uint64_t     delta_een_g_date;
   double*      ee_rescaled_single_gl;
   uint64_t     ee_rescaled_single_gl_date;
   double*      en_rescaled_single_gl;
@@ -3857,6 +3859,410 @@ for (int elec = 0; elec < elec_num; elec++){
         //printf("een_gl_[%d][%d][%d] = %f\n", nw, m,i, een_gl_new[nw][m][i]-een_gl_old[nw][m][i]);
 
         assert(fabs((een_gl_new[nw][m][i]- een_gl_old[nw][m][i]) - delta_een_gl[nw][m][i]) < 1.e-12);
+
+      }
+    }
+  }
+}
+
+      #+end_src
+
+** Electron-electron-nucleus Jastrow gradients
+
+*** Get
+
+     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
+qmckl_exit_code
+qmckl_get_jastrow_champ_single_een_g(qmckl_context context,
+                                 double* const delta_een_g,
+                                 const int64_t size_max);
+     #+end_src
+
+     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code
+qmckl_get_jastrow_champ_single_een_g(qmckl_context context,
+                                 double* const delta_een_g,
+                                 const int64_t size_max)
+{
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_exit_code rc;
+
+  rc = qmckl_provide_jastrow_champ_single_een_g(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  if (delta_een_g == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_get_jastrow_champ_single_een_g",
+                           "Array is NULL.");
+  }
+
+  int64_t sze = 3 * ctx->electron.num * ctx->electron.walker.num;
+  if (size_max < sze) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_3,
+                           "qmckl_get_jastrow_champ_single_een_g",
+                           "Array too small. Expected 3 * ctx->electron.num * ctx->electron.walker.num");
+  }
+  memcpy(delta_een_g, ctx->single_point.delta_een_g, sze * sizeof(double));
+
+  return QMCKL_SUCCESS;
+}
+     #+end_src
+
+ #+begin_src f90 :tangle (eval fh_func) :comments org
+interface
+   integer(qmckl_exit_code) function qmckl_get_jastrow_champ_single_een_g (context, &
+        delta_een_g, size_max) bind(C)
+     use, intrinsic :: iso_c_binding
+     import
+     implicit none
+     integer (qmckl_context) , intent(in), value :: context
+     integer(c_int64_t), intent(in), value       :: size_max
+     real(c_double),   intent(out)               :: delta_een_g(size_max)
+   end function
+end interface
+ #+end_src
+
+*** Provide                                                       :noexport:
+
+     #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code qmckl_provide_jastrow_champ_single_een_g(qmckl_context context);
+     #+end_src
+
+     #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
+qmckl_exit_code qmckl_provide_jastrow_champ_single_een_g(qmckl_context context)
+{
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_NULL_CONTEXT;
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  qmckl_exit_code rc;
+
+  if (ctx->jastrow_champ.cord_num > 0) {
+
+    rc = qmckl_provide_jastrow_champ_delta_p(context);
+    if(rc != QMCKL_SUCCESS) return rc;
+
+    rc = qmckl_provide_jastrow_champ_factor_een(context);
+    if(rc != QMCKL_SUCCESS) return rc;
+
+    rc = qmckl_provide_jastrow_champ_delta_p_gl(context);
+    if(rc != QMCKL_SUCCESS) return rc;
+
+    rc = qmckl_provide_jastrow_champ_factor_een_gl(context);
+    if(rc != QMCKL_SUCCESS) return rc;
+
+  }
+
+
+  /* Compute if necessary */
+  if (ctx->single_point.date > ctx->single_point.delta_een_g_date) {
+
+    if (ctx->electron.walker.num > ctx->electron.walker_old.num) {
+      if (ctx->single_point.delta_een_g != NULL) {
+        rc = qmckl_free(context, ctx->single_point.delta_een_g);
+        if (rc != QMCKL_SUCCESS) {
+          return qmckl_failwith( context, rc,
+                                 "qmckl_provide_jastrow_champ_single_een_g",
+                                 "Unable to free ctx->single_point.delta_een_g");
+        }
+        ctx->single_point.delta_een_g = NULL;
+      }
+    }
+
+    /* Allocate array */
+    if (ctx->single_point.delta_een_g == NULL) {
+
+      qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+      mem_info.size = 3 * ctx->electron.num * ctx->electron.walker.num * sizeof(double);
+      double* delta_een_g = (double*) qmckl_malloc(context, mem_info);
+
+      if (delta_een_g == NULL) {
+        return qmckl_failwith( context,
+                               QMCKL_ALLOCATION_FAILED,
+                               "qmckl_provide_jastrow_champ_single_een_g",
+                               NULL);
+      }
+      ctx->single_point.delta_een_g = delta_een_g;
+    }
+
+    rc = qmckl_compute_jastrow_champ_factor_single_een_g_doc(context,
+                                                ctx->single_point.num,
+                                                ctx->electron.walker.num,
+                                                ctx->electron.num,
+                                                ctx->nucleus.num,
+                                                ctx->jastrow_champ.cord_num,
+                                                ctx->jastrow_champ.dim_c_vector,
+                                                ctx->jastrow_champ.c_vector_full,
+                                                ctx->jastrow_champ.lkpm_combined_index,
+                                                ctx->jastrow_champ.tmp_c,
+                                                ctx->jastrow_champ.dtmp_c,
+                                                ctx->single_point.delta_p,
+                                                ctx->single_point.delta_p_gl,
+                                                ctx->jastrow_champ.een_rescaled_n,
+                                                ctx->single_point.een_rescaled_single_n,
+                                                ctx->jastrow_champ.een_rescaled_n_gl,
+                                                ctx->single_point.een_rescaled_single_n_gl,
+                                                ctx->single_point.delta_een_g);
+    if (rc != QMCKL_SUCCESS) {
+      return rc;
+    }
+
+    ctx->single_point.delta_een_g_date = ctx->single_point.date;
+  }
+
+  return QMCKL_SUCCESS;
+}
+     #+end_src
+
+*** Compute
+     :PROPERTIES:
+     :Name:     qmckl_compute_jastrow_champ_factor_single_een_g_doc
+     :CRetType: qmckl_exit_code
+     :FRetType: qmckl_exit_code
+     :END:
+
+     #+NAME: qmckl_factor_single_een_g_args
+     | Variable                   | Type                                                                | In/Out | Description                                                    |
+     |----------------------------+---------------------------------------------------------------------+--------+----------------------------------------------------------------|
+     | ~context~                  | ~qmckl_context~                                                     | in     | Global state                                                   |
+     | ~num~                      | ~int64_t~                                                           | in     | Index of single electron                                       |
+     | ~walk_num~                 | ~int64_t~                                                           | in     | Number of walkers                                              |
+     | ~elec_num~                 | ~int64_t~                                                           | in     | Number of electrons                                            |
+     | ~nucl_num~                 | ~int64_t~                                                           | in     | Number of nuclei                                               |
+     | ~cord_num~                 | ~int64_t~                                                           | in     | order of polynomials                                           |
+     | ~dim_c_vector~             | ~int64_t~                                                           | in     | dimension of full coefficient vector                           |
+     | ~c_vector_full~            | ~double[dim_c_vector][nucl_num]~                                    | in     | full coefficient vector                                        |
+     | ~lkpm_combined_index~      | ~int64_t[4][dim_c_vector]~                                          | in     | combined indices                                               |
+     | ~tmp_c~                    | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][elec_num]~    | in     | P matrix                                                       |
+     | ~dtmp_c~                   | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][4][elec_num]~ | in     | P matrix derivative                                            |
+     | ~delta_p~                  | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][elec_num]~    | in     | Delta P matrix                                                 |
+     | ~delta_p_gl~               | ~double[walk_num][0:cord_num-1][0:cord_num][4][nucl_num][elec_num]~ | in     | Delta P matrix derivative                                      |
+     | ~een_rescaled_n~           | ~double[walk_num][0:cord_num][nucl_num][elec_num]~                  | in     | Electron-nucleus rescaled distances                            |
+     | ~een_rescaled_single_n~    | ~double[walk_num][0:cord_num][nucl_num]~                            | in     | Electron-nucleus single rescaled distances                     |
+     | ~een_rescaled_n_gl~        | ~double[walk_num][0:cord_num][nucl_num][4][elec_num]~               | in     | Electron-nucleus rescaled distances derivatives                |
+     | ~een_rescaled_single_n_gl~ | ~double[walk_num][0:cord_num][nucl_num][4]~                         | in     | Electron-nucleus single rescaled distances derivatives         |
+     | ~delta_een_g~              | ~double[walk_num][3][elec_num]~                                     | out    | Delta electron-electron-nucleus jastrow gradient               |
+     |----------------------------+---------------------------------------------------------------------+--------+----------------------------------------------------------------|
+
+     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+integer(qmckl_exit_code) function qmckl_compute_jastrow_champ_factor_single_een_g_doc( &
+     context, num_in, walk_num, elec_num, nucl_num, cord_num,   &
+     dim_c_vector, c_vector_full, lkpm_combined_index, &
+     tmp_c, dtmp_c, delta_p, delta_p_gl, een_rescaled_n, een_rescaled_single_n, &
+     een_rescaled_n_gl, een_rescaled_single_n_gl, delta_een_g) &
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
+  use qmckl
+  implicit none
+  integer(qmckl_context), intent(in)  :: context
+  integer(c_int64_t)    , intent(in), value  :: num_in, walk_num, elec_num, cord_num, nucl_num, dim_c_vector
+  integer(c_int64_t)    , intent(in)  :: lkpm_combined_index(dim_c_vector,4)
+  real(c_double)        , intent(in)  :: c_vector_full(nucl_num, dim_c_vector)
+  real(c_double)        , intent(in)  :: tmp_c(elec_num, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
+  real(c_double)        , intent(in)  :: dtmp_c(elec_num, 4, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
+  real(c_double)        , intent(in)  :: delta_p(elec_num, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
+  real(c_double)        , intent(in)  :: delta_p_gl(elec_num, nucl_num, 4, 0:cord_num, 0:cord_num-1,  walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_single_n(nucl_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_n_gl(elec_num, 4, nucl_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_single_n_gl(4, nucl_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(out) :: delta_een_g(elec_num, 3, walk_num)
+
+  integer*8 :: i, a, j, l, k, p, m, n, nw, kk, num
+  double precision :: accu, accu2, cn
+  integer*8                           :: LDA, LDB, LDC
+
+  double precision  :: een_rescaled_delta_n_gl(4, nucl_num, 0:cord_num, walk_num)
+  double precision  :: een_rescaled_delta_n(nucl_num, 0:cord_num, walk_num)
+
+  num = num_in + 1
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) info = QMCKL_INVALID_CONTEXT
+  if (walk_num <= 0)                 info = QMCKL_INVALID_ARG_3
+  if (elec_num <= 0)                 info = QMCKL_INVALID_ARG_4
+  if (nucl_num <= 0)                 info = QMCKL_INVALID_ARG_5
+  if (cord_num <  0)                 info = QMCKL_INVALID_ARG_6
+  if (info /= QMCKL_SUCCESS)         return
+
+  delta_een_g = 0.0d0
+
+  if (cord_num == 0) return
+
+  een_rescaled_delta_n(:,:,:) = een_rescaled_single_n(:,:,:) - een_rescaled_n(num, :, :, :)
+  een_rescaled_delta_n_gl(:,:,:,:) = een_rescaled_single_n_gl(:,:,:,:) - een_rescaled_n_gl(num, :,:,:,:)
+
+
+  do nw =1, walk_num
+     do n = 1, dim_c_vector
+        l = lkpm_combined_index(n, 1)
+        k = lkpm_combined_index(n, 2)
+        p = lkpm_combined_index(n, 3)
+        m = lkpm_combined_index(n, 4)
+
+        do kk = 1, 3
+           do a = 1, nucl_num
+              cn = c_vector_full(a, n)
+              if(cn == 0.d0) cycle
+              do i = 1, elec_num
+                 delta_een_g(i,kk,nw) = delta_een_g(i,kk,nw) + ( &
+                      delta_p_gl(i,a,kk,m  ,k,nw) * een_rescaled_n(i,a,m+l,nw) + &
+                      delta_p_gl(i,a,kk,m+l,k,nw) * een_rescaled_n(i,a,m  ,nw) + &
+                      delta_p(i,a,m  ,k,nw) * een_rescaled_n_gl(i,kk,a,m+l,nw) + &
+                      delta_p(i,a,m+l,k,nw) * een_rescaled_n_gl(i,kk,a,m  ,nw) ) * cn
+              end do
+              delta_een_g(num,kk,nw) = delta_een_g(num,kk,nw) + ( &
+                   (dtmp_c(num,kk,a,m  ,k,nw) + delta_p_gl(num,a,kk,m  ,k,nw)) * een_rescaled_delta_n(a,m+l,nw) + &
+                   (dtmp_c(num,kk,a,m+l,k,nw) + delta_p_gl(num,a,kk,m+l,k,nw)) * een_rescaled_delta_n(a,m  ,nw) + &
+                   (tmp_c(num,a,m  ,k,nw) + delta_p(num,a,m  ,k,nw)) * een_rescaled_delta_n_gl(kk,a,m+l,nw)  + &
+                   (tmp_c(num,a,m+l,k,nw) + delta_p(num,a,m+l,k,nw)) * een_rescaled_delta_n_gl(kk,a,m  ,nw) )* cn
+           end do
+        end do
+     end do
+  end do
+
+end function qmckl_compute_jastrow_champ_factor_single_een_g_doc
+     #+end_src
+
+ #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+qmckl_exit_code
+qmckl_compute_jastrow_champ_factor_single_een_g_doc (const qmckl_context context,
+                              const int64_t num,
+                              const int64_t walk_num,
+                              const int64_t elec_num,
+                              const int64_t nucl_num,
+                              const int64_t cord_num,
+                              const int64_t dim_c_vector,
+                              const double* c_vector_full,
+                              const int64_t* lkpm_combined_index,
+                              const double* tmp_c,
+                              const double* dtmp_c,
+                              const double* delta_p,
+                              const double* delta_p_gl,
+                              const double* een_rescaled_n,
+                              const double* een_rescaled_single_n,
+                              const double* een_rescaled_n_gl,
+                              const double* een_rescaled_single_n_gl,
+                              double* const delta_een_g );
+
+qmckl_exit_code
+
+qmckl_compute_jastrow_champ_factor_single_een_g (const qmckl_context context,
+                              const int64_t num,
+                              const int64_t walk_num,
+                              const int64_t elec_num,
+                              const int64_t nucl_num,
+                              const int64_t cord_num,
+                              const int64_t dim_c_vector,
+                              const double* c_vector_full,
+                              const int64_t* lkpm_combined_index,
+                              const double* tmp_c,
+                              const double* dtmp_c,
+                              const double* delta_p,
+                              const double* delta_p_gl,
+                              const double* een_rescaled_n,
+                              const double* een_rescaled_single_n,
+                              const double* een_rescaled_n_gl,
+                              const double* een_rescaled_single_n_gl,
+                          double* const delta_een_g );
+ #+end_src
+
+ #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
+qmckl_exit_code
+qmckl_compute_jastrow_champ_factor_single_een_g (const qmckl_context context,
+                              const int64_t num,
+                              const int64_t walk_num,
+                              const int64_t elec_num,
+                              const int64_t nucl_num,
+                              const int64_t cord_num,
+                              const int64_t dim_c_vector,
+                              const double* c_vector_full,
+                              const int64_t* lkpm_combined_index,
+                              const double* tmp_c,
+                              const double* dtmp_c,
+                              const double* delta_p,
+                              const double* delta_p_gl,
+                              const double* een_rescaled_n,
+                              const double* een_rescaled_single_n,
+                              const double* een_rescaled_n_gl,
+                              const double* een_rescaled_single_n_gl,
+                          double* const delta_een_g )
+{
+#ifdef HAVE_HPC
+  return qmckl_compute_jastrow_champ_factor_single_een_g_doc
+#else
+  return qmckl_compute_jastrow_champ_factor_single_een_g_doc
+#endif
+    (context, num, walk_num, elec_num, nucl_num, cord_num, dim_c_vector,
+     c_vector_full, lkpm_combined_index, tmp_c, dtmp_c, delta_p, delta_p_gl, een_rescaled_n, een_rescaled_single_n, een_rescaled_n_gl, een_rescaled_single_n_gl, delta_een_g );
+
+}
+ #+end_src
+
+
+*** Test :noexport:
+
+      #+begin_src c :tangle (eval c_test)
+
+
+/* Check if Jastrow is properly initialized */
+assert(qmckl_jastrow_champ_provided(context));
+
+double een_g_old[walk_num][4][elec_num];
+double delta_een_g[walk_num][3][elec_num];
+double een_g_new[walk_num][4][elec_num];
+
+
+for (int elec = 0; elec < elec_num; elec++){
+
+	rc = qmckl_set_electron_coord(context, 'N', walk_num, elec_coord, walk_num*elec_num*3);
+  assert(rc == QMCKL_SUCCESS);
+
+  rc = qmckl_get_jastrow_champ_factor_een_gl(context, &een_g_old[0][0][0], walk_num*4*elec_num);
+  assert (rc == QMCKL_SUCCESS);
+
+  rc = qmckl_get_electron_coord(context, 'N', &coords[0][0][0], walk_num*elec_num*3);
+  assert (rc == QMCKL_SUCCESS);
+
+  rc = qmckl_set_single_point(context, 'N', elec, new_coords, 3*walk_num);
+  assert (rc == QMCKL_SUCCESS);
+
+  rc = qmckl_get_jastrow_champ_single_een_g(context, &delta_een_g[0][0][0], walk_num*3*elec_num);
+  assert (rc == QMCKL_SUCCESS);
+
+  coords[0][elec][0] = new_coords[0];
+  coords[0][elec][1] = new_coords[1];
+  coords[0][elec][2] = new_coords[2];
+  coords[1][elec][0] = new_coords[3];
+  coords[1][elec][1] = new_coords[4];
+  coords[1][elec][2] = new_coords[5];
+
+	rc = qmckl_set_electron_coord(context, 'N', walk_num, &coords[0][0][0], walk_num*elec_num*3);
+  assert (rc == QMCKL_SUCCESS);
+
+  rc = qmckl_get_jastrow_champ_factor_een_gl(context, &een_g_new[0][0][0], walk_num*4*elec_num);
+  assert (rc == QMCKL_SUCCESS);
+
+  for (int nw = 0; nw < walk_num; nw++) {
+    for (int m = 0; m < 3; m++) {
+      for (int i = 0; i < elec_num; i++) {
+        //printf("delta_een_g[%d][%d][%d] = %f\n", nw, i, m, delta_een_g[nw][i][m]);
+        //printf("een_g_[%d][%d][%d] = %f\n", nw, m,i, een_g_new[nw][m][i]-een_g_old[nw][m][i]);
+
+        assert(fabs((een_g_new[nw][m][i]- een_g_old[nw][m][i]) - delta_een_g[nw][m][i]) < 1.e-12);
 
       }
     }

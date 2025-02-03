@@ -4199,6 +4199,9 @@ qmckl_exit_code qmckl_provide_forces_jastrow_delta_p(qmckl_context context)
   rc = qmckl_provide_een_rescaled_single_n(context);
   if(rc != QMCKL_SUCCESS) return rc;
 
+  rc = qmckl_provide_een_rescaled_single_e(context);
+  if(rc != QMCKL_SUCCESS) return rc;
+
   rc = qmckl_provide_een_rescaled_single_n_gl(context);
   if(rc != QMCKL_SUCCESS) return rc;
 
@@ -4638,19 +4641,19 @@ qmckl_exit_code qmckl_provide_forces_jastrow_single_een(qmckl_context context)
   }
 
   /* Check if en rescaled distance is provided */
-  rc = qmckl_provide_en_distance_rescaled(context);
+  rc = qmckl_provide_een_rescaled_n(context);
   if(rc != QMCKL_SUCCESS) return rc;
 
   /* Check if en rescaled distance derivatives is provided */
-  rc = qmckl_provide_en_distance_rescaled_gl(context);
+  rc = qmckl_provide_een_rescaled_n_gl(context);
   if(rc != QMCKL_SUCCESS) return rc;
 
   /* Check if en rescaled distance is provided */
-  rc = qmckl_provide_en_rescaled_single(context);
+  rc = qmckl_provide_een_rescaled_single_n(context);
   if(rc != QMCKL_SUCCESS) return rc;
 
   /* Check if en rescaled distance derivatives is provided */
-  rc = qmckl_provide_en_rescaled_single_gl(context);
+  rc = qmckl_provide_een_rescaled_single_n_gl(context);
   if(rc != QMCKL_SUCCESS) return rc;
 
   rc = qmckl_provide_tmp_c(context);
@@ -5454,11 +5457,11 @@ printf("Forces AO value\n");
 rc = qmckl_set_nucleus_coord(context, 'T', &(nucl_coord[0]), 3*nucl_num);
 assert(rc == QMCKL_SUCCESS);
 
-double forces_ao_value[nucl_num][3][point_num][ao_num];
-rc = qmckl_get_forces_ao_value(context, &forces_ao_value[0][0][0][0], 3*nucl_num*ao_num*point_num);
+double * forces_ao_value = (double*) malloc(nucl_num * 3 *point_num * ao_num *sizeof(double));
+rc = qmckl_get_forces_ao_value(context, &forces_ao_value[0], 3*nucl_num*ao_num*point_num);
 assert(rc == QMCKL_SUCCESS);
 
-double finite_difference_force_ao_value[3][nucl_num][point_num][ao_num];
+double * finite_difference_force_ao_value = (double*) malloc(3 *nucl_num * point_num * ao_num *sizeof(double));
 
 nucleus_coord = (double*) malloc(3 * nucl_num * sizeof(double));
 if (nucleus_coord == NULL) {
@@ -5472,7 +5475,7 @@ if (temp_coord == NULL) {
   free(nucleus_coord);
   return QMCKL_ALLOCATION_FAILED;
 }
-double ao_output[point_num][ao_num];
+double * ao_output = (double*) malloc(point_num*ao_num*sizeof(double));
 
 // Copy original coordinates
 for (int i = 0; i < 3 * nucl_num; i++) {
@@ -5494,16 +5497,16 @@ for (int64_t a = 0; a < nucl_num; a++) {
       assert(rc == QMCKL_SUCCESS);
 
       // Call the provided function
-      rc = qmckl_get_ao_basis_ao_value(context,&ao_output[0][0], point_num*ao_num);
+      rc = qmckl_get_ao_basis_ao_value(context,&ao_output[0], point_num*ao_num);
       assert(rc == QMCKL_SUCCESS);
 
       // Accumulate derivative using finite-difference coefficients
       for (int i = 0; i < point_num; i++) {
         for (int j = 0; j < ao_num; j++) {
           if (m == -4) {
-            finite_difference_force_ao_value[k][a][i][j] = 0.0;
+            finite_difference_force_ao_value[k*ao_num*point_num*nucl_num + a*ao_num*point_num + i*ao_num + j] = 0.0;
           }
-          finite_difference_force_ao_value[k][a][i][j] += coef[m + 4] * ao_output[i][j]/delta_x;
+          finite_difference_force_ao_value[k*ao_num*point_num*nucl_num + a*ao_num*point_num + i*ao_num + j] += coef[m + 4] * ao_output[i*ao_num + j]/delta_x;
         }
       }
     }
@@ -5520,6 +5523,7 @@ assert(rc == QMCKL_SUCCESS);
 
 free(nucleus_coord);
 free(temp_coord);
+free(ao_output);
 
 
 for (int j = 0; j < ao_num; j++){
@@ -5527,14 +5531,17 @@ for (int j = 0; j < ao_num; j++){
       for (int a = 0; a < nucl_num; a++) {
         for (int k = 0; k < 3; k++){
             //printf("k=%i a=%i i=%i j=%i\n", k, a, i, j);
-            //printf("%.10f\t", finite_difference_force_ao_value[k][a][i][j]);
-            //printf("%.10f\n", forces_ao_value[a][k][i][j]);
-            assert(fabs(finite_difference_force_ao_value[k][a][i][j] -  forces_ao_value[a][k][i][j]) < 1.e-10);
+            //printf("%.10f\t", finite_difference_force_ao_value[k*ao_num*point_num*nucl_num + a*ao_num*point_num + i*ao_num + j]);
+            //printf("%.10f\n", forces_ao_value[a*3*ao_num*point_num + k*ao_num*point_num + i*ao_num + j]);
+            assert(fabs(finite_difference_force_ao_value[k*ao_num*point_num*nucl_num + a*ao_num*point_num + i*ao_num + j] -  forces_ao_value[a*3*ao_num*point_num + k*ao_num*point_num + i*ao_num + j]) < 1.e-9);
 
         }
     }
   }
 }
+
+free(forces_ao_value);
+free(finite_difference_force_ao_value);
 
 printf("OK\n");
 
@@ -5768,11 +5775,13 @@ printf("Forces MO value\n");
 rc = qmckl_set_nucleus_coord(context, 'T', &(nucl_coord[0]), 3*nucl_num);
 assert(rc == QMCKL_SUCCESS);
 
-double forces_mo_value[nucl_num][3][point_num][mo_num];
-rc = qmckl_get_forces_mo_value(context, &forces_mo_value[0][0][0][0], 3*nucl_num*mo_num*point_num);
+double * forces_mo_value = (double*) malloc(nucl_num * point_num* 3 * mo_num *sizeof(double));
+//double forces_mo_value[nucl_num][3][point_num][mo_num];
+rc = qmckl_get_forces_mo_value(context, &forces_mo_value[0], 3*nucl_num*mo_num*point_num);
 assert(rc == QMCKL_SUCCESS);
 
-double finite_difference_force_mo_value[3][nucl_num][point_num][mo_num];
+//double finite_difference_force_mo_value[3][nucl_num][point_num][mo_num];
+double * finite_difference_force_mo_value = (double*) malloc(nucl_num* 3 * point_num * mo_num * sizeof(double));
 
 nucleus_coord = (double*) malloc(3 * nucl_num * sizeof(double));
 if (nucleus_coord == NULL) {
@@ -5823,9 +5832,9 @@ for (int64_t a = 0; a < nucl_num; a++) {
       for (int i = 0; i < point_num; i++) {
         for (int j = 0; j < mo_num; j++) {
           if (m == -4) {
-            finite_difference_force_mo_value[k][a][i][j] = 0.0;
+            finite_difference_force_mo_value[k*mo_num*point_num*nucl_num + a*mo_num*point_num + i*mo_num + j]= 0.0;
           }
-          finite_difference_force_mo_value[k][a][i][j] += coef[m + 4] * mo_output[i*mo_num+ j]/delta_x;
+          finite_difference_force_mo_value[k*mo_num*point_num*nucl_num + a*mo_num*point_num + i*mo_num + j] += coef[m + 4] * mo_output[i*mo_num+ j]/delta_x;
         }
       }
     }
@@ -5850,13 +5859,16 @@ for (int j = 0; j < mo_num; j++){
     for (int a = 0; a < nucl_num; a++) {
       for (int k = 0; k < 3; k++){
         //printf("k=%i a=%i i=%i j=%i\n", k, a, i, j);
-        //printf("%.10f\t", finite_difference_force_mo_value[k][a][i][j]);
-        //printf("%.10f\n", forces_mo_value[a][k][i][j]);
-        assert(fabs(finite_difference_force_mo_value[k][a][i][j] -  forces_mo_value[a][k][i][j]) < 1.e-9);
+        //printf("%.10f\t", finite_difference_force_mo_value[k*mo_num*point_num*nucl_num + a*mo_num*point_num + i*mo_num + j]);
+        //printf("%.10f\n", forces_mo_value[a*3*mo_num*point_num + k*mo_num*point_num + i*mo_num + j]);
+        assert(fabs(finite_difference_force_mo_value[k*mo_num*point_num*nucl_num + a*mo_num*point_num + i*mo_num + j] -  forces_mo_value[a*3*mo_num*point_num + k*mo_num*point_num + i*mo_num + j]) < 1.e-9);
       }
     }
   }
 }
+
+free(forces_mo_value);
+free(finite_difference_force_mo_value);
 
 printf("OK\n");
 
