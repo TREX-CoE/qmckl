@@ -553,7 +553,7 @@ qmckl_get_single_electron_ee_distance(qmckl_context context,
                            "distance is a NULL pointer");
   }
 
-  size_t sze = ctx->electron.num * ctx->electron.walker.num;
+  int64_t sze = ctx->electron.num * ctx->electron.walker.num;
   if (size_max < sze) {
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_3,
@@ -821,7 +821,7 @@ qmckl_get_single_electron_en_distance(qmckl_context context,
                            "distance is a NULL pointer");
   }
 
-  size_t sze = ctx->nucleus.num * ctx->electron.walker.num;
+  int64_t sze = ctx->nucleus.num * ctx->electron.walker.num;
   if (size_max < sze) {
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_3,
@@ -2848,8 +2848,8 @@ qmckl_exit_code qmckl_provide_een_rescaled_single_e_gl(qmckl_context context)
      | ~elec_num~                 | ~int64_t~                                   | in     | Number of electrons                                    |
      | ~cord_num~                 | ~int64_t~                                   | in     | Order of polynomials                                   |
      | ~rescale_factor_ee~        | ~double~                                    | in     | Factor to rescale ee distances                         |
-     | ~coord~                    | ~double[3]~                                 | in     | Single electron coordinates                            |
-     | ~coord_ee~                 | ~double[walk_num][3][elec_num]~             | in     | Electron coordinates                                   |
+     | ~coord~                    | ~double[walk_num][3]~                                 | in     | Single electron coordinates                            |
+     | ~coord_ee~                 | ~double[3][walk_num][elec_num]~             | in     | Electron coordinates                                   |
      | ~single_ee_distance~       | ~double[walk_num][elec_num]~                | in     | Electron-electron single distances                     |
      | ~een_rescaled_single_e~    | ~double[walk_num][0:cord_num][elec_num]~    | in     | Electron-electron rescaled single distances            |
      | ~een_rescaled_single_e_gl~ | ~double[walk_num][0:cord_num][elec_num][4]~ | out    | Electron-electron rescaled single distances derivative |
@@ -2870,7 +2870,7 @@ integer function qmckl_compute_een_rescaled_single_e_gl_doc( &
   integer(c_int64_t)    , intent(in), value :: cord_num
   real(c_double)        , intent(in), value :: rescale_factor_ee
   real(c_double)        , intent(in)        :: coord(3,walk_num)
-  real(c_double)        , intent(in)        :: coord_ee(elec_num,3,walk_num)
+  real(c_double)        , intent(in)        :: coord_ee(elec_num,walk_num,3)
   real(c_double)        , intent(in)        :: single_ee_distance(elec_num,walk_num)
   real(c_double)        , intent(in)        :: een_rescaled_single_e(elec_num,0:cord_num,walk_num)
   real(c_double)        , intent(out)       :: een_rescaled_single_e_gl(4,elec_num,0:cord_num,walk_num)
@@ -2912,12 +2912,16 @@ integer function qmckl_compute_een_rescaled_single_e_gl_doc( &
 
   do nw = 1, walk_num
      do i = 1, elec_num
+        if (i == num) cycle
         rij_inv = 1.0d0 / single_ee_distance(i, nw)
         do ii = 1, 3
-           elec_dist_gl(ii, i) = (coord(ii,nw) - coord_ee(i, ii, nw)) * rij_inv
+           elec_dist_gl(ii, i) = (coord(ii, nw) - coord_ee(i, nw, ii)) * rij_inv
         end do
         elec_dist_gl(4, i) = 2.0d0 * rij_inv
      end do
+
+          !  print *, single_ee_distance(2, 1), elec_dist_gl(1,2)
+          ! stop
 
      elec_dist_gl(:, num) = 0.0d0
 
@@ -3032,6 +3036,13 @@ for (int elec = 0; elec < elec_num; elec++){
   coords[1][elec][0] = new_coords[3];
   coords[1][elec][1] = new_coords[4];
   coords[1][elec][2] = new_coords[5];
+
+  //coords[0][0][elec] = new_coords[0];
+  //coords[1][0][elec] = new_coords[1];
+  //coords[2][0][elec] = new_coords[2];
+  //coords[0][1][elec] = new_coords[3];
+  //coords[1][1][elec] = new_coords[4];
+  //coords[2][1][elec] = new_coords[5];
 
 	rc = qmckl_set_electron_coord(context, 'N', walk_num, &coords[0][0][0], walk_num*elec_num*3);
   assert (rc == QMCKL_SUCCESS);
@@ -4934,7 +4945,7 @@ qmckl_exit_code qmckl_get_ee_rescaled_single_gl(qmckl_context context,
                            "Array is NULL");
   }
 
-  size_t sze = 4 * ctx->electron.num  * ctx->electron.walker.num;
+  int64_t sze = 4 * ctx->electron.num  * ctx->electron.walker.num;
   if (size_max < sze) {
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_3,
@@ -5037,7 +5048,7 @@ qmckl_exit_code qmckl_provide_ee_rescaled_single_gl(qmckl_context context)
      | ~walk_num~              | ~int64_t~                       | in     | Number of walkers                                      |
      | ~single_ee_distance~    | ~double[elec_num][walk_num]~    | in     | Single electron-electron distances                     |
      | ~elec_coord~            | ~double[3][walk_num][elec_num]~ | in     | Electron coordinates                                   |
-     | ~coord~                 | ~double[3]~                     | in     | Single electron coordinates                            |
+     | ~coord~                 | ~double[walk_num][3]~                     | in     | Single electron coordinates                            |
      | ~ee_rescaled_single_gl~ | ~double[walk_num][elec_num][4]~ | out    | Electron-electron rescaled single distance derivatives |
      |-------------------------+---------------------------------+--------+--------------------------------------------------------|
 
@@ -5055,7 +5066,7 @@ function qmckl_compute_ee_rescaled_single_gl_doc(context, num_in,  &
   integer (c_int64_t) , intent(in)  , value :: walk_num
   real    (c_double ) , intent(in)          :: single_ee_distance(elec_num,walk_num)
   real    (c_double ) , intent(in)          :: elec_coord(elec_num,walk_num,3)
-  real    (c_double ) , intent(in)          :: coord(3)
+  real    (c_double ) , intent(in)          :: coord(3,walk_num)
   real    (c_double ) , intent(out)         :: ee_rescaled_single_gl(4,elec_num,walk_num)
   integer(qmckl_exit_code)                  :: info
 
@@ -5089,7 +5100,7 @@ function qmckl_compute_ee_rescaled_single_gl_doc(context, num_in,  &
      do i = 1, elec_num
         rij_inv = 1.0d0 / single_ee_distance(i, nw)
         do ii = 1, 3
-          elel_dist_gl(ii, i) = (elec_coord(i,nw, ii) - coord(ii)) * rij_inv
+          elel_dist_gl(ii, i) = (elec_coord(i,nw, ii) - coord(ii,nw)) * rij_inv
         end do
         elel_dist_gl(4, i) = 2.0d0 * rij_inv
      end do
@@ -6322,6 +6333,11 @@ for (int elec = 0; elec < elec_num; elec++){
   assert (rc == QMCKL_SUCCESS);
 
   for (int nw = 0; nw < walk_num; nw++) {
+    //printf("electron %d walk %d \n", elec, nw);
+    //printf("jastrow_en_new %f\n", jastrow_en_new[nw]);
+    //printf("jastrow_en_old %f\n", jastrow_en_old[nw]);
+    //printf("delta_en %f\n", delta_en[nw]);
+    //printf("diff %f\n", jastrow_en_new[nw] - jastrow_en_old[nw] - delta_en[nw]);
     assert(fabs((jastrow_en_new[nw] - jastrow_en_old[nw]) - delta_en[nw]) < 1.e-12);
   }
 }
@@ -6458,7 +6474,7 @@ qmckl_exit_code qmckl_provide_en_rescaled_single_gl(qmckl_context context)
      | ~rescale_factor_en~     | ~double[nucl_num]~              | in     | The factors for rescaled distances                    |
      | ~walk_num~              | ~int64_t~                       | in     | Number of walkers                                     |
      | ~single_en_distance~    | ~double[walk_num][nucl_num]~    | in     | Single electorn distances                             |
-     | ~coord~                 | ~double[3]~                     | in     | Single electron coordinates                           |
+     | ~coord~                 | ~double[walk_num][3]~                     | in     | Single electron coordinates                           |
      | ~nucl_coord~            | ~double[3][nucl_num]~           | in     | Nucleus coordinates                                   |
      | ~en_rescaled_single_gl~ | ~double[walk_num][nucl_num][4]~ | out    | Electron-nucleus rescaled single distance derivatives |
      |-------------------------+---------------------------------+--------+-------------------------------------------------------|
@@ -6477,7 +6493,7 @@ integer function qmckl_compute_en_rescaled_single_gl_doc_f(context, nucl_num, &
   double precision      , intent(in)  :: rescale_factor_en(nucl_num)
   integer*8             , intent(in)  :: walk_num
   double precision      , intent(in)  :: single_en_distance(nucl_num, walk_num)
-  double precision      , intent(in)  :: coord(3)
+  double precision      , intent(in)  :: coord(3,walk_num)
   double precision      , intent(in)  :: nucl_coord(nucl_num,3)
   double precision      , intent(out) :: en_rescaled_single_gl(4,nucl_num,walk_num)
 
@@ -6510,7 +6526,7 @@ integer function qmckl_compute_en_rescaled_single_gl_doc_f(context, nucl_num, &
      do a = 1, nucl_num
         ria_inv = 1.0d0 / single_en_distance(a, nw)
         do ii = 1, 3
-          elnuc_dist_gl(ii, a) = (coord(ii) - nucl_coord(a, ii)) * ria_inv
+          elnuc_dist_gl(ii, a) = (coord(ii,nw) - nucl_coord(a, ii)) * ria_inv
         end do
         elnuc_dist_gl(4, a) = 2.0d0 * ria_inv
      end do
@@ -6611,7 +6627,7 @@ qmckl_exit_code qmckl_compute_en_rescaled_single_gl (
        real    (c_double ) , intent(in)          :: rescale_factor_en(nucl_num)
        integer (c_int64_t) , intent(in)  , value :: walk_num
        real    (c_double ) , intent(in)          :: single_en_distance(nucl_num,walk_num)
-       real    (c_double ) , intent(in)          :: coord(3)
+       real    (c_double ) , intent(in)          :: coord(3,walk_num)
        real    (c_double ) , intent(in)          :: nucl_coord(nucl_num,3)
        real    (c_double ) , intent(out)         :: en_rescaled_single_gl(4,nucl_num,walk_num)
 
@@ -7133,7 +7149,8 @@ qmckl_get_jastrow_champ_single_accept_alt(qmckl_context context)
 
   double metric[4] = {-1.0, -1.0, -1.0, 1.0};
 
-  int old_date, do_update;
+  uint64_t old_date;
+  int do_update;
 
   int shift1, shift2, shift3, shift4, shift5, shift6, shift7;
 
@@ -7736,7 +7753,7 @@ qmckl_get_jastrow_champ_single_accept(qmckl_context context)
  
   for (int nw = 0; nw < ctx->electron.walker.num; nw++) {
     for (int k = 0; k < 3; k++) {
-      ctx->point.coord.data[nw*3*ctx->electron.num + k*ctx->electron.num + ctx->single_point.num] = ctx->single_point.coord.data[nw*3 + k];
+      ctx->point.coord.data[k*ctx->electron.walker.num*ctx->electron.num + nw*ctx->electron.num + ctx->single_point.num] = ctx->single_point.coord.data[nw*3 + k];
     }
   }
 
