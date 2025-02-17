@@ -7279,7 +7279,7 @@ integer(qmckl_exit_code) function qmckl_compute_forces_jastrow_quad_delta_p_doc(
   real(c_double)        , intent(in)  :: een_rescaled_quad_n_gl(3, nucl_num, 0:cord_num, num)
   real(c_double)        , intent(out)  :: forces_delta_p(elec_num,3,nucl_num,0:cord_num, 0:cord_num-1,  num)
 
-  double precision        :: delta_n_gl, accu
+  double precision        :: accu, tmp1, tmp2
   double precision        :: delta_e(elec_num)
 
 
@@ -7303,34 +7303,33 @@ integer(qmckl_exit_code) function qmckl_compute_forces_jastrow_quad_delta_p_doc(
      return
   endif
 
+do nw=1, num
+  idx = indices(nw)+1
+  do m=0, cord_num-1
 
-  do nw=1, num
-    idx = indices(nw)+1
-    do m=1, cord_num-1
+    do j = 1, elec_num
+      delta_e(j) = -een_rescaled_quad_e(j,m,nw) + een_rescaled_e(j,idx,m,1)
+    end do
 
-      do j = 1, elec_num
-        delta_e(j) = een_rescaled_quad_e(j,m,nw) - een_rescaled_e(j,idx,m,1)
-      end do
+    do l=1, cord_num
+      do a = 1, nucl_num
+        do k = 1, 3
+          tmp1 = een_rescaled_n_gl(idx, k, a, l, 1)
+          tmp2 = een_rescaled_quad_n_gl(k,a,l,nw)
+          accu = 0.d0
+          do j = 1, elec_num
+            forces_delta_p(j,k,a,l,m,nw) =  een_rescaled_e(j,idx,m,1) * tmp1 - &
+              een_rescaled_quad_e(j,m,nw)  * tmp2
 
-      do l=0, cord_num
-        do a = 1, nucl_num
-          do k = 1, 3
-            delta_n_gl = een_rescaled_quad_n_gl(k,a,l,nw) - een_rescaled_n_gl(idx, k, a, l, 1)
-            tmp = -een_rescaled_quad_n_gl(k,a,l,nw)
-            do j = 1, elec_num
-              forces_delta_p(j,k,a,l,m,nw) =  delta_e(j) * tmp + &
-                    een_rescaled_e(idx,j,m,1) * delta_n_gl
-            end do
-            accu = 0.0d0
-            do j = 1, elec_num
-              accu = accu - delta_e(j) * een_rescaled_n_gl(j,k,a,l,1)
-            end do
-            forces_delta_p(idx,k,a,l,m,nw) = forces_delta_p(idx,k,a,l,m,nw) + accu
+            accu = accu + delta_e(j) * een_rescaled_n_gl(j,k,a,l,1)
           end do
+          forces_delta_p(idx,k,a,l,m,nw) = forces_delta_p(idx,k,a,l,m,nw) + accu
         end do
       end do
     end do
   end do
+end do
+
 
 end function qmckl_compute_forces_jastrow_quad_delta_p_doc
      #+end_src
@@ -7645,7 +7644,7 @@ function qmckl_compute_forces_jastrow_quad_een_doc( &
   real    (c_double ) , intent(out)         :: forces_jastrow_quad_een(3,nucl_num,num)
   integer(qmckl_exit_code)                   :: info
 
-  double precision        :: een_rescaled_delta_n(nucl_num, 0:cord_num), een_rescaled_delta_n_gl(nucl_num, 0:cord_num)
+  double precision        :: een_rescaled_delta_n(nucl_num, 0:cord_num), een_rescaled_delta_n_gl(3,nucl_num, 0:cord_num)
 
   integer*8 :: i, a, j, l, k, p, m, n, nw, kk, idx
   double precision :: accu, accu2, cn
@@ -7664,33 +7663,36 @@ function qmckl_compute_forces_jastrow_quad_een_doc( &
 
   if (cord_num == 0) return
 
-  do nw = 1, num
-     idx = indices(nw)+1
-     do kk = 1, 3
-      een_rescaled_delta_n(:,:) = een_rescaled_quad_n(:,:,nw) - een_rescaled_n(idx,:,:,1)
-      een_rescaled_delta_n_gl(:,:) = een_rescaled_quad_n_gl(kk,:,:,nw) - een_rescaled_n_gl(idx,kk,:,:,1)
-      do n = 1, dim_c_vector
-          l = lkpm_combined_index(n, 1)
-          k = lkpm_combined_index(n, 2)
-          p = lkpm_combined_index(n, 3)
-          m = lkpm_combined_index(n, 4)
+  do nw =1, num
+    idx = indices(nw)+1
+    een_rescaled_delta_n(:,:) = een_rescaled_quad_n(:,:,nw) - een_rescaled_n(idx,:,:,1)
+    do kk = 1,3
+      een_rescaled_delta_n_gl(kk,:,:) = een_rescaled_quad_n_gl(kk,:,:,nw) - een_rescaled_n_gl(idx,kk,:,:,1)
+    end do
+    do n = 1, dim_c_vector
+        l = lkpm_combined_index(n, 1)
+        k = lkpm_combined_index(n, 2)
+        p = lkpm_combined_index(n, 3)
+        m = lkpm_combined_index(n, 4)
 
-          do a = 1, nucl_num
-            cn = c_vector_full(a, n)
-            if(cn == 0.d0) cycle
-
+        do a = 1, nucl_num
+          cn = c_vector_full(a, n)
+          if(cn == 0.d0) cycle
+          do kk = 1, 3
             accu = 0.0d0
             do j = 1, elec_num
                 accu = accu - een_rescaled_n_gl(j,kk,a,m,1) * delta_p(j,a,m+l,k,nw) + &
                     een_rescaled_n(j,a,m,1) * forces_delta_p(j,kk,a,m+l,k,nw)
             end do
-            accu = accu - een_rescaled_delta_n_gl(a,m) * (tmp_c(idx,a,m+l,k,1) + delta_p(idx,a,m+l,k,nw)) + &
+            accu = accu - een_rescaled_delta_n_gl(kk,a,m) * (tmp_c(idx,a,m+l,k,1) + delta_p(idx,a,m+l,k,nw)) + &
                 een_rescaled_delta_n(a,m) * (forces_tmp_c(idx,kk,a,m+l,k,1) + forces_delta_p(idx,kk,a,m+l,k,nw))
             forces_jastrow_quad_een(kk,a,nw) = forces_jastrow_quad_een(kk,a,nw) + accu * cn
+
           end do
-      end do
-     end do
+        end do
+    end do
   end do
+
 
 
 end function qmckl_compute_forces_jastrow_quad_een_doc
