@@ -4482,6 +4482,93 @@ integer(qmckl_exit_code) function qmckl_compute_forces_jastrow_delta_p_doc( &
 end function qmckl_compute_forces_jastrow_delta_p_doc
      #+end_src
 
+     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+integer(qmckl_exit_code) function qmckl_compute_forces_jastrow_delta_p_hpc( &
+     context, num_in, walk_num, elec_num, nucl_num, cord_num,   &
+     een_rescaled_n, een_rescaled_e, een_rescaled_single_n, een_rescaled_single_e, &
+     een_rescaled_n_gl, een_rescaled_single_n_gl, forces_delta_p) &
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
+  use qmckl
+  implicit none
+  integer(qmckl_context), intent(in)  :: context
+  integer(c_int64_t)    , intent(in), value  :: num_in, walk_num, elec_num, cord_num, nucl_num
+  real(c_double)        , intent(in)  :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_e(elec_num, elec_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_single_n(nucl_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_single_e(elec_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_n_gl(elec_num, 4, nucl_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_single_n_gl(4, nucl_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(out)  :: forces_delta_p(elec_num,3,nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
+
+  double precision        :: tmp1, tmp2
+  double precision        :: delta_e(elec_num)
+
+  integer*8 :: i, a, j, l, k, p, m, n, nw, num
+  double precision :: tmp, accu
+  integer :: elec_num4, size4
+
+  double precision, external :: ddot
+  double precision, allocatable :: een_rescaled_n_g(:,:,:,:)
+
+  num = num_in + 1
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) info = QMCKL_INVALID_CONTEXT
+  if (walk_num <= 0)                 info = QMCKL_INVALID_ARG_3
+  if (elec_num <= 0)                 info = QMCKL_INVALID_ARG_4
+  if (nucl_num <= 0)                 info = QMCKL_INVALID_ARG_5
+  if (cord_num <  0)                 info = QMCKL_INVALID_ARG_6
+  if (info /= QMCKL_SUCCESS)         return
+
+
+  if (cord_num == 0) then
+     forces_delta_p = 0.d0
+     return
+  endif
+
+
+  elec_num4 = elec_num
+  size4 = 3*nucl_num*cord_num
+
+  allocate(een_rescaled_n_g(elec_num, 3, nucl_num, cord_num))
+
+  do nw=1, walk_num
+     do l=1,cord_num
+        do a=1,nucl_num
+           een_rescaled_n_g(:,1:3,a,l) = een_rescaled_n_gl(:,1:3,a,l,nw)
+        enddo
+     enddo
+
+     do m=0, cord_num-1
+
+        do l=1, cord_num
+           do a = 1, nucl_num
+              do k = 1, 3
+                 tmp1 = een_rescaled_n_gl(num, k, a, l, nw)
+                 tmp2 = een_rescaled_single_n_gl(k,a,l,nw)
+                 do j = 1, elec_num
+                    forces_delta_p(j,k,a,l,m,nw) =  een_rescaled_e(j,num,m,nw) * tmp1 - &
+                         een_rescaled_single_e(j,m,nw)  * tmp2
+
+                 end do
+              end do
+           end do
+        end do
+
+        delta_e(:) = een_rescaled_e(:,num,m,nw) - een_rescaled_single_e(:,m,nw)
+
+        call dgemv('T', elec_num4, size4, 1.d0, &
+        een_rescaled_n_g, elec_num4, delta_e, 1, 1.d0, &
+        forces_delta_p(num,1,1,1,m,nw), elec_num4)
+
+     end do
+  end do
+
+end function qmckl_compute_forces_jastrow_delta_p_hpc
+     #+end_src
+
  #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
 qmckl_exit_code
 qmckl_compute_forces_jastrow_delta_p_doc (const qmckl_context context,
@@ -4499,7 +4586,21 @@ qmckl_compute_forces_jastrow_delta_p_doc (const qmckl_context context,
                               double* const forces_delta_p );
 
 qmckl_exit_code
+qmckl_compute_forces_jastrow_delta_p_hpc (const qmckl_context context,
+                              const int64_t num,
+                              const int64_t walk_num,
+                              const int64_t elec_num,
+                              const int64_t nucl_num,
+                              const int64_t cord_num,
+                              const double* een_rescaled_n,
+                              const double* een_rescaled_e,
+                              const double* een_rescaled_single_n,
+                              const double* een_rescaled_single_e,
+                              const double* een_rescaled_n_gl,
+                              const double* een_rescaled_single_n_gl,
+                              double* const forces_delta_p );
 
+qmckl_exit_code
 qmckl_compute_forces_jastrow_delta_p (const qmckl_context context,
                           const int64_t num,
                           const int64_t walk_num,
@@ -4532,7 +4633,7 @@ qmckl_compute_forces_jastrow_delta_p (const qmckl_context context,
                           double* const forces_delta_p )
 {
 #ifdef HAVE_HPC
-  return qmckl_compute_forces_jastrow_delta_p_doc
+  return qmckl_compute_forces_jastrow_delta_p_hpc
 #else
   return qmckl_compute_forces_jastrow_delta_p_doc
 #endif
@@ -5001,9 +5102,10 @@ function qmckl_compute_forces_jastrow_single_een_hpc( &
   integer*8 :: i, a, j, l, k, p, m, n, nw, num, kk
   double precision :: accu2, cn
   double precision, allocatable :: accu(:,:), tmp(:)
-  integer*8                           :: LDA, LDB, LDC
   double precision, external :: ddot
+  integer :: elec_num4
 
+  
   num = num_in + 1
 
   info = QMCKL_SUCCESS
@@ -5022,6 +5124,7 @@ function qmckl_compute_forces_jastrow_single_een_hpc( &
   allocate(een_rescaled_delta_n(nucl_num, 0:cord_num), een_rescaled_delta_n_gl(3,nucl_num, 0:cord_num), &
            accu(3,nucl_num), tmp(nucl_num))
 
+  elec_num4 = elec_num
   do nw =1, walk_num
     een_rescaled_delta_n(:,:) = een_rescaled_single_n(:,:,nw) - een_rescaled_n(num,:,:,nw)
     een_rescaled_delta_n_gl(1:3,:,:) = een_rescaled_single_n_gl(1:3,:,:,nw) - een_rescaled_n_gl(num,1:3,:,:,nw)
@@ -5036,9 +5139,9 @@ function qmckl_compute_forces_jastrow_single_een_hpc( &
           accu(1:3,a) = 0.0d0
           if(cn == 0.d0) cycle
           tmp(a) = tmp_c(num,a,m+l,k,nw) + delta_p(num,a,m+l,k,nw)
-          call dgemv('T', elec_num, 3, -1.d0, een_rescaled_n_gl(1,1,a,m,nw), elec_num, &
+          call dgemv('T', elec_num4, 3, -1.d0, een_rescaled_n_gl(1,1,a,m,nw), elec_num4, &
                      delta_p(1,a,m+l,k,nw), 1, 0.d0, accu(1,a), 1)
-          call dgemv('T', elec_num, 3, 1.d0, forces_delta_p(1,1,a,m+l,k,nw), elec_num, &
+          call dgemv('T', elec_num4, 3, 1.d0, forces_delta_p(1,1,a,m+l,k,nw), elec_num4, &
                      een_rescaled_n(1,a,m,nw), 1, 1.d0, accu(1,a), 1)
 
         enddo
