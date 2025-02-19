@@ -2118,7 +2118,7 @@ qmckl_exit_code qmckl_provide_forces_dtmp_c(qmckl_context context)
      | ~forces_dtmp_c~        | ~double[walk_num][0:cord_num-1][0:cord_num][4][nucl_num][4][elec_num]~ | out     | vector of non-zero coefficients      |
 
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer(qmckl_exit_code) function qmckl_compute_forces_dtmp_c( &
+integer(qmckl_exit_code) function qmckl_compute_forces_dtmp_c_doc( &
      context, walk_num, elec_num, nucl_num, cord_num,&
      een_rescaled_e_gl, een_rescaled_n_gl, forces_dtmp_c) &
      result(info) bind(C)
@@ -2164,7 +2164,7 @@ integer(qmckl_exit_code) function qmckl_compute_forces_dtmp_c( &
           do a = 1, nucl_num
             do kk = 1, 4
               do i = 1, elec_num
-                forces_dtmp_c(i,kk,a,k,m,l,nw) = 0.0
+                forces_dtmp_c(i,kk,a,k,m,l,nw) = 0.d0
                 do j = 1, elec_num
                   forces_dtmp_c(i,kk,a,k,m,l,nw) = forces_dtmp_c(i,kk,a,k,m,l,nw) - &
                         een_rescaled_e_gl(i,kk,j,l,nw) * een_rescaled_n_gl(j,k,a,m,nw)
@@ -2177,12 +2177,81 @@ integer(qmckl_exit_code) function qmckl_compute_forces_dtmp_c( &
     end do
   end do
 
-end function qmckl_compute_forces_dtmp_c
+end function qmckl_compute_forces_dtmp_c_doc
      #+end_src
 
+     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+integer(qmckl_exit_code) function qmckl_compute_forces_dtmp_c_hpc( &
+     context, walk_num, elec_num, nucl_num, cord_num,&
+     een_rescaled_e_gl, een_rescaled_n_gl, forces_dtmp_c) &
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
+  use qmckl
+  implicit none
+  integer(qmckl_context), intent(in)          :: context
+  integer (c_int64_t)   , intent(in), value   :: walk_num, elec_num, cord_num, nucl_num
+  real    (c_double )   , intent(in)          :: een_rescaled_e_gl(elec_num, 4, elec_num, 0:cord_num, walk_num)
+  real    (c_double )   , intent(in)          :: een_rescaled_n_gl(elec_num, 4, nucl_num, 0:cord_num, walk_num)
+  real    (c_double )   , intent(out)         :: forces_dtmp_c(elec_num, 4, nucl_num,4,0:cord_num, 0:cord_num-1, walk_num)
+
+  integer*8 :: nw, i, k
+  integer*8 :: l, m, a,j, kk
+  double precision, allocatable :: tmp(:,:,:,:)
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) info = QMCKL_INVALID_CONTEXT
+  if (walk_num <= 0)                 info = QMCKL_INVALID_ARG_2
+  if (elec_num <= 0)                 info = QMCKL_INVALID_ARG_3
+  if (nucl_num <= 0)                 info = QMCKL_INVALID_ARG_4
+  if (cord_num <  0)                 info = QMCKL_INVALID_ARG_5
+  if (info /= QMCKL_SUCCESS)         return
+
+  allocate(tmp(elec_num, 4, 4, nucl_num))
+
+  do nw = 1, walk_num
+    do l = 0, cord_num-1
+      do m = 1, cord_num
+         call dgemm('N','N', elec_num*4, 4*nucl_num, elec_num, -1.d0, &
+              een_rescaled_e_gl(1,1,1,l,nw), elec_num*4, &
+              een_rescaled_n_gl(1,1,1,m,nw), elec_num, 0.d0, &
+              tmp, elec_num*4)
+        do k = 1, 4
+          do a = 1, nucl_num
+             forces_dtmp_c(:,:,a,k,m,l,nw) = tmp(:,:,k,a)
+          end do
+        end do
+      end do
+    end do
+  end do
+
+  deallocate(tmp)
+
+end function qmckl_compute_forces_dtmp_c_hpc
+     #+end_src
 
      #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
-    qmckl_exit_code qmckl_compute_forces_dtmp_c (
+qmckl_exit_code qmckl_compute_forces_dtmp_c_doc (
+      const qmckl_context context,
+      const int64_t walk_num,
+      const int64_t elec_num,
+      const int64_t nucl_num,
+      const int64_t cord_num,
+      const double* een_rescaled_e_gl,
+      const double* een_rescaled_n_gl,
+      double* const forces_dtmp_c );
+
+qmckl_exit_code qmckl_compute_forces_dtmp_c_hpc (
+      const qmckl_context context,
+      const int64_t walk_num,
+      const int64_t elec_num,
+      const int64_t nucl_num,
+      const int64_t cord_num,
+      const double* een_rescaled_e_gl,
+      const double* een_rescaled_n_gl,
+      double* const forces_dtmp_c );
+
+qmckl_exit_code qmckl_compute_forces_dtmp_c (
       const qmckl_context context,
       const int64_t walk_num,
       const int64_t elec_num,
@@ -2192,6 +2261,27 @@ end function qmckl_compute_forces_dtmp_c
       const double* een_rescaled_n_gl,
       double* const forces_dtmp_c );
      #+end_src
+
+    #+begin_src c :tangle (eval c) :comments org :exports none
+qmckl_exit_code qmckl_compute_forces_dtmp_c (
+      const qmckl_context context,
+      const int64_t walk_num,
+      const int64_t elec_num,
+      const int64_t nucl_num,
+      const int64_t cord_num,
+      const double* een_rescaled_e_gl,
+      const double* een_rescaled_n_gl,
+      double* const forces_dtmp_c )
+{
+#ifdef HAVE_HPC
+  return qmckl_compute_forces_dtmp_c_hpc
+#else
+  return qmckl_compute_forces_dtmp_c_doc
+#endif
+    (context, walk_num, elec_num, nucl_num, cord_num, een_rescaled_e_gl,
+     een_rescaled_n_gl, forces_dtmp_c );
+}
+  #+end_src
 
 ** Test
 
