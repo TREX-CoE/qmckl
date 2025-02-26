@@ -4482,91 +4482,83 @@ integer(qmckl_exit_code) function qmckl_compute_forces_jastrow_delta_p_doc( &
 end function qmckl_compute_forces_jastrow_delta_p_doc
      #+end_src
 
-     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer(qmckl_exit_code) function qmckl_compute_forces_jastrow_delta_p_hpc( &
-     context, num_in, walk_num, elec_num, nucl_num, cord_num,   &
-     een_rescaled_n, een_rescaled_e, een_rescaled_single_n, een_rescaled_single_e, &
-     een_rescaled_n_gl, een_rescaled_single_n_gl, forces_delta_p) &
-     result(info) bind(C)
-  use, intrinsic :: iso_c_binding
-  use qmckl
-  implicit none
-  integer(qmckl_context), intent(in)  :: context
-  integer(c_int64_t)    , intent(in), value  :: num_in, walk_num, elec_num, cord_num, nucl_num
-  real(c_double)        , intent(in)  :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
-  real(c_double)        , intent(in)  :: een_rescaled_e(elec_num, elec_num, 0:cord_num, walk_num)
-  real(c_double)        , intent(in)  :: een_rescaled_single_n(nucl_num, 0:cord_num, walk_num)
-  real(c_double)        , intent(in)  :: een_rescaled_single_e(elec_num, 0:cord_num, walk_num)
-  real(c_double)        , intent(in)  :: een_rescaled_n_gl(elec_num, 4, nucl_num, 0:cord_num, walk_num)
-  real(c_double)        , intent(in)  :: een_rescaled_single_n_gl(4, nucl_num, 0:cord_num, walk_num)
-  real(c_double)        , intent(out)  :: forces_delta_p(elec_num,3,nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
-
-  double precision        :: tmp1, tmp2
-  double precision        :: delta_e(elec_num)
-
-  integer*8 :: i, a, j, l, k, p, m, n, nw, num
-  double precision :: tmp, accu
-  integer :: elec_num4, size4
-
-  double precision, external :: ddot
-  double precision, allocatable :: een_rescaled_n_g(:,:,:,:)
-
-  num = num_in + 1
-
-  info = QMCKL_SUCCESS
-
-  if (context == QMCKL_NULL_CONTEXT) info = QMCKL_INVALID_CONTEXT
-  if (walk_num <= 0)                 info = QMCKL_INVALID_ARG_3
-  if (elec_num <= 0)                 info = QMCKL_INVALID_ARG_4
-  if (nucl_num <= 0)                 info = QMCKL_INVALID_ARG_5
-  if (cord_num <  0)                 info = QMCKL_INVALID_ARG_6
-  if (info /= QMCKL_SUCCESS)         return
+     #+begin_src c :comments org :tangle (eval c) :noweb yes
+qmckl_exit_code
+qmckl_compute_forces_jastrow_delta_p_hpc (const qmckl_context context,
+                                          const int64_t num,
+                                          const int64_t walk_num,
+                                          const int64_t elec_num,
+                                          const int64_t nucl_num,
+                                          const int64_t cord_num,
+                                          const double* een_rescaled_n,
+                                          const double* een_rescaled_e,
+                                          const double* een_rescaled_single_n,
+                                          const double* een_rescaled_single_e,
+                                          const double* een_rescaled_n_gl,
+                                          const double* een_rescaled_single_n_gl,
+                                          double* const forces_delta_p )
+{ 
+  if (context == QMCKL_NULL_CONTEXT)    return QMCKL_INVALID_CONTEXT;
+  if (num < 0)                          return QMCKL_INVALID_ARG_2;
+  if (walk_num <= 0)                    return QMCKL_INVALID_ARG_3;
+  if (elec_num <= 0)                    return QMCKL_INVALID_ARG_4;
+  if (nucl_num <= 0)                    return QMCKL_INVALID_ARG_5;
+  if (cord_num <  0)                    return QMCKL_INVALID_ARG_6;
+  if (een_rescaled_n == NULL)           return QMCKL_INVALID_ARG_7;
+  if (een_rescaled_e == NULL)           return QMCKL_INVALID_ARG_8;
+  if (een_rescaled_single_n == NULL)    return QMCKL_INVALID_ARG_9;
+  if (een_rescaled_single_e == NULL)    return QMCKL_INVALID_ARG_10;
+  if (een_rescaled_n_gl == NULL)        return QMCKL_INVALID_ARG_11;
+  if (een_rescaled_single_n_gl == NULL) return QMCKL_INVALID_ARG_12;
 
 
-  if (cord_num == 0) then
-     forces_delta_p = 0.d0
-     return
-  endif
+  if (cord_num == 0) {
+    const size_t dim = elec_num*3*nucl_num*(cord_num+1)*cord_num;
+    #pragma omp parallel for 
+    for (int64_t nw = 0; nw < walk_num; ++nw) {
+      memset(&forces_delta_p[dim*nw],0,dim*sizeof(double));
+    }
+    return QMCKL_SUCCESS;
+  }
+  
+  #pragma omp parallel for 
+  for (int64_t nw = 0; nw < walk_num; ++nw) {
 
+    for (int64_t m = 0; m <= cord_num-1; ++m) {
+      
+      double delta_e[elec_num];
+      const double* een_rescaled_e_ = &een_rescaled_e[elec_num*(num+elec_num*(m+(cord_num+1)*nw))];
+      const double* een_rescaled_single_e_ = &een_rescaled_single_e[elec_num*(m+(cord_num+1)*nw)];
+      for (int64_t j = 0; j < elec_num; ++j) {
+        delta_e[j] = een_rescaled_e_[j] - een_rescaled_single_e[j];
+      }
 
-  elec_num4 = elec_num
-  size4 = 3*nucl_num*cord_num
+      for (int64_t l = 1; l <= cord_num; ++l) {
+        for (int64_t a = 0; a < nucl_num; ++a) {
+          for (int64_t k = 0; k < 3; k++) {
+            const double* een_rescaled_n_gl_ = &een_rescaled_n_gl[elec_num*(k+4*(a+nucl_num*(l+(cord_num+1)*nw)))];
+            const double tmp1 = een_rescaled_n_gl_[num];
+            const double tmp2 = een_rescaled_single_n_gl[k+4*(a+nucl_num*(l+(cord_num+1)*nw))];
 
-  allocate(een_rescaled_n_g(elec_num, 3, nucl_num, cord_num))
+            double* forces_delta_p_ = &forces_delta_p[elec_num*(k+3*(a+nucl_num*(l+(cord_num+1)*(m+cord_num*nw))))];
+            #pragma omp simd
+            for (int64_t j = 0; j < elec_num; ++j) {
+              forces_delta_p_[j] = een_rescaled_e_[j] * tmp1 - een_rescaled_single_e_[j] * tmp2;
+            }
+            double accu = 0.0;
+            #pragma omp simd reduction(+:accu)
+            for (int64_t j = 0; j < elec_num; ++j) {
+              accu += delta_e[j] * een_rescaled_n_gl_[j];
+            }
+            forces_delta_p_[num] += accu;
+          }
+        }
+      }
+    }
+  }
 
-  do nw=1, walk_num
-     do l=1,cord_num
-        do a=1,nucl_num
-           een_rescaled_n_g(:,1:3,a,l) = een_rescaled_n_gl(:,1:3,a,l,nw)
-        enddo
-     enddo
-
-     do m=0, cord_num-1
-
-        do l=1, cord_num
-           do a = 1, nucl_num
-              do k = 1, 3
-                 tmp1 = een_rescaled_n_gl(num, k, a, l, nw)
-                 tmp2 = een_rescaled_single_n_gl(k,a,l,nw)
-                 do j = 1, elec_num
-                    forces_delta_p(j,k,a,l,m,nw) =  een_rescaled_e(j,num,m,nw) * tmp1 - &
-                         een_rescaled_single_e(j,m,nw)  * tmp2
-
-                 end do
-              end do
-           end do
-        end do
-
-        delta_e(:) = een_rescaled_e(:,num,m,nw) - een_rescaled_single_e(:,m,nw)
-
-        call dgemv('T', elec_num4, size4, 1.d0, &
-        een_rescaled_n_g, elec_num4, delta_e, 1, 1.d0, &
-        forces_delta_p(num,1,1,1,m,nw), elec_num4)
-
-     end do
-  end do
-
-end function qmckl_compute_forces_jastrow_delta_p_hpc
+  return QMCKL_SUCCESS;
+}
      #+end_src
 
  #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
