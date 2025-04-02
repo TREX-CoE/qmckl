@@ -46,49 +46,67 @@ AS_IF([test -f ${srcdir}/.maintainer_mode],
         [enable_maintainer_mode="no"]
 )
 
-# Intel Fortran compiler
+# Intel Fortran compilers
 AC_ARG_WITH([ifort],
             [AS_HELP_STRING([--with-ifort],
-                            [Use Intel Fortran compiler])],
+                            [Use Intel ifort Fortran compiler])],
             [with_ifort=$withval],
             [with_ifort=no])
 
 AS_IF([test "x$with_ifort" = "xyes"], [
   FC=ifort
-  FCFLAGS="-march=native -ip -O3 -ftz -finline -g -mkl=sequential" ])
+  FCFLAGS="-march=native -ip -O3 -ftz -finline -g -qmkl=sequential" ]
+  ax_blas_ok="yes"
+  ax_lapack_ok="yes"
+  BLAS_LIBS=""
+  LAPACK_LIBS=""
+  ])
 
-# Intel C compiler
+AC_ARG_WITH([ifx],
+            [AS_HELP_STRING([--with-ifx],
+                            [Use Intel ifx Fortran compiler])],
+            [with_ifx=$withval],
+            [with_ifx=no])
+
+AS_IF([test "x$with_ifx" = "xyes"], [
+  FC=ifx
+  FCFLAGS="-march=native -O3 -ftz -g -qmkl=sequential"
+  ax_blas_ok="yes"
+  ax_lapack_ok="yes"
+  BLAS_LIBS=""
+  LAPACK_LIBS=""
+  ])
+
+
 AC_ARG_WITH([icx],
             [AS_HELP_STRING([--with-icx],
-                            [Use Intel C compiler])],
+                            [Use Intel icx C compiler])],
             [with_icx=$withval],
             [with_icx=no])
 
 AS_IF([test "x$with_icx" = "xyes"], [
   CC=icx
-  CFLAGS="-march=native -O3 -ftz -finline -g -qmkl=sequential" ])
-
-AS_IF([test "x$with_icx.$with_ifort" = "xyes.yes"], [
+  CFLAGS="-march=native -O3 -ftz -finline -g -qmkl=sequential"
   ax_blas_ok="yes"
   ax_lapack_ok="yes"
   BLAS_LIBS=""
-  LAPACK_LIBS=""])
+  LAPACK_LIBS=""
+  ])
 
 AC_ARG_WITH([icc],
             [AS_HELP_STRING([--with-icc],
-                            [Use Intel C compiler])],
+                            [Use Intel icc C compiler])],
             [with_icc=$withval],
             [with_icc=no])
 
 AS_IF([test "x$with_icc" = "xyes"], [
   CC=icc
-  CFLAGS="-march=native -ip -O3 -ftz -finline -g -mkl=sequential" ])
-
-AS_IF([test "x$with_icc.$with_ifort" = "xyes.yes"], [
+  CFLAGS="-march=native -ip -O3 -ftz -finline -g -mkl=sequential"
   ax_blas_ok="yes"
   ax_lapack_ok="yes"
   BLAS_LIBS=""
-  LAPACK_LIBS=""])
+  LAPACK_LIBS=""
+  ])
 
 # Default Automake variables
 F77=$FC
