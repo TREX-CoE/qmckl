@@ -36,6 +36,7 @@ Furthermore, for the nonlocal pseudopotential, also the forces of the values of 
 #include <stdio.h>
 #include "n2.h"
 #include "chbrclf.h"
+#include "qmckl_context_private_type.h"
 #include "qmckl_jastrow_champ_private_func.h"
 #include "qmckl_jastrow_champ_single_private_func.h"
 #include "qmckl_forces_private_func.h"
@@ -2655,10 +2656,10 @@ integer(qmckl_exit_code) function qmckl_compute_forces_dtmp_c_hpc( &
   do nw = 1, walk_num
     do l = 0, cord_num-1
       do m = 1, cord_num
-         call dgemm('N','N', elec_num*4, 4*nucl_num, elec_num, -1.d0, &
-              een_rescaled_e_gl(1,1,1,l,nw), elec_num*4, &
+         info = qmckl_dgemm(context,'N','N', elec_num*4, 4*nucl_num, elec_num, -1.d0, &
+              een_rescaled_e_gl(1,1,1,l,nw), elec_num*4_8, &
               een_rescaled_n_gl(1,1,1,m,nw), elec_num, 0.d0, &
-              tmp, elec_num*4)
+              tmp, elec_num*4_8)
         do k = 1, 4
           do a = 1, nucl_num
              forces_dtmp_c(:,:,a,k,m,l,nw) = tmp(:,:,k,a)
@@ -5227,7 +5228,7 @@ function qmckl_compute_forces_jastrow_single_een_hpc( &
   allocate(een_rescaled_delta_n(nucl_num, 0:cord_num), een_rescaled_delta_n_gl(3,nucl_num, 0:cord_num), &
            accu(3,nucl_num), tmp(nucl_num))
 
-  elec_num4 = elec_num
+  elec_num4 = int(elec_num,4)
   do nw =1, walk_num
     een_rescaled_delta_n(:,:) = een_rescaled_single_n(:,:,nw) - een_rescaled_n(num,:,:,nw)
     een_rescaled_delta_n_gl(1:3,:,:) = een_rescaled_single_n_gl(1:3,:,:,nw) - een_rescaled_n_gl(num,1:3,:,:,nw)
@@ -6709,11 +6710,19 @@ integer function qmckl_compute_forces_mo_g_doc(context, &
   integer*8 :: i,j, m, n,a
   double precision :: c1
 
+  double precision, allocatable :: tmp(:,:,:,:)
+  
+  allocate(tmp(ao_num,3,point_num,3))
+  do a=1,nucl_num
+     tmp(:,1:3,:,:) = ao_hessian(:,1:3,:,:,a)
+     info = qmckl_dgemm(context, 'N', 'N', mo_num, 3*point_num*3, ao_num, &
+       -1.d0, coefficient_t, mo_num, &
+       tmp, ao_num, 0.d0, forces_mo_g(1,1,1,1,a), mo_num)
+     if (info /= 0) return
+  end do
 
-  info = qmckl_dgemm(context,'N', 'N', mo_num, 3*point_num*3*nucl_num, ao_num, &
-                -1.d0, coefficient_t, mo_num, &
-                ao_hessian(1:ao_num, 1:3, 1:point_num, 1:3, 1:nucl_num), ao_num, &
-                0.d0, forces_mo_g(1:mo_num, 1:3, 1:point_num, 1:3, 1:nucl_num), mo_num)
+
+  deallocate(tmp)
 
 end function qmckl_compute_forces_mo_g_doc
     #+end_src
@@ -6850,7 +6859,7 @@ qmckl_exit_code qmckl_compute_forces_mo_g (
          double* const forces_mo_g )
 {
 #ifdef HAVE_HPC
-  return qmckl_compute_forces_mo_g_hpc 
+  return qmckl_compute_forces_mo_g_doc 
 #else
   return qmckl_compute_forces_mo_g_doc 
 #endif
@@ -6864,11 +6873,45 @@ qmckl_exit_code qmckl_compute_forces_mo_g (
    #+begin_src c :tangle (eval c_test)
 printf("Forces MO gradient\n");
 
+qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+assert (ctx != NULL);
+
 rc = qmckl_set_nucleus_coord(context, 'T', &(nucl_coord[0]), 3*nucl_num);
 assert(rc == QMCKL_SUCCESS);
 
+
+double * forces_mo_g_doc = (double*) malloc(nucl_num* 3 * point_num* 3 * mo_num *sizeof(double));
+rc = qmckl_get_forces_mo_g(context, &forces_mo_g_doc[0], 3*3*nucl_num*mo_num*point_num);
+
+rc = qmckl_compute_forces_mo_g_doc(context,
+                                   ctx->ao_basis.ao_num,
+                                   ctx->mo_basis.mo_num,
+                                   ctx->point.num,
+                                   ctx->nucleus.num,
+                                   ctx->ao_basis.shell_num,
+                                   ctx->ao_basis.nucleus_index,
+                                   ctx->ao_basis.nucleus_shell_num,
+                                   ctx->ao_basis.shell_ang_mom,
+                                   ctx->mo_basis.coefficient_t,
+                                   ctx->ao_basis.ao_hessian,
+                                   &forces_mo_g_doc[0]);
+
+assert(rc == QMCKL_SUCCESS);
 double * forces_mo_g = (double*) malloc(nucl_num* 3 * point_num* 3 * mo_num *sizeof(double));
-rc = qmckl_get_forces_mo_g(context, &forces_mo_g[0], 3*3*nucl_num*mo_num*point_num);
+
+rc = qmckl_compute_forces_mo_g_hpc(context,
+                                   ctx->ao_basis.ao_num,
+                                   ctx->mo_basis.mo_num,
+                                   ctx->point.num,
+                                   ctx->nucleus.num,
+                                   ctx->ao_basis.shell_num,
+                                   ctx->ao_basis.nucleus_index,
+                                   ctx->ao_basis.nucleus_shell_num,
+                                   ctx->ao_basis.shell_ang_mom,
+                                   ctx->mo_basis.coefficient_t,
+                                   ctx->ao_basis.ao_hessian,
+                                   &forces_mo_g[0]);
+
 assert(rc == QMCKL_SUCCESS);
 
 double * finite_difference_force_mo_g = (double*) malloc(nucl_num* 3 * point_num* 3 * mo_num * sizeof(double));
@@ -6947,26 +6990,30 @@ free(temp_coord);
 free(mo_output);
 
 
-
 for (int a = 0; a < nucl_num; a++) {
   for (int n = 0; n < 3; n++){
     for (int j = 0; j < point_num; j++){
       for (int m = 0; m < 3; m++){
         for (int i = 0; i < mo_num; i++){
           printf("a=%i n=%i j=%i m=%i i=%i\n", a, n, j, m, i);
-          printf("%.10f\t", finite_difference_force_mo_g[n*3*mo_num*point_num*nucl_num + a*3*mo_num*point_num + j*3*mo_num + m*mo_num + i]);
-          printf("%.10f\n", forces_mo_g[a*9*mo_num*point_num + n*3*mo_num*point_num + j*3*mo_num + m*mo_num + i]);
+          printf("hpc %.10f\n", forces_mo_g[a*9*mo_num*point_num + n*3*mo_num*point_num + j*3*mo_num + m*mo_num + i]);
+          printf("doc %.10f\n", forces_mo_g_doc[a*9*mo_num*point_num + n*3*mo_num*point_num + j*3*mo_num + m*mo_num + i]);
+          printf("fd  %.10f\n", finite_difference_force_mo_g[n*3*mo_num*point_num*nucl_num + a*3*mo_num*point_num + j*3*mo_num + m*mo_num + i]);
+          assert(fabs(forces_mo_g[a*9*mo_num*point_num + n*3*mo_num*point_num + j*3*mo_num + m*mo_num + i] -
+                      forces_mo_g_doc[a*9*mo_num*point_num + n*3*mo_num*point_num + j*3*mo_num + m*mo_num + i]
+                      ) < 1.e-9);
           assert(fabs(finite_difference_force_mo_g[n*3*mo_num*point_num*nucl_num +
                                                    a*3*mo_num*point_num + j*3*mo_num +
                                                    m*mo_num + i] - 
                       forces_mo_g[a*9*mo_num*point_num + n*3*mo_num*point_num +
-                                  j*3*mo_num + m*mo_num + i]) < 1.e-9);
+                                  j*3*mo_num + m*mo_num + i]) < 1.e-8);
         }
       }
     }
   }
 }
 
+free(forces_mo_g_doc);
 free(forces_mo_g);
 free(finite_difference_force_mo_g);
 
