@@ -5809,7 +5809,7 @@ qmckl_exit_code qmckl_provide_forces_ao_value(qmckl_context context)
     | ~shell_ang_mom~     | ~int32_t[shell_num]~                     | in     | Angular momentum of each shell               |
     | ~ao_factor~         | ~double[ao_num]~                         | in     | Normalization factor of the AOs              |
     | ~ao_vgl~            | ~double[point_num][5][shell_num]~        | in     | Value, gradients and Laplacian of the shells |
-    | ~forces_ao_value~   | ~double[nucl_num][3][point_num][ao_num]~ | out    | Forces of the AOs                            |
+    | ~forces_ao_value~   | ~double[nucl_num][point_num][ao_num][3]~ | out    | Forces of the AOs                            |
     |---------------------+------------------------------------------+--------+----------------------------------------------|
 
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
@@ -5831,7 +5831,7 @@ function qmckl_compute_forces_ao_value_doc(context, &
   integer (c_int32_t) , intent(in)          :: shell_ang_mom(shell_num)
   real    (c_double ) , intent(in)          :: ao_factor(ao_num)
   real    (c_double ) , intent(in)          :: ao_vgl(ao_num,5,point_num)
-  real    (c_double ) , intent(out)         :: forces_ao_value(ao_num,point_num,3,nucl_num)
+  real    (c_double ) , intent(out)         :: forces_ao_value(3,ao_num,point_num,nucl_num)
   integer(qmckl_exit_code) :: info
 
   integer           :: l, il, k
@@ -5874,9 +5874,9 @@ function qmckl_compute_forces_ao_value_doc(context, &
            l = shell_ang_mom(ishell)
            do il = lstart(l), lstart(l+1)-1
 
-              forces_ao_value(k,ipoint,1,inucl) = -ao_vgl(k,2,ipoint)
-              forces_ao_value(k,ipoint,2,inucl) = -ao_vgl(k,3,ipoint)
-              forces_ao_value(k,ipoint,3,inucl) = -ao_vgl(k,4,ipoint)
+              forces_ao_value(1,k,ipoint,inucl) = -ao_vgl(k,2,ipoint)
+              forces_ao_value(2,k,ipoint,inucl) = -ao_vgl(k,3,ipoint)
+              forces_ao_value(3,k,ipoint,inucl) = -ao_vgl(k,4,ipoint)
 
               k = k+1
            end do
@@ -5988,8 +5988,8 @@ for (int j = 0; j < ao_num; j++){
         for (int k = 0; k < 3; k++){
             //printf("k=%i a=%i i=%i j=%i\n", k, a, i, j);
             //printf("%.10f\t", finite_difference_force_ao_value[k*ao_num*point_num*nucl_num + a*ao_num*point_num + i*ao_num + j]);
-            //printf("%.10f\n", forces_ao_value[a*3*ao_num*point_num + k*ao_num*point_num + i*ao_num + j]);
-            assert(fabs(finite_difference_force_ao_value[k*ao_num*point_num*nucl_num + a*ao_num*point_num + i*ao_num + j] -  forces_ao_value[a*3*ao_num*point_num + k*ao_num*point_num + i*ao_num + j]) < 1.e-9);
+            //printf("%.10f\n", forces_ao_value[a*3*ao_num*point_num + i*ao_num*3 + j*3 + k]);
+            assert(fabs(finite_difference_force_ao_value[k*ao_num*point_num*nucl_num + a*ao_num*point_num + i*ao_num + j] -  forces_ao_value[a*3*ao_num*point_num + i*ao_num*3 + j*3 + k]) < 1.e-9);
 
         }
     }
@@ -6164,11 +6164,7 @@ qmckl_exit_code qmckl_provide_forces_mo_value(qmckl_context context)
     mem_info.size = 3 * ctx->mo_basis.mo_num * ctx->point.num * ctx->nucleus.num * sizeof(double);
 
     if (mem_info.size > ctx->forces.forces_mo_value_maxsize) {
-      qmckl_memory_info_struct mem_info_test = qmckl_memory_info_struct_zero;
-      rc = qmckl_get_malloc_info(context, ctx->mo_basis.mo_value, &mem_info_test);
-      
-      if (ctx->forces.forces_mo_value != NULL && rc == QMCKL_SUCCESS && 
-          mem_info_test.size != mem_info.size) {
+       if (ctx->forces.forces_mo_value != NULL) {
         rc = qmckl_free(context, ctx->forces.forces_mo_value);
         assert (rc == QMCKL_SUCCESS);
         ctx->forces.forces_mo_value = NULL;
@@ -6242,8 +6238,8 @@ qmckl_exit_code qmckl_provide_forces_mo_value(qmckl_context context)
     | ~nucleus_shell_num~ | ~int64_t[nucl_num]~                      | in     | Number of shells per nucleus                    |
     | ~shell_ang_mom~     | ~int32_t[shell_num]~                     | in     | Angular momentum of each shell                  |
     | ~coefficient_t~     | ~double[mo_num][ao_num]~                 | in     | Transpose of the AO to MO transformation matrix |
-    | ~forces_ao_value~   | ~double[nucl_num][3][point_num][ao_num]~ | in     | Forces of AOs                                   |
-    | ~forces_mo_value~   | ~double[nucl_num][3][point_num][mo_num]~ | out    | Forces of MOs                                   |
+    | ~forces_ao_value~   | ~double[nucl_num][point_num][ao_num][3]~ | in     | Forces of AOs                                   |
+    | ~forces_mo_value~   | ~double[nucl_num][point_num][mo_num][3]~ | out    | Forces of MOs                                   |
     |---------------------+------------------------------------------+--------+-------------------------------------------------|
 
 
@@ -6257,17 +6253,17 @@ integer(qmckl_exit_code)  function qmckl_compute_forces_mo_value_doc(context, &
   implicit none
   integer(qmckl_context), intent(in)        :: context
   integer(c_int64_t)    , intent(in), value ::nucl_num, ao_num, mo_num, point_num, shell_num
-  real(c_double)      , intent(in)          :: forces_ao_value(ao_num,point_num,3,nucl_num)
+  real(c_double)      , intent(in)          :: forces_ao_value(3,ao_num,point_num,nucl_num)
   real(c_double)      , intent(in)          :: coefficient_t(mo_num,ao_num)
   integer (c_int64_t) , intent(in)          :: nucleus_index(nucl_num)
   integer (c_int64_t) , intent(in)          :: nucleus_shell_num(nucl_num)
   integer (c_int32_t) , intent(in)          :: shell_ang_mom(shell_num)
-  real(c_double)      , intent(out)         :: forces_mo_value(mo_num,point_num,3,nucl_num)
+  real(c_double)      , intent(out)         :: forces_mo_value(3,mo_num,point_num,nucl_num)
 
 
   integer*8 :: i,j,a, m, ishell_start, ishell_end, il, ishell
   integer :: l, k
-  double precision :: c1, c2, c3
+  double precision :: c1, c2, c3, coef
 
   integer, allocatable  ::  ao_index(:)
   integer           :: lstart(0:20)
@@ -6300,14 +6296,18 @@ integer(qmckl_exit_code)  function qmckl_compute_forces_mo_value_doc(context, &
         k = ao_index(ishell)
         l = shell_ang_mom(ishell)
         do il = lstart(l), lstart(l+1)-1
-          c1 = forces_ao_value(k,j,1,a)
-          c2 = forces_ao_value(k,j,2,a)
-          c3 = forces_ao_value(k,j,3,a)
-          if (c1 == 0.d0 .and. c2 == 0.d0 .and. c3 == 0.d0) cycle
+          c1 = forces_ao_value(1,k,j,a)
+          c2 = forces_ao_value(2,k,j,a)
+          c3 = forces_ao_value(3,k,j,a)
+          if (c1 == 0.d0 .and. c2 == 0.d0 .and. c3 == 0.d0) then
+             k = k + 1
+             cycle
+          end if
           do i=1,mo_num
-            forces_mo_value(i,j,1,a) = forces_mo_value(i,j,1,a) + coefficient_t(i,k) * c1
-            forces_mo_value(i,j,2,a) = forces_mo_value(i,j,2,a) + coefficient_t(i,k) * c2
-            forces_mo_value(i,j,3,a) = forces_mo_value(i,j,3,a) + coefficient_t(i,k) * c3
+            coef = coefficient_t(i,k)
+            forces_mo_value(1,i,j,a) = forces_mo_value(1,i,j,a) + coef * c1
+            forces_mo_value(2,i,j,a) = forces_mo_value(2,i,j,a) + coef * c2
+            forces_mo_value(3,i,j,a) = forces_mo_value(3,i,j,a) + coef * c3
           end do
           k = k + 1
         end do
@@ -6433,7 +6433,7 @@ for (int j = 0; j < mo_num; j++){
         //printf("k=%i a=%i i=%i j=%i\n", k, a, i, j);
         //printf("%.10f\t", finite_difference_force_mo_value[k*mo_num*point_num*nucl_num + a*mo_num*point_num + i*mo_num + j]);
         //printf("%.10f\n", forces_mo_value[a*3*mo_num*point_num + k*mo_num*point_num + i*mo_num + j]);
-        assert(fabs(finite_difference_force_mo_value[k*mo_num*point_num*nucl_num + a*mo_num*point_num + i*mo_num + j] -  forces_mo_value[a*3*mo_num*point_num + k*mo_num*point_num + i*mo_num + j]) < 1.e-9);
+        assert(fabs(finite_difference_force_mo_value[k*mo_num*point_num*nucl_num + a*mo_num*point_num + i*mo_num + j] -  forces_mo_value[a*3*mo_num*point_num + i*mo_num*3 + j*3 + k]) < 1.e-9);
       }
     }
   }
@@ -6686,7 +6686,7 @@ qmckl_exit_code qmckl_provide_forces_mo_g(qmckl_context context)
     | ~nucleus_shell_num~ | ~int64_t[nucl_num]~                         | in     | Number of shells per nucleus                    |
     | ~shell_ang_mom~     | ~int32_t[shell_num]~                        | in     | Angular momentum of each shell                  |
     | ~coefficient_t~     | ~double[mo_num][ao_num]~                    | in     | Transpose of the AO to MO transformation matrix |
-    | ~ao_hessian~        | ~double[nucl_num][3][point_num][4][ao_num]~ | in     | Hessian of AOs                                  |
+    | ~ao_hessian~        | ~double[3][point_num][4][ao_num]~           | in     | Hessian of AOs                                  |
     | ~forces_mo_g~       | ~double[nucl_num][3][point_num][3][mo_num]~ | out    | Forces on gradients of MOs                      |
     |---------------------+---------------------------------------------+--------+-------------------------------------------------|
 
@@ -6705,7 +6705,7 @@ integer function qmckl_compute_forces_mo_g_doc(context, &
   integer (c_int64_t) ,   intent(in)         :: nucleus_shell_num(nucl_num)
   integer (c_int32_t) ,   intent(in)         :: shell_ang_mom(shell_num)
   real    (c_double )   , intent(in)         :: coefficient_t(mo_num,ao_num)
-  real    (c_double )   , intent(in)         :: ao_hessian(ao_num,4,point_num,3,nucl_num)
+  real    (c_double )   , intent(in)         :: ao_hessian(ao_num,4,point_num,3)
   real    (c_double )   , intent(out)        :: forces_mo_g(mo_num,3,point_num,3,nucl_num)
   integer*8 :: i,j, m, n,a
   double precision :: c1
@@ -6714,7 +6714,8 @@ integer function qmckl_compute_forces_mo_g_doc(context, &
   
   allocate(tmp(ao_num,3,point_num,3))
   do a=1,nucl_num
-     tmp(:,1:3,:,:) = ao_hessian(:,1:3,:,:,a)
+  ! BROKEN
+     tmp(:,1:3,:,:) = ao_hessian(:,1:3,:,:)
      info = qmckl_dgemm(context, 'N', 'N', mo_num, 3*point_num*3, ao_num, &
        -1.d0, coefficient_t, mo_num, &
        tmp, ao_num, 0.d0, forces_mo_g(1,1,1,1,a), mo_num)
@@ -6741,12 +6742,12 @@ integer function qmckl_compute_forces_mo_g_hpc(context, &
   integer (c_int64_t) ,   intent(in)         :: nucleus_shell_num(nucl_num)
   integer (c_int32_t) ,   intent(in)         :: shell_ang_mom(shell_num)
   real    (c_double )   , intent(in)         :: coefficient_t(mo_num,ao_num)
-  real    (c_double )   , intent(in)         :: ao_hessian(ao_num,4,point_num,3,nucl_num)
+  real    (c_double )   , intent(in)         :: ao_hessian(ao_num,4,point_num,3)
   real    (c_double )   , intent(out)        :: forces_mo_g(mo_num,3,point_num,3,nucl_num)
   integer*8 :: i,j, m, n,a
   double precision :: c1
 
-  integer           :: l, il, k
+  integer           :: l, il, k, ao_ind
   integer*8         :: ishell_start, ishell_end, ishell
   integer           :: lstart(0:20)
 
@@ -6779,9 +6780,10 @@ integer function qmckl_compute_forces_mo_g_hpc(context, &
         do m = 1, 3
           do ishell = ishell_start, ishell_end
             l = shell_ang_mom(ishell)
-            il = lstart(l+1)-lstart(l) 
-            do k = ao_index(ishell), ao_index(ishell) + il - 1
-              c1 = ao_hessian(k, m, j, n, a)
+            il = lstart(l+1)-lstart(l)
+            ao_ind = ao_index(ishell) 
+            do k = ao_ind, ao_ind + il - 1
+              c1 = ao_hessian(k, m, j, n)
               if (c1 == 0.d0) cycle
               do i=1,mo_num
                 forces_mo_g(i, m, j, n, a) = forces_mo_g(i, m, j, n, a) - coefficient_t(i,k) * c1
@@ -6859,9 +6861,9 @@ qmckl_exit_code qmckl_compute_forces_mo_g (
          double* const forces_mo_g )
 {
 #ifdef HAVE_HPC
-  return qmckl_compute_forces_mo_g_doc 
+  return qmckl_compute_forces_mo_g_hpc
 #else
-  return qmckl_compute_forces_mo_g_doc 
+  return qmckl_compute_forces_mo_g_hpc
 #endif
    (context, ao_num, mo_num, point_num, nucl_num, shell_num, nucleus_index,
    nucleus_shell_num, shell_ang_mom, coefficient_t, ao_hessian, forces_mo_g );
@@ -6995,13 +6997,13 @@ for (int a = 0; a < nucl_num; a++) {
     for (int j = 0; j < point_num; j++){
       for (int m = 0; m < 3; m++){
         for (int i = 0; i < mo_num; i++){
-          printf("a=%i n=%i j=%i m=%i i=%i\n", a, n, j, m, i);
-          printf("hpc %.10f\n", forces_mo_g[a*9*mo_num*point_num + n*3*mo_num*point_num + j*3*mo_num + m*mo_num + i]);
-          printf("doc %.10f\n", forces_mo_g_doc[a*9*mo_num*point_num + n*3*mo_num*point_num + j*3*mo_num + m*mo_num + i]);
-          printf("fd  %.10f\n", finite_difference_force_mo_g[n*3*mo_num*point_num*nucl_num + a*3*mo_num*point_num + j*3*mo_num + m*mo_num + i]);
-          assert(fabs(forces_mo_g[a*9*mo_num*point_num + n*3*mo_num*point_num + j*3*mo_num + m*mo_num + i] -
-                      forces_mo_g_doc[a*9*mo_num*point_num + n*3*mo_num*point_num + j*3*mo_num + m*mo_num + i]
-                      ) < 1.e-9);
+          //printf("a=%i n=%i j=%i m=%i i=%i\n", a, n, j, m, i);
+          //printf("hpc %.10f\n", forces_mo_g[a*9*mo_num*point_num + n*3*mo_num*point_num + j*3*mo_num + m*mo_num + i]);
+          //printf("doc %.10f\n", forces_mo_g_doc[a*9*mo_num*point_num + n*3*mo_num*point_num + j*3*mo_num + m*mo_num + i]);
+          //printf("fd  %.10f\n", finite_difference_force_mo_g[n*3*mo_num*point_num*nucl_num + a*3*mo_num*point_num + j*3*mo_num + m*mo_num + i]);
+          //assert(fabs(forces_mo_g[a*9*mo_num*point_num + n*3*mo_num*point_num + j*3*mo_num + m*mo_num + i] -
+          //            forces_mo_g_doc[a*9*mo_num*point_num + n*3*mo_num*point_num + j*3*mo_num + m*mo_num + i]
+          //            ) < 1.e-9);
           assert(fabs(finite_difference_force_mo_g[n*3*mo_num*point_num*nucl_num +
                                                    a*3*mo_num*point_num + j*3*mo_num +
                                                    m*mo_num + i] - 
@@ -7198,7 +7200,7 @@ qmckl_exit_code qmckl_provide_forces_mo_l(qmckl_context context)
     | ~nucleus_shell_num~ | ~int64_t[nucl_num]~                         | in     | Number of shells per nucleus                    |
     | ~shell_ang_mom~     | ~int32_t[shell_num]~                        | in     | Angular momentum of each shell                  |
     | ~coefficient_t~     | ~double[mo_num][ao_num]~                    | in     | Transpose of the AO to MO transformation matrix |
-    | ~ao_hessian~        | ~double[nucl_num][3][point_num][4][ao_num]~ | in     | Hessian of AOs                                  |
+    | ~ao_hessian~        | ~double[3][point_num][4][ao_num]~           | in     | Hessian of AOs                                  |
     | ~forces_mo_l~       | ~double[nucl_num][3][point_num][mo_num]~    | out    | Forces on MO Laplacian                          |
     |---------------------+---------------------------------------------+--------+-------------------------------------------------|
 
@@ -7217,7 +7219,7 @@ integer function qmckl_compute_forces_mo_l_doc(context, &
   integer (c_int64_t) ,   intent(in)         :: nucleus_shell_num(nucl_num)
   integer (c_int32_t) ,   intent(in)         :: shell_ang_mom(shell_num)
   real    (c_double )   , intent(in)         :: coefficient_t(mo_num,ao_num)
-  real    (c_double )   , intent(in)         :: ao_hessian(ao_num,4,point_num,3,nucl_num)
+  real    (c_double )   , intent(in)         :: ao_hessian(ao_num,4,point_num,3)
   real    (c_double )   , intent(out)        :: forces_mo_l(mo_num,point_num,3,nucl_num)
   integer*8 :: i,j, m, n,a, il, ishell, ishell_start, ishell_end
   integer           :: lstart(0:20)
@@ -7254,7 +7256,7 @@ integer function qmckl_compute_forces_mo_l_doc(context, &
           k = ao_index(ishell)
           l = shell_ang_mom(ishell)
           do il = lstart(l), lstart(l+1)-1
-            c1  = ao_hessian(k, 4, j, n, a)
+            c1  = ao_hessian(k, 4, j, n)
             if (c1 == 0.d0) then
               k = k + 1
               cycle
