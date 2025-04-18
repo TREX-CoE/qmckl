@@ -5809,7 +5809,7 @@ qmckl_exit_code qmckl_provide_forces_ao_value(qmckl_context context)
     | ~shell_ang_mom~     | ~int32_t[shell_num]~                     | in     | Angular momentum of each shell               |
     | ~ao_factor~         | ~double[ao_num]~                         | in     | Normalization factor of the AOs              |
     | ~ao_vgl~            | ~double[point_num][5][shell_num]~        | in     | Value, gradients and Laplacian of the shells |
-    | ~forces_ao_value~   | ~double[nucl_num][point_num][ao_num][3]~ | out    | Forces of the AOs                            |
+    | ~forces_ao_value~   | ~double[nucl_num][point_num][3][ao_num]~ | out    | Forces of the AOs                            |
     |---------------------+------------------------------------------+--------+----------------------------------------------|
 
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
@@ -5831,7 +5831,7 @@ function qmckl_compute_forces_ao_value_doc(context, &
   integer (c_int32_t) , intent(in)          :: shell_ang_mom(shell_num)
   real    (c_double ) , intent(in)          :: ao_factor(ao_num)
   real    (c_double ) , intent(in)          :: ao_vgl(ao_num,5,point_num)
-  real    (c_double ) , intent(out)         :: forces_ao_value(3,ao_num,point_num,nucl_num)
+  real    (c_double ) , intent(out)         :: forces_ao_value(ao_num,3,point_num,nucl_num)
   integer(qmckl_exit_code) :: info
 
   integer           :: l, il, k
@@ -5844,7 +5844,7 @@ function qmckl_compute_forces_ao_value_doc(context, &
   integer         , allocatable  ::  ao_index(:)
   allocate(ao_index(ao_num))
 
-  !forces_ao_value = 0.d0
+  forces_ao_value = 0.d0
 
   ! Pre-computed data
   do l=0,20
@@ -5870,15 +5870,11 @@ function qmckl_compute_forces_ao_value_doc(context, &
         ishell_start = nucleus_index(inucl) + 1
         ishell_end   = nucleus_index(inucl) + nucleus_shell_num(inucl)
         do ishell = ishell_start, ishell_end
-           k = ao_index(ishell)
            l = shell_ang_mom(ishell)
-           do il = lstart(l), lstart(l+1)-1
-
-              forces_ao_value(1,k,ipoint,inucl) = -ao_vgl(k,2,ipoint)
-              forces_ao_value(2,k,ipoint,inucl) = -ao_vgl(k,3,ipoint)
-              forces_ao_value(3,k,ipoint,inucl) = -ao_vgl(k,4,ipoint)
-
-              k = k+1
+           do k = ao_index(ishell), ao_index(ishell) + lstart(l+1)-lstart(l) -1
+              forces_ao_value(k,1,ipoint,inucl) = -ao_vgl(k,2,ipoint)
+              forces_ao_value(k,2,ipoint,inucl) = -ao_vgl(k,3,ipoint)
+              forces_ao_value(k,3,ipoint,inucl) = -ao_vgl(k,4,ipoint)
            end do
         end do
      end do
@@ -5982,15 +5978,15 @@ free(temp_coord);
 free(ao_output);
 
 
-for (int j = 0; j < ao_num; j++){
+for (int a = 0; a < nucl_num; a++) {
   for (int i = 0; i < point_num; i++){
-      for (int a = 0; a < nucl_num; a++) {
-        for (int k = 0; k < 3; k++){
-            //printf("k=%i a=%i i=%i j=%i\n", k, a, i, j);
-            //printf("%.10f\t", finite_difference_force_ao_value[k*ao_num*point_num*nucl_num + a*ao_num*point_num + i*ao_num + j]);
-            //printf("%.10f\n", forces_ao_value[a*3*ao_num*point_num + i*ao_num*3 + j*3 + k]);
-            assert(fabs(finite_difference_force_ao_value[k*ao_num*point_num*nucl_num + a*ao_num*point_num + i*ao_num + j] -  forces_ao_value[a*3*ao_num*point_num + i*ao_num*3 + j*3 + k]) < 1.e-9);
-
+    for (int k = 0; k < 3; k++){
+      for (int j = 0; j < ao_num; j++){
+//        printf("k=%i a=%i i=%i j=%i\n", k, a, i, j);
+//        printf("%.10e\t", finite_difference_force_ao_value[k*ao_num*point_num*nucl_num + a*ao_num*point_num + i*ao_num + j]);
+//        printf("%.10e\n", forces_ao_value[a*3*ao_num*point_num + i*ao_num*3 + k*ao_num + j]);
+        assert(fabs(finite_difference_force_ao_value[k*ao_num*point_num*nucl_num + a*ao_num*point_num + i*ao_num + j] -
+                    forces_ao_value[a*3*ao_num*point_num + i*ao_num*3 + k*ao_num + j]) < 1.e-9);
         }
     }
   }
@@ -6238,8 +6234,8 @@ qmckl_exit_code qmckl_provide_forces_mo_value(qmckl_context context)
     | ~nucleus_shell_num~ | ~int64_t[nucl_num]~                      | in     | Number of shells per nucleus                    |
     | ~shell_ang_mom~     | ~int32_t[shell_num]~                     | in     | Angular momentum of each shell                  |
     | ~coefficient_t~     | ~double[mo_num][ao_num]~                 | in     | Transpose of the AO to MO transformation matrix |
-    | ~forces_ao_value~   | ~double[nucl_num][point_num][ao_num][3]~ | in     | Forces of AOs                                   |
-    | ~forces_mo_value~   | ~double[nucl_num][point_num][mo_num][3]~ | out    | Forces of MOs                                   |
+    | ~forces_ao_value~   | ~double[nucl_num][point_num][3][ao_num]~ | in     | Forces of AOs                                   |
+    | ~forces_mo_value~   | ~double[nucl_num][point_num][3][mo_num]~ | out    | Forces of MOs                                   |
     |---------------------+------------------------------------------+--------+-------------------------------------------------|
 
 
@@ -6253,12 +6249,12 @@ integer(qmckl_exit_code)  function qmckl_compute_forces_mo_value_doc(context, &
   implicit none
   integer(qmckl_context), intent(in)        :: context
   integer(c_int64_t)    , intent(in), value ::nucl_num, ao_num, mo_num, point_num, shell_num
-  real(c_double)      , intent(in)          :: forces_ao_value(3,ao_num,point_num,nucl_num)
+  real(c_double)      , intent(in)          :: forces_ao_value(ao_num,3,point_num,nucl_num)
   real(c_double)      , intent(in)          :: coefficient_t(mo_num,ao_num)
   integer (c_int64_t) , intent(in)          :: nucleus_index(nucl_num)
   integer (c_int64_t) , intent(in)          :: nucleus_shell_num(nucl_num)
   integer (c_int32_t) , intent(in)          :: shell_ang_mom(shell_num)
-  real(c_double)      , intent(out)         :: forces_mo_value(3,mo_num,point_num,nucl_num)
+  real(c_double)      , intent(out)         :: forces_mo_value(mo_num,3,point_num,nucl_num)
 
 
   integer*8 :: i,j,a, m, ishell_start, ishell_end, il, ishell
@@ -6287,29 +6283,26 @@ integer(qmckl_exit_code)  function qmckl_compute_forces_mo_value_doc(context, &
 
 
   info = QMCKL_SUCCESS
- forces_mo_value = 0.0d0
   do a=1,nucl_num
     ishell_start = nucleus_index(a) + 1
     ishell_end   = nucleus_index(a) + nucleus_shell_num(a)
     do j=1,point_num
+      forces_mo_value(:,:,j,a) = 0.0d0
       do ishell = ishell_start, ishell_end
-        k = ao_index(ishell)
         l = shell_ang_mom(ishell)
-        do il = lstart(l), lstart(l+1)-1
-          c1 = forces_ao_value(1,k,j,a)
-          c2 = forces_ao_value(2,k,j,a)
-          c3 = forces_ao_value(3,k,j,a)
+        do k=ao_index(ishell), ao_index(ishell) + lstart(l+1)-lstart(l)-1
+          c1 = forces_ao_value(k,1,j,a)
+          c2 = forces_ao_value(k,2,j,a)
+          c3 = forces_ao_value(k,3,j,a)
           if (c1 == 0.d0 .and. c2 == 0.d0 .and. c3 == 0.d0) then
-             k = k + 1
              cycle
           end if
           do i=1,mo_num
             coef = coefficient_t(i,k)
-            forces_mo_value(1,i,j,a) = forces_mo_value(1,i,j,a) + coef * c1
-            forces_mo_value(2,i,j,a) = forces_mo_value(2,i,j,a) + coef * c2
-            forces_mo_value(3,i,j,a) = forces_mo_value(3,i,j,a) + coef * c3
+            forces_mo_value(i,1,j,a) = forces_mo_value(i,1,j,a) + c1
+            forces_mo_value(i,2,j,a) = forces_mo_value(i,2,j,a) + c2
+            forces_mo_value(i,3,j,a) = forces_mo_value(i,3,j,a) + c3
           end do
-          k = k + 1
         end do
       end do
     end do
@@ -6426,14 +6419,15 @@ free(temp_coord);
 free(mo_output);
 
 
-for (int j = 0; j < mo_num; j++){
+for (int a = 0; a < nucl_num; a++) {
   for (int i = 0; i < point_num; i++){
-    for (int a = 0; a < nucl_num; a++) {
-      for (int k = 0; k < 3; k++){
+    for (int k = 0; k < 3; k++){
+      for (int j = 0; j < mo_num; j++){
         //printf("k=%i a=%i i=%i j=%i\n", k, a, i, j);
         //printf("%.10f\t", finite_difference_force_mo_value[k*mo_num*point_num*nucl_num + a*mo_num*point_num + i*mo_num + j]);
         //printf("%.10f\n", forces_mo_value[a*3*mo_num*point_num + k*mo_num*point_num + i*mo_num + j]);
-        assert(fabs(finite_difference_force_mo_value[k*mo_num*point_num*nucl_num + a*mo_num*point_num + i*mo_num + j] -  forces_mo_value[a*3*mo_num*point_num + i*mo_num*3 + j*3 + k]) < 1.e-9);
+        assert(fabs(finite_difference_force_mo_value[k*mo_num*point_num*nucl_num + a*mo_num*point_num + i*mo_num + j] -
+                    forces_mo_value[a*3*mo_num*point_num + i*mo_num*3 + k*mo_num + j]) < 1.e-9);
       }
     }
   }
