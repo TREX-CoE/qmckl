@@ -6182,7 +6182,7 @@ qmckl_exit_code qmckl_provide_forces_mo_value(qmckl_context context)
       ctx->forces.forces_mo_value = forces_mo_value;
     }
 
-    rc = qmckl_provide_forces_ao_value(context);
+    rc = qmckl_provide_ao_basis_ao_vgl(context);
     if (rc != QMCKL_SUCCESS) {
       return qmckl_failwith( context,
                              QMCKL_NOT_PROVIDED,
@@ -6200,7 +6200,7 @@ qmckl_exit_code qmckl_provide_forces_mo_value(qmckl_context context)
                                     ctx->ao_basis.nucleus_shell_num,
                                     ctx->ao_basis.shell_ang_mom,
                                     ctx->mo_basis.coefficient_t,
-                                    ctx->forces.forces_ao_value,
+                                    ctx->ao_basis.ao_vgl,
                                     ctx->forces.forces_mo_value);
 
     if (rc != QMCKL_SUCCESS) {
@@ -6234,7 +6234,7 @@ qmckl_exit_code qmckl_provide_forces_mo_value(qmckl_context context)
     | ~nucleus_shell_num~ | ~int64_t[nucl_num]~                      | in     | Number of shells per nucleus                    |
     | ~shell_ang_mom~     | ~int32_t[shell_num]~                     | in     | Angular momentum of each shell                  |
     | ~coefficient_t~     | ~double[mo_num][ao_num]~                 | in     | Transpose of the AO to MO transformation matrix |
-    | ~forces_ao_value~   | ~double[nucl_num][point_num][3][ao_num]~ | in     | Forces of AOs                                   |
+    | ~ao_vgl~            | ~double[point_num][3][ao_num]~           | in     | AO values, gradient and Laplacian               |
     | ~forces_mo_value~   | ~double[nucl_num][point_num][3][mo_num]~ | out    | Forces of MOs                                   |
     |---------------------+------------------------------------------+--------+-------------------------------------------------|
 
@@ -6242,14 +6242,14 @@ qmckl_exit_code qmckl_provide_forces_mo_value(qmckl_context context)
     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
 integer(qmckl_exit_code)  function qmckl_compute_forces_mo_value_doc(context, &
      nucl_num,ao_num, mo_num, point_num, shell_num, nucleus_index, nucleus_shell_num, &
-     shell_ang_mom, coefficient_t, forces_ao_value, forces_mo_value) &
+     shell_ang_mom, coefficient_t, ao_vgl, forces_mo_value) &
      result(info) bind(C)
   use, intrinsic :: iso_c_binding
   use qmckl
   implicit none
   integer(qmckl_context), intent(in)        :: context
   integer(c_int64_t)    , intent(in), value ::nucl_num, ao_num, mo_num, point_num, shell_num
-  real(c_double)      , intent(in)          :: forces_ao_value(ao_num,3,point_num,nucl_num)
+  real(c_double)      , intent(in)          :: ao_vgl(ao_num,5,point_num)
   real(c_double)      , intent(in)          :: coefficient_t(mo_num,ao_num)
   integer (c_int64_t) , intent(in)          :: nucleus_index(nucl_num)
   integer (c_int64_t) , intent(in)          :: nucleus_shell_num(nucl_num)
@@ -6291,17 +6291,14 @@ integer(qmckl_exit_code)  function qmckl_compute_forces_mo_value_doc(context, &
       do ishell = ishell_start, ishell_end
         l = shell_ang_mom(ishell)
         do k=ao_index(ishell), ao_index(ishell) + lstart(l+1)-lstart(l)-1
-          c1 = forces_ao_value(k,1,j,a)
-          c2 = forces_ao_value(k,2,j,a)
-          c3 = forces_ao_value(k,3,j,a)
-          if (c1 == 0.d0 .and. c2 == 0.d0 .and. c3 == 0.d0) then
-             cycle
-          end if
+          c1 = ao_vgl(k,2,j)
+          c2 = ao_vgl(k,3,j)
+          c3 = ao_vgl(k,4,j)
           do i=1,mo_num
             coef = coefficient_t(i,k)
-            forces_mo_value(i,1,j,a) = forces_mo_value(i,1,j,a) + c1 * coef
-            forces_mo_value(i,2,j,a) = forces_mo_value(i,2,j,a) + c2 * coef
-            forces_mo_value(i,3,j,a) = forces_mo_value(i,3,j,a) + c3 * coef
+            forces_mo_value(i,1,j,a) = forces_mo_value(i,1,j,a) - c1 * coef
+            forces_mo_value(i,2,j,a) = forces_mo_value(i,2,j,a) - c2 * coef
+            forces_mo_value(i,3,j,a) = forces_mo_value(i,3,j,a) - c3 * coef
           end do
         end do
       end do
@@ -6328,7 +6325,7 @@ end function qmckl_compute_forces_mo_value_doc
          const int64_t* nucleus_shell_num,
          const int32_t* shell_ang_mom,
          const double* coefficient_t,
-         const double* forces_ao_value,
+         const double* ao_vgl,
          double* const forces_mo_value );
    #+end_src
 
