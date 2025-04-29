@@ -188,7 +188,7 @@ $(htmlize_el):
 
 tests/chbrclf.h: $(qmckl_h)
 
-tests/n2.h: $(qmckl_h)
+include/n2.h: $(qmckl_h)
 
 cppcheck: cppcheck.out
 
