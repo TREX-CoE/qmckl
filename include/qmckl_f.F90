@@ -526,6 +526,22 @@ interface
 end interface
 
 interface
+   integer(c_int32_t) function qmckl_ao_slater_vgl(context, &
+        X, R, num_slater, N, A, VGL, ldv) bind(C)
+     use qmckl_constants
+     import
+     implicit none
+     integer (c_int64_t) , intent(in)  , value :: context
+     real    (c_double)  , intent(in)          :: X(3), R(3)
+     integer (c_int64_t) , intent(in)  , value :: num_slater
+     integer (c_int64_t) , intent(in)  , value :: ldv
+     integer (c_int64_t) , intent(in)          :: N(num_slater)
+     real    (c_double)  , intent(in)          :: A(num_slater)
+     real    (c_double)  , intent(out)         :: VGL(ldv,5)
+   end function qmckl_ao_slater_vgl
+end interface
+
+interface
   integer(c_int32_t) function qmckl_get_ao_basis_shell_hessian &
        (context, shell_hessian, size_max) &
        bind(C)

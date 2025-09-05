@@ -3570,7 +3570,357 @@ int test_qmckl_ao_gaussian_vgl(qmckl_context context);
 assert(0 == test_qmckl_ao_gaussian_vgl(context));
     #+end_src
 
-** TODO General functions for Slater basis functions               :noexport:
+** General functions for Slater basis functions
+
+   ~qmckl_ao_slater_vgl~ computes the values, gradients and
+   Laplacians at a given point of ~n~ Slater-type orbitals centered at
+   the same point:
+
+   \[ v_i = r^{n_i} \exp(-a_i r) \]
+   \[ \nabla_x v_i = \left(n_i \frac{X_x - R_x}{r} - a_i \frac{X_x - R_x}{r}\right) v_i \]
+   \[ \nabla_y v_i = \left(n_i \frac{X_y - R_y}{r} - a_i \frac{X_y - R_y}{r}\right) v_i \]
+   \[ \nabla_z v_i = \left(n_i \frac{X_z - R_z}{r} - a_i \frac{X_z - R_z}{r}\right) v_i \]
+   \[ \Delta v_i = \left[ n_i (n_i - 1) r^{-2} + 2 n_i a_i r^{-1} - a_i^2 - 2 a_i n_i r^{-1} \right] v_i \]
+
+   |--------------+------------------+------------------------------------------------------|
+   | Variable     | Type             | Description                                          |
+   |--------------+------------------+------------------------------------------------------|
+   | ~context~    | ~qmckl_context~  | Global state                                         |
+   | ~X(3)~       | ~double[3]~      | Array containing the coordinates of the points       |
+   | ~R(3)~       | ~double[3]~      | Array containing the x,y,z coordinates of the center |
+   | ~num_slater~ | ~int64_t~        | Number of computed Slater orbitals                  |
+   | ~A(num_slater)~ | ~double[num_slater]~ | Exponents of the Slater orbitals             |
+   | ~N(num_slater)~ | ~int64_t[num_slater]~ | Principal quantum numbers of the Slater orbitals |
+   | ~VGL(ldv,5)~ | ~double[5][ldv]~ | Value, gradients and Laplacian of the Slater orbitals |
+   | ~ldv~        | ~int64_t~        | Leading dimension of array ~VGL~                     |
+   |--------------+------------------+------------------------------------------------------|
+
+   Requirements:
+
+        - ~context~ \ne 0
+        - ~num_slater~ > 0
+        - ~ldv~ >= 5
+        - ~A(i)~ > 0 for all ~i~
+        - ~N(i)~ > 0 for all ~i~
+        - ~X~ is allocated with at least $3 \times 8$ bytes
+        - ~R~ is allocated with at least $3 \times 8$ bytes
+        - ~A~ is allocated with at least $num\_slater \times 8$ bytes
+        - ~N~ is allocated with at least $num\_slater \times 8$ bytes
+        - ~VGL~ is allocated with at least $num\_slater \times 5 \times 8$ bytes
+
+   #+begin_src c :tangle (eval h_func)
+qmckl_exit_code
+qmckl_ao_slater_vgl(const qmckl_context context,
+                     const double *X,
+                     const double *R,
+                     const int64_t *num_slater,
+                     const int64_t *N,
+                     const double *A,
+                     const double *VGL,
+                     const int64_t ldv);
+   #+end_src
+
+   #+begin_src f90 :tangle (eval f)
+function qmckl_ao_slater_vgl(context, X, R, num_slater, N, A, VGL, ldv) &
+  bind(C) result(info)
+  use qmckl_constants
+  implicit none
+  integer (qmckl_context) , intent(in) , value :: context
+  real    (c_double)  , intent(in)         :: X(3), R(3)
+  integer (c_int64_t) , intent(in) , value :: num_slater
+  integer (c_int64_t) , intent(in) , value :: ldv
+  integer (c_int64_t) , intent(in)         :: N(num_slater)
+  real    (c_double)  , intent(in)         :: A(num_slater)
+  real    (c_double)  , intent(out)        :: VGL(ldv,5)
+  integer (qmckl_exit_code) :: info
+
+  integer*8         :: i
+  double precision  :: Y_vec(3), radius, r_inv, r_inv_2, x_over_r, y_over_r, z_over_r
+  double precision  :: alpha, n_val, rn, exp_alpha_r
+  double precision  :: grad_coef, lapl_coef
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (num_slater <= 0) then
+     info = QMCKL_INVALID_ARG_4
+     return
+  endif
+
+  if (ldv < num_slater) then
+     info = QMCKL_INVALID_ARG_8
+     return
+  endif
+
+  ! Compute distance vector and radius
+  do i=1,3
+     Y_vec(i) = X(i) - R(i)
+  end do
+  radius = dsqrt(Y_vec(1)*Y_vec(1) + Y_vec(2)*Y_vec(2) + Y_vec(3)*Y_vec(3))
+
+  ! Handle r = 0 case
+  if (radius < 1.d-15) then
+     do i=1,num_slater
+        if (N(i) == 1) then
+           VGL(i,1) = 1.d0
+        else
+           VGL(i,1) = 0.d0
+        end if
+        VGL(i,2) = 0.d0
+        VGL(i,3) = 0.d0
+        VGL(i,4) = 0.d0
+        VGL(i,5) = 0.d0
+     end do
+     return
+  end if
+
+  r_inv = 1.d0 / radius
+  r_inv_2 = r_inv * r_inv
+  x_over_r = Y_vec(1) * r_inv
+  y_over_r = Y_vec(2) * r_inv
+  z_over_r = Y_vec(3) * r_inv
+
+  ! Compute values, gradients and Laplacians for each Slater orbital
+  do i=1,num_slater
+     alpha = A(i)
+     n_val = dble(N(i))
+     
+     ! Compute r^n * exp(-alpha * r)
+     if (N(i) == 1) then
+        rn = radius
+     else
+        rn = radius**N(i)
+     end if
+     exp_alpha_r = dexp(-alpha * radius)
+     
+     ! Value: r^n * exp(-alpha * r)
+     VGL(i,1) = rn * exp_alpha_r
+     
+     ! Gradient coefficients
+     grad_coef = (n_val * r_inv - alpha) * VGL(i,1)
+     VGL(i,2) = grad_coef * x_over_r
+     VGL(i,3) = grad_coef * y_over_r
+     VGL(i,4) = grad_coef * z_over_r
+     
+     ! Laplacian: n*(n-1)*r^(n-2)*exp(-alpha*r) + 2*n*(-alpha)*r^(n-1)*exp(-alpha*r) + alpha^2*r^n*exp(-alpha*r)
+     ! Simplified: [n*(n-1)*r^(-2) - 2*n*alpha*r^(-1) + alpha^2] * r^n * exp(-alpha*r)
+     lapl_coef = n_val * (n_val - 1.d0) * r_inv_2 - 2.d0 * n_val * alpha * r_inv + alpha * alpha
+     VGL(i,5) = lapl_coef * VGL(i,1)
+  end do
+
+end function qmckl_ao_slater_vgl
+   #+end_src
+
+   #+begin_src f90 :tangle (eval fh_func) :exports none
+interface
+   integer(c_int32_t) function qmckl_ao_slater_vgl(context, &
+        X, R, num_slater, N, A, VGL, ldv) bind(C)
+     use qmckl_constants
+     import
+     implicit none
+     integer (c_int64_t) , intent(in)  , value :: context
+     real    (c_double)  , intent(in)          :: X(3), R(3)
+     integer (c_int64_t) , intent(in)  , value :: num_slater
+     integer (c_int64_t) , intent(in)  , value :: ldv
+     integer (c_int64_t) , intent(in)          :: N(num_slater)
+     real    (c_double)  , intent(in)          :: A(num_slater)
+     real    (c_double)  , intent(out)         :: VGL(ldv,5)
+   end function qmckl_ao_slater_vgl
+end interface
+   #+end_src
+
+   #+begin_src c :tangle (eval h_func)
+qmckl_exit_code
+qmckl_ao_slater_vgl_hpc(const qmckl_context context,
+                         const double *X,
+                         const double *R,
+                         const int64_t *num_slater,
+                         const int64_t *N,
+                         const double *A,
+                         double *VGL,
+                         const int64_t ldv);
+   #+end_src
+
+   #+begin_src c :tangle (eval c) :noweb yes
+qmckl_exit_code
+qmckl_ao_slater_vgl_hpc(const qmckl_context context,
+                         const double *X,
+                         const double *R,
+                         const int64_t *num_slater,
+                         const int64_t *N,
+                         const double *A,
+                         double *VGL,
+                         const int64_t ldv)
+{
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_INVALID_CONTEXT;
+  }
+
+  if (*num_slater <= 0) {
+    return QMCKL_INVALID_ARG_4;
+  }
+
+  if (ldv < *num_slater) {
+    return QMCKL_INVALID_ARG_8;
+  }
+
+  const double Y[3] = {X[0] - R[0], X[1] - R[1], X[2] - R[2]};
+  const double r = sqrt(Y[0]*Y[0] + Y[1]*Y[1] + Y[2]*Y[2]);
+
+  // Handle r = 0 case
+  if (r < 1.e-15) {
+    for (int64_t i = 0; i < *num_slater; ++i) {
+      const int64_t idx = i;
+      VGL[idx] = (N[i] == 1) ? 1.0 : 0.0;
+      VGL[ldv + idx] = 0.0;
+      VGL[2*ldv + idx] = 0.0;
+      VGL[3*ldv + idx] = 0.0;
+      VGL[4*ldv + idx] = 0.0;
+    }
+    return QMCKL_SUCCESS;
+  }
+
+  const double r_inv = 1.0 / r;
+  const double r_inv_2 = r_inv * r_inv;
+  const double x_over_r = Y[0] * r_inv;
+  const double y_over_r = Y[1] * r_inv;
+  const double z_over_r = Y[2] * r_inv;
+
+  // Vectorized computation for HPC performance
+  #pragma omp simd
+  for (int64_t i = 0; i < *num_slater; ++i) {
+    const double alpha = A[i];
+    const double n_val = (double) N[i];
+    
+    // Compute r^n * exp(-alpha * r) efficiently
+    const double rn = pow(r, N[i]);
+    const double exp_alpha_r = exp(-alpha * r);
+    
+    // Value: r^n * exp(-alpha * r)
+    const double val = rn * exp_alpha_r;
+    VGL[i] = val;
+    
+    // Gradient coefficients
+    const double grad_coef = (n_val * r_inv - alpha) * val;
+    VGL[ldv + i] = grad_coef * x_over_r;
+    VGL[2*ldv + i] = grad_coef * y_over_r;
+    VGL[3*ldv + i] = grad_coef * z_over_r;
+    
+    // Laplacian coefficient
+    const double lapl_coef = n_val * (n_val - 1.0) * r_inv_2 - 2.0 * n_val * alpha * r_inv + alpha * alpha;
+    VGL[4*ldv + i] = lapl_coef * val;
+  }
+
+  return QMCKL_SUCCESS;
+}
+   #+end_src
+
+*** Test                                                           :noexport:
+
+    #+begin_src f90 :tangle (eval f_test)
+function test_qmckl_ao_slater_vgl(context) bind(C)
+  use qmckl
+  implicit none
+
+  integer(qmckl_context), intent(in), value :: context
+  integer(qmckl_exit_code) :: test_qmckl_ao_slater_vgl
+
+  integer*8                     :: num_slater, ldv, j, i
+  double precision              :: X(3), R(3), Y_vec(3), radius, z
+  double precision, allocatable :: VGL(:,:), A(:)
+  integer*8, allocatable        :: N(:)
+  double precision              :: epsilon
+  double precision              :: expected_val, expected_grad, expected_lapl
+  double precision              :: alpha, n_val, rn, exp_alpha_r
+  double precision              :: grad_coef, lapl_coef, r_inv, r_inv_2
+
+  epsilon = 3.d0 * qmckl_get_numprec_epsilon(context)
+
+  X = (/ 1.1d0, 2.2d0, 3.3d0 /)
+  R = (/ 0.1d0, 1.2d0, -2.3d0 /)
+  Y_vec(:) = X(:) - R(:)
+  radius = dsqrt(Y_vec(1)**2 + Y_vec(2)**2 + Y_vec(3)**2)
+
+  num_slater = 5
+  ldv = 100
+
+  allocate (A(num_slater), N(num_slater), VGL(ldv,5))
+  do i=1,num_slater
+     A(i) = 0.5d0 * dble(i)
+     N(i) = i
+  end do
+
+  test_qmckl_ao_slater_vgl = &
+       qmckl_ao_slater_vgl(context, X, R, num_slater, N, A, VGL, ldv)
+  if (test_qmckl_ao_slater_vgl /= 0) return
+
+  test_qmckl_ao_slater_vgl = -1
+
+  r_inv = 1.d0 / radius
+  r_inv_2 = r_inv * r_inv
+
+  ! Test values and analytical derivatives
+  do i=1,num_slater
+     alpha = A(i)
+     n_val = dble(N(i))
+     rn = radius**N(i)
+     exp_alpha_r = dexp(-alpha * radius)
+     
+     ! Test value: r^n * exp(-alpha * r)
+     expected_val = rn * exp_alpha_r
+     z = dabs(1.d0 - VGL(i,1) / expected_val)
+     if (z > epsilon) then
+        print *, 'Value test failed for i=', i, ', z=', z, ', epsilon=', epsilon
+        return
+     end if
+     
+     ! Test gradient components
+     grad_coef = (n_val * r_inv - alpha) * expected_val
+     expected_grad = grad_coef * Y_vec(1) * r_inv
+     z = dabs(VGL(i,2) - expected_grad) / (dabs(expected_grad) + epsilon)
+     if (z > epsilon) then
+        print *, 'X-gradient test failed for i=', i, ', z=', z
+        return
+     end if
+     
+     expected_grad = grad_coef * Y_vec(2) * r_inv
+     z = dabs(VGL(i,3) - expected_grad) / (dabs(expected_grad) + epsilon)
+     if (z > epsilon) then
+        print *, 'Y-gradient test failed for i=', i, ', z=', z
+        return
+     end if
+     
+     expected_grad = grad_coef * Y_vec(3) * r_inv
+     z = dabs(VGL(i,4) - expected_grad) / (dabs(expected_grad) + epsilon)
+     if (z > epsilon) then
+        print *, 'Z-gradient test failed for i=', i, ', z=', z
+        return
+     end if
+     
+     ! Test Laplacian
+     lapl_coef = n_val * (n_val - 1.d0) * r_inv_2 - 2.d0 * n_val * alpha * r_inv + alpha * alpha
+     expected_lapl = lapl_coef * expected_val
+     z = dabs(VGL(i,5) - expected_lapl) / (dabs(expected_lapl) + epsilon)
+     if (z > epsilon) then
+        print *, 'Laplacian test failed for i=', i, ', z=', z
+        return
+     end if
+  end do
+
+  test_qmckl_ao_slater_vgl = 0
+
+  deallocate(VGL, A, N)
+end function test_qmckl_ao_slater_vgl
+    #+end_src
+
+    #+begin_src c :tangle (eval c_test) :exports none
+int test_qmckl_ao_slater_vgl(qmckl_context context);
+assert(0 == test_qmckl_ao_slater_vgl(context));
+    #+end_src
 ** TODO General functions for Radial functions on a grid           :noexport:
 ** Computation of primitives
    :PROPERTIES:

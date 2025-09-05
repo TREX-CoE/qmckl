@@ -65,6 +65,99 @@ function qmckl_ao_gaussian_vgl(context, X, R, n, A, VGL, ldv) &
 
 end function qmckl_ao_gaussian_vgl
 
+function qmckl_ao_slater_vgl(context, X, R, num_slater, N, A, VGL, ldv) &
+  bind(C) result(info)
+  use qmckl_constants
+  implicit none
+  integer (qmckl_context) , intent(in) , value :: context
+  real    (c_double)  , intent(in)         :: X(3), R(3)
+  integer (c_int64_t) , intent(in) , value :: num_slater
+  integer (c_int64_t) , intent(in) , value :: ldv
+  integer (c_int64_t) , intent(in)         :: N(num_slater)
+  real    (c_double)  , intent(in)         :: A(num_slater)
+  real    (c_double)  , intent(out)        :: VGL(ldv,5)
+  integer (qmckl_exit_code) :: info
+
+  integer*8         :: i
+  double precision  :: Y_vec(3), radius, r_inv, r_inv_2, x_over_r, y_over_r, z_over_r
+  double precision  :: alpha, n_val, rn, exp_alpha_r
+  double precision  :: grad_coef, lapl_coef
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (num_slater <= 0) then
+     info = QMCKL_INVALID_ARG_4
+     return
+  endif
+
+  if (ldv < num_slater) then
+     info = QMCKL_INVALID_ARG_8
+     return
+  endif
+
+  ! Compute distance vector and radius
+  do i=1,3
+     Y_vec(i) = X(i) - R(i)
+  end do
+  radius = dsqrt(Y_vec(1)*Y_vec(1) + Y_vec(2)*Y_vec(2) + Y_vec(3)*Y_vec(3))
+
+  ! Handle r = 0 case
+  if (radius < 1.d-15) then
+     do i=1,num_slater
+        if (N(i) == 1) then
+           VGL(i,1) = 1.d0
+        else
+           VGL(i,1) = 0.d0
+        end if
+        VGL(i,2) = 0.d0
+        VGL(i,3) = 0.d0
+        VGL(i,4) = 0.d0
+        VGL(i,5) = 0.d0
+     end do
+     return
+  end if
+
+  r_inv = 1.d0 / radius
+  r_inv_2 = r_inv * r_inv
+  x_over_r = Y_vec(1) * r_inv
+  y_over_r = Y_vec(2) * r_inv
+  z_over_r = Y_vec(3) * r_inv
+
+  ! Compute values, gradients and Laplacians for each Slater orbital
+  do i=1,num_slater
+     alpha = A(i)
+     n_val = dble(N(i))
+     
+     ! Compute r^n * exp(-alpha * r)
+     if (N(i) == 1) then
+        rn = radius
+     else
+        rn = radius**N(i)
+     end if
+     exp_alpha_r = dexp(-alpha * radius)
+     
+     ! Value: r^n * exp(-alpha * r)
+     VGL(i,1) = rn * exp_alpha_r
+     
+     ! Gradient coefficients
+     grad_coef = (n_val * r_inv - alpha) * VGL(i,1)
+     VGL(i,2) = grad_coef * x_over_r
+     VGL(i,3) = grad_coef * y_over_r
+     VGL(i,4) = grad_coef * z_over_r
+     
+     ! Laplacian: n*(n-1)*r^(n-2)*exp(-alpha*r) + 2*n*(-alpha)*r^(n-1)*exp(-alpha*r) + alpha^2*r^n*exp(-alpha*r)
+     ! Simplified: [n*(n-1)*r^(-2) - 2*n*alpha*r^(-1) + alpha^2] * r^n * exp(-alpha*r)
+     lapl_coef = n_val * (n_val - 1.d0) * r_inv_2 - 2.d0 * n_val * alpha * r_inv + alpha * alpha
+     VGL(i,5) = lapl_coef * VGL(i,1)
+  end do
+
+end function qmckl_ao_slater_vgl
+
 function qmckl_compute_ao_basis_primitive_gaussian_vgl &
      (context, prim_num, point_num, nucl_num, nucleus_prim_index, coord, nucl_coord, expo, primitive_vgl) &
      bind(C) result(info)

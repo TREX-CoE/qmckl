@@ -78,6 +78,100 @@ function test_qmckl_ao_gaussian_vgl(context) bind(C)
   deallocate(VGL)
 end function test_qmckl_ao_gaussian_vgl
 
+function test_qmckl_ao_slater_vgl(context) bind(C)
+  use qmckl
+  implicit none
+
+  integer(qmckl_context), intent(in), value :: context
+  integer(qmckl_exit_code) :: test_qmckl_ao_slater_vgl
+
+  integer*8                     :: num_slater, ldv, j, i
+  double precision              :: X(3), R(3), Y_vec(3), radius, z
+  double precision, allocatable :: VGL(:,:), A(:)
+  integer*8, allocatable        :: N(:)
+  double precision              :: epsilon
+  double precision              :: expected_val, expected_grad, expected_lapl
+  double precision              :: alpha, n_val, rn, exp_alpha_r
+  double precision              :: grad_coef, lapl_coef, r_inv, r_inv_2
+
+  epsilon = 3.d0 * qmckl_get_numprec_epsilon(context)
+
+  X = (/ 1.1d0, 2.2d0, 3.3d0 /)
+  R = (/ 0.1d0, 1.2d0, -2.3d0 /)
+  Y_vec(:) = X(:) - R(:)
+  radius = dsqrt(Y_vec(1)**2 + Y_vec(2)**2 + Y_vec(3)**2)
+
+  num_slater = 5
+  ldv = 100
+
+  allocate (A(num_slater), N(num_slater), VGL(ldv,5))
+  do i=1,num_slater
+     A(i) = 0.5d0 * dble(i)
+     N(i) = i
+  end do
+
+  test_qmckl_ao_slater_vgl = &
+       qmckl_ao_slater_vgl(context, X, R, num_slater, N, A, VGL, ldv)
+  if (test_qmckl_ao_slater_vgl /= 0) return
+
+  test_qmckl_ao_slater_vgl = -1
+
+  r_inv = 1.d0 / radius
+  r_inv_2 = r_inv * r_inv
+
+  ! Test values and analytical derivatives
+  do i=1,num_slater
+     alpha = A(i)
+     n_val = dble(N(i))
+     rn = radius**N(i)
+     exp_alpha_r = dexp(-alpha * radius)
+     
+     ! Test value: r^n * exp(-alpha * r)
+     expected_val = rn * exp_alpha_r
+     z = dabs(1.d0 - VGL(i,1) / expected_val)
+     if (z > epsilon) then
+        print *, 'Value test failed for i=', i, ', z=', z, ', epsilon=', epsilon
+        return
+     end if
+     
+     ! Test gradient components
+     grad_coef = (n_val * r_inv - alpha) * expected_val
+     expected_grad = grad_coef * Y_vec(1) * r_inv
+     z = dabs(VGL(i,2) - expected_grad) / (dabs(expected_grad) + epsilon)
+     if (z > epsilon) then
+        print *, 'X-gradient test failed for i=', i, ', z=', z
+        return
+     end if
+     
+     expected_grad = grad_coef * Y_vec(2) * r_inv
+     z = dabs(VGL(i,3) - expected_grad) / (dabs(expected_grad) + epsilon)
+     if (z > epsilon) then
+        print *, 'Y-gradient test failed for i=', i, ', z=', z
+        return
+     end if
+     
+     expected_grad = grad_coef * Y_vec(3) * r_inv
+     z = dabs(VGL(i,4) - expected_grad) / (dabs(expected_grad) + epsilon)
+     if (z > epsilon) then
+        print *, 'Z-gradient test failed for i=', i, ', z=', z
+        return
+     end if
+     
+     ! Test Laplacian
+     lapl_coef = n_val * (n_val - 1.d0) * r_inv_2 - 2.d0 * n_val * alpha * r_inv + alpha * alpha
+     expected_lapl = lapl_coef * expected_val
+     z = dabs(VGL(i,5) - expected_lapl) / (dabs(expected_lapl) + epsilon)
+     if (z > epsilon) then
+        print *, 'Laplacian test failed for i=', i, ', z=', z
+        return
+     end if
+  end do
+
+  test_qmckl_ao_slater_vgl = 0
+
+  deallocate(VGL, A, N)
+end function test_qmckl_ao_slater_vgl
+
 function test_qmckl_ao_power(context) bind(C)
   use qmckl
   implicit none

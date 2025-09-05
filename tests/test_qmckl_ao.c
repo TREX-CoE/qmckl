@@ -231,6 +231,9 @@ free(ao_factor_test);
 int test_qmckl_ao_gaussian_vgl(qmckl_context context);
 assert(0 == test_qmckl_ao_gaussian_vgl(context));
 
+int test_qmckl_ao_slater_vgl(qmckl_context context);
+assert(0 == test_qmckl_ao_slater_vgl(context));
+
 {
 #define walk_num 1 // chbrclf_walk_num
 #define elec_num chbrclf_elec_num
