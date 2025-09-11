@@ -8899,10 +8899,6 @@ return qmckl_compute_een_rescaled_e_doc (context,
 #pragma omp simd
 #endif
       for (size_t k = 0; k < elec_pairs; ++k) {
-        // een_rescaled_e_ij(k, l + 1) = een_rescaled_e_ij(k, l + 1 - 1) * een_rescaled_e_ij(k, 2)
-
-        // een_rescaled_e_ij[k+l*elec_pairs] = een_rescaled_e_ij[k + (l - 1)*elec_pairs] *
-        //  een_rescaled_e_ij[k + elec_pairs];
         ee1[k] = ee2[k] * ee3[k];
       }
     }
@@ -11942,20 +11938,23 @@ function qmckl_compute_tmp_c_doc( &
 
 
   M = elec_num
-  N = nucl_num*(cord_num + 1)
   K = elec_num
+  N = nucl_num
   LDA = size(een_rescaled_e,1)
   LDB = size(een_rescaled_n,1)
   LDC = size(tmp_c,1)
 
   do nw=1, walk_num
-    do i=0, cord_num-1
-      info = qmckl_dgemm(context, TransA, TransB, M, N, K, alpha,     &
-                         een_rescaled_e(1,1,i,nw),LDA*1_8,                     &
-                         een_rescaled_n(1,1,0,nw),LDB*1_8,                     &
-                         beta,                                       &
-                         tmp_c(1,1,0,i,nw),LDC)
-    end do
+     do i=0, cord_num-1
+        do j=0, cord_num
+           if (i+j > cord_num) cycle
+           info = qmckl_dgemm(context, TransA, TransB, M, N, K, alpha, &
+                een_rescaled_e(1,1,i,nw),LDA*1_8,        &
+                een_rescaled_n(1,1,j,nw),LDB*1_8,        &
+                beta,                                    &
+                tmp_c(1,1,j,i,nw),LDC)
+        end do
+     end do
   end do
 
 end function qmckl_compute_tmp_c_doc
@@ -12000,26 +11999,30 @@ qmckl_exit_code qmckl_compute_tmp_c_hpc (
   const double beta  = 0.0;
 
   const int64_t M = elec_num;
-  const int64_t N = nucl_num*(cord_num + 1);
   const int64_t K = elec_num;
+  const int64_t N = nucl_num;
 
   const int64_t LDA = elec_num;
   const int64_t LDB = elec_num;
   const int64_t LDC = elec_num;
 
   const int64_t af = elec_num*elec_num;
-  const int64_t bf = elec_num*nucl_num*(cord_num+1);
-  const int64_t cf = bf;
+  const int64_t bf = elec_num*nucl_num;
+  const int64_t cf = elec_num*nucl_num;
 
 #ifdef HAVE_OPENMP
-#pragma omp parallel for collapse(2)
+#pragma omp parallel for collapse(3)
 #endif
   for (int64_t nw=0; nw < walk_num; ++nw) {
     for (int64_t i=0; i<cord_num; ++i){
-      info = qmckl_dgemm(context, TransA, TransB, M, N, K, alpha,
-                         &(een_rescaled_e[af*(i+nw*(cord_num+1))]), LDA,
-                         &(een_rescaled_n[bf*nw]), LDB, beta,
-                         &(tmp_c[cf*(i+nw*cord_num)]), LDC);
+      for (int64_t j=0; j<=cord_num; ++j){
+        if (i+j <= cord_num) {
+          info = qmckl_dgemm(context, TransA, TransB, M, N, K, alpha,
+                             &(een_rescaled_e[af*(i+nw*(cord_num+1))]), LDA,
+                             &(een_rescaled_n[bf*(j+nw*(cord_num+1))]), LDB, beta,
+                             &(tmp_c[cf*(j+(cord_num+1)*(i+nw*cord_num))]), LDC);
+        }
+      }
     }
   }
 
@@ -12168,7 +12171,7 @@ function qmckl_compute_dtmp_c_doc( &
   beta  = 0.0d0
 
   M = 4*elec_num
-  N = nucl_num*(cord_num + 1)
+  N = nucl_num
   K = elec_num
   LDA = 4*size(een_rescaled_e_gl,1)
   LDB = size(een_rescaled_n,1)
@@ -12176,11 +12179,15 @@ function qmckl_compute_dtmp_c_doc( &
 
   do nw=1, walk_num
      do i=0, cord_num-1
-        info = qmckl_dgemm(context,TransA, TransB, M, N, K, alpha,  &
-             een_rescaled_e_gl(1,1,1,i,nw),LDA*1_8,            &
-             een_rescaled_n(1,1,0,nw),LDB*1_8,                      &
-             beta,                                                  &
-             dtmp_c(1,1,1,0,i,nw),LDC)
+        do j=0, cord_num
+           if (i+j <= cord_num) then
+              info = qmckl_dgemm(context,TransA, TransB, M, N, K, alpha,  &
+                   een_rescaled_e_gl(1,1,1,i,nw),LDA*1_8,            &
+                   een_rescaled_n(1,1,j,nw),LDB*1_8,                      &
+                   beta,                                                  &
+                   dtmp_c(1,1,1,j,i,nw),LDC)
+           end if
+        end do
      end do
   end do
 
@@ -12227,7 +12234,7 @@ qmckl_compute_dtmp_c_hpc (const qmckl_context context,
   const double beta  = 0.0;
 
   const int64_t M = 4*elec_num;
-  const int64_t N = nucl_num*(cord_num + 1);
+  const int64_t N = nucl_num;
   const int64_t K = elec_num;
 
   const int64_t LDA = 4*elec_num;
@@ -12235,18 +12242,22 @@ qmckl_compute_dtmp_c_hpc (const qmckl_context context,
   const int64_t LDC = 4*elec_num;
 
   const int64_t af = elec_num*elec_num*4;
-  const int64_t bf = elec_num*nucl_num*(cord_num+1);
-  const int64_t cf = elec_num*4*nucl_num*(cord_num+1);
+  const int64_t bf = elec_num*nucl_num;
+  const int64_t cf = elec_num*4*nucl_num;
 
 #ifdef HAVE_OPENMP
-#pragma omp parallel for collapse(2)
+#pragma omp parallel for collapse(3)
 #endif
   for (int64_t nw=0; nw < walk_num; ++nw) {
     for (int64_t i=0; i < cord_num; ++i) {
-      info = qmckl_dgemm(context, TransA, TransB, M, N, K, alpha,
-                         &(een_rescaled_e_gl[af*(i+nw*(cord_num+1))]), LDA,
-                         &(een_rescaled_n[bf*nw]), LDB, beta,
-                         &(dtmp_c[cf*(i+nw*cord_num)]), LDC);
+      for (int64_t j=0; j <= cord_num; ++j) {
+        if (i+j <= cord_num) {
+          qmckl_dgemm(context, TransA, TransB, M, N, K, alpha,
+                      &(een_rescaled_e_gl[af*(i+nw*(cord_num+1))]), LDA,
+                      &(een_rescaled_n[bf*(j+nw*(cord_num+1))]), LDB, beta,
+                      &(dtmp_c[cf*(j+(cord_num+1)*(i+nw*cord_num))]), LDC);
+        }
+      }
     }
   }
 
@@ -12286,7 +12297,9 @@ print("#+begin_src c")
 tmp_c = np.einsum("pij,qaj->pqai", een_rescaled_e, een_rescaled_n)
 for p in range(cord_num):
   for q in range(cord_num+1):
-   for a in range(nucl_num):
+    if (p+q > cord_num):
+      continue
+    for a in range(nucl_num):
 #     for i in range(elec_num):
       for i in range(3):
          print(f"assert( fabs(tmp_c[0][{p}][{q}][{a}][{i}] - ({tmp_c[p,q,a,i]})) < 1.e-10 );")
@@ -12305,8 +12318,8 @@ print("#+end_src")
      assert( fabs(tmp_c[0][0][1][0][0] - (3.954384435757992)) < 1.e-10 );
      assert( fabs(tmp_c[0][0][1][0][1] - (3.9727741848396345)) < 1.e-10 );
      assert( fabs(tmp_c[0][0][1][0][2] - (4.397537932479169)) < 1.e-10 );
-     assert( fabs(tmp_c[0][0][1][1][0] - (3.9699975124473874)) < 1.e-10 );
-     assert( fabs(tmp_c[0][0][1][1][1] - (3.9148146902985954)) < 1.e-10 );
+     assert( fabs(tmp_c[0][0][1][1][0] - (3.969997512447387)) < 1.e-10 );
+     assert( fabs(tmp_c[0][0][1][1][1] - (3.914814690298595)) < 1.e-10 );
      assert( fabs(tmp_c[0][0][1][1][2] - (4.1255401297639)) < 1.e-10 );
      assert( fabs(tmp_c[0][0][2][0][0] - (2.3199893721759075)) < 1.e-10 );
      assert( fabs(tmp_c[0][0][2][0][1] - (2.345524480553636)) < 1.e-10 );
@@ -12324,7 +12337,7 @@ print("#+end_src")
      assert( fabs(tmp_c[0][0][4][0][1] - (1.208685373326865)) < 1.e-10 );
      assert( fabs(tmp_c[0][0][4][0][2] - (1.4243692008920064)) < 1.e-10 );
      assert( fabs(tmp_c[0][0][4][1][0] - (1.6548327884142877)) < 1.e-10 );
-     assert( fabs(tmp_c[0][0][4][1][1] - (1.6499536090450504)) < 1.e-10 );
+     assert( fabs(tmp_c[0][0][4][1][1] - (1.64995360904505)) < 1.e-10 );
      assert( fabs(tmp_c[0][0][4][1][2] - (1.6587881580945973)) < 1.e-10 );
      assert( fabs(tmp_c[0][0][5][0][0] - (0.9190764850802002)) < 1.e-10 );
      assert( fabs(tmp_c[0][0][5][0][1] - (0.9404475300736013)) < 1.e-10 );
@@ -12353,7 +12366,7 @@ print("#+end_src")
      assert( fabs(tmp_c[0][1][3][0][0] - (0.9932622989012245)) < 1.e-10 );
      assert( fabs(tmp_c[0][1][3][0][1] - (1.0141894558280218)) < 1.e-10 );
      assert( fabs(tmp_c[0][1][3][0][2] - (0.4753220161707207)) < 1.e-10 );
-     assert( fabs(tmp_c[0][1][3][1][0] - (0.4930918823080653)) < 1.e-10 );
+     assert( fabs(tmp_c[0][1][3][1][0] - (0.4930918823080652)) < 1.e-10 );
      assert( fabs(tmp_c[0][1][3][1][1] - (0.5794046581154504)) < 1.e-10 );
      assert( fabs(tmp_c[0][1][3][1][2] - (0.1946473341774275)) < 1.e-10 );
      assert( fabs(tmp_c[0][1][4][0][0] - (0.7630013568815328)) < 1.e-10 );
@@ -12362,12 +12375,6 @@ print("#+end_src")
      assert( fabs(tmp_c[0][1][4][1][0] - (0.4109099207757694)) < 1.e-10 );
      assert( fabs(tmp_c[0][1][4][1][1] - (0.4923250204592893)) < 1.e-10 );
      assert( fabs(tmp_c[0][1][4][1][2] - (0.15795730216834925)) < 1.e-10 );
-     assert( fabs(tmp_c[0][1][5][0][0] - (0.602269944510014)) < 1.e-10 );
-     assert( fabs(tmp_c[0][1][5][0][1] - (0.6282411041142684)) < 1.e-10 );
-     assert( fabs(tmp_c[0][1][5][0][2] - (0.2720802683938866)) < 1.e-10 );
-     assert( fabs(tmp_c[0][1][5][1][0] - (0.362929128218399)) < 1.e-10 );
-     assert( fabs(tmp_c[0][1][5][1][1] - (0.43821371905410267)) < 1.e-10 );
-     assert( fabs(tmp_c[0][1][5][1][2] - (0.13806267644073672)) < 1.e-10 );
      assert( fabs(tmp_c[0][2][0][0][0] - (1.7079542032550128)) < 1.e-10 );
      assert( fabs(tmp_c[0][2][0][0][1] - (1.7085261968741112)) < 1.e-10 );
      assert( fabs(tmp_c[0][2][0][0][2] - (0.3970759035111535)) < 1.e-10 );
@@ -12379,31 +12386,19 @@ print("#+end_src")
      assert( fabs(tmp_c[0][2][1][0][2] - (0.2534013021277625)) < 1.e-10 );
      assert( fabs(tmp_c[0][2][1][1][0] - (0.5330754925220906)) < 1.e-10 );
      assert( fabs(tmp_c[0][2][1][1][1] - (0.5657834475086373)) < 1.e-10 );
-     assert( fabs(tmp_c[0][2][1][1][2] - (0.1141291662092793)) < 1.e-10 );
+     assert( fabs(tmp_c[0][2][1][1][2] - (0.11412916620927929)) < 1.e-10 );
      assert( fabs(tmp_c[0][2][2][0][0] - (0.8418981496305529)) < 1.e-10 );
      assert( fabs(tmp_c[0][2][2][0][1] - (0.8541709218045712)) < 1.e-10 );
      assert( fabs(tmp_c[0][2][2][0][2] - (0.17246525189807282)) < 1.e-10 );
-     assert( fabs(tmp_c[0][2][2][1][0] - (0.22603663902864907)) < 1.e-10 );
+     assert( fabs(tmp_c[0][2][2][1][0] - (0.226036639028649)) < 1.e-10 );
      assert( fabs(tmp_c[0][2][2][1][1] - (0.27015967947397757)) < 1.e-10 );
      assert( fabs(tmp_c[0][2][2][1][2] - (0.04167575795818711)) < 1.e-10 );
      assert( fabs(tmp_c[0][2][3][0][0] - (0.6401188619267253)) < 1.e-10 );
      assert( fabs(tmp_c[0][2][3][0][1] - (0.6618576066446866)) < 1.e-10 );
      assert( fabs(tmp_c[0][2][3][0][2] - (0.1230008126184953)) < 1.e-10 );
      assert( fabs(tmp_c[0][2][3][1][0] - (0.13715998273079621)) < 1.e-10 );
-     assert( fabs(tmp_c[0][2][3][1][1] - (0.18336683166888237)) < 1.e-10 );
+     assert( fabs(tmp_c[0][2][3][1][1] - (0.18336683166888235)) < 1.e-10 );
      assert( fabs(tmp_c[0][2][3][1][2] - (0.021963771267852313)) < 1.e-10 );
-     assert( fabs(tmp_c[0][2][4][0][0] - (0.499929076268241)) < 1.e-10 );
-     assert( fabs(tmp_c[0][2][4][0][1] - (0.5265960139195482)) < 1.e-10 );
-     assert( fabs(tmp_c[0][2][4][0][2] - (0.0910512147576923)) < 1.e-10 );
-     assert( fabs(tmp_c[0][2][4][1][0] - (0.10629369854590472)) < 1.e-10 );
-     assert( fabs(tmp_c[0][2][4][1][1] - (0.15080705716368356)) < 1.e-10 );
-     assert( fabs(tmp_c[0][2][4][1][2] - (0.015805559632835135)) < 1.e-10 );
-     assert( fabs(tmp_c[0][2][5][0][0] - (0.3983228921475786)) < 1.e-10 );
-     assert( fabs(tmp_c[0][2][5][0][1] - (0.4266422347127092)) < 1.e-10 );
-     assert( fabs(tmp_c[0][2][5][0][2] - (0.06950051271731551)) < 1.e-10 );
-     assert( fabs(tmp_c[0][2][5][1][0] - (0.09200476119277279)) < 1.e-10 );
-     assert( fabs(tmp_c[0][2][5][1][1] - (0.13367129287076376)) < 1.e-10 );
-     assert( fabs(tmp_c[0][2][5][1][2] - (0.013305097963586336)) < 1.e-10 );
      assert( fabs(tmp_c[0][3][0][0][0] - (0.9972792932023298)) < 1.e-10 );
      assert( fabs(tmp_c[0][3][0][0][1] - (0.9831693477247843)) < 1.e-10 );
      assert( fabs(tmp_c[0][3][0][0][2] - (0.11234258551609563)) < 1.e-10 );
@@ -12422,24 +12417,6 @@ print("#+end_src")
      assert( fabs(tmp_c[0][3][2][1][0] - (0.09502899655350536)) < 1.e-10 );
      assert( fabs(tmp_c[0][3][2][1][1] - (0.1111138509695107)) < 1.e-10 );
      assert( fabs(tmp_c[0][3][2][1][2] - (0.008475857956264363)) < 1.e-10 );
-     assert( fabs(tmp_c[0][3][3][0][0] - (0.4194920126064232)) < 1.e-10 );
-     assert( fabs(tmp_c[0][3][3][0][1] - (0.44216091798724816)) < 1.e-10 );
-     assert( fabs(tmp_c[0][3][3][0][2] - (0.03316783480322055)) < 1.e-10 );
-     assert( fabs(tmp_c[0][3][3][1][0] - (0.044597420410611245)) < 1.e-10 );
-     assert( fabs(tmp_c[0][3][3][1][1] - (0.06297040112414112)) < 1.e-10 );
-     assert( fabs(tmp_c[0][3][3][1][2] - (0.0032045341074789613)) < 1.e-10 );
-     assert( fabs(tmp_c[0][3][4][0][0] - (0.33062730102924326)) < 1.e-10 );
-     assert( fabs(tmp_c[0][3][4][0][1] - (0.3573530834310498)) < 1.e-10 );
-     assert( fabs(tmp_c[0][3][4][0][2] - (0.02411768923836689)) < 1.e-10 );
-     assert( fabs(tmp_c[0][3][4][1][0] - (0.029474482615142926)) < 1.e-10 );
-     assert( fabs(tmp_c[0][3][4][1][1] - (0.047775866616842744)) < 1.e-10 );
-     assert( fabs(tmp_c[0][3][4][1][2] - (0.0017804317848328574)) < 1.e-10 );
-     assert( fabs(tmp_c[0][3][5][0][0] - (0.26492842911059955)) < 1.e-10 );
-     assert( fabs(tmp_c[0][3][5][0][1] - (0.29292181085477714)) < 1.e-10 );
-     assert( fabs(tmp_c[0][3][5][0][2] - (0.01817212438400414)) < 1.e-10 );
-     assert( fabs(tmp_c[0][3][5][1][0] - (0.023973796420952254)) < 1.e-10 );
-     assert( fabs(tmp_c[0][3][5][1][1] - (0.04138341596732758)) < 1.e-10 );
-     assert( fabs(tmp_c[0][3][5][1][2] - (0.001337584627182013)) < 1.e-10 );
      assert( fabs(tmp_c[0][4][0][0][0] - (0.6241835038928094)) < 1.e-10 );
      assert( fabs(tmp_c[0][4][0][0][1] - (0.612546136476027)) < 1.e-10 );
      assert( fabs(tmp_c[0][4][0][0][2] - (0.03465465051392334)) < 1.e-10 );
@@ -12452,30 +12429,6 @@ print("#+end_src")
      assert( fabs(tmp_c[0][4][1][1][0] - (0.16648754510969857)) < 1.e-10 );
      assert( fabs(tmp_c[0][4][1][1][1] - (0.16715589592727115)) < 1.e-10 );
      assert( fabs(tmp_c[0][4][1][1][2] - (0.008630307553639064)) < 1.e-10 );
-     assert( fabs(tmp_c[0][4][2][0][0] - (0.3559511100628826)) < 1.e-10 );
-     assert( fabs(tmp_c[0][4][2][0][1] - (0.37188847139673)) < 1.e-10 );
-     assert( fabs(tmp_c[0][4][2][0][2] - (0.01377428017733446)) < 1.e-10 );
-     assert( fabs(tmp_c[0][4][2][1][0] - (0.04910107172940137)) < 1.e-10 );
-     assert( fabs(tmp_c[0][4][2][1][1] - (0.05410820945940521)) < 1.e-10 );
-     assert( fabs(tmp_c[0][4][2][1][2] - (0.0022455129250148003)) < 1.e-10 );
-     assert( fabs(tmp_c[0][4][3][0][0] - (0.2774887561655332)) < 1.e-10 );
-     assert( fabs(tmp_c[0][4][3][0][1] - (0.29970898445737015)) < 1.e-10 );
-     assert( fabs(tmp_c[0][4][3][0][2] - (0.009317809236120462)) < 1.e-10 );
-     assert( fabs(tmp_c[0][4][3][1][0] - (0.01796962439244505)) < 1.e-10 );
-     assert( fabs(tmp_c[0][4][3][1][1] - (0.024421292732073697)) < 1.e-10 );
-     assert( fabs(tmp_c[0][4][3][1][2] - (0.0006605314285571214)) < 1.e-10 );
-     assert( fabs(tmp_c[0][4][4][0][0] - (0.21991272780704038)) < 1.e-10 );
-     assert( fabs(tmp_c[0][4][4][0][1] - (0.24502713699626255)) < 1.e-10 );
-     assert( fabs(tmp_c[0][4][4][0][2] - (0.006598336469853555)) < 1.e-10 );
-     assert( fabs(tmp_c[0][4][4][1][0] - (0.009276621934660619)) < 1.e-10 );
-     assert( fabs(tmp_c[0][4][4][1][1] - (0.015980421873260757)) < 1.e-10 );
-     assert( fabs(tmp_c[0][4][4][1][2] - (0.0002580697357978305)) < 1.e-10 );
-     assert( fabs(tmp_c[0][4][5][0][0] - (0.17686342761222515)) < 1.e-10 );
-     assert( fabs(tmp_c[0][4][5][0][1] - (0.20271119715650288)) < 1.e-10 );
-     assert( fabs(tmp_c[0][4][5][0][2] - (0.004871262574401626)) < 1.e-10 );
-     assert( fabs(tmp_c[0][4][5][1][0] - (0.006582852663072146)) < 1.e-10 );
-     assert( fabs(tmp_c[0][4][5][1][1] - (0.013083414383021134)) < 1.e-10 );
-     assert( fabs(tmp_c[0][4][5][1][2] - (0.00015002618373046253)) < 1.e-10 );
      #+end_src
 
      #+begin_src python :results raw output :exports none :noweb yes
@@ -12485,6 +12438,8 @@ print("#+begin_src c")
 dtmp_c = np.einsum("lpji,qaj->pqali", een_rescaled_e_gl, een_rescaled_n)
 for p in range(cord_num):
   for q in range(cord_num+1):
+    if (p+q > cord_num):
+      continue
     for a in range(nucl_num):
       for l in range(4):
 #       for i in range(elec_num):
@@ -12859,10 +12814,10 @@ print("#+end_src")
      assert( fabs(dtmp_c[0][1][1][0][3][2] - (-0.17618867383487768)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][1][1][1][0][0], 0.08655901222441939); fflush(stdout);
      assert( fabs(dtmp_c[0][1][1][1][0][0] - (0.08655901222441939)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][1][1][1][0][1], 0.3718476223462695); fflush(stdout);
-     assert( fabs(dtmp_c[0][1][1][1][0][1] - (0.3718476223462695)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][1][1][1][0][2], -0.1880144254085473); fflush(stdout);
-     assert( fabs(dtmp_c[0][1][1][1][0][2] - (-0.1880144254085473)) < 1.e-10 );
+     printf("%e %e\n", dtmp_c[0][1][1][1][0][1], 0.37184762234626945); fflush(stdout);
+     assert( fabs(dtmp_c[0][1][1][1][0][1] - (0.37184762234626945)) < 1.e-10 );
+     printf("%e %e\n", dtmp_c[0][1][1][1][0][2], -0.18801442540854726); fflush(stdout);
+     assert( fabs(dtmp_c[0][1][1][1][0][2] - (-0.18801442540854726)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][1][1][1][1][0], -0.373219730383185); fflush(stdout);
      assert( fabs(dtmp_c[0][1][1][1][1][0] - (-0.373219730383185)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][1][1][1][1][1], 0.11557326827726634); fflush(stdout);
@@ -12909,8 +12864,8 @@ print("#+end_src")
      assert( fabs(dtmp_c[0][1][2][1][0][0] - (0.04101895608273089)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][1][2][1][0][1], 0.1692098996461025); fflush(stdout);
      assert( fabs(dtmp_c[0][1][2][1][0][1] - (0.1692098996461025)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][1][2][1][0][2], -0.08157456325334705); fflush(stdout);
-     assert( fabs(dtmp_c[0][1][2][1][0][2] - (-0.08157456325334705)) < 1.e-10 );
+     printf("%e %e\n", dtmp_c[0][1][2][1][0][2], -0.08157456325334704); fflush(stdout);
+     assert( fabs(dtmp_c[0][1][2][1][0][2] - (-0.08157456325334704)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][1][2][1][1][0], -0.14062811888255994); fflush(stdout);
      assert( fabs(dtmp_c[0][1][2][1][1][0] - (-0.14062811888255994)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][1][2][1][1][1], 0.04966346199008702); fflush(stdout);
@@ -12927,8 +12882,8 @@ print("#+end_src")
      assert( fabs(dtmp_c[0][1][2][1][3][0] - (-0.2771885915793018)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][1][2][1][3][1], -0.32750955178890273); fflush(stdout);
      assert( fabs(dtmp_c[0][1][2][1][3][1] - (-0.32750955178890273)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][1][2][1][3][2], -0.005414624476035229); fflush(stdout);
-     assert( fabs(dtmp_c[0][1][2][1][3][2] - (-0.005414624476035229)) < 1.e-10 );
+     printf("%e %e\n", dtmp_c[0][1][2][1][3][2], -0.00541462447603523); fflush(stdout);
+     assert( fabs(dtmp_c[0][1][2][1][3][2] - (-0.00541462447603523)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][1][3][0][0][0], 0.041518317038679226); fflush(stdout);
      assert( fabs(dtmp_c[0][1][3][0][0][0] - (0.041518317038679226)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][1][3][0][0][1], 0.40808685616423107); fflush(stdout);
@@ -12959,24 +12914,24 @@ print("#+end_src")
      assert( fabs(dtmp_c[0][1][3][1][0][1] - (0.10968727103181443)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][1][3][1][0][2], -0.05056277489728557); fflush(stdout);
      assert( fabs(dtmp_c[0][1][3][1][0][2] - (-0.05056277489728557)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][1][3][1][1][0], -0.07490965750749531); fflush(stdout);
-     assert( fabs(dtmp_c[0][1][3][1][1][0] - (-0.07490965750749531)) < 1.e-10 );
+     printf("%e %e\n", dtmp_c[0][1][3][1][1][0], -0.0749096575074953); fflush(stdout);
+     assert( fabs(dtmp_c[0][1][3][1][1][0] - (-0.0749096575074953)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][1][3][1][1][1], 0.03161213358508026); fflush(stdout);
      assert( fabs(dtmp_c[0][1][3][1][1][1] - (0.03161213358508026)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][1][3][1][1][2], 0.02042682750021449); fflush(stdout);
      assert( fabs(dtmp_c[0][1][3][1][1][2] - (0.02042682750021449)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][1][3][1][2][0], 0.2651287007442243); fflush(stdout);
-     assert( fabs(dtmp_c[0][1][3][1][2][0] - (0.2651287007442243)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][1][3][1][2][1], 0.29864100133392585); fflush(stdout);
-     assert( fabs(dtmp_c[0][1][3][1][2][1] - (0.29864100133392585)) < 1.e-10 );
+     printf("%e %e\n", dtmp_c[0][1][3][1][2][0], 0.26512870074422423); fflush(stdout);
+     assert( fabs(dtmp_c[0][1][3][1][2][0] - (0.26512870074422423)) < 1.e-10 );
+     printf("%e %e\n", dtmp_c[0][1][3][1][2][1], 0.2986410013339258); fflush(stdout);
+     assert( fabs(dtmp_c[0][1][3][1][2][1] - (0.2986410013339258)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][1][3][1][2][2], 0.10131396651000343); fflush(stdout);
      assert( fabs(dtmp_c[0][1][3][1][2][2] - (0.10131396651000343)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][1][3][1][3][0], -0.12233799123812668); fflush(stdout);
      assert( fabs(dtmp_c[0][1][3][1][3][0] - (-0.12233799123812668)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][1][3][1][3][1], -0.1749982805145044); fflush(stdout);
      assert( fabs(dtmp_c[0][1][3][1][3][1] - (-0.1749982805145044)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][1][3][1][3][2], 0.005533912938599828); fflush(stdout);
-     assert( fabs(dtmp_c[0][1][3][1][3][2] - (0.005533912938599828)) < 1.e-10 );
+     printf("%e %e\n", dtmp_c[0][1][3][1][3][2], 0.005533912938599827); fflush(stdout);
+     assert( fabs(dtmp_c[0][1][3][1][3][2] - (0.005533912938599827)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][1][4][0][0][0], 0.03228007764178889); fflush(stdout);
      assert( fabs(dtmp_c[0][1][4][0][0][0] - (0.03228007764178889)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][1][4][0][0][1], 0.32650132646618324); fflush(stdout);
@@ -13001,10 +12956,10 @@ print("#+end_src")
      assert( fabs(dtmp_c[0][1][4][0][3][1] - (-1.2022846698870553)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][1][4][0][3][2], -0.06127569538128786); fflush(stdout);
      assert( fabs(dtmp_c[0][1][4][0][3][2] - (-0.06127569538128786)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][1][4][1][0][0], 0.024568482604823683); fflush(stdout);
-     assert( fabs(dtmp_c[0][1][4][1][0][0] - (0.024568482604823683)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][1][4][1][0][1], 0.08749273467036488); fflush(stdout);
-     assert( fabs(dtmp_c[0][1][4][1][0][1] - (0.08749273467036488)) < 1.e-10 );
+     printf("%e %e\n", dtmp_c[0][1][4][1][0][0], 0.02456848260482368); fflush(stdout);
+     assert( fabs(dtmp_c[0][1][4][1][0][0] - (0.02456848260482368)) < 1.e-10 );
+     printf("%e %e\n", dtmp_c[0][1][4][1][0][1], 0.08749273467036486); fflush(stdout);
+     assert( fabs(dtmp_c[0][1][4][1][0][1] - (0.08749273467036486)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][1][4][1][0][2], -0.039603319111111486); fflush(stdout);
      assert( fabs(dtmp_c[0][1][4][1][0][2] - (-0.039603319111111486)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][1][4][1][1][0], -0.053528296761971975); fflush(stdout);
@@ -13023,56 +12978,8 @@ print("#+end_src")
      assert( fabs(dtmp_c[0][1][4][1][3][0] - (-0.07721034468420171)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][1][4][1][3][1], -0.12837380227095865); fflush(stdout);
      assert( fabs(dtmp_c[0][1][4][1][3][1] - (-0.12837380227095865)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][1][4][1][3][2], 0.0074019690684439185); fflush(stdout);
-     assert( fabs(dtmp_c[0][1][4][1][3][2] - (0.0074019690684439185)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][1][5][0][0][0], 0.028154251977039687); fflush(stdout);
-     assert( fabs(dtmp_c[0][1][5][0][0][0] - (0.028154251977039687)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][1][5][0][0][1], 0.2675648464894296); fflush(stdout);
-     assert( fabs(dtmp_c[0][1][5][0][0][1] - (0.2675648464894296)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][1][5][0][0][2], -0.12452862415334812); fflush(stdout);
-     assert( fabs(dtmp_c[0][1][5][0][0][2] - (-0.12452862415334812)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][1][5][0][1][0], -0.32448339329853426); fflush(stdout);
-     assert( fabs(dtmp_c[0][1][5][0][1][0] - (-0.32448339329853426)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][1][5][0][1][1], 0.05739916372169026); fflush(stdout);
-     assert( fabs(dtmp_c[0][1][5][0][1][1] - (0.05739916372169026)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][1][5][0][1][2], 0.042842019446247125); fflush(stdout);
-     assert( fabs(dtmp_c[0][1][5][0][1][2] - (0.042842019446247125)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][1][5][0][2][0], 0.009582449802574257); fflush(stdout);
-     assert( fabs(dtmp_c[0][1][5][0][2][0] - (0.009582449802574257)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][1][5][0][2][1], -0.2103200962586508); fflush(stdout);
-     assert( fabs(dtmp_c[0][1][5][0][2][1] - (-0.2103200962586508)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][1][5][0][2][2], 0.09232438690101506); fflush(stdout);
-     assert( fabs(dtmp_c[0][1][5][0][2][2] - (0.09232438690101506)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][1][5][0][3][0], -0.8499383650671706); fflush(stdout);
-     assert( fabs(dtmp_c[0][1][5][0][3][0] - (-0.8499383650671706)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][1][5][0][3][1], -0.9945478199910702); fflush(stdout);
-     assert( fabs(dtmp_c[0][1][5][0][3][1] - (-0.9945478199910702)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][1][5][0][3][2], -0.046223814939612445); fflush(stdout);
-     assert( fabs(dtmp_c[0][1][5][0][3][2] - (-0.046223814939612445)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][1][5][1][0][0], 0.021674237430510352); fflush(stdout);
-     assert( fabs(dtmp_c[0][1][5][1][0][0] - (0.021674237430510352)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][1][5][1][0][1], 0.07619490347632643); fflush(stdout);
-     assert( fabs(dtmp_c[0][1][5][1][0][1] - (0.07619490347632643)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][1][5][1][0][2], -0.03437119170244582); fflush(stdout);
-     assert( fabs(dtmp_c[0][1][5][1][0][2] - (-0.03437119170244582)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][1][5][1][1][0], -0.04474232067042888); fflush(stdout);
-     assert( fabs(dtmp_c[0][1][5][1][1][0] - (-0.04474232067042888)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][1][5][1][1][1], 0.022605073588539335); fflush(stdout);
-     assert( fabs(dtmp_c[0][1][5][1][1][1] - (0.022605073588539335)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][1][5][1][1][2], 0.013736156923521098); fflush(stdout);
-     assert( fabs(dtmp_c[0][1][5][1][1][2] - (0.013736156923521098)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][1][5][1][2][0], 0.2102381984988093); fflush(stdout);
-     assert( fabs(dtmp_c[0][1][5][1][2][0] - (0.2102381984988093)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][1][5][1][2][1], 0.24811662611440918); fflush(stdout);
-     assert( fabs(dtmp_c[0][1][5][1][2][1] - (0.24811662611440918)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][1][5][1][2][2], 0.07387138323364789); fflush(stdout);
-     assert( fabs(dtmp_c[0][1][5][1][2][2] - (0.07387138323364789)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][1][5][1][3][0], -0.061616378298223); fflush(stdout);
-     assert( fabs(dtmp_c[0][1][5][1][3][0] - (-0.061616378298223)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][1][5][1][3][1], -0.10988792547317254); fflush(stdout);
-     assert( fabs(dtmp_c[0][1][5][1][3][1] - (-0.10988792547317254)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][1][5][1][3][2], 0.007206101623458766); fflush(stdout);
-     assert( fabs(dtmp_c[0][1][5][1][3][2] - (0.007206101623458766)) < 1.e-10 );
+     printf("%e %e\n", dtmp_c[0][1][4][1][3][2], 0.007401969068443918); fflush(stdout);
+     assert( fabs(dtmp_c[0][1][4][1][3][2] - (0.007401969068443918)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][2][0][0][0][0], 0.19018068428042578); fflush(stdout);
      assert( fabs(dtmp_c[0][2][0][0][0][0] - (0.19018068428042578)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][2][0][0][0][1], 1.222540367818457); fflush(stdout);
@@ -13197,12 +13104,12 @@ print("#+end_src")
      assert( fabs(dtmp_c[0][2][2][1][0][0] - (0.017830656847428992)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][2][2][1][0][1], 0.1349488372147283); fflush(stdout);
      assert( fabs(dtmp_c[0][2][2][1][0][1] - (0.1349488372147283)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][2][1][0][2], -0.026174261381932806); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][2][1][0][2] - (-0.026174261381932806)) < 1.e-10 );
+     printf("%e %e\n", dtmp_c[0][2][2][1][0][2], -0.026174261381932802); fflush(stdout);
+     assert( fabs(dtmp_c[0][2][2][1][0][2] - (-0.026174261381932802)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][2][2][1][1][0], -0.12999345215341282); fflush(stdout);
      assert( fabs(dtmp_c[0][2][2][1][1][0] - (-0.12999345215341282)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][2][1][1][1], 0.043704069259968836); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][2][1][1][1] - (0.043704069259968836)) < 1.e-10 );
+     printf("%e %e\n", dtmp_c[0][2][2][1][1][1], 0.04370406925996884); fflush(stdout);
+     assert( fabs(dtmp_c[0][2][2][1][1][1] - (0.04370406925996884)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][2][2][1][1][2], 0.012118690017597503); fflush(stdout);
      assert( fabs(dtmp_c[0][2][2][1][1][2] - (0.012118690017597503)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][2][2][1][2][0], 0.15424255856794733); fflush(stdout);
@@ -13241,8 +13148,8 @@ print("#+end_src")
      assert( fabs(dtmp_c[0][2][3][0][3][1] - (-1.5356654468826247)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][2][3][0][3][2], 0.04072938212195742); fflush(stdout);
      assert( fabs(dtmp_c[0][2][3][0][3][2] - (0.04072938212195742)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][3][1][0][0], 0.012960729895566838); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][3][1][0][0] - (0.012960729895566838)) < 1.e-10 );
+     printf("%e %e\n", dtmp_c[0][2][3][1][0][0], 0.012960729895566837); fflush(stdout);
+     assert( fabs(dtmp_c[0][2][3][1][0][0] - (0.012960729895566837)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][2][3][1][0][1], 0.0741298097662961); fflush(stdout);
      assert( fabs(dtmp_c[0][2][3][1][0][1] - (0.0741298097662961)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][2][3][1][0][2], -0.012277061853367108); fflush(stdout);
@@ -13259,108 +13166,12 @@ print("#+end_src")
      assert( fabs(dtmp_c[0][2][3][1][2][1] - (0.1691043488583484)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][2][3][1][2][2], 0.021916906999824466); fflush(stdout);
      assert( fabs(dtmp_c[0][2][3][1][2][2] - (0.021916906999824466)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][3][1][3][0], -0.005512801061502169); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][3][1][3][0] - (-0.005512801061502169)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][3][1][3][1], -0.010076887579249677); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][3][1][3][1] - (-0.010076887579249677)) < 1.e-10 );
+     printf("%e %e\n", dtmp_c[0][2][3][1][3][0], -0.00551280106150217); fflush(stdout);
+     assert( fabs(dtmp_c[0][2][3][1][3][0] - (-0.00551280106150217)) < 1.e-10 );
+     printf("%e %e\n", dtmp_c[0][2][3][1][3][1], -0.010076887579249679); fflush(stdout);
+     assert( fabs(dtmp_c[0][2][3][1][3][1] - (-0.010076887579249679)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][2][3][1][3][2], 0.014930281772348983); fflush(stdout);
      assert( fabs(dtmp_c[0][2][3][1][3][2] - (0.014930281772348983)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][4][0][0][0], 0.03813233269772307); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][4][0][0][0] - (0.03813233269772307)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][4][0][0][1], 0.4438604831301593); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][4][0][0][1] - (0.4438604831301593)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][4][0][0][2], -0.0805430449279358); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][4][0][0][2] - (-0.0805430449279358)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][4][0][1][0], -0.5343857508081257); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][4][0][1][0] - (-0.5343857508081257)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][4][0][1][1], 0.10116100660240025); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][4][0][1][1] - (0.10116100660240025)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][4][0][1][2], 0.029871464901813947); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][4][0][1][2] - (0.029871464901813947)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][4][0][2][0], 0.004458479216758887); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][4][0][2][0] - (0.004458479216758887)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][4][0][2][1], -0.3542531456618736); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][4][0][2][1] - (-0.3542531456618736)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][4][0][2][2], 0.06322261252403447); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][4][0][2][2] - (0.06322261252403447)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][4][0][3][0], -1.0516226855570123); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][4][0][3][0] - (-1.0516226855570123)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][4][0][3][1], -1.281200838550817); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][4][0][3][1] - (-1.281200838550817)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][4][0][3][2], 0.03172716648865696); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][4][0][3][2] - (0.03172716648865696)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][4][1][0][0], 0.011449471373215819); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][4][1][0][0] - (0.011449471373215819)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][4][1][0][1], 0.05479041428299073); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][4][1][0][1] - (0.05479041428299073)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][4][1][0][2], -0.008194665667702015); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][4][1][0][2] - (-0.008194665667702015)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][4][1][1][0], -0.03105543800362735); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][4][1][1][0] - (-0.03105543800362735)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][4][1][1][1], 0.01652184035897789); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][4][1][1][1] - (0.01652184035897789)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][4][1][1][2], 0.0033403740697770428); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][4][1][1][2] - (0.0033403740697770428)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][4][1][2][0], 0.11681595977083911); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][4][1][2][0] - (0.11681595977083911)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][4][1][2][1], 0.16198600420647907); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][4][1][2][1] - (0.16198600420647907)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][4][1][2][2], 0.016538142923122962); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][4][1][2][2] - (0.016538142923122962)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][4][1][3][0], 0.025889040367487987); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][4][1][3][0] - (0.025889040367487987)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][4][1][3][1], 0.02066410313780114); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][4][1][3][1] - (0.02066410313780114)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][4][1][3][2], 0.012280066471279343); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][4][1][3][2] - (0.012280066471279343)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][5][0][0][0], 0.035956095375261614); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][5][0][0][0] - (0.035956095375261614)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][5][0][0][1], 0.3696356834752306); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][5][0][0][1] - (0.3696356834752306)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][5][0][0][2], -0.06280598690889702); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][5][0][0][2] - (-0.06280598690889702)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][5][0][1][0], -0.43276760797237757); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][5][0][1][0] - (-0.43276760797237757)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][5][0][1][1], 0.0698904473968921); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][5][0][1][1] - (0.0698904473968921)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][5][0][1][2], 0.022044004473798853); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][5][0][1][2] - (0.022044004473798853)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][5][0][2][0], 0.007744868429178038); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][5][0][2][0] - (0.007744868429178038)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][5][0][2][1], -0.28616781595041874); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][5][0][2][1] - (-0.28616781595041874)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][5][0][2][2], 0.04768932393175146); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][5][0][2][2] - (0.04768932393175146)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][5][0][3][0], -0.850003834086743); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][5][0][3][0] - (-0.850003834086743)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][5][0][3][1], -1.0777041011066946); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][5][0][3][1] - (-1.0777041011066946)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][5][0][3][2], 0.025086889680343255); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][5][0][3][2] - (0.025086889680343255)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][5][1][0][0], 0.0104860048592525); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][5][1][0][0] - (0.0104860048592525)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][5][1][0][1], 0.046763658997173364); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][5][1][0][1] - (0.046763658997173364)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][5][1][0][2], -0.006711548322015135); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][5][1][0][2] - (-0.006711548322015135)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][5][1][1][0], -0.023657571129070156); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][5][1][1][0] - (-0.023657571129070156)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][5][1][1][1], 0.014074513707690191); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][5][1][1][1] - (0.014074513707690191)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][5][1][1][2], 0.0026860087114576542); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][5][1][1][2] - (0.0026860087114576542)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][5][1][2][0], 0.10548456189403788); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][5][1][2][0] - (0.10548456189403788)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][5][1][2][1], 0.15005908607648322); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][5][1][2][1] - (0.15005908607648322)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][5][1][2][2], 0.014160777013293286); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][5][1][2][2] - (0.014160777013293286)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][5][1][3][0], 0.03174368702359653); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][5][1][3][0] - (0.03174368702359653)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][5][1][3][1], 0.026139955230237814); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][5][1][3][1] - (0.026139955230237814)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][2][5][1][3][2], 0.010807900710766975); fflush(stdout);
-     assert( fabs(dtmp_c[0][2][5][1][3][2] - (0.010807900710766975)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][3][0][0][0][0], 0.08718192269762033); fflush(stdout);
      assert( fabs(dtmp_c[0][3][0][0][0][0] - (0.08718192269762033)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][3][0][0][0][1], 1.0956261439767068); fflush(stdout);
@@ -13505,150 +13316,6 @@ print("#+end_src")
      assert( fabs(dtmp_c[0][3][2][1][3][1] - (-0.05351292689086246)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][3][2][1][3][2], 0.013296132113609202); fflush(stdout);
      assert( fabs(dtmp_c[0][3][2][1][3][2] - (0.013296132113609202)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][3][0][0][0], 0.037059551434450194); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][3][0][0][0] - (0.037059551434450194)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][3][0][0][1], 0.5531176807788016); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][3][0][0][1] - (0.5531176807788016)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][3][0][0][2], -0.040990433687054274); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][3][0][0][2] - (-0.040990433687054274)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][3][0][1][0], -0.6671535149772022); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][3][0][1][0] - (-0.6671535149772022)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][3][0][1][1], 0.13373989270757727); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][3][0][1][1] - (0.13373989270757727)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][3][0][1][2], 0.01730921894958104); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][3][0][1][2] - (0.01730921894958104)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][3][0][2][0], -0.010287705081322483); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][3][0][2][0] - (-0.010287705081322483)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][3][0][2][1], -0.44790260626788075); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][3][0][2][1] - (-0.44790260626788075)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][3][0][2][2], 0.03639437038789638); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][3][0][2][2] - (0.03639437038789638)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][3][0][3][0], -0.8723378539673872); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][3][0][3][0] - (-0.8723378539673872)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][3][0][3][1], -1.1258292468805597); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][3][0][3][1] - (-1.1258292468805597)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][3][0][3][2], 0.05044211348038961); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][3][0][3][2] - (0.05044211348038961)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][3][1][0][0], 0.003729281832846056); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][3][1][0][0] - (0.003729281832846056)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][3][1][0][1], 0.043084899912543786); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][3][1][0][1] - (0.043084899912543786)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][3][1][0][2], -0.002869737097021148); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][3][1][0][2] - (-0.002869737097021148)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][3][1][1][0], -0.036047934095113754); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][3][1][1][0] - (-0.036047934095113754)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][3][1][1][1], 0.013377620032024761); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][3][1][1][1] - (0.013377620032024761)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][3][1][1][2], 0.0014069547300744648); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][3][1][1][2] - (0.0014069547300744648)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][3][1][2][0], 0.05135253751206031); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][3][1][2][0] - (0.05135253751206031)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][3][1][2][1], 0.06845441989957772); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][3][1][2][1] - (0.06845441989957772)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][3][1][2][2], 0.0045360749532722365); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][3][1][2][2] - (0.0045360749532722365)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][3][1][3][0], 0.015187044606887428); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][3][1][3][0] - (0.015187044606887428)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][3][1][3][1], 0.03418602160543856); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][3][1][3][1] - (0.03418602160543856)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][3][1][3][2], 0.00586529050396006); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][3][1][3][2] - (0.00586529050396006)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][4][0][0][0], 0.036494137154527005); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][4][0][0][0] - (0.036494137154527005)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][4][0][0][1], 0.46018838552304103); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][4][0][0][1] - (0.46018838552304103)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][4][0][0][2], -0.03109498371004895); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][4][0][0][2] - (-0.03109498371004895)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][4][0][1][0], -0.5344679494594589); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][4][0][1][0] - (-0.5344679494594589)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][4][0][1][1], 0.09253579359135737); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][4][0][1][1] - (0.09253579359135737)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][4][0][1][2], 0.012070708556363306); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][4][0][1][2] - (0.012070708556363306)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][4][0][2][0], -0.0025533970525859068); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][4][0][2][0] - (-0.0025533970525859068)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][4][0][2][1], -0.36102046492602013); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][4][0][2][1] - (-0.36102046492602013)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][4][0][2][2], 0.025726022899259748); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][4][0][2][2] - (0.025726022899259748)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][4][0][3][0], -0.7021343287791432); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][4][0][3][0] - (-0.7021343287791432)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][4][0][3][1], -0.9595046123161148); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][4][0][3][1] - (-0.9595046123161148)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][4][0][3][2], 0.037615120338098156); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][4][0][3][2] - (0.037615120338098156)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][4][1][0][0], 0.0038216374362923912); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][4][1][0][0] - (0.0038216374362923912)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][4][1][0][1], 0.02745167766942589); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][4][1][0][1] - (0.02745167766942589)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][4][1][0][2], -0.0014542722905223392); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][4][1][0][2] - (-0.0014542722905223392)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][4][1][1][0], -0.016087458287979937); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][4][1][1][0] - (-0.016087458287979937)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][4][1][1][1], 0.008321531332585943); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][4][1][1][1] - (0.008321531332585943)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][4][1][1][2], 0.0006381881097886708); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][4][1][1][2] - (0.0006381881097886708)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][4][1][2][0], 0.04466456765066179); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][4][1][2][0] - (0.04466456765066179)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][4][1][2][1], 0.07177239175469316); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][4][1][2][1] - (0.07177239175469316)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][4][1][2][2], 0.0027061007144890755); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][4][1][2][2] - (0.0027061007144890755)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][4][1][3][0], 0.033140867046369864); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][4][1][3][0] - (0.033140867046369864)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][4][1][3][1], 0.053011110578175744); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][4][1][3][1] - (0.053011110578175744)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][4][1][3][2], 0.0037420368994668983); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][4][1][3][2] - (0.0037420368994668983)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][5][0][0][0], 0.03593144047367517); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][5][0][0][0] - (0.03593144047367517)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][5][0][0][1], 0.38735355395186644); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][5][0][0][1] - (0.38735355395186644)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][5][0][0][2], -0.02415810793192205); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][5][0][0][2] - (-0.02415810793192205)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][5][0][1][0], -0.4340531088122261); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][5][0][1][0] - (-0.4340531088122261)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][5][0][1][1], 0.06378553712352382); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][5][0][1][1] - (0.06378553712352382)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][5][0][1][2], 0.008743324805611132); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][5][0][1][2] - (0.008743324805611132)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][5][0][2][0], 0.0032607112383044715); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][5][0][2][0] - (0.0032607112383044715)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][5][0][2][1], -0.2937110848433893); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][5][0][2][1] - (-0.2937110848433893)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][5][0][2][2], 0.019017520508765057); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][5][0][2][2] - (0.019017520508765057)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][5][0][3][0], -0.5707320233347631); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][5][0][3][0] - (-0.5707320233347631)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][5][0][3][1], -0.8215201875027386); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][5][0][3][1] - (-0.8215201875027386)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][5][0][3][2], 0.02887671710464598); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][5][0][3][2] - (0.02887671710464598)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][5][1][0][0], 0.0037695308089584303); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][5][1][0][0] - (0.0037695308089584303)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][5][1][0][1], 0.02211108580460943); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][5][1][0][1] - (0.02211108580460943)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][5][1][0][2], -0.0010341417856208133); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][5][1][0][2] - (-0.0010341417856208133)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][5][1][1][0], -0.010183876444822859); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][5][1][1][0] - (-0.010183876444822859)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][5][1][1][1], 0.006649504812089057); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][5][1][1][1] - (0.006649504812089057)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][5][1][1][2], 0.00042350858782990526); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][5][1][1][2] - (0.00042350858782990526)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][5][1][2][0], 0.04014308010355947); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][5][1][2][0] - (0.04014308010355947)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][5][1][2][1], 0.0683153468714047); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][5][1][2][1] - (0.0683153468714047)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][5][1][2][2], 0.002110124318732031); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][5][1][2][2] - (0.002110124318732031)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][5][1][3][0], 0.035510656097454345); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][5][1][3][0] - (0.035510656097454345)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][5][1][3][1], 0.05434684019178174); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][5][1][3][1] - (0.05434684019178174)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][3][5][1][3][2], 0.0030055325665043265); fflush(stdout);
-     assert( fabs(dtmp_c[0][3][5][1][3][2] - (0.0030055325665043265)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][4][0][0][0][0], 0.03641894886362417); fflush(stdout);
      assert( fabs(dtmp_c[0][4][0][0][0][0] - (0.03641894886362417)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][4][0][0][0][1], 0.9384662053704101); fflush(stdout);
@@ -13745,198 +13412,6 @@ print("#+end_src")
      assert( fabs(dtmp_c[0][4][1][1][3][1] - (-0.190297981115932)) < 1.e-10 );
      printf("%e %e\n", dtmp_c[0][4][1][1][3][2], 0.02747728751417891); fflush(stdout);
      assert( fabs(dtmp_c[0][4][1][1][3][2] - (0.02747728751417891)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][2][0][0][0], 0.02975057359830538); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][2][0][0][0] - (0.02975057359830538)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][2][0][0][1], 0.6136113253237288); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][2][0][0][1] - (0.6136113253237288)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][2][0][0][2], -0.020077970533001966); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][2][0][0][2] - (-0.020077970533001966)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][2][0][1][0], -0.7487199736878327); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][2][0][1][0] - (-0.7487199736878327)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][2][0][1][1], 0.15718402674663834); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][2][0][1][1] - (0.15718402674663834)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][2][0][1][2], 0.010316581816643631); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][2][0][1][2] - (0.010316581816643631)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][2][0][2][0], -0.031081624443481195); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][2][0][2][0] - (-0.031081624443481195)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][2][0][2][1], -0.5037825434259197); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][2][0][2][1] - (-0.5037825434259197)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][2][0][2][2], 0.02189024676623996); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][2][0][2][2] - (0.02189024676623996)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][2][0][3][0], -0.47763242984655563); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][2][0][3][0] - (-0.47763242984655563)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][2][0][3][1], -0.7138719864278856); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][2][0][3][1] - (-0.7138719864278856)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][2][0][3][2], 0.04559115586167293); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][2][0][3][2] - (0.04559115586167293)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][2][1][0][0], -0.0004113138144010972); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][2][1][0][0] - (-0.0004113138144010972)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][2][1][0][1], 0.0732434988140552); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][2][1][0][1] - (0.0732434988140552)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][2][1][0][2], -0.0027552586768104124); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][2][1][0][2] - (-0.0027552586768104124)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][2][1][1][0], -0.08854462725281863); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][2][1][1][0] - (-0.08854462725281863)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][2][1][1][1], 0.022783301706344707); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][2][1][1][1] - (0.022783301706344707)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][2][1][1][2], 0.0017278506177386063); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][2][1][1][2] - (0.0017278506177386063)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][2][1][2][0], 0.023374437938563114); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][2][1][2][0] - (0.023374437938563114)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][2][1][2][1], -0.013699108092899407); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][2][1][2][1] - (-0.013699108092899407)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][2][1][2][2], 0.003980007037119749); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][2][1][2][2] - (0.003980007037119749)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][2][1][3][0], -0.016343952992919627); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][2][1][3][0] - (-0.016343952992919627)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][2][1][3][1], -0.014586500566322031); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][2][1][3][1] - (-0.014586500566322031)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][2][1][3][2], 0.007332618693239406); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][2][1][3][2] - (0.007332618693239406)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][3][0][0][0], 0.03152720276787019); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][3][0][0][0] - (0.03152720276787019)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][3][0][0][1], 0.5098331056486243); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][3][0][0][1] - (0.5098331056486243)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][3][0][0][2], -0.014556221738452993); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][3][0][0][2] - (-0.014556221738452993)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][3][0][1][0], -0.5931336291794296); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][3][0][1][0] - (-0.5931336291794296)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][3][0][1][1], 0.1088947034315803); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][3][0][1][1] - (0.1088947034315803)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][3][0][1][2], 0.006666003572591696); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][3][0][1][2] - (0.006666003572591696)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][3][0][2][0], -0.01783383785096143); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][3][0][2][0] - (-0.01783383785096143)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][3][0][2][1], -0.4052089320950355); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][3][0][2][1] - (-0.4052089320950355)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][3][0][2][2], 0.014182917472410976); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][3][0][2][2] - (0.014182917472410976)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][3][0][3][0], -0.38796584382291055); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][3][0][3][0] - (-0.38796584382291055)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][3][0][3][1], -0.6309135540587967); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][3][0][3][1] - (-0.6309135540587967)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][3][0][3][2], 0.031560200751032226); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][3][0][3][2] - (0.031560200751032226)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][3][1][0][0], 0.0003491661298714175); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][3][1][0][0] - (0.0003491661298714175)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][3][1][0][1], 0.026381431279199764); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][3][1][0][1] - (0.026381431279199764)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][3][1][0][2], -0.0007921202792388702); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][3][1][0][2] - (-0.0007921202792388702)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][3][1][1][0], -0.026098176834432208); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][3][1][1][0] - (-0.026098176834432208)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][3][1][1][1], 0.00784947900724862); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][3][1][1][1] - (0.00784947900724862)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][3][1][1][2], 0.00046510849802275064); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][3][1][1][2] - (0.00046510849802275064)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][3][1][2][0], 0.018791323424391004); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][3][1][2][0] - (0.018791323424391004)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][3][1][2][1], 0.020742693705728024); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][3][1][2][1] - (0.020742693705728024)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][3][1][2][2], 0.0012078291929494046); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][3][1][2][2] - (0.0012078291929494046)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][3][1][3][0], 0.013896101491367248); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][3][1][3][0] - (0.013896101491367248)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][3][1][3][1], 0.03006318719166455); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][3][1][3][1] - (0.03006318719166455)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][3][1][3][2], 0.0022955591393589566); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][3][1][3][2] - (0.0022955591393589566)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][4][0][0][0], 0.03265523388867102); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][4][0][0][0] - (0.03265523388867102)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][4][0][0][1], 0.42853088220057267); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][4][0][0][1] - (0.42853088220057267)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][4][0][0][2], -0.010902951422590604); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][4][0][0][2] - (-0.010902951422590604)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][4][0][1][0], -0.47647982297023356); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][4][0][1][0] - (-0.47647982297023356)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][4][0][1][1], 0.07518799481974753); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][4][0][1][1] - (0.07518799481974753)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][4][0][1][2], 0.004503917145645722); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][4][0][1][2] - (0.004503917145645722)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][4][0][2][0], -0.007880161843529002); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][4][0][2][0] - (-0.007880161843529002)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][4][0][2][1], -0.32878265875584134); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][4][0][2][1] - (-0.32878265875584134)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][4][0][2][2], 0.009683690060484331); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][4][0][2][2] - (0.009683690060484331)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][4][0][3][0], -0.3161154729336227); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][4][0][3][0] - (-0.3161154729336227)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][4][0][3][1], -0.5550924402920809); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][4][0][3][1] - (-0.5550924402920809)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][4][0][3][2], 0.022794074554597712); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][4][0][3][2] - (0.022794074554597712)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][4][1][0][0], 0.0009273041728807913); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][4][1][0][0] - (0.0009273041728807913)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][4][1][0][1], 0.013554790172679776); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][4][1][0][1] - (0.013554790172679776)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][4][1][0][2], -0.0002927065283570177); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][4][1][0][2] - (-0.0002927065283570177)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][4][1][1][0], -0.009236105302181174); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][4][1][1][0] - (-0.009236105302181174)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][4][1][1][1], 0.003986074954054194); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][4][1][1][1] - (0.003986074954054194)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][4][1][1][2], 0.0001515591661193652); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][4][1][1][2] - (0.0001515591661193652)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][4][1][2][0], 0.015654562520082578); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][4][1][2][0] - (0.015654562520082578)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][4][1][2][1], 0.027485394689259427); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][4][1][2][1] - (0.027485394689259427)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][4][1][2][2], 0.0005005082686599629); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][4][1][2][2] - (0.0005005082686599629)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][4][1][3][0], 0.01995337684220751); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][4][1][3][0] - (0.01995337684220751)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][4][1][3][1], 0.03948065183116187); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][4][1][3][1] - (0.03948065183116187)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][4][1][3][2], 0.000997506989025163); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][4][1][3][2] - (0.000997506989025163)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][5][0][0][0], 0.03272519348705163); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][5][0][0][0] - (0.03272519348705163)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][5][0][0][1], 0.3634851380697153); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][5][0][0][1] - (0.3634851380697153)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][5][0][0][2], -0.00839865401627028); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][5][0][0][2] - (-0.00839865401627028)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][5][0][1][0], -0.38772514005601383); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][5][0][1][0] - (-0.38772514005601383)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][5][0][1][1], 0.051648529756526944); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][5][0][1][1] - (0.051648529756526944)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][5][0][1][2], 0.0031782902950070464); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][5][0][1][2] - (0.0031782902950070464)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][5][0][2][0], -0.0008274677489341686); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][5][0][2][0] - (-0.0008274677489341686)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][5][0][2][1], -0.2694431499792432); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][5][0][2][1] - (-0.2694431499792432)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][5][0][2][2], 0.006954850054341348); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][5][0][2][2] - (0.006954850054341348)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][5][0][3][0], -0.25923091788381186); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][5][0][3][0] - (-0.25923091788381186)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][5][0][3][1], -0.48781098678008744); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][5][0][3][1] - (-0.48781098678008744)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][5][0][3][2], 0.0170923563068019); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][5][0][3][2] - (0.0170923563068019)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][5][1][0][0], 0.0011411734166630787); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][5][1][0][0] - (0.0011411734166630787)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][5][1][0][1], 0.009702243023321726); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][5][1][0][1] - (0.009702243023321726)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][5][1][0][2], -0.0001594495027813494); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][5][1][0][2] - (-0.0001594495027813494)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][5][1][1][0], -0.004505026302608349); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][5][1][1][0] - (-0.004505026302608349)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][5][1][1][1], 0.0028614620724252107); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][5][1][1][1] - (0.0028614620724252107)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][5][1][1][2], 7.13262143983927e-05); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][5][1][1][2] - (7.13262143983927e-05)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][5][1][2][0], 0.013782423535475943); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][5][1][2][0] - (0.013782423535475943)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][5][1][2][1], 0.027553325828820363); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][5][1][2][1] - (0.027553325828820363)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][5][1][2][2], 0.0003080233937426753); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][5][1][2][2] - (0.0003080233937426753)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][5][1][3][0], 0.020226270177046275); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][5][1][3][0] - (0.020226270177046275)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][5][1][3][1], 0.03967433210086987); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][5][1][3][1] - (0.03967433210086987)) < 1.e-10 );
-     printf("%e %e\n", dtmp_c[0][4][5][1][3][2], 0.0006371438697383446); fflush(stdout);
-     assert( fabs(dtmp_c[0][4][5][1][3][2] - (0.0006371438697383446)) < 1.e-10 );
      #+end_src
 
 
