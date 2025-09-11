@@ -1,0 +1,751 @@
+                              ___________
+
+                               ELECTRONS
+
+                                TREX CoE
+                              ___________
+
+
+Table of Contents
+_________________
+
+1. Context
+.. 1. Data structure
+.. 2. Initialization functions
+.. 3. Access functions
+..... 1. Number of electrons
+..... 2. Number of walkers
+..... 3. Electron coordinates
+.. 4. Test
+2. Computation
+.. 1. Electron-electron distances
+..... 1. Get
+..... 2. Compute
+..... 3. Test
+.. 2. Electron-electron potential
+..... 1. Get
+..... 2. Compute
+..... 3. Test
+.. 3. Electron-nucleus distances
+..... 1. Get
+..... 2. Compute
+..... 3. Test
+.. 4. Electron-nucleus potential
+..... 1. Get
+..... 2. Compute
+..... 3. Test
+.. 5. Generate initial coordinates
+
+
+
+
+
+1 Context
+=========
+
+  The following data stored in the context:
+
+   Variable         Type           Description                          
+  ----------------------------------------------------------------------
+   `uninitialized'  `int32_t'      Keeps bit set for uninitialized data 
+   `num'            `int64_t'      Total number of electrons            
+   `up_num'         `int64_t'      Number of up-spin electrons          
+   `down_num'       `int64_t'      Number of down-spin electrons        
+   `provided'       `bool'         If true, `electron' is valid         
+   `walker'         `qmckl_point'  Current set of walkers               
+   `walker_old'     `qmckl_point'  Previous set of walkers              
+
+  Computed data:
+
+   Variable             Type                            Description                                                  
+  -------------------------------------------------------------------------------------------------------------------
+   `ee_distance'        `double[walker.num][num][num]'  Electron-electron distances                                  
+   `ee_distance_date'   `uint64_t'                      Last modification date of the electron-electron distances    
+   `en_distance'        `double[num][nucl_num]'         Electron-nucleus distances                                   
+   `en_distance_date'   `uint64_t'                      Last modification date of the electron-electron distances    
+   `ee_potential'       `double[walker.num]'            Electron-electron potential energy                           
+   `ee_potential_date'  `uint64_t'                      Last modification date of the electron-electron potential    
+   `en_potential'       `double[walker.num]'            Electron-nucleus potential energy                            
+   `en_potential_date'  `int64_t'                       Date when the electron-nucleus potential energy was computed 
+
+
+1.1 Data structure
+~~~~~~~~~~~~~~~~~~
+
+  ,----
+  | 
+  | typedef struct qmckl_walker_struct {
+  |   int64_t num;
+  |   qmckl_point_struct point;
+  | } qmckl_walker;
+  | 
+  | typedef struct qmckl_electron_struct {
+  |   int64_t        num;
+  |   int64_t        up_num;
+  |   int64_t        down_num;
+  |   qmckl_walker   walker;
+  |   qmckl_walker   walker_old;
+  |   uint64_t       ee_distance_date;
+  |   uint64_t       en_distance_date;
+  |   uint64_t       ee_potential_date;
+  |   uint64_t       en_potential_date;
+  |   double*        ee_distance;
+  |   double*        en_distance;
+  |   double*        ee_potential;
+  |   double*        en_potential;
+  |   int32_t        uninitialized;
+  |   bool           provided;
+  | } qmckl_electron_struct;
+  | 
+  `----
+
+  The `uninitialized' integer contains one bit set to one for each
+  initialization function which has not been called. It becomes equal to
+  zero after all initialization functions have been called. The struct
+  is then initialized and `provided == true'.  Some values are
+  initialized by default, and are not concerned by this mechanism.
+
+  ,----
+  | qmckl_exit_code qmckl_init_electron(qmckl_context context);
+  `----
+
+  ,----
+  | qmckl_exit_code qmckl_init_electron(qmckl_context context) {
+  | 
+  |   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+  |     return false;
+  |   }
+  | 
+  |   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  |   assert (ctx != NULL);
+  | 
+  |   ctx->electron.uninitialized = (1 << 1) - 1;
+  | 
+  |   return QMCKL_SUCCESS;
+  | }
+  `----
+
+
+  ,----
+  | bool qmckl_electron_provided (const qmckl_context context);
+  `----
+
+
+1.2 Initialization functions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  To set the data relative to the electrons in the context, the
+  following functions need to be called. When the data structure is
+  initialized, the internal `coord_new' and `coord_old' arrays are both
+  not allocated.
+
+  ,----
+  | qmckl_exit_code qmckl_set_electron_num      (qmckl_context context, const int64_t up_num, const int64_t down_num);
+  | qmckl_exit_code qmckl_set_electron_coord    (qmckl_context context, const char transp, const int64_t walk_num, const double* coord, const int64_t size_max);
+  `----
+
+  To set the number of electrons, we give the number of up-spin and
+  down-spin electrons to the context and we set the number of walkers.
+
+  ,----
+  | interface
+  |   integer(c_int32_t) function qmckl_set_electron_num(context, alpha, beta) bind(C)
+  |     use, intrinsic :: iso_c_binding
+  |     import
+  |     implicit none
+  | 
+  |     integer (c_int64_t) , intent(in)  , value :: context
+  |     integer (c_int64_t) , intent(in)  , value :: alpha
+  |     integer (c_int64_t) , intent(in)  , value :: beta
+  |   end function
+  | end interface
+  `----
+
+
+  The following function sets the electron coordinates of all the
+  walkers. When this is done, the pointers to the old and new sets of
+  coordinates are swapped, and the new coordinates are overwritten. This
+  can be done only when the data relative to electrons have been set.
+
+  `size_max' should be equal equal or geater than `elec_num * walker.num
+      * 3', to be symmetric with `qmckl_get_electron_coord'.
+
+  Important: changing the electron coordinates increments the date in
+  the context.
+
+  ,----
+  | interface
+  |   integer(c_int32_t) function qmckl_set_electron_coord(context, transp, walk_num, coord, size_max) bind(C)
+  |     use, intrinsic :: iso_c_binding
+  |     import
+  |     implicit none
+  | 
+  |     integer (c_int64_t) , intent(in)  , value :: context
+  |     character(c_char)   , intent(in)  , value :: transp
+  |     integer (c_int64_t) , intent(in)  , value :: walk_num
+  |     real(c_double)      , intent(in)          :: coord(*)
+  |     integer (c_int64_t) , intent(in)  , value :: size_max
+  |   end function
+  | end interface
+  `----
+
+
+1.3 Access functions
+~~~~~~~~~~~~~~~~~~~~
+
+  Access functions return `QMCKL_SUCCESS' when the data has been
+  successfully retrieved. It returnes `QMCKL_INVALID_CONTEXT' when the
+  context is not a valid context, and `QMCKL_NOT_PROVIDED' when the data
+  has not been provided. If the function returns successfully, the
+  variable pointed by the pointer given in argument contains the
+  requested data. Otherwise, this variable is untouched.
+
+
+1.3.1 Number of electrons
+-------------------------
+
+
+1.3.2 Number of walkers
+-----------------------
+
+  A walker is a set of electron coordinates that are arguments of the
+  wave function. `walk_num' is the number of walkers.
+
+
+1.3.3 Electron coordinates
+--------------------------
+
+  Returns the current electron coordinates. The pointer is assumed to
+  point on a memory block of size `size_max' >= `3 * elec_num *
+  walker.num'.  The order of the indices is:
+
+            Normal                      Transposed                 
+  -----------------------------------------------------------------
+   C        `[walker.num*elec_num][3]'  `[3][walker.num*elec_num]' 
+   Fortran  `(3,walker.num*elec_num)'   `(walker.num*elec_num, 3)' 
+
+
+  As the `walker' attribute is equal to `points', returning the current
+  electron coordinates is equivalent to returning the current points.
+
+  ,----
+  | interface
+  |   integer(c_int32_t) function qmckl_get_electron_coord(context, transp, coord, size_max) bind(C)
+  |     use, intrinsic :: iso_c_binding
+  |     import
+  |     implicit none
+  | 
+  |     integer (c_int64_t) , intent(in)  , value :: context
+  |     character(c_char)   , intent(in)  , value :: transp
+  |     real(c_double)      , intent(in)          :: coord(*)
+  |     integer (c_int64_t) , intent(in)  , value :: size_max
+  |   end function
+  | end interface
+  `----
+
+
+1.4 Test
+~~~~~~~~
+
+  ,----
+  | /* Reference input data */
+  | int64_t walk_num      = chbrclf_walk_num;
+  | int64_t elec_num      = chbrclf_elec_num;
+  | int64_t elec_up_num   = chbrclf_elec_up_num;
+  | int64_t elec_dn_num   = chbrclf_elec_dn_num;
+  | int64_t nucl_num      = chbrclf_nucl_num;
+  | double* charge        = chbrclf_charge;
+  | double* nucl_coord    = &(chbrclf_nucl_coord[0][0]);
+  | 
+  | double* elec_coord    = &(chbrclf_elec_coord[0][0][0]);
+  | 
+  | 
+  | /* --- */
+  | 
+  | qmckl_exit_code rc;
+  | 
+  | assert(!qmckl_electron_provided(context));
+  | 
+  | int64_t n;
+  | rc = qmckl_get_electron_num (context, &n);
+  | assert(rc == QMCKL_NOT_PROVIDED);
+  | 
+  | rc = qmckl_get_electron_up_num (context, &n);
+  | assert(rc == QMCKL_NOT_PROVIDED);
+  | 
+  | rc = qmckl_get_electron_down_num (context, &n);
+  | assert(rc == QMCKL_NOT_PROVIDED);
+  | 
+  | 
+  | rc = qmckl_set_electron_num (context, elec_up_num, elec_dn_num);
+  | qmckl_check(context, rc);
+  | assert(qmckl_electron_provided(context));
+  | 
+  | rc = qmckl_get_electron_up_num (context, &n);
+  | qmckl_check(context, rc);
+  | assert(n == elec_up_num);
+  | 
+  | rc = qmckl_get_electron_down_num (context, &n);
+  | qmckl_check(context, rc);
+  | assert(n == elec_dn_num);
+  | 
+  | rc = qmckl_get_electron_num (context, &n);
+  | qmckl_check(context, rc);
+  | assert(n == elec_num);
+  | 
+  | 
+  | int64_t w = 0;
+  | rc = qmckl_get_electron_walk_num (context, &w);
+  | qmckl_check(context, rc);
+  | assert(w == 0);
+  | 
+  | 
+  | assert(qmckl_electron_provided(context));
+  | 
+  | rc = qmckl_set_electron_coord (context, 'N', walk_num, elec_coord, walk_num*elec_num*3);
+  | qmckl_check(context, rc);
+  | 
+  | rc = qmckl_get_electron_walk_num (context, &w);
+  | qmckl_check(context, rc);
+  | assert(w == walk_num);
+  | 
+  | double elec_coord2[walk_num*3*elec_num];
+  | 
+  | rc = qmckl_get_electron_coord (context, 'N', elec_coord2, walk_num*3*elec_num);
+  | qmckl_check(context, rc);
+  | for (int64_t i=0 ; i<3*elec_num*walk_num ; ++i) {
+  |   printf("%f %f\n",  elec_coord[i],  elec_coord2[i]);
+  |   assert( elec_coord[i] == elec_coord2[i] );
+  |  }
+  | 
+  `----
+
+
+2 Computation
+=============
+
+  The computed data is stored in the context so that it can be reused by
+  different kernels. To ensure that the data is valid, for each computed
+  data the date of the context is stored when it is computed.  To know
+  if some data needs to be recomputed, we check if the date of the
+  dependencies are more recent than the date of the data to compute. If
+  it is the case, then the data is recomputed and the current date is
+  stored.
+
+
+2.1 Electron-electron distances
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+2.1.1 Get
+---------
+
+  ,----
+  | qmckl_exit_code
+  | qmckl_get_electron_ee_distance(qmckl_context context,
+  |                                double* const distance,
+  |                                const int64_t size_max);
+  `----
+
+
+2.1.2 Compute
+-------------
+
+   Variable       Type                                    In/Out  Description                 
+  --------------------------------------------------------------------------------------------
+   `context'      `qmckl_context'                         in      Global state                
+   `elec_num'     `int64_t'                               in      Number of electrons         
+   `walk_num'     `int64_t'                               in      Number of walkers           
+   `coord'        `double[3][walk_num][elec_num]'         in      Electron coordinates        
+   `ee_distance'  `double[walk_num][elec_num][elec_num]'  out     Electron-electron distances 
+
+  ,----
+  | integer function qmckl_compute_ee_distance_f(context, elec_num, walk_num, coord, ee_distance) &
+  |      result(info)
+  |   use qmckl
+  |   implicit none
+  |   integer(qmckl_context), intent(in)  :: context
+  |   integer*8             , intent(in)  :: elec_num
+  |   integer*8             , intent(in)  :: walk_num
+  |   double precision      , intent(in)  :: coord(elec_num,walk_num,3)
+  |   double precision      , intent(out) :: ee_distance(elec_num,elec_num,walk_num)
+  | 
+  |   integer*8 :: k, i, j
+  |   double precision :: x, y, z
+  | 
+  |   info = QMCKL_SUCCESS
+  | 
+  |   if (context == QMCKL_NULL_CONTEXT) then
+  |      info = QMCKL_INVALID_CONTEXT
+  |      return
+  |   endif
+  | 
+  |   if (elec_num <= 0) then
+  |      info = QMCKL_INVALID_ARG_2
+  |      return
+  |   endif
+  | 
+  |   if (walk_num <= 0) then
+  |      info = QMCKL_INVALID_ARG_3
+  |      return
+  |   endif
+  | 
+  |   do k=1,walk_num
+  |      info = qmckl_distance(context, 'T', 'T', elec_num, elec_num, &
+  |           coord(1,k,1), elec_num * walk_num, &
+  |           coord(1,k,1), elec_num * walk_num, &
+  |           ee_distance(1,1,k), elec_num)
+  |      if (info /= QMCKL_SUCCESS) then
+  |         exit
+  |      endif
+  |   end do
+  | 
+  | end function qmckl_compute_ee_distance_f
+  `----
+
+
+2.1.3 Test
+----------
+
+  ,----
+  | assert(qmckl_electron_provided(context));
+  | 
+  | 
+  | double ee_distance[walk_num * elec_num * elec_num];
+  | rc = qmckl_get_electron_ee_distance(context, ee_distance, walk_num * elec_num * elec_num);
+  | 
+  | // (e1,e2,w)
+  | // (0,0,0) == 0.
+  | assert(ee_distance[0] == 0.);
+  | 
+  | // (1,0,0) == (0,1,0)
+  | assert(ee_distance[1] == ee_distance[elec_num]);
+  | 
+  | // value of (1,0,0)
+  | assert(fabs(ee_distance[1]-7.152322512964209) < 1.e-12);
+  | 
+  | // (0,0,1) == 0.
+  | assert(ee_distance[elec_num*elec_num] == 0.);
+  | 
+  | // (1,0,1) == (0,1,1)
+  | assert(ee_distance[elec_num*elec_num+1] == ee_distance[elec_num*elec_num+elec_num]);
+  | 
+  | // value of (1,0,1)
+  | assert(fabs(ee_distance[elec_num*elec_num+1]-6.5517646321055665) < 1.e-12);
+  | 
+  `----
+
+
+2.2 Electron-electron potential
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  `ee_potential' is given by
+
+  \[ \mathcal{V}_{ee} = \sum_{i=1}^{N_e}\sum_{j>i}^{N_e}\frac{1}{r_{ij}}
+     \]
+
+  where \(\mathcal{V}_{ee}\) is the `ee' potential and \[r_{ij}\] the
+  `ee' distance.
+
+
+2.2.1 Get
+---------
+
+  ,----
+  | qmckl_exit_code qmckl_get_electron_ee_potential(qmckl_context context, double* const ee_potential);
+  `----
+
+
+2.2.2 Compute
+-------------
+
+   Variable        Type                                    In/Out  Description                 
+  ---------------------------------------------------------------------------------------------
+   `context'       `qmckl_context'                         in      Global state                
+   `elec_num'      `int64_t'                               in      Number of electrons         
+   `walk_num'      `int64_t'                               in      Number of walkers           
+   `ee_distance'   `double[walk_num][elec_num][elec_num]'  in      Electron-electron distances 
+   `ee_potential'  `double[walk_num]'                      out     Electron-electron potential 
+
+  ,----
+  | integer function qmckl_compute_ee_potential_f(context, elec_num, walk_num, &
+  |      ee_distance, ee_potential) &
+  |      result(info)
+  |   use qmckl
+  |   implicit none
+  |   integer(qmckl_context), intent(in)  :: context
+  |   integer*8             , intent(in)  :: elec_num
+  |   integer*8             , intent(in)  :: walk_num
+  |   double precision      , intent(in)  :: ee_distance(elec_num,elec_num,walk_num)
+  |   double precision      , intent(out) :: ee_potential(walk_num)
+  | 
+  |   integer*8 :: nw, i, j
+  | 
+  |   info = QMCKL_SUCCESS
+  | 
+  |   if (context == QMCKL_NULL_CONTEXT) then
+  |      info = QMCKL_INVALID_CONTEXT
+  |      return
+  |   endif
+  | 
+  |   if (elec_num <= 0) then
+  |      info = QMCKL_INVALID_ARG_2
+  |      return
+  |   endif
+  | 
+  |   if (walk_num <= 0) then
+  |      info = QMCKL_INVALID_ARG_3
+  |      return
+  |   endif
+  | 
+  |   ee_potential = 0.0d0
+  |   do nw=1,walk_num
+  |     do j=2,elec_num
+  |       do i=1,j-1
+  |         if (dabs(ee_distance(i,j,nw)) > 1e-5) then
+  |           ee_potential(nw) = ee_potential(nw) + 1.0d0/(ee_distance(i,j,nw))
+  |         endif
+  |       end do
+  |     end do
+  |   end do
+  | 
+  | end function qmckl_compute_ee_potential_f
+  `----
+
+  ,----
+  | qmckl_exit_code qmckl_compute_ee_potential (
+  |       const qmckl_context context,
+  |       const int64_t elec_num,
+  |       const int64_t walk_num,
+  |       const double* ee_distance,
+  |       double* const ee_potential ); 
+  `----
+
+
+2.2.3 Test
+----------
+
+  ,----
+  | double ee_potential[walk_num];
+  | 
+  | rc = qmckl_get_electron_ee_potential(context, &(ee_potential[0]));
+  | qmckl_check(context, rc);
+  `----
+
+
+2.3 Electron-nucleus distances
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+2.3.1 Get
+---------
+
+  ,----
+  | qmckl_exit_code
+  | qmckl_get_electron_en_distance(qmckl_context context,
+  |                                double* const distance,
+  |                                const int64_t size_max);
+  `----
+
+
+2.3.2 Compute
+-------------
+
+   Variable       Type                           In/Out  Description                
+  ----------------------------------------------------------------------------------
+   `context'      `qmckl_context'                in      Global state               
+   `point_num'    `int64_t'                      in      Number of points           
+   `nucl_num'     `int64_t'                      in      Number of nuclei           
+   `elec_coord'   `double[3][point_num]'         in      Electron coordinates       
+   `nucl_coord'   `double[3][nucl_num]'          in      Nuclear coordinates        
+   `en_distance'  `double[point_num][nucl_num]'  out     Electron-nucleus distances 
+
+  ,----
+  | integer function qmckl_compute_en_distance_f(context, point_num, nucl_num, elec_coord, nucl_coord, en_distance) &
+  |      result(info)
+  |   use qmckl
+  |   implicit none
+  |   integer(qmckl_context), intent(in)  :: context
+  |   integer*8             , intent(in)  :: point_num
+  |   integer*8             , intent(in)  :: nucl_num
+  |   double precision      , intent(in)  :: elec_coord(point_num,3)
+  |   double precision      , intent(in)  :: nucl_coord(nucl_num,3)
+  |   double precision      , intent(out) :: en_distance(nucl_num,point_num)
+  | 
+  |   integer*8 :: k
+  | 
+  |   info = QMCKL_SUCCESS
+  | 
+  |   if (context == QMCKL_NULL_CONTEXT) then
+  |      info = QMCKL_INVALID_CONTEXT
+  |      return
+  |   endif
+  | 
+  |   if (point_num <= 0) then
+  |      info = QMCKL_INVALID_ARG_2
+  |      return
+  |   endif
+  | 
+  |   if (nucl_num <= 0) then
+  |      info = QMCKL_INVALID_ARG_3
+  |      return
+  |   endif
+  | 
+  |   info = qmckl_distance(context, 'T', 'T', nucl_num, point_num, &
+  |           nucl_coord, nucl_num, &
+  |           elec_coord, point_num, &
+  |           en_distance, nucl_num)
+  | 
+  | end function qmckl_compute_en_distance_f
+  `----
+
+
+2.3.3 Test
+----------
+
+  ,----
+  | 
+  | assert(!qmckl_nucleus_provided(context));
+  | assert(qmckl_electron_provided(context));
+  | 
+  | rc = qmckl_set_nucleus_num (context, nucl_num);
+  | qmckl_check(context, rc);
+  | 
+  | rc = qmckl_set_nucleus_charge (context, charge, nucl_num);
+  | qmckl_check(context, rc);
+  | 
+  | rc = qmckl_set_nucleus_coord (context, 'T', nucl_coord, 3*nucl_num);
+  | qmckl_check(context, rc);
+  | 
+  | assert(qmckl_nucleus_provided(context));
+  | 
+  | double en_distance[walk_num][elec_num][nucl_num];
+  | 
+  | rc = qmckl_get_electron_en_distance(context, &(en_distance[0][0][0]), walk_num * elec_num * nucl_num);
+  | qmckl_check(context, rc);
+  | 
+  | // (e,n,w) in Fortran notation
+  | // (1,1,1)
+  | assert(fabs(en_distance[0][0][0] - 7.546738741619978) < 1.e-12);
+  | 
+  | // (1,2,1)
+  | assert(fabs(en_distance[0][0][1] - 8.77102435246984) < 1.e-12);
+  | 
+  | // (2,1,1)
+  | assert(fabs(en_distance[0][1][0] - 3.698922010513608) < 1.e-12);
+  | 
+  | // (1,1,2)
+  | assert(fabs(en_distance[1][0][0] - 5.824059436060509) < 1.e-12);
+  | 
+  | // (1,2,2)
+  | assert(fabs(en_distance[1][0][1] - 7.080482110317645) < 1.e-12);
+  | 
+  | // (2,1,2)
+  | assert(fabs(en_distance[1][1][0] - 3.1804527583077356) < 1.e-12);
+  | 
+  `----
+
+
+2.4 Electron-nucleus potential
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  `en_potential' stores the `en' potential energy
+
+  \[ \mathcal{V}_{en} =
+     -\sum_{i=1}^{N_e}\sum_{A=1}^{N_n}\frac{Z_A}{r_{iA}} \]
+
+  where \(\mathcal{V}_{en}\) is the `en' potential, \[r_{iA}\] the `en'
+  distance and \[Z_A\] is the nuclear charge.
+
+
+2.4.1 Get
+---------
+
+  ,----
+  | qmckl_exit_code qmckl_get_electron_en_potential(qmckl_context context, double* const en_potential);
+  `----
+
+
+2.4.2 Compute
+-------------
+
+   Variable        Type                                    In/Out  Description                 
+  ---------------------------------------------------------------------------------------------
+   `context'       `qmckl_context'                         in      Global state                
+   `elec_num'      `int64_t'                               in      Number of electrons         
+   `nucl_num'      `int64_t'                               in      Number of nuclei            
+   `walk_num'      `int64_t'                               in      Number of walkers           
+   `charge'        `double[nucl_num]'                      in      charge of nucleus           
+   `en_distance'   `double[walk_num][elec_num][nucl_num]'  in      Electron-electron distances 
+   `en_potential'  `double[walk_num]'                      out     Electron-electron potential 
+
+  ,----
+  | integer function qmckl_compute_en_potential_f(context, elec_num, nucl_num, walk_num, &
+  |      charge, en_distance, en_potential) &
+  |      result(info)
+  |   use qmckl
+  |   implicit none
+  |   integer(qmckl_context), intent(in)  :: context
+  |   integer*8             , intent(in)  :: elec_num
+  |   integer*8             , intent(in)  :: nucl_num
+  |   integer*8             , intent(in)  :: walk_num
+  |   double precision      , intent(in)  :: charge(nucl_num)
+  |   double precision      , intent(in)  :: en_distance(nucl_num,elec_num,walk_num)
+  |   double precision      , intent(out) :: en_potential(walk_num)
+  | 
+  |   integer*8 :: nw, i, j
+  | 
+  |   info = QMCKL_SUCCESS
+  | 
+  |   if (context == QMCKL_NULL_CONTEXT) then
+  |      info = QMCKL_INVALID_CONTEXT
+  |      return
+  |   endif
+  | 
+  |   if (elec_num <= 0) then
+  |      info = QMCKL_INVALID_ARG_2
+  |      return
+  |   endif
+  | 
+  |   if (walk_num <= 0) then
+  |      info = QMCKL_INVALID_ARG_3
+  |      return
+  |   endif
+  | 
+  |   en_potential = 0.0d0
+  |   do nw=1,walk_num
+  |     do i=1,elec_num
+  |       do j=1,nucl_num
+  |         if (dabs(en_distance(j,i,nw)) > 1.d-6) then
+  |           en_potential(nw) = en_potential(nw) - charge(j)/(en_distance(j,i,nw))
+  |         endif
+  |       end do
+  |     end do
+  |   end do
+  | 
+  | end function qmckl_compute_en_potential_f
+  `----
+
+  ,----
+  | qmckl_exit_code qmckl_compute_en_potential (
+  |       const qmckl_context context,
+  |       const int64_t elec_num,
+  |       const int64_t nucl_num,
+  |       const int64_t walk_num,
+  |       const double* charge,
+  |       const double* en_distance,
+  |       double* const en_potential ); 
+  `----
+
+
+2.4.3 Test
+----------
+
+  ,----
+  | double en_potential[walk_num];
+  | 
+  | rc = qmckl_get_electron_en_potential(context, &(en_potential[0]));
+  | qmckl_check(context, rc);
+  `----
+
+
+2.5 Generate initial coordinates
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
