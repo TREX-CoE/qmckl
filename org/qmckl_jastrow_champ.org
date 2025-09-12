@@ -10092,8 +10092,7 @@ function qmckl_compute_tmp_c_doc( &
 
   do nw=1, walk_num
      do i=0, cord_num-1
-        do j=0, cord_num
-           if (i+j > cord_num) cycle
+        do j=0, cord_num-i
            info = qmckl_dgemm(context, TransA, TransB, M, N, K, alpha, &
                 een_rescaled_e(1,1,i,nw),LDA*1_8,        &
                 een_rescaled_n(1,1,j,nw),LDB*1_8,        &
@@ -10148,26 +10147,65 @@ qmckl_exit_code qmckl_compute_tmp_c_hpc (
   const int64_t K = elec_num;
   const int64_t N = nucl_num;
 
-  const int64_t LDA = elec_num;
-  const int64_t LDB = elec_num;
-  const int64_t LDC = elec_num;
+  const int64_t LDA = M;
+  const int64_t LDB = K;
+  const int64_t LDC = M;
 
-  const int64_t af = elec_num*elec_num;
-  const int64_t bf = elec_num*nucl_num;
-  const int64_t cf = elec_num*nucl_num;
+  const int64_t af = LDA*elec_num;
+  const int64_t bf = LDB*nucl_num;
+  const int64_t cf = LDC*nucl_num;
+  
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
+  for (int64_t nw=0; nw < walk_num; ++nw) {
+    // (i,0)
+    { int64_t j=0 ;
+      for (int64_t i=1; i<cord_num; ++i){
+        double rowsum[M];
+        for (int64_t m=0 ; m<M ; ++m) {
+          rowsum[m] = 0.0;
+        }
+        for (int64_t k=0 ; k<K ; ++k) {
+          for (int64_t m=0 ; m<M ; ++m) {
+            rowsum[m] += een_rescaled_e[m + k*LDA + af*(i+nw*(cord_num+1))];
+          }
+        }
+        for (int64_t n=0 ; n<N ; ++n) {
+          for (int64_t m=0 ; m<M ; ++m) {
+            tmp_c[m + n*LDC + cf*(j+(cord_num+1)*(i+nw*cord_num))] = rowsum[m];
+          }
+        }
+      }
+    }
+
+    // (0,j)
+    { int64_t i=0;
+      for (int64_t j=0; j<=cord_num; ++j){
+        for (int64_t l=0 ; l<N ; ++l) {
+          double colsum = 0.0;
+          for (int64_t k=0 ; k<K ; ++k) {
+            colsum += een_rescaled_n[k + l*elec_num + bf*(j+nw*(cord_num+1))];
+          }
+          for (int64_t k=0 ; k<M ; ++k) {
+            tmp_c[k + l*elec_num + cf*(j+(cord_num+1)*(i+nw*cord_num))] = colsum - 
+              een_rescaled_n[k + l*elec_num + bf*(j+nw*(cord_num+1))];
+          }
+        }
+      }
+    }
+  }
 
 #ifdef HAVE_OPENMP
 #pragma omp parallel for collapse(3)
 #endif
   for (int64_t nw=0; nw < walk_num; ++nw) {
-    for (int64_t i=0; i<cord_num; ++i){
-      for (int64_t j=0; j<=cord_num; ++j){
-        if (i+j <= cord_num) {
-          info = qmckl_dgemm(context, TransA, TransB, M, N, K, alpha,
-                             &(een_rescaled_e[af*(i+nw*(cord_num+1))]), LDA,
-                             &(een_rescaled_n[bf*(j+nw*(cord_num+1))]), LDB, beta,
-                             &(tmp_c[cf*(j+(cord_num+1)*(i+nw*cord_num))]), LDC);
-        }
+    for (int64_t i=1; i<cord_num; ++i){
+      for (int64_t j=1; j<=cord_num-i; ++j){
+        info = qmckl_dgemm(context, TransA, TransB, M, N, K, alpha,
+                           &(een_rescaled_e[af*(i+nw*(cord_num+1))]), LDA,
+                           &(een_rescaled_n[bf*(j+nw*(cord_num+1))]), LDB, beta,
+                           &(tmp_c[cf*(j+(cord_num+1)*(i+nw*cord_num))]), LDC);
       }
     }
   }
@@ -10325,14 +10363,12 @@ function qmckl_compute_dtmp_c_doc( &
 
   do nw=1, walk_num
      do i=0, cord_num-1
-        do j=0, cord_num
-           if (i+j <= cord_num) then
+        do j=0, cord_num-i
               info = qmckl_dgemm(context,TransA, TransB, M, N, K, alpha,  &
                    een_rescaled_e_gl(1,1,1,i,nw),LDA*1_8,            &
                    een_rescaled_n(1,1,j,nw),LDB*1_8,                      &
                    beta,                                                  &
                    dtmp_c(1,1,1,j,i,nw),LDC)
-           end if
         end do
      end do
   end do
@@ -10383,26 +10419,58 @@ qmckl_compute_dtmp_c_hpc (const qmckl_context context,
   const int64_t N = nucl_num;
   const int64_t K = elec_num;
 
-  const int64_t LDA = 4*elec_num;
-  const int64_t LDB = elec_num;
-  const int64_t LDC = 4*elec_num;
+  const int64_t LDA = M;
+  const int64_t LDB = K;
+  const int64_t LDC = M;
 
-  const int64_t af = elec_num*elec_num*4;
-  const int64_t bf = elec_num*nucl_num;
-  const int64_t cf = elec_num*4*nucl_num;
+  const int64_t af = LDA*elec_num;
+  const int64_t bf = LDB*nucl_num;
+  const int64_t cf = LDC*nucl_num;
+
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
+  for (int64_t nw=0; nw < walk_num; ++nw) {
+    // (i,0)
+    { int64_t j=0 ;
+      for (int64_t i=1; i<cord_num; ++i){
+        double rowsum[M];
+        for (int64_t m=0 ; m<M ; ++m) {
+          rowsum[m] = 0.0;
+        }
+        for (int64_t k=0 ; k<K ; ++k) {
+          for (int64_t m=0 ; m<M ; ++m) {
+            rowsum[m] += een_rescaled_e_gl[m + k*LDA + af*(i+nw*(cord_num+1))];
+          }
+        }
+        for (int64_t n=0 ; n<N ; ++n) {
+          for (int64_t m=0 ; m<M ; ++m) {
+            dtmp_c[m + n*LDC + cf*(j+(cord_num+1)*(i+nw*cord_num))] = rowsum[m];
+          }
+        }
+      }
+    }
+
+    // (0,j)
+    { int64_t i=0;
+      for (int64_t j=0; j<=cord_num; ++j){
+        for (int64_t k=0 ; k<N*M ; ++k) {
+          dtmp_c[k + cf*(j+(cord_num+1)*(i+nw*cord_num))] = 0.0;
+        }
+      }
+    }
+  }
 
 #ifdef HAVE_OPENMP
 #pragma omp parallel for collapse(3)
 #endif
   for (int64_t nw=0; nw < walk_num; ++nw) {
-    for (int64_t i=0; i < cord_num; ++i) {
-      for (int64_t j=0; j <= cord_num; ++j) {
-        if (i+j <= cord_num) {
+    for (int64_t i=1; i < cord_num; ++i) {
+      for (int64_t j=1; j <= cord_num-i; ++j) {
           qmckl_dgemm(context, TransA, TransB, M, N, K, alpha,
                       &(een_rescaled_e_gl[af*(i+nw*(cord_num+1))]), LDA,
                       &(een_rescaled_n[bf*(j+nw*(cord_num+1))]), LDB, beta,
                       &(dtmp_c[cf*(j+(cord_num+1)*(i+nw*cord_num))]), LDC);
-        }
       }
     }
   }
