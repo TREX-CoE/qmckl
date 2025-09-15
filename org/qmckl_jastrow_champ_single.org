@@ -1876,7 +1876,7 @@ qmckl_exit_code qmckl_provide_jastrow_champ_delta_p(qmckl_context context)
       ctx->single_point.delta_p = delta_p;
     }
 
-    rc = qmckl_compute_jastrow_champ_delta_p_doc(context,
+    rc = qmckl_compute_jastrow_champ_delta_p(context,
                                                 ctx->single_point.num,
                                                 ctx->electron.walker.num,
                                                 ctx->electron.num,
@@ -1988,6 +1988,105 @@ end function qmckl_compute_jastrow_champ_delta_p_doc
      #+end_src
 
 
+     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+integer function qmckl_compute_jastrow_champ_delta_p_hpc( &
+     context, num_in, walk_num, elec_num, nucl_num, cord_num,   &
+     een_rescaled_n, een_rescaled_e, een_rescaled_single_n, een_rescaled_single_e, delta_p) &
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
+  use qmckl
+  implicit none
+  integer(qmckl_context), intent(in), value  :: context
+  integer(c_int64_t), intent(in), value  :: num_in, walk_num, elec_num, cord_num, nucl_num
+  real(c_double) , intent(in)            :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
+  real(c_double) , intent(in)            :: een_rescaled_e(elec_num, elec_num, 0:cord_num, walk_num)
+  real(c_double) , intent(in)            :: een_rescaled_single_n(nucl_num, 0:cord_num, walk_num)
+  real(c_double) , intent(in)            :: een_rescaled_single_e(elec_num, 0:cord_num, walk_num)
+  real(c_double) , intent(out)           :: delta_p(elec_num, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
+
+  double precision        :: een_rescaled_delta_e(elec_num)
+
+  integer*8 :: i, a, c, j, l, k, p, m, n, nw, num
+  double precision :: dn, dn2
+  integer*8                           :: LDA, LDB, LDC
+
+  num = num_in + 1
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) info = QMCKL_INVALID_CONTEXT
+  if (walk_num <= 0)                 info = QMCKL_INVALID_ARG_3
+  if (elec_num <= 0)                 info = QMCKL_INVALID_ARG_4
+  if (nucl_num <= 0)                 info = QMCKL_INVALID_ARG_5
+  if (cord_num <  0)                 info = QMCKL_INVALID_ARG_6
+  if (info /= QMCKL_SUCCESS)         return
+
+  if (cord_num == 0) return
+
+  do nw=1, walk_num
+
+    i = 0
+
+    do c=1,cord_num
+        do a=1,nucl_num
+          dn = een_rescaled_single_n(a,c,nw) - een_rescaled_n(num,a,c,nw)
+          delta_p(:,a,c,i,nw) = een_rescaled_e(:,num,i,nw)*dn 
+        end do
+    end do
+
+
+
+
+    c = 0
+
+    do i=1, cord_num-1
+
+      een_rescaled_delta_e(:) = een_rescaled_single_e(:,i,nw) - een_rescaled_e(:,num,i,nw)
+
+
+      do a=1,nucl_num
+        dn2 = een_rescaled_single_n(a,c,nw)
+        delta_p(:,a,c,i,nw) =  een_rescaled_delta_e(:) * dn2
+      end do
+      do a = 1, nucl_num
+        do j = 1, elec_num
+            delta_p(num,a,0,i,nw) = delta_p(num,a,0,i,nw) + een_rescaled_delta_e(j)
+        end do
+      end do
+    end do
+
+
+
+
+    do i=1, cord_num-1
+
+      een_rescaled_delta_e(:) = een_rescaled_single_e(:,i,nw) - een_rescaled_e(:,num,i,nw)
+
+      do c=1,cord_num-i
+          do a=1,nucl_num
+            dn = een_rescaled_single_n(a,c,nw) - een_rescaled_n(num,a,c,nw)
+            dn2 = een_rescaled_single_n(a,c,nw)
+            !do j=1,elec_num
+                delta_p(:,a,c,i,nw) = een_rescaled_e(:,num,i,nw)*dn + een_rescaled_delta_e(:) * dn2
+            !enddo
+          end do
+
+        info = qmckl_dgemm(context, 'T', 'N', 1_8, nucl_num , elec_num, 1.0d0,     &
+            een_rescaled_delta_e,elec_num, &
+            een_rescaled_n(1,1,c,nw),elec_num,     &
+            1.0d0,                                 &
+            delta_p(num,1,c,i,nw),elec_num)
+      end do
+
+
+    enddo
+
+  end do
+
+end function qmckl_compute_jastrow_champ_delta_p_hpc
+     #+end_src
+
+
  #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
 qmckl_exit_code
 qmckl_compute_jastrow_champ_delta_p_doc (const qmckl_context context,
@@ -2003,7 +2102,19 @@ qmckl_compute_jastrow_champ_delta_p_doc (const qmckl_context context,
                               double* const delta_p );
 
 qmckl_exit_code
+qmckl_compute_jastrow_champ_delta_p_hpc (const qmckl_context context,
+                              const int64_t num,
+                              const int64_t walk_num,
+                              const int64_t elec_num,
+                              const int64_t nucl_num,
+                              const int64_t cord_num,
+                              const double* een_rescaled_n,
+                              const double* een_rescaled_e,
+                              const double* een_rescaled_single_n,
+                              const double* een_rescaled_single_e,
+                              double* const delta_p );
 
+qmckl_exit_code
 qmckl_compute_jastrow_champ_delta_p (const qmckl_context context,
                           const int64_t num,
                           const int64_t walk_num,
@@ -2032,7 +2143,7 @@ qmckl_compute_jastrow_champ_delta_p (const qmckl_context context,
                           double* const delta_p )
 {
 #ifdef HAVE_HPC
-  return qmckl_compute_jastrow_champ_delta_p_doc
+  return qmckl_compute_jastrow_champ_delta_p_hpc
 #else
   return qmckl_compute_jastrow_champ_delta_p_doc
 #endif
@@ -3432,6 +3543,103 @@ integer(qmckl_exit_code) function qmckl_compute_jastrow_champ_delta_p_gl_doc( &
   end do
 
 end function qmckl_compute_jastrow_champ_delta_p_gl_doc
+     #+end_src
+
+     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+integer(qmckl_exit_code) function qmckl_compute_jastrow_champ_delta_p_gl_hpc( &
+     context, num_in, walk_num, elec_num, nucl_num, cord_num,   &
+     een_rescaled_n, een_rescaled_e, een_rescaled_single_n, een_rescaled_single_e, &
+     een_rescaled_n_gl, een_rescaled_e_gl, een_rescaled_single_n_gl, een_rescaled_single_e_gl, delta_p_gl) &
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
+  use qmckl
+  implicit none
+  integer(qmckl_context), intent(in), value  :: context
+  integer(c_int64_t)    , intent(in), value  :: num_in, walk_num, elec_num, cord_num, nucl_num
+  real(c_double)        , intent(in)  :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_e(elec_num, elec_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_single_n(nucl_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_single_e(elec_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_n_gl(elec_num, 4, nucl_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_e_gl(elec_num, 4, elec_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_single_n_gl(4, nucl_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_single_e_gl(4,elec_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(out)  :: delta_p_gl(elec_num,nucl_num,4,0:cord_num, 0:cord_num-1,  walk_num)
+
+  double precision        :: delta_e_gl(elec_num,4)
+
+  double precision        :: een_rescaled_delta_n, een_re_n, een_re_single_n
+
+  integer*8 :: i, a, j, l, k, p, m, n, nw, num
+  double precision :: tmp, cummu
+  integer*8        :: LDA, LDB, LDC
+
+  num = num_in + 1
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) info = QMCKL_INVALID_CONTEXT
+  if (walk_num <= 0)                 info = QMCKL_INVALID_ARG_3
+  if (elec_num <= 0)                 info = QMCKL_INVALID_ARG_4
+  if (nucl_num <= 0)                 info = QMCKL_INVALID_ARG_5
+  if (cord_num <  0)                 info = QMCKL_INVALID_ARG_6
+  if (info /= QMCKL_SUCCESS)         return
+
+
+  if (cord_num == 0) then
+     delta_p_gl = 0.d0
+     return
+  endif
+
+  do nw=1, walk_num
+     do m=1, cord_num-1
+        do k = 1, 4
+          do j = 1, elec_num
+            delta_e_gl(j,k) = een_rescaled_single_e_gl(k,j,m,nw) - een_rescaled_e_gl(num, k, j, m, nw)
+          end do
+        end do
+        do k = 1, 4
+          delta_e_gl(num, k) = 0.0d0
+        end do
+
+        do l=0, cord_num-m
+          do k = 1, 3
+            do a = 1, nucl_num
+
+              een_re_n = een_rescaled_n(num, a, l, nw)
+              een_re_single_n = een_rescaled_single_n(a,l,nw)
+
+              cummu = 0.0d0
+              do i = 1, elec_num
+
+                delta_p_gl(i,a,k,l,m,nw) = -een_rescaled_e_gl(i,k,num,m,nw) * een_re_n &
+                  - een_rescaled_single_e_gl(k,i,m,nw) * een_re_single_n
+
+                cummu = cummu + delta_e_gl(i,k) * een_rescaled_n(i,a,l,nw)
+              end do
+              delta_p_gl(num,a,k,l,m,nw) = delta_p_gl(num,a,k,l,m,nw) + cummu
+
+            end do
+          end do
+          do a = 1, nucl_num
+            een_rescaled_delta_n = een_rescaled_single_n(a,l,nw) - een_rescaled_n(num, a, l, nw)
+            cummu = 0.0d0
+            een_re_single_n = een_rescaled_single_n(a,l,nw)
+            
+            do i = 1, elec_num
+              delta_p_gl(i,a,4,l,m,nw) = een_rescaled_e_gl(i,4,num,m,nw) * een_rescaled_delta_n &
+                +delta_e_gl(i,4) * een_re_single_n
+
+              cummu = cummu + delta_e_gl(i,4) * een_rescaled_n(i,a,l,nw)
+            end do
+            delta_p_gl(num,a,4,l,m,nw) = delta_p_gl(num,a,4,l,m,nw) + cummu
+
+          end do
+        end do
+     end do
+  end do
+
+end function qmckl_compute_jastrow_champ_delta_p_gl_hpc
      #+end_src
 
  #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
