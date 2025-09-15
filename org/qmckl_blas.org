@@ -2721,6 +2721,203 @@ printf("qmckl_transpose ok\n");
 
      #+end_src
 
+** ~qmckl_dgemm_sparse_nn~
+
+   #+NAME: qmckl_dgemm_sparse_nn_args
+   | Variable  | Type            | In/Out | Description                           |
+   |-----------+-----------------+--------+---------------------------------------|
+   | ~context~ | ~qmckl_context~ | in     | Global state                          |
+   | ~m~       | ~int64_t~       | in     | Number of rows of the input matrix    |
+   | ~n~       | ~int64_t~       | in     | Number of columns of the input matrix |
+   | ~k~       | ~int64_t~       | in     | Number of columns of the input matrix |
+   | ~alpha~   | ~double~        | in     | \alpha                                |
+   | ~A~       | ~double[][lda]~ | in     | Array containing the matrix $A$       |
+   | ~lda~     | ~int64_t~       | in     | Leading dimension of array ~A~        |
+   | ~B~       | ~double[][ldb]~ | in     | Array containing the matrix $B$       |
+   | ~ldb~     | ~int64_t~       | in     | Leading dimension of array ~B~        |
+   | ~beta~    | ~double~        | in     | \beta                                 |
+   | ~C~       | ~double[][ldc]~ | out    | Array containing the matrix $C$       |
+   | ~ldc~     | ~int64_t~       | in     | Leading dimension of array ~C~        |
+   | ~epsilon~ | ~double~        | in     | Threshold for sparsity                |
+
+   Requirements:
+
+    - ~context~ is not ~QMCKL_NULL_CONTEXT~
+    - ~m > 0~
+    - ~n > 0~
+    - ~k > 0~
+    - ~epsilon > 0.~
+    - ~lda >= m~
+    - ~ldb >= n~
+    - ~ldc >= n~
+    - ~A~ is allocated with at least $m \times k \times 8$ bytes
+    - ~B~ is allocated with at least $k \times n \times 8$ bytes
+    - ~C~ is allocated with at least $m \times n \times 8$ bytes
+
+    #+begin_src c :tangle (eval h_private_type) :comments org :exports none
+typedef struct {
+  int64_t nrows, ncols, nnz, lda;
+  int64_t *row_ptr;   // size nrows+1
+  int64_t *col_idx;   // size nnz
+  double  *val;       // size nnz
+  const double *A;
+  double density;
+} CSRMatrix;
+    #+end_src
+    
+    #+begin_src c :tangle (eval h_private_func) :comments org
+CSRMatrix* qmckl_dense_to_csr(const int64_t m, const int64_t n, const double *A, const int64_t lda,
+                              const double eps);
+
+void free_csr(CSRMatrix* Acsr);
+    #+end_src
+
+    #+begin_src c :tangle (eval c) :comments org :exports none
+/* Convert dense (column-major) matrix A (m x n) to CSR, dropping |x| <= eps */
+CSRMatrix* qmckl_dense_to_csr(const int64_t m, const int64_t n,
+                              const double *A, const int64_t lda,
+                              const double eps)
+{
+  assert(m >= 0 && n >= 0);
+  int64_t *row_ptr = malloc((m + 1) * sizeof(int64_t));
+  if (!row_ptr) return NULL;
+
+  /* worst-case nnz = m * n (add +1 to avoid zero-size malloc) */
+  int64_t nnz_est = (m * n) + 1;
+  int64_t *col_idx = malloc(nnz_est * sizeof(int64_t));
+  double  *val     = malloc(nnz_est * sizeof(double));
+  if (!col_idx || !val) {
+    free(row_ptr);
+    free(col_idx);
+    free(val);
+    return NULL;
+  }
+
+  int64_t nnz = 0;
+  row_ptr[0] = 0;
+  for (int64_t i = 0; i < m; ++i) {
+    for (int64_t j = 0; j < n; ++j) {
+      double x = A[i + j * lda]; /* column-major layout */
+      if (fabs(x) > eps) {
+        col_idx[nnz] = j;
+        val[nnz]     = x;
+        ++nnz;
+      }
+    }
+    row_ptr[i + 1] = nnz;
+  }
+
+  /*
+  // shrink to actual size 
+  col_idx = realloc(col_idx, (nnz > 0) ? nnz * sizeof(int64_t) : 1);
+  val     = realloc(val,     (nnz > 0) ? nnz * sizeof(double) : 1);
+  ,*/
+
+  CSRMatrix *csr = malloc(sizeof(CSRMatrix));
+  if (!csr) {
+    free(row_ptr); free(col_idx); free(val);
+    return NULL;
+  }
+  csr->nrows = m; csr->ncols = n; csr->nnz = nnz;
+  csr->row_ptr = row_ptr; csr->col_idx = col_idx; csr->val = val;
+  csr->A = A; csr->lda = lda;
+  csr->density = (double) nnz / ( m * (double) n);
+  return csr;
+}
+
+void free_csr(CSRMatrix *A) {
+  if (!A) return;
+  free(A->row_ptr);
+  free(A->col_idx);
+  free(A->val);
+  free(A);
+}
+    #+end_src
+    
+
+    #+begin_src c :tangle (eval h_private_func) :comments org
+qmckl_exit_code qmckl_dgemm_sparse_nn (const qmckl_context context,
+                                       const int64_t m,
+                                       const int64_t n,
+                                       const int64_t k,
+                                       const double alpha,
+                                       const CSRMatrix* A,
+                                       const CSRMatrix* B,
+                                       const double beta,
+                                       double* C,
+                                       const int64_t ldc);
+    #+end_src
+
+    #+begin_src c :tangle (eval c) :comments org :exports none
+qmckl_exit_code
+qmckl_dgemm_sparse_nn(const qmckl_context context,
+                      const int64_t m, const int64_t n, const int64_t k,
+                      const double a,
+                      const CSRMatrix *Acsr, const CSRMatrix *Bcsr,
+                      const double b,
+                      double *C, const int64_t ldc)
+{
+  /* Basic context / arg checks (replace error codes/messages as desired) */
+  if (qmckl_context_check(context) == 0) {
+    return qmckl_failwith(context, QMCKL_INVALID_CONTEXT, "qmckl_dgemm_sparse_nn", "NULL context");
+  }
+  if (m <= 0) return qmckl_failwith(context, QMCKL_INVALID_ARG_2, "qmckl_dgemm_sparse_nn", "m<=0");
+  if (n <= 0) return qmckl_failwith(context, QMCKL_INVALID_ARG_3, "qmckl_dgemm_sparse_nn", "n<=0");
+  if (k <= 0) return qmckl_failwith(context, QMCKL_INVALID_ARG_4, "qmckl_dgemm_sparse_nn", "k<=0");
+  if (Acsr == NULL) return qmckl_failwith(context, QMCKL_INVALID_ARG_6, "qmckl_dgemm_sparse_nn", "A NULL");
+  if (Bcsr == NULL) return qmckl_failwith(context, QMCKL_INVALID_ARG_7, "qmckl_dgemm_sparse_nn", "B NULL");
+  if (C == NULL) return qmckl_failwith(context, QMCKL_INVALID_ARG_9, "qmckl_dgemm_sparse_nn", "C NULL");
+
+  /* Scale C by beta (column-major) */
+  if (b == 0.0) {
+    for (int64_t j = 0; j < n; ++j)
+      for (int64_t i = 0; i < m; ++i)
+        C[i + j * ldc] = 0.0;
+  } else if (b != 1.0) {
+    for (int64_t j = 0; j < n; ++j)
+      for (int64_t i = 0; i < m; ++i)
+        C[i + j * ldc] *= b;
+  }
+
+  // If either matrix is "dense enough", use tuned BLAS
+  const double threshold = 0.20; // 20% nonzero
+  if (Acsr->density < threshold || Bcsr->density < threshold) {
+
+    /* Multiply: for each row i of A, iterate nonzeros (l, valA),
+       then iterate nonzeros in row l of B (col j, valB) to update C[i,j]. */
+    for (int64_t i = 0; i < m; ++i) {
+      int64_t row_start = Acsr->row_ptr[i];
+      int64_t row_end   = Acsr->row_ptr[i + 1];
+
+      for (int64_t idxA = row_start; idxA < row_end; ++idxA) {
+        const int64_t l = Acsr->col_idx[idxA];      /* column index in A (0..k-1) */
+        const double valA = a * Acsr->val[idxA];
+
+        /* traverse row l of B (B is k x n stored as CSR) */
+        int64_t brow_start = Bcsr->row_ptr[l];
+        int64_t brow_end   = Bcsr->row_ptr[l + 1];
+        for (int64_t idxB = brow_start; idxB < brow_end; ++idxB) {
+          int64_t j = Bcsr->col_idx[idxB];    /* column index in B (0..n-1) */
+          double valB = Bcsr->val[idxB];
+          
+          /* update dense C (column-major) */
+          C[i + j * ldc] += valA * valB;
+        }
+      }
+    }
+
+  } else {
+
+    qmckl_dgemm(context, 'N', 'N', m, n, k, a, Acsr->A, Acsr->lda, Bcsr->A, Bcsr->lda, b, C, ldc);
+
+  }
+
+  return QMCKL_SUCCESS;
+}
+#+end_src
+
+
+
 * Utilities
 
   Trick to make MKL efficient on AMD
