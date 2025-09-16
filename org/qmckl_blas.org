@@ -2723,37 +2723,6 @@ printf("qmckl_transpose ok\n");
 
 ** ~qmckl_dgemm_sparse_nn~
 
-   #+NAME: qmckl_dgemm_sparse_nn_args
-   | Variable  | Type            | In/Out | Description                           |
-   |-----------+-----------------+--------+---------------------------------------|
-   | ~context~ | ~qmckl_context~ | in     | Global state                          |
-   | ~m~       | ~int64_t~       | in     | Number of rows of the input matrix    |
-   | ~n~       | ~int64_t~       | in     | Number of columns of the input matrix |
-   | ~k~       | ~int64_t~       | in     | Number of columns of the input matrix |
-   | ~alpha~   | ~double~        | in     | \alpha                                |
-   | ~A~       | ~double[][lda]~ | in     | Array containing the matrix $A$       |
-   | ~lda~     | ~int64_t~       | in     | Leading dimension of array ~A~        |
-   | ~B~       | ~double[][ldb]~ | in     | Array containing the matrix $B$       |
-   | ~ldb~     | ~int64_t~       | in     | Leading dimension of array ~B~        |
-   | ~beta~    | ~double~        | in     | \beta                                 |
-   | ~C~       | ~double[][ldc]~ | out    | Array containing the matrix $C$       |
-   | ~ldc~     | ~int64_t~       | in     | Leading dimension of array ~C~        |
-   | ~epsilon~ | ~double~        | in     | Threshold for sparsity                |
-
-   Requirements:
-
-    - ~context~ is not ~QMCKL_NULL_CONTEXT~
-    - ~m > 0~
-    - ~n > 0~
-    - ~k > 0~
-    - ~epsilon > 0.~
-    - ~lda >= m~
-    - ~ldb >= n~
-    - ~ldc >= n~
-    - ~A~ is allocated with at least $m \times k \times 8$ bytes
-    - ~B~ is allocated with at least $k \times n \times 8$ bytes
-    - ~C~ is allocated with at least $m \times n \times 8$ bytes
-
     #+begin_src c :tangle (eval h_private_type) :comments org :exports none
 typedef struct {
   int64_t nrows, ncols, nnz, lda;
@@ -2909,6 +2878,85 @@ qmckl_dgemm_sparse_nn(const qmckl_context context,
   } else {
 
     qmckl_dgemm(context, 'N', 'N', m, n, k, a, Acsr->A, Acsr->lda, Bcsr->A, Bcsr->lda, b, C, ldc);
+
+  }
+
+  return QMCKL_SUCCESS;
+}
+#+end_src
+
+
+** ~qmckl_dgemm_sparse_b_nn~
+
+    #+begin_src c :tangle (eval h_private_func) :comments org
+qmckl_exit_code qmckl_dgemm_sparse_b_nn (const qmckl_context context,
+                                         const int64_t m,
+                                         const int64_t n,
+                                         const int64_t k,
+                                         const double alpha,
+                                         const double* A,
+                                         const int64_t LDA,
+                                         const CSRMatrix* B,
+                                         const double beta,
+                                         double* C,
+                                         const int64_t ldc);
+    #+end_src
+
+    #+begin_src c :tangle (eval c) :comments org :exports none
+qmckl_exit_code
+qmckl_dgemm_sparse_b_nn(const qmckl_context context,
+                        const int64_t m, const int64_t n, const int64_t k,
+                        const double a,
+                        const double *A, const int64_t lda,
+                        const CSRMatrix *Bcsr, const double b,
+                        double *C, const int64_t ldc)
+{
+  /* Basic context / arg checks (replace error codes/messages as desired) */
+  if (qmckl_context_check(context) == 0) {
+    return qmckl_failwith(context, QMCKL_INVALID_CONTEXT, "qmckl_dgemm_sparse_nn", "NULL context");
+  }
+  if (m <= 0) return qmckl_failwith(context, QMCKL_INVALID_ARG_2, "qmckl_dgemm_sparse_nn", "m<=0");
+  if (n <= 0) return qmckl_failwith(context, QMCKL_INVALID_ARG_3, "qmckl_dgemm_sparse_nn", "n<=0");
+  if (k <= 0) return qmckl_failwith(context, QMCKL_INVALID_ARG_4, "qmckl_dgemm_sparse_nn", "k<=0");
+  if (A == NULL) return qmckl_failwith(context, QMCKL_INVALID_ARG_6, "qmckl_dgemm_sparse_nn", "A NULL");
+  if (Bcsr == NULL) return qmckl_failwith(context, QMCKL_INVALID_ARG_7, "qmckl_dgemm_sparse_nn", "B NULL");
+  if (C == NULL) return qmckl_failwith(context, QMCKL_INVALID_ARG_9, "qmckl_dgemm_sparse_nn", "C NULL");
+
+  const double threshold = 0.20; // 20% nonzero
+  if (Bcsr->density < threshold) {
+
+    /* Scale C by beta (column-major) */
+    if (b == 0.0) {
+      for (int64_t j = 0; j < n; ++j)
+        for (int64_t i = 0; i < m; ++i)
+          C[i + j * ldc] = 0.0;
+    } else if (b != 1.0) {
+      for (int64_t j = 0; j < n; ++j)
+        for (int64_t i = 0; i < m; ++i)
+          C[i + j * ldc] *= b;
+    }
+
+    for (int64_t kk=0 ; kk<k ; ++kk) {
+      const int64_t brow_start = Bcsr->row_ptr[kk];
+      const int64_t brow_end   = Bcsr->row_ptr[kk+1];
+      const double* a = &(A[kk*lda]);
+
+      for (int64_t idxB = brow_start ; idxB < brow_end ; ++idxB) {
+        const int64_t j = Bcsr->col_idx[idxB];
+        const double valB = Bcsr->val[idxB];
+
+#ifdef HAVE_OPENMP
+#pragma omp simd
+#endif
+        for (int64_t i=0 ; i<m ; ++i) {
+          C[i+j*ldc] += a[i] * valB;
+        }
+      }
+    }
+    
+  } else {
+
+    qmckl_dgemm(context, 'N', 'N', m, n, k, a, A, lda, Bcsr->A, Bcsr->lda, b, C, ldc);
 
   }
 
