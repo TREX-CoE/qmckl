@@ -2732,13 +2732,27 @@ typedef struct {
   const double *A;
   double density;
 } CSRMatrix;
+
+
+typedef struct {
+  int64_t nrows, ncols, nnz, lda;
+  int64_t *col_ptr;   // size ncols+1
+  int64_t *row_idx;   // size nnz
+  double  *val;       // size nnz
+  const double *A;
+  double density;
+} CSCMatrix;
+
     #+end_src
     
     #+begin_src c :tangle (eval h_private_func) :comments org
 CSRMatrix* qmckl_dense_to_csr(const int64_t m, const int64_t n, const double *A, const int64_t lda,
                               const double eps);
+CSCMatrix* qmckl_dense_to_csc(const int64_t m, const int64_t n, const double *A, const int64_t lda,
+                              const double eps);
 
 void free_csr(CSRMatrix* Acsr);
+void free_csc(CSCMatrix* Acsc);
     #+end_src
 
     #+begin_src c :tangle (eval c) :comments org :exports none
@@ -2803,6 +2817,67 @@ void free_csr(CSRMatrix *A) {
 }
     #+end_src
     
+    #+begin_src c :tangle (eval c) :comments org :exports none
+/* Convert dense (column-major) matrix A (m x n) to CSR, dropping |x| <= eps */
+CSCMatrix* qmckl_dense_to_csc(const int64_t m, const int64_t n,
+                              const double *A, const int64_t lda,
+                              const double eps)
+{
+  assert(m >= 0 && n >= 0);
+  int64_t *col_ptr = malloc((n + 1) * sizeof(int64_t));
+  if (!col_ptr) return NULL;
+
+  /* worst-case nnz = m * n (add +1 to avoid zero-size malloc) */
+  int64_t nnz_est = (m * n) + 1;
+  int64_t *row_idx = malloc(nnz_est * sizeof(int64_t));
+  double  *val     = malloc(nnz_est * sizeof(double));
+  if (!row_idx || !val) {
+    free(col_ptr);
+    free(row_idx);
+    free(val);
+    return NULL;
+  }
+
+  int64_t nnz = 0;
+  col_ptr[0] = 0;
+  for (int64_t j = 0; j < n; ++j) {
+    for (int64_t i = 0; i < m; ++i) {
+      double x = A[i + j * lda]; /* column-major layout */
+      if (fabs(x) > eps) {
+        row_idx[nnz] = i;
+        val[nnz]     = x;
+        ++nnz;
+      }
+    }
+    col_ptr[j + 1] = nnz;
+  }
+
+  /*
+  // shrink to actual size 
+  row_idx = realloc(row_idx, (nnz > 0) ? nnz * sizeof(int64_t) : 1);
+  val     = realloc(val,     (nnz > 0) ? nnz * sizeof(double) : 1);
+  ,*/
+
+  CSCMatrix *csc = malloc(sizeof(CSCMatrix));
+  if (!csc) {
+    free(col_ptr); free(row_idx); free(val);
+    return NULL;
+  }
+  csc->nrows = m; csc->ncols = n; csc->nnz = nnz;
+  csc->col_ptr = col_ptr; csc->row_idx = row_idx; csc->val = val;
+  csc->A = A; csc->lda = lda;
+  csc->density = (double) nnz / ( m * (double) n);
+  return csc;
+}
+
+void free_csc(CSCMatrix *A) {
+  if (!A) return;
+  free(A->col_ptr);
+  free(A->row_idx);
+  free(A->val);
+  free(A);
+}
+    #+end_src
 
     #+begin_src c :tangle (eval h_private_func) :comments org
 qmckl_exit_code qmckl_dgemm_sparse_nn (const qmckl_context context,
@@ -2896,7 +2971,7 @@ qmckl_exit_code qmckl_dgemm_sparse_b_nn (const qmckl_context context,
                                          const double alpha,
                                          const double* A,
                                          const int64_t LDA,
-                                         const CSRMatrix* B,
+                                         const CSCMatrix* B,
                                          const double beta,
                                          double* C,
                                          const int64_t ldc);
@@ -2908,7 +2983,7 @@ qmckl_dgemm_sparse_b_nn(const qmckl_context context,
                         const int64_t m, const int64_t n, const int64_t k,
                         const double a,
                         const double *A, const int64_t lda,
-                        const CSRMatrix *Bcsr, const double b,
+                        const CSCMatrix *Bcsc, const double b,
                         double *C, const int64_t ldc)
 {
   /* Basic context / arg checks (replace error codes/messages as desired) */
@@ -2919,11 +2994,11 @@ qmckl_dgemm_sparse_b_nn(const qmckl_context context,
   if (n <= 0) return qmckl_failwith(context, QMCKL_INVALID_ARG_3, "qmckl_dgemm_sparse_nn", "n<=0");
   if (k <= 0) return qmckl_failwith(context, QMCKL_INVALID_ARG_4, "qmckl_dgemm_sparse_nn", "k<=0");
   if (A == NULL) return qmckl_failwith(context, QMCKL_INVALID_ARG_6, "qmckl_dgemm_sparse_nn", "A NULL");
-  if (Bcsr == NULL) return qmckl_failwith(context, QMCKL_INVALID_ARG_7, "qmckl_dgemm_sparse_nn", "B NULL");
+  if (Bcsc == NULL) return qmckl_failwith(context, QMCKL_INVALID_ARG_7, "qmckl_dgemm_sparse_nn", "B NULL");
   if (C == NULL) return qmckl_failwith(context, QMCKL_INVALID_ARG_9, "qmckl_dgemm_sparse_nn", "C NULL");
 
   const double threshold = 0.20; // 20% nonzero
-  if (Bcsr->density < threshold) {
+  if (Bcsc->density < threshold) {
 
     /* Scale C by beta (column-major) */
     if (b == 0.0) {
@@ -2936,27 +3011,25 @@ qmckl_dgemm_sparse_b_nn(const qmckl_context context,
           C[i + j * ldc] *= b;
     }
 
-    for (int64_t kk=0 ; kk<k ; ++kk) {
-      const int64_t brow_start = Bcsr->row_ptr[kk];
-      const int64_t brow_end   = Bcsr->row_ptr[kk+1];
-      const double* a = &(A[kk*lda]);
-
-      for (int64_t idxB = brow_start ; idxB < brow_end ; ++idxB) {
-        const int64_t j = Bcsr->col_idx[idxB];
-        const double valB = Bcsr->val[idxB];
+    for (int64_t j=0 ; j<n ; ++j) {
+      const int64_t bcol_start = Bcsc->col_ptr[j];
+      const int64_t bcol_end   = Bcsc->col_ptr[j+1];
+      for (int64_t idxB = bcol_start ; idxB < bcol_end ; ++idxB) {
+        const int64_t kk = Bcsc->row_idx[idxB];
+        const double valB = a*Bcsc->val[idxB];
 
 #ifdef HAVE_OPENMP
 #pragma omp simd
 #endif
         for (int64_t i=0 ; i<m ; ++i) {
-          C[i+j*ldc] += a[i] * valB;
+          C[i+j*ldc] += A[i+kk*lda] * valB;
         }
       }
     }
     
   } else {
 
-    qmckl_dgemm(context, 'N', 'N', m, n, k, a, A, lda, Bcsr->A, Bcsr->lda, b, C, ldc);
+    qmckl_dgemm(context, 'N', 'N', m, n, k, a, A, lda, Bcsc->A, Bcsc->lda, b, C, ldc);
 
   }
 
