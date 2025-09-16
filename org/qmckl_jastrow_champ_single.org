@@ -2348,7 +2348,7 @@ qmckl_exit_code qmckl_provide_jastrow_champ_single_een(qmckl_context context)
       ctx->single_point.delta_een = delta_een;
     }
 
-    rc = qmckl_compute_jastrow_champ_factor_single_een_doc(context,
+    rc = qmckl_compute_jastrow_champ_factor_single_een(context,
                                                 ctx->single_point.num,
                                                 ctx->electron.walker.num,
                                                 ctx->electron.num,
@@ -2428,8 +2428,9 @@ integer function qmckl_compute_jastrow_champ_factor_single_een_doc( &
   double precision        :: een_rescaled_delta_n(nucl_num, 0:cord_num)
 
   integer*8 :: i, a, j, l, k, p, m, n, nw, num
-  double precision :: accu, accu2, cn
+  double precision :: accu, accu2, cn, eps
   integer*8                           :: LDA, LDB, LDC
+  integer*8, allocatable  :: non_zeros(:,:,:)
 
   num = num_in + 1
 
@@ -2451,7 +2452,6 @@ integer function qmckl_compute_jastrow_champ_factor_single_een_doc( &
      do n = 1, dim_c_vector
         l = lkpm_combined_index(n, 1)
         k = lkpm_combined_index(n, 2)
-        p = lkpm_combined_index(n, 3)
         m = lkpm_combined_index(n, 4)
 
         do a = 1, nucl_num
@@ -2474,6 +2474,101 @@ integer function qmckl_compute_jastrow_champ_factor_single_een_doc( &
 end function qmckl_compute_jastrow_champ_factor_single_een_doc
      #+end_src
 
+     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+integer function qmckl_compute_jastrow_champ_factor_single_een_hpc( &
+     context, num_in, walk_num, elec_num, nucl_num, cord_num,   &
+     dim_c_vector, c_vector_full, lkpm_combined_index, &
+     tmp_c, delta_p, een_rescaled_n, een_rescaled_e, een_rescaled_single_n, &
+     een_rescaled_single_e, delta_een) &
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
+  use qmckl
+  implicit none
+  integer(qmckl_context), intent(in), value  :: context
+  integer(c_int64_t)    , intent(in), value  :: num_in, walk_num, elec_num, cord_num, nucl_num, dim_c_vector
+  integer(c_int64_t)    , intent(in)  :: lkpm_combined_index(dim_c_vector,4)
+  real(c_double)        , intent(in)  :: c_vector_full(nucl_num, dim_c_vector)
+  real(c_double)        , intent(in)  :: tmp_c(elec_num, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
+  real(c_double)        , intent(in)  :: delta_p(elec_num, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_e(elec_num, elec_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_single_n(nucl_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_single_e(elec_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(out) :: delta_een(walk_num)
+
+  double precision        :: een_rescaled_delta_n(nucl_num, 0:cord_num)
+
+  integer*8 :: i, a, j, l, k, p, m, n, nw, num
+  double precision :: accu, accu2, cn, eps
+  integer*8        :: LDA, LDB, LDC
+  integer*8, allocatable  :: non_zeros(:,:)
+
+  num = num_in + 1
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) info = QMCKL_INVALID_CONTEXT
+  if (walk_num <= 0)                 info = QMCKL_INVALID_ARG_3
+  if (elec_num <= 0)                 info = QMCKL_INVALID_ARG_4
+  if (nucl_num <= 0)                 info = QMCKL_INVALID_ARG_5
+  if (cord_num <  0)                 info = QMCKL_INVALID_ARG_6
+  if (info /= QMCKL_SUCCESS)         return
+
+  delta_een = 0.0d0
+
+  if (cord_num == 0) return
+
+  allocate (non_zeros(0:elec_num, nucl_num))
+  eps = qmckl_get_numprec_epsilon(context)
+
+  do nw =1, walk_num
+
+     een_rescaled_delta_n(:,:) = een_rescaled_single_n(:,:,nw) - een_rescaled_n(num,:,:,nw)
+
+        do a=1,nucl_num
+           k=0
+           do j=1,elec_num
+              if (een_rescaled_n(j,a,1,nw) > eps) then
+                 k = k+1
+                 non_zeros(k,a) = j
+              endif
+           enddo
+           non_zeros(0,a) = k
+     enddo
+
+     do n = 1, dim_c_vector
+        l = lkpm_combined_index(n, 1)
+        k = lkpm_combined_index(n, 2)
+        m = lkpm_combined_index(n, 4)
+
+        do a = 1, nucl_num
+           if (k == 0 .and. een_rescaled_delta_n(a,m) == 0.d0) cycle
+
+           cn = c_vector_full(a, n)
+           if(cn == 0.d0) cycle
+
+           accu = 0.0d0
+           if (m == 0) then
+              do j = 1, elec_num
+                 accu = accu + delta_p(j,a,m+l,k,nw)
+              end do
+           else
+              do p=1,non_zeros(0,a)
+                 j = non_zeros(p,a)
+                 accu = accu + een_rescaled_n(j,a,m,nw) * delta_p(j,a,m+l,k,nw)
+              enddo
+           endif
+
+           if (m /= 0) then
+             accu = accu + een_rescaled_delta_n(a,m) * (tmp_c(num,a,m+l,k,nw) + delta_p(num,a,m+l,k,nw))
+           end if
+           delta_een(nw) = delta_een(nw) + accu * cn
+        end do
+     end do
+  end do
+
+end function qmckl_compute_jastrow_champ_factor_single_een_hpc
+     #+end_src
  #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
 qmckl_exit_code
 qmckl_compute_jastrow_champ_factor_single_een_doc (const qmckl_context context,
@@ -2494,7 +2589,24 @@ qmckl_compute_jastrow_champ_factor_single_een_doc (const qmckl_context context,
                               double* const delta_een );
 
 qmckl_exit_code
+qmckl_compute_jastrow_champ_factor_single_een_hpc (const qmckl_context context,
+                              const int64_t num,
+                              const int64_t walk_num,
+                              const int64_t elec_num,
+                              const int64_t nucl_num,
+                              const int64_t cord_num,
+                              const int64_t dim_c_vector,
+                              const double* c_vector_full,
+                              const int64_t* lkpm_combined_index,
+                              const double* tmp_c,
+                              const double* delta_p,
+                              const double* een_rescaled_n,
+                              const double* een_rescaled_e,
+                              const double* een_rescaled_single_n,
+                              const double* een_rescaled_single_e,
+                              double* const delta_een );
 
+qmckl_exit_code
 qmckl_compute_jastrow_champ_factor_single_een (const qmckl_context context,
                           const int64_t num,
                           const int64_t walk_num,
@@ -2533,7 +2645,7 @@ qmckl_compute_jastrow_champ_factor_single_een (const qmckl_context context,
                           double* const delta_een )
 {
 #ifdef HAVE_HPC
-  return qmckl_compute_jastrow_champ_factor_single_een_doc
+  return qmckl_compute_jastrow_champ_factor_single_een_hpc
 #else
   return qmckl_compute_jastrow_champ_factor_single_een_doc
 #endif
