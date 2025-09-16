@@ -2030,7 +2030,8 @@ integer function qmckl_compute_jastrow_champ_delta_p_hpc( &
     do c=1,cord_num
         do a=1,nucl_num
           dn = een_rescaled_single_n(a,c,nw) - een_rescaled_n(num,a,c,nw)
-          delta_p(:,a,c,0,nw) = een_rescaled_e(:,num,0,nw)*dn 
+          delta_p(:,a,c,0,nw) = dn 
+          delta_p(num,a,c,0,nw) = 0.0d0
         end do
     end do
 
@@ -2047,8 +2048,7 @@ integer function qmckl_compute_jastrow_champ_delta_p_hpc( &
       end do
 
       do a=1,nucl_num
-        dn2 = een_rescaled_single_n(a,0,nw)
-        delta_p(:,a,0,i,nw) =  een_rescaled_delta_e(:) * dn2
+        delta_p(:,a,0,i,nw) =  een_rescaled_delta_e(:) 
       end do
 
 
@@ -2066,7 +2066,15 @@ integer function qmckl_compute_jastrow_champ_delta_p_hpc( &
           do a=1,nucl_num
             dn = een_rescaled_single_n(a,c,nw) - een_rescaled_n(num,a,c,nw)
             dn2 = een_rescaled_single_n(a,c,nw)
-            delta_p(:,a,c,i,nw) = een_rescaled_e(:,num,i,nw)*dn + een_rescaled_delta_e(:) * dn2
+            !delta_p(:,a,c,i,nw) = een_rescaled_e(:,num,i,nw)*dn + een_rescaled_delta_e(:) * dn2
+
+            ! delta_p(:,a,c,i,nw) = dn  * een_rescaled_e(:,num,i,nw)
+            call dcopy(elec_num*1_8, een_rescaled_e(1,num,i,nw), 1_8, delta_p(1,a,c,i,nw), 1_8)
+            call dscal(elec_num*1_8, dn, delta_p(1,a,c,i,nw), 1_8)
+
+            ! delta_p(:,a,c,i,nw) += dn2 * een_rescaled_delta_e(:)
+            call daxpy(elec_num*1_8, dn2, een_rescaled_delta_e, 1_8, delta_p(1,a,c,i,nw), 1_8)
+
           end do
 
         info = qmckl_dgemm(context, 'T', 'N', 1_8, nucl_num , elec_num, 1.0d0,     &
@@ -2414,9 +2422,6 @@ integer function qmckl_compute_jastrow_champ_factor_single_een_doc( &
   real(c_double)        , intent(in)  :: een_rescaled_single_e(elec_num, 0:cord_num, walk_num)
   real(c_double)        , intent(out) :: delta_een(walk_num)
 
-  double precision        :: delta_c(nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
-  double precision        :: delta_c2(elec_num, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
-
   double precision        :: een_rescaled_delta_n(nucl_num, 0:cord_num)
 
   integer*8 :: i, a, j, l, k, p, m, n, nw, num
@@ -2447,6 +2452,7 @@ integer function qmckl_compute_jastrow_champ_factor_single_een_doc( &
         m = lkpm_combined_index(n, 4)
 
         do a = 1, nucl_num
+          if (k == 0 .and. een_rescaled_delta_n(a,m) == 0.d0) cycle
            cn = c_vector_full(a, n)
            if(cn == 0.d0) cycle
 
@@ -2454,7 +2460,9 @@ integer function qmckl_compute_jastrow_champ_factor_single_een_doc( &
            do j = 1, elec_num
               accu = accu + een_rescaled_n(j,a,m,nw) * delta_p(j,a,m+l,k,nw)
            end do
-           accu = accu + een_rescaled_delta_n(a,m) * (tmp_c(num,a,m+l,k,nw) + delta_p(num,a,m+l,k,nw))
+           if (m /= 0) then
+             accu = accu + een_rescaled_delta_n(a,m) * (tmp_c(num,a,m+l,k,nw) + delta_p(num,a,m+l,k,nw))
+           end if
            delta_een(nw) = delta_een(nw) + accu * cn
         end do
      end do
