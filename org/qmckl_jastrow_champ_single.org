@@ -1991,109 +1991,6 @@ end function qmckl_compute_jastrow_champ_delta_p_doc
      #+end_src
 
 
-     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_jastrow_champ_delta_p_hpc2( &
-     context, num_in, walk_num, elec_num, nucl_num, cord_num,   &
-     een_rescaled_n, een_rescaled_e, een_rescaled_single_n, een_rescaled_single_e, delta_p) &
-     result(info) bind(C)
-  use, intrinsic :: iso_c_binding
-  use qmckl
-  implicit none
-  integer(qmckl_context), intent(in), value  :: context
-  integer(c_int64_t), intent(in), value  :: num_in, walk_num, elec_num, cord_num, nucl_num
-  real(c_double) , intent(in)            :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
-  real(c_double) , intent(in)            :: een_rescaled_e(elec_num, elec_num, 0:cord_num, walk_num)
-  real(c_double) , intent(in)            :: een_rescaled_single_n(nucl_num, 0:cord_num, walk_num)
-  real(c_double) , intent(in)            :: een_rescaled_single_e(elec_num, 0:cord_num, walk_num)
-  real(c_double) , intent(out)           :: delta_p(elec_num, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
-
-  double precision        :: een_rescaled_delta_e(elec_num)
-
-  integer*8 :: i, a, c, j, l, k, p, m, n, nw, num
-  double precision :: dn, dn2
-  integer*8                           :: LDA, LDB, LDC
-
-  num = num_in + 1
-
-  info = QMCKL_SUCCESS
-
-  if (context == QMCKL_NULL_CONTEXT) info = QMCKL_INVALID_CONTEXT
-  if (walk_num <= 0)                 info = QMCKL_INVALID_ARG_3
-  if (elec_num <= 0)                 info = QMCKL_INVALID_ARG_4
-  if (nucl_num <= 0)                 info = QMCKL_INVALID_ARG_5
-  if (cord_num <  0)                 info = QMCKL_INVALID_ARG_6
-  if (info /= QMCKL_SUCCESS)         return
-
-  if (cord_num == 0) return
-
-  do nw=1, walk_num
-
-    ! i = 0
-
-    do c=1,cord_num
-        do a=1,nucl_num
-          dn = een_rescaled_single_n(a,c,nw) - een_rescaled_n(num,a,c,nw)
-          delta_p(:,a,c,0,nw) = dn 
-          delta_p(num,a,c,0,nw) = 0.0d0
-        end do
-    end do
-
-
-    ! c = 0
-
-    do i=1, cord_num-1
-
-      een_rescaled_delta_e(:) = een_rescaled_single_e(:,i,nw) - een_rescaled_e(:,num,i,nw)
-
-      dn = 0.0d0
-      do j = 1, elec_num
-        dn = dn + een_rescaled_delta_e(j)
-      end do
-
-      do a=1,nucl_num
-        delta_p(:,a,0,i,nw) =  een_rescaled_delta_e(:) 
-      end do
-
-
-      do a = 1, nucl_num
-        delta_p(num,a,0,i,nw) = delta_p(num,a,0,i,nw) + dn
-      end do
-    end do
-
-
-    do i=1, cord_num-1
-
-      een_rescaled_delta_e(:) = een_rescaled_single_e(:,i,nw) - een_rescaled_e(:,num,i,nw)
-
-      do c=1,cord_num-i
-          do a=1,nucl_num
-            dn = een_rescaled_single_n(a,c,nw) - een_rescaled_n(num,a,c,nw)
-            dn2 = een_rescaled_single_n(a,c,nw)
-            delta_p(:,a,c,i,nw) = een_rescaled_e(:,num,i,nw)*dn + een_rescaled_delta_e(:) * dn2
-
-            dn = 0.0d0
-            do j = 1, elec_num
-              dn = dn + een_rescaled_delta_e(j) * een_rescaled_n(j,a,c,nw)
-            end do
-            delta_p(num,a,c,i,nw) = delta_p(num,a,c,i,nw) + dn
-
-          end do
-
-        !info = qmckl_dgemm(context, 'T', 'N', 1_8, nucl_num , elec_num, 1.0d0,     &
-        !    een_rescaled_delta_e,elec_num, &
-        !    een_rescaled_n(1,1,c,nw),elec_num,     &
-        !    1.0d0,                                 &
-        !    delta_p(num,1,c,i,nw),elec_num)
-        
-      end do
-
-    enddo
-
-  end do
-
-end function qmckl_compute_jastrow_champ_delta_p_hpc2
-     #+end_src
-
      #+begin_src c :comments org :tangle (eval c) :noweb yes
 qmckl_exit_code
 qmckl_compute_jastrow_champ_delta_p_hpc(const qmckl_context context,
@@ -2219,14 +2116,6 @@ qmckl_compute_jastrow_champ_delta_p_hpc(const qmckl_context context,
           }
 
         }
-//      const int32_t m4 = elec_num;
-//      const int32_t n4 = nucl_num;
-//      const int32_t incx = 1;
-//      const int32_t incy = elec_num;
-//      const double alpha = 1.0;
-//      const char t = 'T';
-//      dgemv(&t,  &m4, &n4, &alpha, &(EEN_N(0,0,c,nw)), &m4, 
-//            een_rescaled_delta_e, &incx, &alpha, &(DELTA_P(num_idx,0,c,i,nw)), &incy);
         qmckl_dgemv(context, 'T',  elec_num, nucl_num, 1.0, &(EEN_N(0,0,c,nw)), elec_num,
                     een_rescaled_delta_e, 1, 1.0, &(DELTA_P(num_idx,0,c,i,nw)), elec_num);
         
