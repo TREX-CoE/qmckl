@@ -2997,7 +2997,7 @@ qmckl_dgemm_sparse_b_nn(const qmckl_context context,
   if (Bcsc == NULL) return qmckl_failwith(context, QMCKL_INVALID_ARG_7, "qmckl_dgemm_sparse_nn", "B NULL");
   if (C == NULL) return qmckl_failwith(context, QMCKL_INVALID_ARG_9, "qmckl_dgemm_sparse_nn", "C NULL");
 
-  const double threshold = 0.20; // 20% nonzero
+  const double threshold = 0.25; // 25% nonzero
   if (Bcsc->density < threshold) {
 
     /* Scale C by beta (column-major) */
@@ -3014,10 +3014,30 @@ qmckl_dgemm_sparse_b_nn(const qmckl_context context,
     for (int64_t j=0 ; j<n ; ++j) {
       const int64_t bcol_start = Bcsc->col_ptr[j];
       const int64_t bcol_end   = Bcsc->col_ptr[j+1];
-      for (int64_t idxB = bcol_start ; idxB < bcol_end ; ++idxB) {
+      const int64_t bmax = bcol_start + ((bcol_end-bcol_start) & (~((int64_t)0x3)));
+
+      for (int64_t idxB = bcol_start ; idxB < bmax; idxB+=4) {
+        const int64_t kk1 = Bcsc->row_idx[idxB+0];
+        const int64_t kk2 = Bcsc->row_idx[idxB+1];
+        const int64_t kk3 = Bcsc->row_idx[idxB+2];
+        const int64_t kk4 = Bcsc->row_idx[idxB+3];
+        const double valB1 = a*Bcsc->val[idxB+0];
+        const double valB2 = a*Bcsc->val[idxB+1];
+        const double valB3 = a*Bcsc->val[idxB+2];
+        const double valB4 = a*Bcsc->val[idxB+3];
+
+#ifdef HAVE_OPENMP
+#pragma omp simd
+#endif
+        for (int64_t i=0 ; i<m ; ++i) {
+          C[i+j*ldc] += A[i+kk1*lda] * valB1 + A[i+kk2*lda] * valB2 +
+                        A[i+kk3*lda] * valB3 + A[i+kk4*lda] * valB4 ;
+        }
+      }
+
+      for (int64_t idxB = bmax; idxB < bcol_end ; idxB+=1) {
         const int64_t kk = Bcsc->row_idx[idxB];
         const double valB = a*Bcsc->val[idxB];
-
 #ifdef HAVE_OPENMP
 #pragma omp simd
 #endif
