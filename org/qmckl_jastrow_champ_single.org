@@ -1992,7 +1992,7 @@ end function qmckl_compute_jastrow_champ_delta_p_doc
 
 
      #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_jastrow_champ_delta_p_hpc( &
+integer function qmckl_compute_jastrow_champ_delta_p_hpc2( &
      context, num_in, walk_num, elec_num, nucl_num, cord_num,   &
      een_rescaled_n, een_rescaled_e, een_rescaled_single_n, een_rescaled_single_e, delta_p) &
      result(info) bind(C)
@@ -2091,7 +2091,158 @@ integer function qmckl_compute_jastrow_champ_delta_p_hpc( &
 
   end do
 
-end function qmckl_compute_jastrow_champ_delta_p_hpc
+end function qmckl_compute_jastrow_champ_delta_p_hpc2
+     #+end_src
+
+     #+begin_src c :comments org :tangle (eval c) :noweb yes
+qmckl_exit_code
+qmckl_compute_jastrow_champ_delta_p_hpc(const qmckl_context context,
+                                        const int64_t num_in,
+                                        const int64_t walk_num,
+                                        const int64_t elec_num,
+                                        const int64_t nucl_num,
+                                        const int64_t cord_num,
+                                        const double* restrict een_rescaled_n,         /* (elec_num, nucl_num, 0..cord_num, walk_num) */
+                                        const double* restrict een_rescaled_e,         /* (elec_num, elec_num, 0..cord_num, walk_num) */
+                                        const double* restrict een_rescaled_single_n,  /* (nucl_num, 0..cord_num, walk_num) */
+                                        const double* restrict een_rescaled_single_e,  /* (elec_num, 0..cord_num, walk_num) */
+                                        double* restrict delta_p                       /* (elec_num, nucl_num, 0..cord_num, 0..cord_num-1, walk_num) */
+                                        )
+{
+  if (context == QMCKL_NULL_CONTEXT) return QMCKL_INVALID_CONTEXT;
+  if (walk_num <= 0)                 return QMCKL_INVALID_ARG_3;
+  if (elec_num <= 0)                 return QMCKL_INVALID_ARG_4;
+  if (nucl_num <= 0)                 return QMCKL_INVALID_ARG_5;
+  if (cord_num <  0)                 return QMCKL_INVALID_ARG_6;
+
+  if (cord_num == 0) return QMCKL_SUCCESS;
+
+  const int64_t D_elec = elec_num;
+  const int64_t D_nucl = nucl_num;
+  const int64_t D_c    = cord_num + 1;  /* 0..cord_num */
+  const int64_t D_i    = cord_num;      /* 0..cord_num-1 */
+  const int64_t D_walk = walk_num;
+
+  /* Index helpers for Fortran-order arrays */
+#define EEN_N(j,a,c,nw)  (een_rescaled_n       [ (j) + D_elec * ( (a) + D_nucl * ( (c) + D_c * (nw) ) ) ])
+#define EEN_E(j,k,i,nw)  (een_rescaled_e       [ (j) + D_elec * ( (k) + D_elec * ( (i) + D_c * (nw) ) ) ])
+#define EEN_SN(a,c,nw)   (een_rescaled_single_n[ (a) + D_nucl * ( (c) + D_c * (nw) ) ])
+#define EEN_SE(j,i,nw)   (een_rescaled_single_e[ (j) + D_elec * ( (i) + D_c * (nw) ) ])
+#define DELTA_P(j,a,c,i,nw) (delta_p           [ (j) + D_elec * ( (a) + D_nucl * ( (c) + D_c * ( (i) + D_i * (nw) ) ) ) ])
+
+//  const double eps = qmckl_get_numprec_epsilon(context);
+  const int64_t num_idx = num_in; /* 0-based electron index corresponding to Fortran's num = num_in + 1 */
+
+  /* Workspace (vector over electrons) */
+  /* C99 VLA on the stack; if not desired, replace with heap allocation. */
+  double een_rescaled_delta_e_stack[ (size_t) (D_elec > 0 ? D_elec : 1) ];
+  double* restrict een_rescaled_delta_e = een_rescaled_delta_e_stack;
+
+  for (int64_t nw = 0; nw < D_walk; ++nw) {
+
+    /* i = 0 case: c = 1..cord_num (Fortran) => c = 1..cord_num (C, 0-based c is used directly) */
+    for (int64_t c = 1; c <= cord_num; ++c) {
+      for (int64_t a = 0; a < D_nucl; ++a) {
+        const double dn = EEN_SN(a, c, nw) - EEN_N(num_idx, a, c, nw);
+
+        /* delta_p(:,a,c,0,nw) = dn */
+#ifdef HAVE_OPENMP
+#pragma omp simd
+#endif
+        for (int64_t j = 0; j < D_elec; ++j) {
+          DELTA_P(j, a, c, 0, nw) = dn;
+        }
+        /* delta_p(num,a,c,0,nw) = 0.0d0 */
+        DELTA_P(num_idx, a, c, 0, nw) = 0.0;
+      }
+    }
+
+    /* c = 0 case: i = 1..cord_num-1 */
+    for (int64_t i = 1; i < cord_num; ++i) {
+
+      /* een_rescaled_delta_e(:) = een_rescaled_single_e(:,i,nw) - een_rescaled_e(:,num,i,nw) */
+#ifdef HAVE_OPENMP
+#pragma omp simd
+#endif
+      for (int64_t j = 0; j < D_elec; ++j) {
+        een_rescaled_delta_e[j] = EEN_SE(j, i, nw) - EEN_E(j, num_idx, i, nw);
+      }
+
+      /* dn = sum_j een_rescaled_delta_e(j) */
+      double dn_sum = 0.0;
+#ifdef HAVE_OPENMP
+#pragma omp simd
+#endif
+      for (int64_t j = 0; j < D_elec; ++j) {
+        dn_sum += een_rescaled_delta_e[j];
+      }
+
+      /* delta_p(:,a,0,i,nw) = een_rescaled_delta_e(:) for all nuclei a */
+      for (int64_t a = 0; a < D_nucl; ++a) {
+#ifdef HAVE_OPENMP
+#pragma omp simd
+#endif
+        for (int64_t j = 0; j < D_elec; ++j) {
+          DELTA_P(j, a, 0, i, nw) = een_rescaled_delta_e[j];
+        }
+      }
+
+      /* delta_p(num,a,0,i,nw) += dn_sum for all nuclei a */
+      for (int64_t a = 0; a < D_nucl; ++a) {
+        DELTA_P(num_idx, a, 0, i, nw) += dn_sum;
+      }
+    }
+
+    /* General case: i = 1..cord_num-1 and c = 1..cord_num-i */
+    for (int64_t i = 1; i < cord_num; ++i) {
+
+      /* recompute een_rescaled_delta_e for this i */
+#ifdef HAVE_OPENMP
+#pragma omp simd
+#endif
+      for (int64_t j = 0; j < D_elec; ++j) {
+        een_rescaled_delta_e[j] = EEN_SE(j, i, nw) - EEN_E(j, num_idx, i, nw);
+      }
+
+      for (int64_t c = 1; c <= cord_num - i; ++c) {
+        for (int64_t a = 0; a < D_nucl; ++a) {
+
+          const double dn  = EEN_SN(a, c, nw) - EEN_N(num_idx, a, c, nw);
+          const double dn2 = EEN_SN(a, c, nw);
+
+          /* delta_p(:,a,c,i,nw) = een_rescaled_e(:,num,i,nw)*dn + een_rescaled_delta_e(:)*dn2 */
+#ifdef HAVE_OPENMP
+#pragma omp simd
+#endif
+          for (int64_t j = 0; j < D_elec; ++j) {
+            DELTA_P(j, a, c, i, nw) = EEN_E(j, num_idx, i, nw) * dn + een_rescaled_delta_e[j] * dn2;
+          }
+
+          /* dn_sum = sum_j een_rescaled_delta_e(j) * een_rescaled_n(j,a,c,nw) */
+          double dn_sum = 0.0;
+#ifdef HAVE_OPENMP
+#pragma omp simd reduction(+:dn_sum)
+#endif
+          for (int64_t j = 0; j < D_elec; ++j) {
+            dn_sum += een_rescaled_delta_e[j] * EEN_N(j, a, c, nw);
+          }
+
+          /* delta_p(num,a,c,i,nw) += dn_sum */
+          DELTA_P(num_idx, a, c, i, nw) += dn_sum;
+        }
+      }
+    }
+  }
+
+  #undef EEN_N
+  #undef EEN_E
+  #undef EEN_SN
+  #undef EEN_SE
+  #undef DELTA_P
+
+  return QMCKL_SUCCESS;
+
+}
      #+end_src
 
 
