@@ -1069,13 +1069,13 @@ printf("OK\n");
 
 * Electron-electron-nucleus Jastrow
 
-Calcules the single electron contributions to the electron-electron-nucleus Jastrow term. 
+Computes the single electron contributions to the electron-electron-nucleus Jastrow term. 
 First, the rescaled distances for the single electron electron-nucleus and electron-electron distances are computed.
 These rescaled distances can be calculates by
 \[
 \widetilde{R}_{i\alpha} = e^{-\kappa l R_{i\alpha}} \quad \text{and} \quad \widetilde{r}_{ij} = e^{-\kappa l r_{ij}}.
 \]
-Here, $\kappa$ is the rescaling factor and $l$ the power. The neccessery powers are stored in the same array. 
+Here, $\kappa$ is the rescaling factor and $l$ the power. The neccessary powers are stored in the same array. 
 From these, we can calculate the $\delta \widetilde{R}$ and $\delta \widetilde{r}$ using
 \begin{eqnarray*}
 \delta \widetilde{R}_{i\alpha} &=& \widetilde{R}_{i\alpha}^\text{new} - \widetilde{R}_{i\alpha}^\text{old} \quad \text{and}\\
@@ -2255,7 +2255,7 @@ printf("OK\n");
 
 Computes $\delta J_{een}$ by combining $\delta \widetilde{R}_{i\alpha}$ and $\delta P$.
 \begin{eqnarray*}
-J_{een} = \sum_{p=2}^{N_\text{nord}} \sum_{k=0}^{p-1} \sum_{l=0}^{p-k-2\delta_{k,0}}\sum_{\alpha=1}^{N_\text{nucl}} c_{l,k,p,\alpha} \left(
+\delta J_{een} = \sum_{p=2}^{N_\text{nord}} \sum_{k=0}^{p-1} \sum_{l=0}^{p-k-2\delta_{k,0}}\sum_{\alpha=1}^{N_\text{nucl}} c_{l,k,p,\alpha} \left(
 \sum_{i=1}^{N_\text{elec}} \left( \widetilde{R}_{i,\alpha,(p-k-l)/2} \delta P_{i,\alpha,k,(p-k+l)/2} \right)
 + \delta \widetilde{R}_{\text{num},\alpha,(p-k-l)/2} \left(P_{\text{num},\alpha,k,(p-k+l)/2} + \delta P_{\text{num},\alpha,k,(p-k+l)/2}  \right)\right)
 \end{eqnarray*}
@@ -2335,10 +2335,16 @@ qmckl_exit_code qmckl_provide_jastrow_champ_single_een(qmckl_context context)
 
   if (ctx->jastrow_champ.cord_num > 0) {
 
-    rc = qmckl_provide_jastrow_champ_delta_p(context);
+    rc = qmckl_provide_een_rescaled_n(context);
     if(rc != QMCKL_SUCCESS) return rc;
 
-    rc = qmckl_provide_jastrow_champ_factor_een(context);
+    rc = qmckl_provide_een_rescaled_e(context);
+    if(rc != QMCKL_SUCCESS) return rc;
+
+    rc = qmckl_provide_een_rescaled_single_n(context);
+    if(rc != QMCKL_SUCCESS) return rc;
+
+    rc = qmckl_provide_een_rescaled_single_e(context);
     if(rc != QMCKL_SUCCESS) return rc;
 
   }
@@ -2386,8 +2392,6 @@ qmckl_exit_code qmckl_provide_jastrow_champ_single_een(qmckl_context context)
                                                 ctx->jastrow_champ.dim_c_vector,
                                                 ctx->jastrow_champ.c_vector_full,
                                                 ctx->jastrow_champ.lkpm_combined_index,
-                                                ctx->jastrow_champ.tmp_c,
-                                                ctx->single_point.delta_p,
                                                 ctx->jastrow_champ.een_rescaled_n,
                                                 ctx->jastrow_champ.een_rescaled_e,
                                                 ctx->single_point.een_rescaled_single_n,
@@ -2423,8 +2427,6 @@ qmckl_exit_code qmckl_provide_jastrow_champ_single_een(qmckl_context context)
      | ~dim_c_vector~          | ~int64_t~                                                        | in     | dimension of full coefficient vector              |
      | ~c_vector_full~         | ~double[dim_c_vector][nucl_num]~                                 | in     | full coefficient vector                           |
      | ~lkpm_combined_index~   | ~int64_t[4][dim_c_vector]~                                       | in     | combined indices                                  |
-     | ~tmp_c~                 | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][elec_num]~ | in     | P matrix                                          |
-     | ~delta_p~               | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][elec_num]~ | in     | Delta P matrix                                    |
      | ~een_rescaled_n~        | ~double[walk_num][0:cord_num][nucl_num][elec_num]~               | in     | Electron-nucleus rescaled distances               |
      | ~een_rescaled_e~        | ~double[walk_num][0:cord_num][elec_num][elec_num]~               | in     | Electron-electron rescaled distances              |
      | ~een_rescaled_single_n~ | ~double[walk_num][0:cord_num][nucl_num]~                         | in     | Electron-nucleus single rescaled distances        |
@@ -2436,7 +2438,7 @@ qmckl_exit_code qmckl_provide_jastrow_champ_single_een(qmckl_context context)
 integer function qmckl_compute_jastrow_champ_factor_single_een_doc( &
      context, num_in, walk_num, elec_num, nucl_num, cord_num,   &
      dim_c_vector, c_vector_full, lkpm_combined_index, &
-     tmp_c, delta_p, een_rescaled_n, een_rescaled_e, een_rescaled_single_n, &
+     een_rescaled_n, een_rescaled_e, een_rescaled_single_n, &
      een_rescaled_single_e, delta_een) &
      result(info) bind(C)
   use, intrinsic :: iso_c_binding
@@ -2446,20 +2448,15 @@ integer function qmckl_compute_jastrow_champ_factor_single_een_doc( &
   integer(c_int64_t)    , intent(in), value  :: num_in, walk_num, elec_num, cord_num, nucl_num, dim_c_vector
   integer(c_int64_t)    , intent(in)  :: lkpm_combined_index(dim_c_vector,4)
   real(c_double)        , intent(in)  :: c_vector_full(nucl_num, dim_c_vector)
-  real(c_double)        , intent(in)  :: tmp_c(elec_num, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
-  real(c_double)        , intent(in)  :: delta_p(elec_num, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
   real(c_double)        , intent(in)  :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
   real(c_double)        , intent(in)  :: een_rescaled_e(elec_num, elec_num, 0:cord_num, walk_num)
   real(c_double)        , intent(in)  :: een_rescaled_single_n(nucl_num, 0:cord_num, walk_num)
   real(c_double)        , intent(in)  :: een_rescaled_single_e(elec_num, 0:cord_num, walk_num)
   real(c_double)        , intent(out) :: delta_een(walk_num)
 
-  double precision        :: een_rescaled_delta_n(nucl_num, 0:cord_num)
-
   integer*8 :: i, a, j, l, k, p, m, n, nw, num
   double precision :: accu, accu2, cn, eps
   integer*8                           :: LDA, LDB, LDC
-  integer*8, allocatable  :: non_zeros(:,:,:)
 
   num = num_in + 1
 
@@ -2477,28 +2474,30 @@ integer function qmckl_compute_jastrow_champ_factor_single_een_doc( &
   if (cord_num == 0) return
 
   do nw =1, walk_num
-     een_rescaled_delta_n(:,:) = een_rescaled_single_n(:,:,nw) - een_rescaled_n(num,:,:,nw)
+
+     delta_een(nw) = 0.d0
      do n = 1, dim_c_vector
         l = lkpm_combined_index(n, 1)
         k = lkpm_combined_index(n, 2)
         m = lkpm_combined_index(n, 4)
 
         do a = 1, nucl_num
-          if (k == 0 .and. een_rescaled_delta_n(a,m) == 0.d0) cycle
            cn = c_vector_full(a, n)
            if(cn == 0.d0) cycle
 
-           accu = 0.0d0
-           do j = 1, elec_num
-              accu = accu + een_rescaled_n(j,a,m,nw) * delta_p(j,a,m+l,k,nw)
+           accu = 0.d0
+           do j=1,elec_num
+              accu = accu + &
+                   (een_rescaled_single_n(a,l+m,nw) * een_rescaled_single_e(j,k,nw) -  &
+                    een_rescaled_n(num,a,l+m,nw) * een_rescaled_e(j,num,k,nw) ) * een_rescaled_n(j,a,m,nw) + &
+                   (een_rescaled_single_n(a,m,nw) * een_rescaled_single_e(j,k,nw) - &
+                    een_rescaled_n(num,a,m,nw) * een_rescaled_e(j,num,k,nw) ) * een_rescaled_n(j,a,l+m,nw) 
            end do
-           if (m /= 0) then
-             accu = accu + een_rescaled_delta_n(a,m) * (tmp_c(num,a,m+l,k,nw) + delta_p(num,a,m+l,k,nw))
-           end if
            delta_een(nw) = delta_een(nw) + accu * cn
         end do
      end do
   end do
+
 
 end function qmckl_compute_jastrow_champ_factor_single_een_doc
      #+end_src
@@ -2507,7 +2506,7 @@ end function qmckl_compute_jastrow_champ_factor_single_een_doc
 integer function qmckl_compute_jastrow_champ_factor_single_een_hpc( &
      context, num_in, walk_num, elec_num, nucl_num, cord_num,   &
      dim_c_vector, c_vector_full, lkpm_combined_index, &
-     tmp_c, delta_p, een_rescaled_n, een_rescaled_e, een_rescaled_single_n, &
+     een_rescaled_n, een_rescaled_e, een_rescaled_single_n, &
      een_rescaled_single_e, delta_een) &
      result(info) bind(C)
   use, intrinsic :: iso_c_binding
@@ -2517,8 +2516,6 @@ integer function qmckl_compute_jastrow_champ_factor_single_een_hpc( &
   integer(c_int64_t)    , intent(in), value  :: num_in, walk_num, elec_num, cord_num, nucl_num, dim_c_vector
   integer(c_int64_t)    , intent(in)  :: lkpm_combined_index(dim_c_vector,4)
   real(c_double)        , intent(in)  :: c_vector_full(nucl_num, dim_c_vector)
-  real(c_double)        , intent(in)  :: tmp_c(elec_num, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
-  real(c_double)        , intent(in)  :: delta_p(elec_num, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
   real(c_double)        , intent(in)  :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
   real(c_double)        , intent(in)  :: een_rescaled_e(elec_num, elec_num, 0:cord_num, walk_num)
   real(c_double)        , intent(in)  :: een_rescaled_single_n(nucl_num, 0:cord_num, walk_num)
@@ -2543,53 +2540,91 @@ integer function qmckl_compute_jastrow_champ_factor_single_een_hpc( &
   if (cord_num <  0)                 info = QMCKL_INVALID_ARG_6
   if (info /= QMCKL_SUCCESS)         return
 
-  delta_een = 0.0d0
 
-  if (cord_num == 0) return
+  if (cord_num == 0) then
+     delta_een = 0.0d0
+     return
+  endif
 
   allocate (non_zeros(0:elec_num, nucl_num))
   eps = qmckl_get_numprec_epsilon(context)
 
   do nw =1, walk_num
 
-     een_rescaled_delta_n(:,:) = een_rescaled_single_n(:,:,nw) - een_rescaled_n(num,:,:,nw)
-
-        do a=1,nucl_num
-           k=0
-           do j=1,elec_num
-              if (een_rescaled_n(j,a,1,nw) > eps) then
-                 k = k+1
-                 non_zeros(k,a) = j
-              endif
-           enddo
-           non_zeros(0,a) = k
+     do a=1,nucl_num
+        k=0
+        do j=1,elec_num
+           if (een_rescaled_n(j,a,1,nw) > eps) then
+              k = k+1
+              non_zeros(k,a) = j
+           endif
+        enddo
+        non_zeros(0,a) = k
      enddo
 
+     delta_een(nw) = 0.d0
      do n = 1, dim_c_vector
         l = lkpm_combined_index(n, 1)
         k = lkpm_combined_index(n, 2)
         m = lkpm_combined_index(n, 4)
 
         do a = 1, nucl_num
-           if (k == 0 .and. een_rescaled_delta_n(a,m) == 0.d0) cycle
-
            cn = c_vector_full(a, n)
            if(cn == 0.d0) cycle
 
-           accu = 0.0d0
-           if (m == 0) then
-              do j = 1, elec_num
-                 accu = accu + delta_p(j,a,m+l,k,nw)
-              end do
-           else
-              do p=1,non_zeros(0,a)
-                 j = non_zeros(p,a)
-                 accu = accu + een_rescaled_n(j,a,m,nw) * delta_p(j,a,m+l,k,nw)
-              enddo
-           endif
+           accu = 0.d0
 
-           if (m /= 0) then
-             accu = accu + een_rescaled_delta_n(a,m) * (tmp_c(num,a,m+l,k,nw) + delta_p(num,a,m+l,k,nw))
+           if ((dabs(een_rescaled_single_n(a,l+m,nw)) > eps).and.(dabs(een_rescaled_n(num,a,l+m,nw)) > eps)) then
+              do p=1,non_zeros(0,a)
+                 j=non_zeros(p,a)
+                 accu = accu + ( &
+                      een_rescaled_single_n(a,l+m,nw) * een_rescaled_single_e(j,k,nw) - &
+                      een_rescaled_n(num,a,l+m,nw) * een_rescaled_e(j,num,k,nw) ) * een_rescaled_n(j,a,m,nw) 
+              end do
+              
+           else if (dabs(een_rescaled_single_n(a,l+m,nw)) > eps) then
+
+              do p=1,non_zeros(0,a)
+                 j=non_zeros(p,a)
+                 accu = accu + &
+                      een_rescaled_single_n(a,l+m,nw) * een_rescaled_single_e(j,k,nw) * een_rescaled_n(j,a,m,nw) 
+              end do
+
+           else if (dabs(een_rescaled_n(num,a,l+m,nw)) > eps) then
+
+              do p=1,non_zeros(0,a)
+                 j=non_zeros(p,a)
+                 accu = accu - &
+                      een_rescaled_n(num,a,l+m,nw) * een_rescaled_e(j,num,k,nw) * een_rescaled_n(j,a,m,nw) 
+              end do
+
+           end if
+              
+           if ((dabs(een_rescaled_single_n(a,m,nw)) > eps).and.(dabs(een_rescaled_n(num,a,m,nw)) > eps)) then
+
+              do p=1,non_zeros(0,a)
+                 j=non_zeros(p,a)
+                 accu = accu + &
+                      (een_rescaled_single_n(a,m,nw) * een_rescaled_single_e(j,k,nw) - &
+                      een_rescaled_n(num,a,m,nw) * een_rescaled_e(j,num,k,nw)) * een_rescaled_n(j,a,l+m,nw) 
+              end do
+              
+           else if (dabs(een_rescaled_single_n(a,m,nw)) > eps) then
+              
+              do p=1,non_zeros(0,a)
+                 j=non_zeros(p,a)
+                 accu = accu + &
+                      een_rescaled_single_n(a,m,nw) * een_rescaled_single_e(j,k,nw) * een_rescaled_n(j,a,l+m,nw) 
+              end do
+
+           else if (dabs(een_rescaled_n(num,a,m,nw)) > eps) then
+
+              do p=1,non_zeros(0,a)
+                 j=non_zeros(p,a)
+                 accu = accu - &
+                      een_rescaled_n(num,a,m,nw) * een_rescaled_e(j,num,k,nw) * een_rescaled_n(j,a,l+m,nw) 
+              end do
+
            end if
            delta_een(nw) = delta_een(nw) + accu * cn
         end do
@@ -2598,6 +2633,7 @@ integer function qmckl_compute_jastrow_champ_factor_single_een_hpc( &
 
 end function qmckl_compute_jastrow_champ_factor_single_een_hpc
      #+end_src
+
  #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
 qmckl_exit_code
 qmckl_compute_jastrow_champ_factor_single_een_doc (const qmckl_context context,
@@ -2609,8 +2645,6 @@ qmckl_compute_jastrow_champ_factor_single_een_doc (const qmckl_context context,
                               const int64_t dim_c_vector,
                               const double* c_vector_full,
                               const int64_t* lkpm_combined_index,
-                              const double* tmp_c,
-                              const double* delta_p,
                               const double* een_rescaled_n,
                               const double* een_rescaled_e,
                               const double* een_rescaled_single_n,
@@ -2627,8 +2661,6 @@ qmckl_compute_jastrow_champ_factor_single_een_hpc (const qmckl_context context,
                               const int64_t dim_c_vector,
                               const double* c_vector_full,
                               const int64_t* lkpm_combined_index,
-                              const double* tmp_c,
-                              const double* delta_p,
                               const double* een_rescaled_n,
                               const double* een_rescaled_e,
                               const double* een_rescaled_single_n,
@@ -2645,8 +2677,6 @@ qmckl_compute_jastrow_champ_factor_single_een (const qmckl_context context,
                           const int64_t dim_c_vector,
                           const double* c_vector_full,
                           const int64_t* lkpm_combined_index,
-                          const double* tmp_c,
-                          const double* delta_p,
                           const double* een_rescaled_n,
                           const double* een_rescaled_e,
                           const double* een_rescaled_single_n,
@@ -2665,8 +2695,6 @@ qmckl_compute_jastrow_champ_factor_single_een (const qmckl_context context,
                           const int64_t dim_c_vector,
                           const double* c_vector_full,
                           const int64_t* lkpm_combined_index,
-                          const double* tmp_c,
-                          const double* delta_p,
                           const double* een_rescaled_n,
                           const double* een_rescaled_e,
                           const double* een_rescaled_single_n,
@@ -2679,7 +2707,7 @@ qmckl_compute_jastrow_champ_factor_single_een (const qmckl_context context,
   return qmckl_compute_jastrow_champ_factor_single_een_doc
 #endif
     (context, num, walk_num, elec_num, nucl_num, cord_num, dim_c_vector,
-     c_vector_full, lkpm_combined_index, tmp_c, delta_p, een_rescaled_n, een_rescaled_e, een_rescaled_single_n, een_rescaled_single_e, delta_een );
+     c_vector_full, lkpm_combined_index, een_rescaled_n, een_rescaled_e, een_rescaled_single_n, een_rescaled_single_e, delta_een );
 
 }
  #+end_src
@@ -2728,9 +2756,10 @@ for (int elec = 0; elec < elec_num; elec++){
   assert (rc == QMCKL_SUCCESS);
 
   for (int nw = 0; nw < walk_num; nw++) {
-    //printf("jastrow_een_old %f\n", jastrow_een_old[nw]);
-    //printf("jastrow_een_new %f\n", jastrow_een_new[nw]);
-    //printf("delta_een %f\n", delta_een[nw]);
+    printf("jastrow_een_old %f\n", jastrow_een_old[nw]);
+    printf("jastrow_een_new %f\n", jastrow_een_new[nw]);
+    printf("diff %f\n", jastrow_een_new[nw]-jastrow_een_old[nw]);
+    printf("delta_een %f\n", delta_een[nw]);
     assert(fabs((jastrow_een_new[nw]-jastrow_een_old[nw])-delta_een[nw]) < 1.e-12);
   }
 
@@ -11021,7 +11050,6 @@ for (int elec = 0; elec < elec_num; elec++){
 printf("OK\n");
 
   #+end_src
-
 
 * End of files                                                     :noexport:
 
