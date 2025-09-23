@@ -2989,7 +2989,7 @@ qmckl_compute_jastrow_champ_factor_single_een (const qmckl_context context,
                           double* const delta_een )
 {
 #ifdef HAVE_HPC
-  return qmckl_compute_jastrow_champ_factor_single_een_hpc
+  return qmckl_compute_jastrow_champ_factor_single_een_doc
 #else
   return qmckl_compute_jastrow_champ_factor_single_een_doc
 #endif
@@ -5842,6 +5842,9 @@ integer(qmckl_exit_code) function qmckl_compute_jastrow_champ_factor_single_een_
 
   integer*8 :: i, a, j, l, k, p, m, n, nw, kk, num
   double precision :: accu, accu1, accu2, accu3, accu4, accu5, accu6, accu7, accu8, cn
+  double precision :: en_ml, en_m, sn_m, sn_ml, n_num_m, n_num_ml
+  double precision :: se_i, e_i, se_gl, e_gl, nglp, ngm
+  double precision :: sn_gl_m, sn_gl_ml, n_gl_m, n_gl_ml
   num = num_in + 1
 
   info = QMCKL_SUCCESS
@@ -5867,34 +5870,44 @@ integer(qmckl_exit_code) function qmckl_compute_jastrow_champ_factor_single_een_
       do a = 1, nucl_num
         cn = c_vector_full(a, n)
         if(cn == 0.d0) cycle
+
+        sn_m   = een_rescaled_single_n(a,m,nw)
+        sn_ml  = een_rescaled_single_n(a,m+l,nw)
+        n_num_m  = een_rescaled_n(num,a,m,nw)
+        n_num_ml = een_rescaled_n(num,a,m+l,nw)
         do kk = 1, 3
+          sn_gl_m  = een_rescaled_single_n_gl(kk,a,m,nw)
+          sn_gl_ml = een_rescaled_single_n_gl(kk,a,m+l,nw)
+          n_gl_m   = een_rescaled_n_gl(num,kk,a,m,nw)
+          n_gl_ml  = een_rescaled_n_gl(num,kk,a,m+l,nw)
+
           do i = 1, elec_num
-            accu1 = een_rescaled_n(i,a,m+l,nw) * een_rescaled_single_e_gl(kk,i,k,nw) 
-            accu2 = een_rescaled_n(i,a,m+l,nw) * een_rescaled_e_gl(i,kk,num,k,nw)
-            accu3 = een_rescaled_n(i,a,m,nw) * een_rescaled_single_e_gl(kk,i,k,nw)
-            accu4 = een_rescaled_n(i,a,m,nw) * een_rescaled_e_gl(i,kk,num,k,nw)
+          ! cache repeated loads
+          en_ml  = een_rescaled_n(i,a,m+l,nw)
+          en_m   = een_rescaled_n(i,a,m,nw)
 
-            accu5 = een_rescaled_n(i,a,m+l,nw) * een_rescaled_single_e(i,k,nw) 
-            accu6 = - een_rescaled_n(i,a,m+l,nw) * een_rescaled_e(i,num,k,nw) 
-            accu7 = een_rescaled_n(i,a,m,nw) * een_rescaled_single_e(i,k,nw) 
-            accu8 = - een_rescaled_n(i,a,m,nw) * een_rescaled_e(i,num,k,nw)
+          se_i   = een_rescaled_single_e(i,k,nw)
+          e_i    = een_rescaled_e(i,num,k,nw)
 
-            accu = accu1 * een_rescaled_single_n(a,m,nw) + accu2 * een_rescaled_n(num,a,m,nw) + &
-                   accu3 * een_rescaled_single_n(a,m+l,nw) + accu4 *  een_rescaled_n(num,a,m+l,nw) +&
-                   accu5 * een_rescaled_single_n_gl(kk,a,m,nw) + accu6 * een_rescaled_n_gl(num,kk,a,m,nw) + &
-                   accu7 * een_rescaled_single_n_gl(kk,a,m+l,nw) + accu8 * een_rescaled_n_gl(num,kk,a,m+l,nw)
+          se_gl  = een_rescaled_single_e_gl(kk,i,k,nw)
+          e_gl   = een_rescaled_e_gl(i,kk,num,k,nw)
 
-            delta_een_g(num,kk,nw) = delta_een_g(num,kk,nw) + accu * cn
+          ! ---- first accumulation ----
+          accu = en_ml *( se_gl*sn_m   + e_gl*n_num_m   + se_i*sn_gl_m   - e_i*n_gl_m ) &
+               + en_m  *( se_gl*sn_ml  + e_gl*n_num_ml  + se_i*sn_gl_ml  - e_i*n_gl_ml )
 
-            accu1 =   een_rescaled_n_gl(i,kk,a,m+l,nw) * een_rescaled_single_e(i,k,nw) - accu1
-            accu2 = - een_rescaled_n_gl(i,kk,a,m+l,nw) * een_rescaled_e(i,num,k,nw) - accu2
-            accu3 =   een_rescaled_n_gl(i,kk,a,m,nw) * een_rescaled_single_e(i,k,nw) - accu3
-            accu4 = - een_rescaled_n_gl(i,kk,a,m,nw) * een_rescaled_e(i,num,k,nw) - accu4
+          delta_een_g(num,kk,nw) = delta_een_g(num,kk,nw) + accu*cn
 
-            accu = accu1 * een_rescaled_single_n(a,m,nw) + accu2 * een_rescaled_n(num,a,m,nw) + &
-                   accu3 * een_rescaled_single_n(a,m+l,nw) + accu4 *  een_rescaled_n(num,a,m+l,nw) 
-            
-            delta_een_g(i,kk,nw) = delta_een_g(i,kk,nw) + accu * cn
+          ! ---- second accumulation ----
+          nglp = een_rescaled_n_gl(i,kk,a,m+l,nw)
+          ngm  = een_rescaled_n_gl(i,kk,a,m,nw)
+
+          accu = ( nglp*se_i - en_ml *se_gl )*sn_m   &
+               + (-nglp*e_i  - en_ml *e_gl )*n_num_m &
+               + ( ngm *se_i - en_m  *se_gl )*sn_ml  &
+               + (-ngm *e_i  - en_m  *e_gl )*n_num_ml
+
+          delta_een_g(i,kk,nw) = delta_een_g(i,kk,nw) + accu*cn
           end do
         end do
       end do
@@ -6126,7 +6139,7 @@ qmckl_exit_code qmckl_provide_jastrow_champ_single_een_pderiv(qmckl_context cont
   if (ctx->jastrow_champ.cord_num == 0) {
     return qmckl_failwith( context,
                            QMCKL_ALLOCATION_FAILED,
-                           "qmckl_provide_jastrow_champ_factor_een_gl_pderiv",
+                           "qmckl_provide_jastrow_champ_factor_een_pderiv",
                            "Expected cord_num > 0");
   }
   if (ctx->jastrow_champ.cord_num > 0) {
