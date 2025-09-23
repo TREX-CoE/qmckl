@@ -2455,7 +2455,7 @@ integer function qmckl_compute_jastrow_champ_factor_single_een_doc( &
   real(c_double)        , intent(out) :: delta_een(walk_num)
 
   integer*8 :: i, a, j, l, k, p, m, n, nw, num
-  double precision :: accu, accu2, cn, eps
+  double precision :: accu, accu2, accu3, accu4, cn, eps
   integer*8                           :: LDA, LDB, LDC
 
   num = num_in + 1
@@ -2473,31 +2473,41 @@ integer function qmckl_compute_jastrow_champ_factor_single_een_doc( &
 
   if (cord_num == 0) return
 
-  do nw =1, walk_num
+  eps = qmckl_get_numprec_epsilon(context)
 
-     delta_een(nw) = 0.d0
+  do nw =1, walk_num
      do n = 1, dim_c_vector
         l = lkpm_combined_index(n, 1)
         k = lkpm_combined_index(n, 2)
         m = lkpm_combined_index(n, 4)
 
         do a = 1, nucl_num
+
+           if ( een_rescaled_single_n(a,m,nw) < eps .and. &
+                een_rescaled_n(num,a,m,nw) < eps ) cycle
            cn = c_vector_full(a, n)
            if(cn == 0.d0) cycle
 
-           accu = 0.d0
-           do j=1,elec_num
-              accu = accu + &
-                   (een_rescaled_single_n(a,l+m,nw) * een_rescaled_single_e(j,k,nw) -  &
-                    een_rescaled_n(num,a,l+m,nw) * een_rescaled_e(j,num,k,nw) ) * een_rescaled_n(j,a,m,nw) + &
-                   (een_rescaled_single_n(a,m,nw) * een_rescaled_single_e(j,k,nw) - &
-                    een_rescaled_n(num,a,m,nw) * een_rescaled_e(j,num,k,nw) ) * een_rescaled_n(j,a,l+m,nw) 
+           accu = 0.0d0
+           accu2 = 0.0d0
+           accu3 = 0.0d0
+           accu4 = 0.0d0
+           do i = 1, elec_num
+              accu = accu + een_rescaled_n(i,a,m+l,nw) * een_rescaled_single_e(i,k,nw)
+              accu2 = accu2 - een_rescaled_n(i,a,m+l,nw) * een_rescaled_e(i,num,k,nw)
+              accu3 = accu3 + een_rescaled_n(i,a,m,nw) * een_rescaled_single_e(i,k,nw)
+              accu4 = accu4 - een_rescaled_n(i,a,m,nw) * een_rescaled_e(i,num,k,nw)
            end do
+
+           accu = accu * een_rescaled_single_n(a,m,nw) + accu2 * &
+                een_rescaled_n(num,a,m,nw) + accu3 * &
+                een_rescaled_single_n(a,m+l,nw) + &
+                accu4 * een_rescaled_n(num,a,m+l,nw)
+
            delta_een(nw) = delta_een(nw) + accu * cn
         end do
      end do
   end do
-
 
 end function qmckl_compute_jastrow_champ_factor_single_een_doc
      #+end_src
@@ -2526,8 +2536,8 @@ integer function qmckl_compute_jastrow_champ_factor_single_een_hpc( &
 
   integer*8 :: i, a, j, l, k, p, m, n, nw, num
   double precision :: accu, accu2, cn, eps
-  integer*8        :: LDA, LDB, LDC
-  integer*8, allocatable  :: non_zeros(:,:)
+  integer*8        :: LDA, LDB, LDC, idx
+  integer*8, allocatable  :: non_zeros(:,:,:)
 
   num = num_in + 1
 
@@ -2546,20 +2556,28 @@ integer function qmckl_compute_jastrow_champ_factor_single_een_hpc( &
      return
   endif
 
-  allocate (non_zeros(0:elec_num, nucl_num))
+  allocate (non_zeros(0:elec_num, nucl_num,2))
   eps = qmckl_get_numprec_epsilon(context)
 
   do nw =1, walk_num
 
      do a=1,nucl_num
         k=0
+        p=0
+        l=0
         do j=1,elec_num
-           if (een_rescaled_n(j,a,1,nw) > eps) then
+           if (een_rescaled_n(j,a,2,nw) > eps) then
               k = k+1
-              non_zeros(k,a) = j
+              p = p+1
+              non_zeros(k,a,1) = j
+              non_zeros(p,a,2) = j
+           else if (een_rescaled_n(j,a,1,nw) > eps) then
+              k = k+1
+              non_zeros(k,a,1) = j
            endif
         enddo
-        non_zeros(0,a) = k
+        non_zeros(0,a,1) = k
+        non_zeros(0,a,2) = p
      enddo
 
      delta_een(nw) = 0.d0
@@ -2574,56 +2592,80 @@ integer function qmckl_compute_jastrow_champ_factor_single_een_hpc( &
 
            accu = 0.d0
 
+           idx = min(m,2)
+
            if ((dabs(een_rescaled_single_n(a,l+m,nw)) > eps).and.(dabs(een_rescaled_n(num,a,l+m,nw)) > eps)) then
-              do p=1,non_zeros(0,a)
-                 j=non_zeros(p,a)
-                 accu = accu + ( &
-                      een_rescaled_single_n(a,l+m,nw) * een_rescaled_single_e(j,k,nw) - &
-                      een_rescaled_n(num,a,l+m,nw) * een_rescaled_e(j,num,k,nw) ) * een_rescaled_n(j,a,m,nw) 
-              end do
-              
+              if (idx > 0) then
+                 do p=1,non_zeros(0,a,idx)
+                    j=non_zeros(p,a,idx)
+                    accu = accu + ( &
+                         een_rescaled_single_n(a,l+m,nw) * een_rescaled_single_e(j,k,nw) - &
+                         een_rescaled_n(num,a,l+m,nw) * een_rescaled_e(j,num,k,nw) ) * een_rescaled_n(j,a,m,nw) 
+                 end do
+              else
+                 do j=1,elec_num
+                    accu = accu +  &
+                         een_rescaled_single_n(a,l+m,nw) * een_rescaled_single_e(j,k,nw) - &
+                         een_rescaled_n(num,a,l+m,nw) * een_rescaled_e(j,num,k,nw) 
+                 end do
+              end if
+
            else if (dabs(een_rescaled_single_n(a,l+m,nw)) > eps) then
 
-              do p=1,non_zeros(0,a)
-                 j=non_zeros(p,a)
-                 accu = accu + &
-                      een_rescaled_single_n(a,l+m,nw) * een_rescaled_single_e(j,k,nw) * een_rescaled_n(j,a,m,nw) 
-              end do
+              if (idx > 0) then
+                 do p=1,non_zeros(0,a,idx)
+                    j=non_zeros(p,a,idx)
+                    accu = accu + &
+                         een_rescaled_single_n(a,l+m,nw) * een_rescaled_single_e(j,k,nw) * een_rescaled_n(j,a,m,nw) 
+                 end do
+              else
+                 do j=1,elec_num
+                    accu = accu + een_rescaled_single_n(a,l+m,nw) * een_rescaled_single_e(j,k,nw) 
+                 end do
+              end if
 
            else if (dabs(een_rescaled_n(num,a,l+m,nw)) > eps) then
 
-              do p=1,non_zeros(0,a)
-                 j=non_zeros(p,a)
-                 accu = accu - &
-                      een_rescaled_n(num,a,l+m,nw) * een_rescaled_e(j,num,k,nw) * een_rescaled_n(j,a,m,nw) 
-              end do
+              if (idx > 0) then
+                 do p=1,non_zeros(0,a,idx)
+                    j=non_zeros(p,a,idx)
+                    accu = accu - &
+                         een_rescaled_n(num,a,l+m,nw) * een_rescaled_e(j,num,k,nw) * een_rescaled_n(j,a,m,nw) 
+                 end do
+              else
+                 do j=1,elec_num
+                    accu = accu - een_rescaled_n(num,a,l+m,nw) * een_rescaled_e(j,num,k,nw) 
+                 end do
+              end  if
 
            end if
-              
+
+           idx = min(l+m,2)
+
            if ((dabs(een_rescaled_single_n(a,m,nw)) > eps).and.(dabs(een_rescaled_n(num,a,m,nw)) > eps)) then
 
-              do p=1,non_zeros(0,a)
-                 j=non_zeros(p,a)
-                 accu = accu + &
-                      (een_rescaled_single_n(a,m,nw) * een_rescaled_single_e(j,k,nw) - &
-                      een_rescaled_n(num,a,m,nw) * een_rescaled_e(j,num,k,nw)) * een_rescaled_n(j,a,l+m,nw) 
-              end do
-              
+                 do p=1,non_zeros(0,a,idx)
+                    j=non_zeros(p,a,idx)
+                    accu = accu + &
+                         (een_rescaled_single_n(a,m,nw) * een_rescaled_single_e(j,k,nw) - &
+                         een_rescaled_n(num,a,m,nw) * een_rescaled_e(j,num,k,nw)) * een_rescaled_n(j,a,l+m,nw) 
+                 end do
+
            else if (dabs(een_rescaled_single_n(a,m,nw)) > eps) then
-              
-              do p=1,non_zeros(0,a)
-                 j=non_zeros(p,a)
-                 accu = accu + &
-                      een_rescaled_single_n(a,m,nw) * een_rescaled_single_e(j,k,nw) * een_rescaled_n(j,a,l+m,nw) 
-              end do
+
+                 do p=1,non_zeros(0,a,idx)
+                    j=non_zeros(p,a,idx)
+                    accu = accu + &
+                         een_rescaled_single_n(a,m,nw) * een_rescaled_single_e(j,k,nw) * een_rescaled_n(j,a,l+m,nw) 
+                 end do
 
            else if (dabs(een_rescaled_n(num,a,m,nw)) > eps) then
 
-              do p=1,non_zeros(0,a)
-                 j=non_zeros(p,a)
-                 accu = accu - &
-                      een_rescaled_n(num,a,m,nw) * een_rescaled_e(j,num,k,nw) * een_rescaled_n(j,a,l+m,nw) 
-              end do
+                 do p=1,non_zeros(0,a,idx)
+                    j=non_zeros(p,a,idx)
+                    accu = accu - &
+                         een_rescaled_n(num,a,m,nw) * een_rescaled_e(j,num,k,nw) * een_rescaled_n(j,a,l+m,nw) 
+                 end do
 
            end if
            delta_een(nw) = delta_een(nw) + accu * cn
