@@ -32,6 +32,7 @@
 #include "qmckl.h"
 #include <assert.h>
 #include <math.h>
+
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -63,6 +64,7 @@ int main() {
 #include <stdbool.h>
 #include <assert.h>
 #include <math.h>
+#include <sys/time.h>
 
 
 #include <stdio.h>
@@ -100,6 +102,7 @@ typedef struct qmckl_jastrow_champ_single_struct{
   uint64_t     single_en_distance_date;
   uint64_t     single_en_distance_maxsize;
   double*      delta_een;
+  void*        delta_een_hpc_function;
   uint64_t     delta_een_date;
   uint64_t     delta_een_maxsize;
   double*      delta_een_pderiv;
@@ -2075,7 +2078,6 @@ integer function qmckl_compute_jastrow_champ_factor_single_een_hpc_f( &
      do a=1,nucl_num
         k=0
         p=0
-        l=0
         do j=1,elec_num
            if (een_rescaled_n(j,a,2,nw) > eps) then
               k = k+1
@@ -2151,7 +2153,7 @@ integer function qmckl_compute_jastrow_champ_factor_single_een_hpc_f( &
 
            end if
 
-           idx = min(l+m,2)
+           idx = min(l+m,2)           
 
            if ((dabs(een_rescaled_single_n(a,m,nw)) > eps).and.(dabs(een_rescaled_n(num,a,m,nw)) > eps)) then
 
@@ -2183,13 +2185,12 @@ integer function qmckl_compute_jastrow_champ_factor_single_een_hpc_f( &
         end do
      end do
   end do
-
-end function qmckl_compute_jastrow_champ_factor_single_een_hpc_f
+end function
      #+end_src
 
  #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
 qmckl_exit_code
-qmckl_compute_jastrow_champ_factor_single_een_hpc(
+qmckl_compute_jastrow_champ_factor_single_een_hpc_c(
                                                   const qmckl_context context,
                                                   const int64_t num,
                                                   const int64_t walk_num,
@@ -2229,16 +2230,10 @@ qmckl_compute_jastrow_champ_factor_single_een_hpc(
     for (int64_t nw = 0; nw < walk_num; ++nw) delta_een[nw] = 0.0;
     return QMCKL_SUCCESS;
   }
-
-  /* Allocate non_zeros as a flat buffer:
-     dimensions in Fortran: non_zeros(0:elec_num, nucl_num, 2)
-     We'll store as: stride_e = (elec_num + 1)
-     layout: [t][a][pos], where t=0..1 (third dim), a=0..nucl_num-1, pos=0..elec_num
-     We keep pos=0 as the count like your Fortran code; entries stored at pos=1..count */
   const int64_t stride_e = elec_num + 1;
   const int64_t t_count = 2;
-  const size_t total_nonzeros_elems = (size_t)stride_e * (size_t)nucl_num * (size_t)t_count;
-  int64_t * non_zeros = (int64_t *) malloc(total_nonzeros_elems * sizeof(int64_t));
+  const size_t total_nonzeros_elems = stride_e * nucl_num * t_count;
+  int64_t * restrict non_zeros = (int64_t *) malloc(total_nonzeros_elems * sizeof(int64_t));
   if (!non_zeros) return qmckl_failwith(context, -20, "qmckl_compute_jastrow_champ_factor_single_een_hpc_c", "alloc non_zeros");
   memset(non_zeros, 0, total_nonzeros_elems * sizeof(int64_t));
 
@@ -2247,184 +2242,169 @@ qmckl_compute_jastrow_champ_factor_single_een_hpc(
      i + j*dim_i + k*(dim_i*dim_j) + ...
      We provide macros for each array shape to avoid mistakes. */
 
-#define IDX_CVECTOR(a,n)  ((size_t)(a) + (size_t)(n) * (size_t)nucl_num)
+#define IDX_CVECTOR(a,n)  ((a) + (n) * nucl_num)
   /* lkpm_combined_index: shape (dim_c_vector, 4) */
-#define IDX_LKPM(n,col)   ((size_t)(n) + (size_t)(col) * (size_t)dim_c_vector)
+#define IDX_LKPM(n,col)   ((n) + (col) * dim_c_vector)
   /* een_rescaled_n: (elec_num, nucl_num, cord_dim, walk_num) */
-#define IDX_EEN_N(j,a,l,nw) (                                           \
-                              (size_t)(j) + (size_t)(a) * (size_t)elec_num + \
-                              (size_t)(l) * (size_t)elec_num * (size_t)nucl_num + \
-                              (size_t)(nw) * (size_t)elec_num * (size_t)nucl_num * (size_t)cord_dim )
+#define IDX_EEN_N(j,a,l,nw) ((j) + (a) * elec_num +                     \
+                             (l) * elec_num * nucl_num +                \
+                             (nw) * elec_num * nucl_num * cord_dim )
   /* een_rescaled_e: (elec_num, elec_num, cord_dim, walk_num) */
 #define IDX_EEN_E(j,col,l,nw) (                                         \
-                                (size_t)(j) + (size_t)(col) * (size_t)elec_num + \
-                                (size_t)(l) * (size_t)elec_num * (size_t)elec_num + \
-                                (size_t)(nw) * (size_t)elec_num * (size_t)elec_num * (size_t)cord_dim )
+                                                                        (j) + (col) * elec_num + \
+                                                                        (l) * elec_num * elec_num + \
+                                                                        (nw) * elec_num * elec_num * cord_dim )
   /* een_rescaled_single_n: (nucl_num, cord_dim, walk_num) */
 #define IDX_EEN_SING_N(a,l,nw) (                                        \
-                                 (size_t)(a) + (size_t)(l) * (size_t)nucl_num + \
-                                 (size_t)(nw) * (size_t)nucl_num * (size_t)cord_dim )
+                                                                        (a) + (l) * nucl_num + \
+                                                                        (nw) * nucl_num * cord_dim )
   /* een_rescaled_single_e: (elec_num, cord_dim, walk_num) */
 #define IDX_EEN_SING_E(j,l,nw) (                                        \
-                                 (size_t)(j) + (size_t)(l) * (size_t)elec_num + \
-                                 (size_t)(nw) * (size_t)elec_num * (size_t)cord_dim )
+                                                                        (j) + (l) * elec_num + \
+                                                                        (nw) * elec_num * cord_dim )
 
   const double eps = qmckl_get_numprec_epsilon(context);
 
-  /* Parallelize over walkers: each walker computes delta_een[nw] independently. */
-#ifdef HAVE_OPENMP
-#pragma omp parallel
-#endif
-  {
-    /* Allocate per-walker temporary non_zeros array on heap (thread-private). */
-    int64_t * nz = (int64_t *) malloc(total_nonzeros_elems * sizeof(int64_t));
-    assert (nz != NULL);
-    /* zero only the needed prefix (we will fill counts and entries) */
-    memset(nz, 0, total_nonzeros_elems * sizeof(int64_t));
+  /* Allocate per-walker temporary non_zeros array on heap (thread-private). */
+  int64_t * __attribute__((aligned(64)))  restrict nz = (int64_t *) malloc(total_nonzeros_elems * sizeof(int64_t));
+  assert (nz != NULL);
+  /* zero only the needed prefix (we will fill counts and entries) */
+  memset(nz, 0, total_nonzeros_elems * sizeof(int64_t));
 
-#ifdef HAVE_OPENMP
-#pragma omp for
-#endif
-    for (int64_t nw = 0; nw < walk_num; ++nw) {
+  for (int64_t nw = 0; nw < walk_num; ++nw) {
 
-      /* Build the non_zeros arrays: for each nucleus a, scan electrons j */
-      for (int64_t a = 0; a < nucl_num; ++a) {
-        int64_t k = 0;  /* count for tier 1 (matching m) */
-        int64_t p = 0;  /* count for tier 2 (matching l+m) */
-        for (int64_t j = 0; j < elec_num; ++j) {
-          const double v_m = een_rescaled_n[IDX_EEN_N(j, a, 2, nw)];
-          if (v_m > eps) {
-            k++; p++;
-            nz[ /* non_zeros(k,a,1) */ (size_t)1 + (size_t)k - 1 + (size_t)a * (size_t)stride_e + (size_t)0 * (size_t)stride_e * (size_t)nucl_num ] = j;
-            nz[ /* non_zeros(p,a,2) */ (size_t)1 + (size_t)p - 1 + (size_t)a * (size_t)stride_e + (size_t)1 * (size_t)stride_e * (size_t)nucl_num ] = j;
-          } else {
-            const double v_lm = een_rescaled_n[IDX_EEN_N(j, a, 1, nw)];
-            if (v_lm > eps) {
-              k++;
-              nz[ /* non_zeros(k,a,1) */ (size_t)1 + (size_t)k - 1 + (size_t)a * (size_t)stride_e + (size_t)0 * (size_t)stride_e * (size_t)nucl_num ] = j;
-            }
+    /* Build the non_zeros arrays: for each nucleus a, scan electrons j */
+    for (int64_t a = 0; a < nucl_num; ++a) {
+      int64_t k = 0;
+      int64_t p = 0;
+      const double * restrict n2_ = &(een_rescaled_n[IDX_EEN_N(0, a, 2, nw)]);
+      const double * restrict n1_ = &(een_rescaled_n[IDX_EEN_N(0, a, 1, nw)]);
+      int64_t * const restrict nzk_ = &(nz[a*stride_e]);
+      int64_t * const restrict nzp_ = &(nz[stride_e*(a+nucl_num)]);
+      for (int64_t j = 0; j < elec_num; ++j) {
+        const double v_m = n2_[j];
+        if (v_m > eps) {
+          k++; p++;
+          nzk_[k] = j;
+          nzp_[p] = j;
+        } else {
+          const double v_lm = n1_[j];
+          if (v_lm > eps) {
+            k++;
+            nzk_[k] = j;
           }
         }
-        /* store counts in position 0 as in Fortran */
-        nz[ /* non_zeros(0,a,1) */ (size_t)0 + (size_t)a * (size_t)stride_e + (size_t)0 * (size_t)stride_e * (size_t)nucl_num ] = k;
-        nz[ /* non_zeros(0,a,2) */ (size_t)0 + (size_t)a * (size_t)stride_e + (size_t)1 * (size_t)stride_e * (size_t)nucl_num ] = p;
-      } /* end build non_zeros for walker */
+      }
+      nzk_[0] = k;
+      nzp_[0] = p;
+    } 
 
-      double delta_val = 0.0;
+    double delta_val = 0.0;
 
-      /* Main accumulation loop: n = 1 .. dim_c_vector in Fortran -> 0..dim_c_vector-1 in C */
-      for (int64_t n = 0; n < dim_c_vector; ++n) {
-        /* In Fortran: l = lkpm_combined_index(n,1); k = lkpm_combined_index(n,2); m = lkpm_combined_index(n,4) */
-        /* In C: columns are 0..3; we read values exactly (these are offsets used with 0:cord_num) */
-        const int64_t l = lkpm_combined_index[ IDX_LKPM(n, 0) ]; /* column 1 in Fortran is index 0 here */
-        const int64_t k_idx = lkpm_combined_index[ IDX_LKPM(n, 1) ]; /* we avoid naming collision with loop var k above */
-        const int64_t m = lkpm_combined_index[ IDX_LKPM(n, 3) ];
+    /* Main accumulation loop: n = 1 .. dim_c_vector in Fortran -> 0..dim_c_vector-1 in C */
+    for (int64_t n = 0; n < dim_c_vector; ++n) {
+      /* In Fortran: l = lkpm_combined_index(n,1); k = lkpm_combined_index(n,2); m = lkpm_combined_index(n,4) */
+      /* In C: columns are 0..3; we read values exactly (these are offsets used with 0:cord_num) */
+      const int64_t l = lkpm_combined_index[ IDX_LKPM(n, 0) ]; /* column 1 in Fortran is index 0 here */
+      const int64_t k = lkpm_combined_index[ IDX_LKPM(n, 1) ]; 
+      const int64_t m = lkpm_combined_index[ IDX_LKPM(n, 3) ];
 
-        /* c_vector_full(a,n) in Fortran => index a + n*nucl_num */
-        for (int64_t a = 0; a < nucl_num; ++a) {
-          const double cn = c_vector_full[ IDX_CVECTOR(a, n) ];
-          if (cn == 0.0) continue;
+      /* c_vector_full(a,n) in Fortran => index a + n*nucl_num */
+      for (int64_t a = 0; a < nucl_num; ++a) {
+        const double cn = c_vector_full[ IDX_CVECTOR(a, n) ];
+        if (cn == 0.0) continue;
 
-          double accu = 0.0;
+        double accu = 0.0;
 
-          /* first block: idx = min(m,2) in Fortran */
-          int64_t idx = (m < 2) ? m : 2;
 
-          const double s_n_lpm = een_rescaled_single_n[ IDX_EEN_SING_N(a, l + m, nw) ];
-          const double n_num_lpm = een_rescaled_n[ IDX_EEN_N( num, a, l + m, nw) ];
+        const double s_n_lpm = een_rescaled_single_n[ IDX_EEN_SING_N(a, l + m, nw) ];
+        const double n_num_lpm = een_rescaled_n[ IDX_EEN_N( num, a, l + m, nw) ];
+        const double * restrict es_ = &(een_rescaled_single_e[ IDX_EEN_SING_E(0, k, nw) ]);
+        const double * restrict e_  = &(een_rescaled_e[ IDX_EEN_E(0, num, k, nw) ]);
+
+        {
+          const int64_t idx = (m < 2) ? m-1 : 1;
+          const int64_t * restrict nz_ = &(nz[ a * stride_e + idx * stride_e * nucl_num ]);
+          const double * restrict n_  = &(een_rescaled_n[ IDX_EEN_N(0, a, m, nw) ]);
 
           if ( fabs(s_n_lpm) > eps && fabs(n_num_lpm) > eps ) {
-            if (idx > 0) {
-              int64_t t = idx - 1; /* Fortran's idx 1 => t=0, idx 2 => t=1 */
-              int64_t count = nz[ (size_t)0 + (size_t)a * (size_t)stride_e + (size_t)t * (size_t)stride_e * (size_t)nucl_num ];
-              for (int64_t p = 1; p <= count; ++p) {
-                int64_t j = nz[ (size_t)p + (size_t)a * (size_t)stride_e + (size_t)t * (size_t)stride_e * (size_t)nucl_num ];
-                double term = s_n_lpm * een_rescaled_single_e[ IDX_EEN_SING_E(j, k_idx, nw) ] -
-                  n_num_lpm * een_rescaled_e[ IDX_EEN_E(j, num, k_idx, nw) ];
-                accu += term * een_rescaled_n[ IDX_EEN_N(j, a, m, nw) ];
+            if (idx >= 0) {
+              for (int64_t p = 1; p <= nz_[0] ; ++p) {
+                int64_t j = nz_[p];
+                accu += (s_n_lpm * es_[j] - n_num_lpm * e_[j]) *n_[j];
               }
             } else {
-#ifdef HAVE_OPENMP
-#pragma omp simd reduction(+:accu)
-#endif
               for (int64_t j = 0; j < elec_num; ++j) {
-                double term = s_n_lpm * een_rescaled_single_e[ IDX_EEN_SING_E(j, k_idx, nw) ] -
-                  n_num_lpm * een_rescaled_e[ IDX_EEN_E(j, num, k_idx, nw) ];
+                double term = s_n_lpm * es_[j] - n_num_lpm * e_[j];
                 accu += term;
               }
             }
           } else if ( fabs(s_n_lpm) > eps ) {
-            if (idx > 0) {
-              int64_t t = idx - 1;
-              int64_t count = nz[ (size_t)0 + (size_t)a * (size_t)stride_e + (size_t)t * (size_t)stride_e * (size_t)nucl_num ];
-              for (int64_t p = 1; p <= count; ++p) {
-                int64_t j = nz[ (size_t)p + (size_t)a * (size_t)stride_e + (size_t)t * (size_t)stride_e * (size_t)nucl_num ];
-                accu += s_n_lpm * een_rescaled_single_e[ IDX_EEN_SING_E(j, k_idx, nw) ] * een_rescaled_n[ IDX_EEN_N(j, a, m, nw) ];
+            if (idx >= 0) {
+              for (int64_t p = 1; p <= nz_[0]; ++p) {
+                int64_t j = nz_[p];
+                accu += s_n_lpm * es_[j] * n_[j];
               }
             } else {
-#ifdef HAVE_OPENMP
-#pragma omp simd reduction(+:accu)
-#endif
               for (int64_t j = 0; j < elec_num; ++j) {
-                accu += s_n_lpm * een_rescaled_single_e[ IDX_EEN_SING_E(j, k_idx, nw) ];
+                accu += s_n_lpm * es_[j];
               }
             }
           } else if ( fabs(n_num_lpm) > eps ) {
-            if (idx > 0) {
-              int64_t t = idx - 1;
-              int64_t count = nz[ (size_t)0 + (size_t)a * (size_t)stride_e + (size_t)t * (size_t)stride_e * (size_t)nucl_num ];
-              for (int64_t p = 1; p <= count; ++p) {
-                int64_t j = nz[ (size_t)p + (size_t)a * (size_t)stride_e + (size_t)t * (size_t)stride_e * (size_t)nucl_num ];
-                accu -= n_num_lpm * een_rescaled_e[ IDX_EEN_E(j, num, k_idx, nw) ] * een_rescaled_n[ IDX_EEN_N(j, a, m, nw) ];
+            if (idx >= 0) {
+              for (int64_t p = 1; p <= nz_[0]; ++p) {
+                int64_t j = nz_[p];
+                accu -= n_num_lpm * e_[j] * n_[j];
               }
             } else {
 #ifdef HAVE_OPENMP
 #pragma omp simd reduction(+:accu)
 #endif
               for (int64_t j = 0; j < elec_num; ++j) {
-                accu -= n_num_lpm * een_rescaled_e[ IDX_EEN_E(j, num, k_idx, nw) ];
+                accu -= n_num_lpm * e_[j];
               }
             }
           }
+        }
 
-          idx = ((l + m) < 2) ? (l + m) : 2;
-          /* reuse variables with new positions */
+        {
+          int64_t idx = ((l + m) < 2) ? (l + m)-1 : 1;
           const double s_n_m = een_rescaled_single_n[ IDX_EEN_SING_N(a, m, nw) ];
           const double n_num_m = een_rescaled_n[ IDX_EEN_N( num, a, m, nw) ];
+          const int64_t * restrict nz_ = &(nz[ a * stride_e + idx * stride_e * nucl_num ]);
+          const double * restrict n_  = &(een_rescaled_n[ IDX_EEN_N(0, a, l+m, nw) ]);
 
           if ( fabs(s_n_m) > eps && fabs(n_num_m) > eps ) {
-            int64_t t = idx - 1;
-            int64_t count = nz[ (size_t)0 + (size_t)a * (size_t)stride_e + (size_t)t * (size_t)stride_e * (size_t)nucl_num ];
-            for (int64_t p = 1; p <= count; ++p) {
-              int64_t j = nz[ (size_t)p + (size_t)a * (size_t)stride_e + (size_t)t * (size_t)stride_e * (size_t)nucl_num ];
-              double term = s_n_m * een_rescaled_single_e[ IDX_EEN_SING_E(j, k_idx, nw) ] -
-                n_num_m * een_rescaled_e[ IDX_EEN_E(j, num, k_idx, nw) ];
-              accu += term * een_rescaled_n[ IDX_EEN_N(j, a, l + m, nw) ];
+
+            double accu1 = 0.;
+            double accu2 = 0.;
+            for (int64_t p = 1; p <= nz_[0]; ++p) {
+              int64_t j = nz_[p];
+              accu1 += es_[j] * n_[j];
+              accu2 += e_[j] * n_[j];
+//              accu += (s_n_m * es_[j] - n_num_m * e_[j]) * n_[j];
             }
+            accu += s_n_m * accu1 - n_num_m*accu2;
           } else if ( fabs(s_n_m) > eps ) {
-            int64_t t = idx - 1;
-            int64_t count = nz[ (size_t)0 + (size_t)a * (size_t)stride_e + (size_t)t * (size_t)stride_e * (size_t)nucl_num ];
-            for (int64_t p = 1; p <= count; ++p) {
-              int64_t j = nz[ (size_t)p + (size_t)a * (size_t)stride_e + (size_t)t * (size_t)stride_e * (size_t)nucl_num ];
-              accu += s_n_m * een_rescaled_single_e[ IDX_EEN_SING_E(j, k_idx, nw) ] * een_rescaled_n[ IDX_EEN_N(j, a, l + m, nw) ];
+            for (int64_t p = 1; p <= nz_[0]; ++p) {
+              int64_t j = nz_[p];
+              accu += s_n_m * es_[j] * n_[j];
             }
           } else if ( fabs(n_num_m) > eps ) {
-            int64_t t = idx - 1;
-            int64_t count = nz[ (size_t)0 + (size_t)a * (size_t)stride_e + (size_t)t * (size_t)stride_e * (size_t)nucl_num ];
-            for (int64_t p = 1; p <= count; ++p) {
-              int64_t j = nz[ (size_t)p + (size_t)a * (size_t)stride_e + (size_t)t * (size_t)stride_e * (size_t)nucl_num ];
-              accu -= n_num_m * een_rescaled_e[ IDX_EEN_E(j, num, k_idx, nw) ] * een_rescaled_n[ IDX_EEN_N(j, a, l + m, nw) ];
+            for (int64_t p = 1; p <= nz_[0]; ++p) {
+              int64_t j = nz_[p];
+              accu -= n_num_m * e_[j] * n_[j];
             }
           }
 
           delta_val += accu * cn;
         } /* end loop a (nuclei) */
-      } /* end loop n (dim_c_vector) */
+      }
+    } /* end loop n (dim_c_vector) */
 
-      delta_een[nw] = delta_val;
-    } /* end parallel over nw */
-    free(nz);
-  }
+    delta_een[nw] = delta_val;
+  } /* end parallel over nw */
+  free(nz);
 
   free(non_zeros);
   return QMCKL_SUCCESS;
@@ -2450,7 +2430,22 @@ qmckl_compute_jastrow_champ_factor_single_een_doc (const qmckl_context context,
                               double* const delta_een );
 
 qmckl_exit_code
-qmckl_compute_jastrow_champ_factor_single_een_hpc (const qmckl_context context,
+qmckl_compute_jastrow_champ_factor_single_een_hpc_c (const qmckl_context context,
+                              const int64_t num,
+                              const int64_t walk_num,
+                              const int64_t elec_num,
+                              const int64_t nucl_num,
+                              const int64_t cord_num,
+                              const int64_t dim_c_vector,
+                              const double* c_vector_full,
+                              const int64_t* lkpm_combined_index,
+                              const double* een_rescaled_n,
+                              const double* een_rescaled_e,
+                              const double* een_rescaled_single_n,
+                              const double* een_rescaled_single_e,
+                              double* const delta_een );
+qmckl_exit_code
+qmckl_compute_jastrow_champ_factor_single_een_hpc_f (const qmckl_context context,
                               const int64_t num,
                               const int64_t walk_num,
                               const int64_t elec_num,
@@ -2484,7 +2479,7 @@ qmckl_compute_jastrow_champ_factor_single_een (const qmckl_context context,
 
  #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
 qmckl_exit_code
-qmckl_compute_jastrow_champ_factor_single_een (const qmckl_context context,
+qmckl_compute_jastrow_champ_factor_single_een (qmckl_context context,
                           const int64_t num,
                           const int64_t walk_num,
                           const int64_t elec_num,
@@ -2500,7 +2495,81 @@ qmckl_compute_jastrow_champ_factor_single_een (const qmckl_context context,
                           double* const delta_een )
 {
 #ifdef HAVE_HPC
-  return qmckl_compute_jastrow_champ_factor_single_een_doc
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  qmckl_exit_code (*fptr) (qmckl_context context,
+                          const int64_t num,
+                          const int64_t walk_num,
+                          const int64_t elec_num,
+                          const int64_t nucl_num,
+                          const int64_t cord_num,
+                          const int64_t dim_c_vector,
+                          const double* c_vector_full,
+                          const int64_t* lkpm_combined_index,
+                          const double* een_rescaled_n,
+                          const double* een_rescaled_e,
+                          const double* een_rescaled_single_n,
+                          const double* een_rescaled_single_e,
+                          double* const delta_een ) = ctx->single_point.delta_een_hpc_function ;
+  if (fptr == NULL) {
+    long t1, t2, t3;
+    
+    long start, end;
+
+    {
+      start = clock();
+      for (int i=0 ; i<100 ; ++i) {
+        qmckl_compute_jastrow_champ_factor_single_een_doc(context, num, walk_num, elec_num, nucl_num, cord_num, dim_c_vector,
+                                                          c_vector_full, lkpm_combined_index, een_rescaled_n, een_rescaled_e,
+                                                          een_rescaled_single_n, een_rescaled_single_e, delta_een );
+      }
+      end = clock();
+      t1 = end-start;
+    }
+    {
+      start = clock();
+      for (int i=0 ; i<100 ; ++i) {
+        qmckl_compute_jastrow_champ_factor_single_een_hpc_c(context, num, walk_num, elec_num, nucl_num, cord_num, dim_c_vector,
+                                                          c_vector_full, lkpm_combined_index, een_rescaled_n, een_rescaled_e,
+                                                          een_rescaled_single_n, een_rescaled_single_e, delta_een );
+      }
+      end = clock();
+      t2 = end-start;
+    }
+    {
+      start = clock();
+      for (int i=0 ; i<100 ; ++i) {
+        qmckl_compute_jastrow_champ_factor_single_een_hpc_f(context, num, walk_num, elec_num, nucl_num, cord_num, dim_c_vector,
+                                                          c_vector_full, lkpm_combined_index, een_rescaled_n, een_rescaled_e,
+                                                          een_rescaled_single_n, een_rescaled_single_e, delta_een );
+      }
+      end = clock();
+      t3 = end-start;
+    }
+
+    if (t1 < t2 && t1 < t3) {
+      fptr = qmckl_compute_jastrow_champ_factor_single_een_doc;
+    } else if (t2 < t1 && t2 < t3) {
+      fptr = qmckl_compute_jastrow_champ_factor_single_een_hpc_c;
+    } else if (t3 < t1 && t3 < t2) {
+      fptr = qmckl_compute_jastrow_champ_factor_single_een_hpc_f;
+    }
+
+    /*
+    printf("doc: %ld\nhpc_c: %ld\n hpc_f: %ld\n", t1, t2, t3);
+    if (t1 < t2 && t1 < t3) {
+      printf("Chose doc\n");
+    } else if (t2 < t1 && t2 < t3) {
+      printf("Chose hpc_c\n");
+    } else if (t3 < t1 && t3 < t2) {
+      printf("Chose hpc_f\n");
+    }
+    */
+
+    ctx->single_point.delta_een_hpc_function = (void*) fptr;
+  }
+  return fptr
 #else
   return qmckl_compute_jastrow_champ_factor_single_een_doc
 #endif
