@@ -1,0 +1,1909 @@
+! Compute
+
+!   :PROPERTIES:
+!      :Name:     qmckl_compute_forces_jastrow_en
+!      :CRetType: qmckl_exit_code
+!      :FRetType: qmckl_exit_code
+!      :END:
+
+!      #+NAME: qmckl_forces_jastrow_en_args
+!      | Variable                  | Type                                      | In/Out | Description                           |
+!      |---------------------------+-------------------------------------------+--------+---------------------------------------|
+!      | ~context~                 | ~qmckl_context~                           | in     | Global state                          |
+!      | ~walk_num~                | ~int64_t~                                 | in     | Number of walkers                     |
+!      | ~elec_num~                | ~int64_t~                                 | in     | Number of electrons                   |
+!      | ~nucl_num~                | ~int64_t~                                 | in     | Number of nuclei                      |
+!      | ~type_nucl_num~           | ~int64_t~                                 | in     | Number of unique nuclei               |
+!      | ~type_nucl_vector~        | ~int64_t[nucl_num]~                       | in     | IDs of unique nuclei                  |
+!      | ~aord_num~                | ~int64_t~                                 | in     | Number of coefficients                |
+!      | ~a_vector~                | ~double[type_nucl_num][aord_num+1]~       | in     | List of coefficients                  |
+!      | ~en_distance_rescaled~    | ~double[walk_num][nucl_num][elec_num]~    | in     | Electron-nucleus distances            |
+!      | ~en_distance_rescaled_gl~ | ~double[walk_num][nucl_num][elec_num][4]~ | in     | Electron-nucleus distance derivatives |
+!      | ~forces_jastrow_en~       | ~double[walk_num][nucl_num][3]~           | out    | Electron-nucleus forces               |
+!      |---------------------------+-------------------------------------------+--------+---------------------------------------|
+
+
+function qmckl_compute_forces_jastrow_en_doc( &
+     context, walk_num, elec_num, nucl_num, type_nucl_num, &
+     type_nucl_vector, aord_num, a_vector, &
+     en_distance_rescaled, en_distance_rescaled_gl, forces_jastrow_en) &
+     bind(C) result(info)
+  use qmckl
+  implicit none
+
+  integer (qmckl_context), intent(in), value :: context
+  integer (c_int64_t) , intent(in)  , value :: walk_num
+  integer (c_int64_t) , intent(in)  , value :: elec_num
+  integer (c_int64_t) , intent(in)  , value :: nucl_num
+  integer (c_int64_t) , intent(in)  , value :: type_nucl_num
+  integer (c_int64_t) , intent(in)          :: type_nucl_vector(nucl_num)
+  integer (c_int64_t) , intent(in)  , value :: aord_num
+  real    (c_double ) , intent(in)          :: a_vector(aord_num+1,type_nucl_num)
+  real    (c_double ) , intent(in)          :: en_distance_rescaled(elec_num,nucl_num,walk_num)
+  real    (c_double ) , intent(in)          :: en_distance_rescaled_gl(4, elec_num,nucl_num,walk_num)
+  real    (c_double ) , intent(out)         :: forces_jastrow_en(3,nucl_num,walk_num)
+  integer(qmckl_exit_code)                   :: info
+
+  integer*8 :: i, a, k, nw, ii
+  double precision   :: x, x1, kf
+  double precision   :: denom, invdenom, invdenom2, f
+  double precision   :: dx(3)
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (walk_num <= 0) then
+     info = QMCKL_INVALID_ARG_2
+     return
+  endif
+
+  if (elec_num <= 0) then
+     info = QMCKL_INVALID_ARG_3
+     return
+  endif
+
+  if (nucl_num <= 0) then
+     info = QMCKL_INVALID_ARG_4
+     return
+  endif
+
+  if (aord_num < 0) then
+     info = QMCKL_INVALID_ARG_7
+     return
+  endif
+
+  do nw =1, walk_num
+    forces_jastrow_en(:,:,nw) = 0.0d0
+    do a = 1, nucl_num
+       do i = 1, elec_num
+
+          x = en_distance_rescaled(i,a,nw)
+          if(abs(x) < 1.d-12) continue
+
+          denom = 1.0d0 + a_vector(2, type_nucl_vector(a)+1) * x
+          invdenom = 1.0d0 / denom
+          invdenom2 = invdenom*invdenom
+
+          dx(1) = -en_distance_rescaled_gl(1,i,a,nw)
+          dx(2) = -en_distance_rescaled_gl(2,i,a,nw)
+          dx(3) = -en_distance_rescaled_gl(3,i,a,nw)
+
+          f = a_vector(1, type_nucl_vector(a)+1) * invdenom2
+
+          forces_jastrow_en(1,a,nw) = forces_jastrow_en(1,a,nw) + f * dx(1)
+          forces_jastrow_en(2,a,nw) = forces_jastrow_en(2,a,nw) + f * dx(2)
+          forces_jastrow_en(3,a,nw) = forces_jastrow_en(3,a,nw) + f * dx(3)
+
+
+           kf = 2.d0
+           x1 = x
+           x = 1.d0
+           do k=2, aord_num
+              f = a_vector(k+1,type_nucl_vector(a)+1) * kf * x
+              forces_jastrow_en(1,a,nw) = forces_jastrow_en(1,a,nw) + f * x1 * dx(1)
+              forces_jastrow_en(2,a,nw) = forces_jastrow_en(2,a,nw) + f * x1 * dx(2)
+              forces_jastrow_en(3,a,nw) = forces_jastrow_en(3,a,nw) + f * x1 * dx(3)
+              x = x*x1
+              kf = kf + 1.d0
+           end do
+
+        end do
+     end do
+  end do
+
+
+end function qmckl_compute_forces_jastrow_en_doc
+
+! Compute
+
+!   :PROPERTIES:
+!      :Name:     qmckl_compute_forces_jastrow_en_g
+!      :CRetType: qmckl_exit_code
+!      :FRetType: qmckl_exit_code
+!      :END:
+
+!      #+NAME: qmckl_forces_jastrow_en_g_args
+!      | Variable                  | Type                                         | In/Out | Description                           |
+!      |---------------------------+----------------------------------------------+--------+---------------------------------------|
+!      | ~context~                 | ~qmckl_context~                              | in     | Global state                          |
+!      | ~walk_num~                | ~int64_t~                                    | in     | Number of walkers                     |
+!      | ~elec_num~                | ~int64_t~                                    | in     | Number of electrons                   |
+!      | ~nucl_num~                | ~int64_t~                                    | in     | Number of nuclei                      |
+!      | ~type_nucl_num~           | ~int64_t~                                    | in     | Number of unique nuclei               |
+!      | ~type_nucl_vector~        | ~int64_t[nucl_num]~                          | in     | IDs of unique nuclei                  |
+!      | ~aord_num~                | ~int64_t~                                    | in     | Number of coefficients                |
+!      | ~a_vector~                | ~double[type_nucl_num][aord_num+1]~          | in     | List of coefficients                  |
+!      | ~rescale_factor_en~       | ~double[type_nucl_num]~                      | in     | Rescale factor for electron-nucleus   |
+!      | ~en_distance~             | ~double[walk_num][elec_num][nucl_num]~       | in     | Electron-nucleus distances            |
+!      | ~en_distance_rescaled~    | ~double[walk_num][nucl_num][elec_num]~       | in     | Electron-nucleus distances            |
+!      | ~en_distance_rescaled_gl~ | ~double[walk_num][nucl_num][elec_num][4]~    | in     | Electron-nucleus distance derivatives |
+!      | ~forces_jastrow_en_g~     | ~double[walk_num][nucl_num][3][elec_num][3]~ | out    | Force of electron-nucleus gradient    |
+!      |---------------------------+----------------------------------------------+--------+---------------------------------------|
+
+
+function qmckl_compute_forces_jastrow_en_g_doc( &
+     context, walk_num, elec_num, nucl_num, type_nucl_num, &
+     type_nucl_vector, aord_num, a_vector, rescale_factor_en, en_distance, &
+     en_distance_rescaled, en_distance_rescaled_gl, forces_jastrow_en_g) &
+     bind(C) result(info)
+  use qmckl
+  implicit none
+
+  integer (qmckl_context), intent(in), value :: context
+  integer (c_int64_t) , intent(in)  , value :: walk_num
+  integer (c_int64_t) , intent(in)  , value :: elec_num
+  integer (c_int64_t) , intent(in)  , value :: nucl_num
+  integer (c_int64_t) , intent(in)  , value :: type_nucl_num
+  integer (c_int64_t) , intent(in)          :: type_nucl_vector(nucl_num)
+  integer (c_int64_t) , intent(in)  , value :: aord_num
+  real    (c_double ) , intent(in)          :: a_vector(aord_num+1,type_nucl_num)
+  real    (c_double ) , intent(in)          :: rescale_factor_en(type_nucl_num)
+  real    (c_double ) , intent(in)          :: en_distance(nucl_num,elec_num,walk_num)
+  real    (c_double ) , intent(in)          :: en_distance_rescaled(elec_num,nucl_num,walk_num)
+  real    (c_double ) , intent(in)          :: en_distance_rescaled_gl(4, elec_num,nucl_num,walk_num)
+  real    (c_double ) , intent(out)         :: forces_jastrow_en_g(3,elec_num,3,nucl_num,walk_num)
+  integer(qmckl_exit_code)                   :: info
+
+  integer*8 :: i, a, k, nw, ii, m,l
+  double precision   :: x, x1, kf
+  double precision   :: denom, invdenom, invdenom2, f, f2, expk, invdist
+  double precision   :: dx(4)
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (walk_num <= 0) then
+     info = QMCKL_INVALID_ARG_2
+     return
+  endif
+
+  if (elec_num <= 0) then
+     info = QMCKL_INVALID_ARG_3
+     return
+  endif
+
+  if (nucl_num <= 0) then
+     info = QMCKL_INVALID_ARG_4
+     return
+  endif
+
+  if (aord_num < 0) then
+     info = QMCKL_INVALID_ARG_7
+     return
+  endif
+
+  do nw =1, walk_num
+    forces_jastrow_en_g(:,:,:,:,nw) = 0.0d0
+    do a = 1, nucl_num
+      do i = 1, elec_num
+        expk = dexp(rescale_factor_en(type_nucl_vector(a)+1) * en_distance(a,i,nw))
+        invdist = 1.d0 / en_distance(a,i,nw)
+        x = en_distance_rescaled(i,a,nw)
+        if(abs(x) < 1.d-12) continue
+        denom = 1.0d0 + a_vector(2, type_nucl_vector(a)+1) * x
+        invdenom = 1.0d0 / denom
+        invdenom2 = invdenom*invdenom
+        f = a_vector(1, type_nucl_vector(a)+1) * invdenom2
+
+        do m = 1, 3
+          dx(m) = en_distance_rescaled_gl(m,i,a,nw)
+        end do
+
+        do m = 1, 3
+          do l = 1,3
+            if (m == l) then
+              forces_jastrow_en_g(m,i,l,a,nw) = forces_jastrow_en_g(m,i,l,a,nw) - f  * invdist / expk
+            end if
+
+            forces_jastrow_en_g(m,i,l,a,nw) = forces_jastrow_en_g(m,i,l,a,nw) + &
+               f * dx(m) * dx(l) * expk * (invdist + rescale_factor_en(type_nucl_vector(a)+1))
+            forces_jastrow_en_g(m,i,l,a,nw) = forces_jastrow_en_g(m,i,l,a,nw) + 2.d0 * f * invdenom * &
+              a_vector(2, type_nucl_vector(a)+1) * dx(m) * dx(l)
+          end do
+        end do
+
+        kf = 2.d0
+        x1 = x
+        x = 1.d0
+        do k=2, aord_num
+          f = a_vector(k+1,type_nucl_vector(a)+1) * kf * x
+          f2 = a_vector(k+1,type_nucl_vector(a)+1) * kf * x * (kf-1.d0)
+
+          do m = 1, 3
+            do l = 1, 3
+              if (m == l) then
+                forces_jastrow_en_g(m,i,l,a,nw) = forces_jastrow_en_g(m,i,l,a,nw) - f * x1 * invdist / expk
+              end if
+              forces_jastrow_en_g(m,i,l,a,nw) = forces_jastrow_en_g(m,i,l,a,nw) - f2 * dx(m) * dx(l) &
+                  + f * x1 * dx(m) * dx(l) * rescale_factor_en(type_nucl_vector(a)+1) * expk &
+                  + f * x1 * dx(m) * dx(l) * invdist * expk
+            end do
+          end do
+          x = x*x1
+          kf = kf + 1.d0
+        end do
+      end do
+    end do
+  end do
+
+
+
+end function qmckl_compute_forces_jastrow_en_g_doc
+
+! Compute
+
+!   :PROPERTIES:
+!      :Name:     qmckl_compute_forces_jastrow_en_l
+!      :CRetType: qmckl_exit_code
+!      :FRetType: qmckl_exit_code
+!      :END:
+
+!      #+NAME: qmckl_forces_jastrow_en_l_args
+!      | Variable                  | Type                                      | In/Out | Description                           |
+!      |---------------------------+-------------------------------------------+--------+---------------------------------------|
+!      | ~context~                 | ~qmckl_context~                           | in     | Global state                          |
+!      | ~walk_num~                | ~int64_t~                                 | in     | Number of walkers                     |
+!      | ~elec_num~                | ~int64_t~                                 | in     | Number of electrons                   |
+!      | ~nucl_num~                | ~int64_t~                                 | in     | Number of nuclei                      |
+!      | ~type_nucl_num~           | ~int64_t~                                 | in     | Number of unique nuclei               |
+!      | ~type_nucl_vector~        | ~int64_t[nucl_num]~                       | in     | IDs of unique nuclei                  |
+!      | ~aord_num~                | ~int64_t~                                 | in     | Number of coefficients                |
+!      | ~a_vector~                | ~double[type_nucl_num][aord_num+1]~       | in     | List of coefficients                  |
+!      | ~rescale_factor_en~       | ~double[type_nucl_num]~                   | in     | Rescale factor for electron-nucleus   |
+!      | ~en_distance~             | ~double[walk_num][elec_num][nucl_num]~    | in     | Electron-nucleus distances            |
+!      | ~en_distance_rescaled~    | ~double[walk_num][nucl_num][elec_num]~    | in     | Electron-nucleus distances            |
+!      | ~en_distance_rescaled_gl~ | ~double[walk_num][nucl_num][elec_num][4]~ | in     | Electron-nucleus distance derivatives |
+!      | ~forces_jastrow_en_l~     | ~double[walk_num][nucl_num][3]~           | out    | Forces of electron-nucleus Laplacian  |
+!      |---------------------------+-------------------------------------------+--------+---------------------------------------|
+
+
+function qmckl_compute_forces_jastrow_en_l_doc( &
+     context, walk_num, elec_num, nucl_num, type_nucl_num, &
+     type_nucl_vector, aord_num, a_vector, rescale_factor_en, en_distance, &
+     en_distance_rescaled, en_distance_rescaled_gl, forces_jastrow_en_l) &
+     bind(C) result(info)
+  use qmckl
+  implicit none
+
+  integer (qmckl_context), intent(in), value :: context
+  integer (c_int64_t) , intent(in)   , value :: walk_num
+  integer (c_int64_t) , intent(in)   , value :: elec_num
+  integer (c_int64_t) , intent(in)   , value :: nucl_num
+  integer (c_int64_t) , intent(in)   , value :: type_nucl_num
+  integer (c_int64_t) , intent(in)           :: type_nucl_vector(nucl_num)
+  integer (c_int64_t) , intent(in)   , value :: aord_num
+  real    (c_double ) , intent(in)           :: a_vector(aord_num+1,type_nucl_num)
+  real    (c_double ) , intent(in)           :: rescale_factor_en(type_nucl_num)
+  real    (c_double ) , intent(in)           :: en_distance(nucl_num, elec_num, walk_num)
+  real    (c_double ) , intent(in)           :: en_distance_rescaled(elec_num,nucl_num,walk_num)
+  real    (c_double ) , intent(in)           :: en_distance_rescaled_gl(4, elec_num,nucl_num,walk_num)
+  real    (c_double ) , intent(out)          :: forces_jastrow_en_l(3,nucl_num,walk_num)
+  integer(qmckl_exit_code)                   :: info
+
+  integer*8 :: i, a, k, nw, ii, m,l
+  double precision   :: x, x1, kf, grad_c2
+  double precision   :: denom, invdenom, invdenom2, f, f2, expk, invdist
+  double precision   :: dx(4)
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (walk_num <= 0) then
+     info = QMCKL_INVALID_ARG_2
+     return
+  endif
+
+  if (elec_num <= 0) then
+     info = QMCKL_INVALID_ARG_3
+     return
+  endif
+
+  if (nucl_num <= 0) then
+     info = QMCKL_INVALID_ARG_4
+     return
+  endif
+
+  if (aord_num < 0) then
+     info = QMCKL_INVALID_ARG_7
+     return
+  endif
+
+  do nw =1, walk_num
+    forces_jastrow_en_l(:,:,nw) = 0.0d0
+    do a = 1, nucl_num
+      do i = 1, elec_num
+        expk = dexp(rescale_factor_en(type_nucl_vector(a)+1) * en_distance(a,i,nw))
+        invdist = 1.d0 / en_distance(a,i,nw)
+        x = en_distance_rescaled(i,a,nw)
+        if(abs(x) < 1.d-12) continue
+        denom = 1.0d0 + a_vector(2, type_nucl_vector(a)+1) * x
+        invdenom = 1.0d0 / denom
+        invdenom2 = invdenom*invdenom
+        f = a_vector(1, type_nucl_vector(a)+1) * invdenom2
+
+        do m = 1, 4
+          dx(m) = en_distance_rescaled_gl(m,i,a,nw)
+        end do
+
+        grad_c2 = dx(1)*dx(1) + dx(2)*dx(2) + dx(3)*dx(3)
+
+        do m = 1, 3
+          forces_jastrow_en_l(m,a,nw) = forces_jastrow_en_l(m,a,nw) + f * dx(m) * &
+            (rescale_factor_en(type_nucl_vector(a)+1) &
+            * (2 *invdist - rescale_factor_en(type_nucl_vector(a)+1)) + 2*invdist*invdist)
+          forces_jastrow_en_l(m,a,nw) = forces_jastrow_en_l(m,a,nw) + 2.d0 * f &
+            * invdenom * a_vector(2, type_nucl_vector(a)+1) * dx(m) * dx(4)
+          forces_jastrow_en_l(m,a,nw) = forces_jastrow_en_l(m,a,nw) - 4.d0 * f &
+            * invdenom * a_vector(2, type_nucl_vector(a)+1) * rescale_factor_en(type_nucl_vector(a)+1) &
+            * dx(m)/expk
+          forces_jastrow_en_l(m,a,nw) = forces_jastrow_en_l(m,a,nw) - 6.d0 * f &
+            * invdenom * invdenom * a_vector(2, type_nucl_vector(a)+1) * a_vector(2, type_nucl_vector(a)+1) &
+            * grad_c2 * dx(m)
+        end do
+
+
+        kf = 2.d0
+        x1 = x
+        x = 1.d0
+        do k=2, aord_num
+          f = a_vector(k+1,type_nucl_vector(a)+1) * kf * x
+          do m = 1, 3
+            forces_jastrow_en_l(m,a,nw) = forces_jastrow_en_l(m,a,nw) &
+              - f * dx(m) * dx(4) * (kf-1.d0) &
+              - f / x1 * (kf-1.d0) * (kf-2.d0) * dx(m) /expk /expk &
+              + f * x1 * rescale_factor_en(type_nucl_vector(a)+1) * dx(m) * dx(4) * expk &
+              + f * x1 * 2 * dx(m) * invdist * invdist &
+              + 2 * f * (kf-1.d0) * dx(m) * rescale_factor_en(type_nucl_vector(a)+1) / expk
+          end do
+          x = x*x1
+          kf = kf + 1.d0
+        end do
+
+      end do
+    end do
+  end do
+
+
+
+end function qmckl_compute_forces_jastrow_en_l_doc
+
+! Compute
+!      :PROPERTIES:
+!      :Name:     qmckl_compute_forces_jastrow_single_en
+!      :CRetType: qmckl_exit_code
+!      :FRetType: qmckl_exit_code
+!      :END:
+
+!      #+NAME: qmckl_forces_single_en_args
+!      | Variable                   | Type                                      | In/Out | Description                                           |
+!      |----------------------------+-------------------------------------------+--------+-------------------------------------------------------|
+!      | ~context~                  | ~qmckl_context~                           | in     | Global state                                          |
+!      | ~num~                      | ~int64_t~                                 | in     | Index of single electron                              |
+!      | ~walk_num~                 | ~int64_t~                                 | in     | Number of walkers                                     |
+!      | ~elec_num~                 | ~int64_t~                                 | in     | Number of electrons                                   |
+!      | ~nucl_num~                 | ~int64_t~                                 | in     | Number of nuclei                                      |
+!      | ~type_nucl_num~            | ~int64_t~                                 | in     | Number of unique nuclei                               |
+!      | ~type_nucl_vector~         | ~int64_t[nucl_num]~                       | in     | IDs of unique nuclei                                  |
+!      | ~aord_num~                 | ~int64_t~                                 | in     | Number of coefficients                                |
+!      | ~a_vector~                 | ~double[type_nucl_num][aord_num+1]~       | in     | List of coefficients                                  |
+!      | ~en_distance_rescaled~     | ~double[walk_num][nucl_num][elec_num]~    | in     | Electron-nucleus rescaled distances                   |
+!      | ~en_distance_rescaled_gl~  | ~double[walk_num][nucl_num][elec_num][4]~ | in     | Electron-nucleus rescaled distance derivatives        |
+!      | ~en_rescaled_single~       | ~double[walk_num][nucl_num]~              | in     | Electron-nucleus rescaled single distances            |
+!      | ~en_rescaled_single_gl~    | ~double[walk_num][nucl_num][4]~           | in     | Electron-nucleus rescaled single distance derivatives |
+!      | ~forces_jastrow_single_en~ | ~double[walk_num][nucl_num][3]~           | out    | Single electron-nucleus forces                        |
+!      |----------------------------+-------------------------------------------+--------+-------------------------------------------------------|
+
+
+function qmckl_compute_forces_jastrow_single_en_doc( &
+     context, num_in, walk_num, elec_num, nucl_num, type_nucl_num, &
+     type_nucl_vector, aord_num, a_vector, &
+     en_distance_rescaled, en_distance_rescaled_gl, en_rescaled_single, en_rescaled_single_gl, forces_jastrow_single_en) &
+     bind(C) result(info)
+  use qmckl
+  implicit none
+
+  integer (qmckl_context), intent(in), value :: context
+  integer (c_int64_t) , intent(in)  , value :: num_in
+  integer (c_int64_t) , intent(in)  , value :: walk_num
+  integer (c_int64_t) , intent(in)  , value :: elec_num
+  integer (c_int64_t) , intent(in)  , value :: nucl_num
+  integer (c_int64_t) , intent(in)  , value :: type_nucl_num
+  integer (c_int64_t) , intent(in)          :: type_nucl_vector(nucl_num)
+  integer (c_int64_t) , intent(in)  , value :: aord_num
+  real    (c_double ) , intent(in)          :: a_vector(aord_num+1,type_nucl_num)
+  real    (c_double ) , intent(in)          :: en_distance_rescaled(elec_num,nucl_num,walk_num)
+  real    (c_double ) , intent(in)          :: en_distance_rescaled_gl(4, elec_num,nucl_num,walk_num)
+  real    (c_double ) , intent(in)          :: en_rescaled_single(nucl_num,walk_num)
+  real    (c_double ) , intent(in)          :: en_rescaled_single_gl(4, nucl_num,walk_num)
+  real    (c_double ) , intent(out)         :: forces_jastrow_single_en(3,nucl_num,walk_num)
+  integer(qmckl_exit_code)                   :: info
+
+  integer*8 :: i, a, k, nw, ii, num
+  double precision   :: x, x1, kf, x_old, x1_old
+  double precision   :: denom, invdenom, invdenom2, f
+  double precision   :: denom_old, invdenom_old, invdenom2_old, f_old
+  double precision   :: dx(3), dx_old(3)
+
+  num = num_in + 1
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (walk_num <= 0) then
+     info = QMCKL_INVALID_ARG_3
+     return
+  endif
+
+  if (elec_num <= 0) then
+     info = QMCKL_INVALID_ARG_4
+     return
+  endif
+
+  if (nucl_num <= 0) then
+     info = QMCKL_INVALID_ARG_5
+     return
+  endif
+
+  if (aord_num < 0) then
+     info = QMCKL_INVALID_ARG_8
+     return
+  endif
+
+  do nw =1, walk_num
+    forces_jastrow_single_en(:,:,nw) = 0.0d0
+
+    do a = 1, nucl_num
+
+      x_old = en_distance_rescaled(num,a,nw)
+      x = en_rescaled_single(a,nw)
+
+
+      denom = 1.0d0 + a_vector(2, type_nucl_vector(a)+1) * x
+      invdenom = 1.0d0 / denom
+      invdenom2 = invdenom*invdenom
+
+      denom_old = 1.0d0 + a_vector(2, type_nucl_vector(a)+1) * x_old
+      invdenom_old = 1.0d0 / denom_old
+      invdenom2_old = invdenom_old*invdenom_old
+
+      dx(1) = -en_rescaled_single_gl(1,a,nw)
+      dx(2) = -en_rescaled_single_gl(2,a,nw)
+      dx(3) = -en_rescaled_single_gl(3,a,nw)
+
+      dx_old(1) = -en_distance_rescaled_gl(1,num,a,nw)
+      dx_old(2) = -en_distance_rescaled_gl(2,num,a,nw)
+      dx_old(3) = -en_distance_rescaled_gl(3,num,a,nw)
+
+      f = a_vector(1, type_nucl_vector(a)+1) * invdenom2
+
+      f_old = a_vector(1, type_nucl_vector(a)+1) * invdenom2_old
+
+      forces_jastrow_single_en(1,a,nw) = forces_jastrow_single_en(1,a,nw) + f * dx(1) - f_old * dx_old(1)
+      forces_jastrow_single_en(2,a,nw) = forces_jastrow_single_en(2,a,nw) + f * dx(2) - f_old * dx_old(2)
+      forces_jastrow_single_en(3,a,nw) = forces_jastrow_single_en(3,a,nw) + f * dx(3) - f_old * dx_old(3)
+
+
+      kf = 2.d0
+      x1 = x
+      x = 1.d0
+      x1_old = x_old
+      x_old = 1.d0
+      do k=2, aord_num
+        f = a_vector(k+1,type_nucl_vector(a)+1) * kf * x
+        f_old = a_vector(k+1,type_nucl_vector(a)+1) * kf * x_old
+        forces_jastrow_single_en(1,a,nw) = forces_jastrow_single_en(1,a,nw) + f * x1 * dx(1) - f_old * x1_old * dx_old(1)
+        forces_jastrow_single_en(2,a,nw) = forces_jastrow_single_en(2,a,nw) + f * x1 * dx(2) - f_old * x1_old * dx_old(2)
+        forces_jastrow_single_en(3,a,nw) = forces_jastrow_single_en(3,a,nw) + f * x1 * dx(3) - f_old * x1_old * dx_old(3)
+        x = x*x1
+        x_old = x_old*x1_old
+        kf = kf + 1.d0
+      end do
+    end do
+  end do
+
+end function qmckl_compute_forces_jastrow_single_en_doc
+
+! Compute
+!      :PROPERTIES:
+!      :Name:     qmckl_compute_forces_tmp_c
+!      :CRetType: qmckl_exit_code
+!      :FRetType: qmckl_exit_code
+!      :END:
+
+!      #+NAME: qmckl_forces_tmp_c_args
+!      | Variable            | Type                                                                | In/Out | Description                           |
+!      |---------------------+---------------------------------------------------------------------+--------+---------------------------------------|
+!      | ~context~           | ~qmckl_context~                                                     | in     | Global state                          |
+!      | ~walk_num~          | ~int64_t~                                                           | in     | Number of walkers                     |
+!      | ~elec_num~          | ~int64_t~                                                           | in     | Number of electrons                   |
+!      | ~nucl_num~          | ~int64_t~                                                           | in     | Number of nuclei                      |
+!      | ~cord_num~          | ~int64_t~                                                           | in     | order of polynomials                  |
+!      | ~een_rescaled_e~    | ~double[walk_num][0:cord_num][elec_num][elec_num]~                  | in     | Electron-nucleus rescaled             |
+!      | ~een_rescaled_n_gl~ | ~double[walk_num][0:cord_num][nucl_num][4][elec_num]~               | in     | Electron-nucleus rescaled derivatives |
+!      | ~forces_tmp_c~      | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][4][elec_num]~ | out    | Force on the P matrix                 |
+!      |---------------------+---------------------------------------------------------------------+--------+---------------------------------------|
+
+
+integer(qmckl_exit_code) function qmckl_compute_forces_tmp_c( &
+     context, walk_num, elec_num, nucl_num, cord_num,&
+     een_rescaled_e, een_rescaled_n_gl, forces_tmp_c) &
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
+  use qmckl
+  implicit none
+  integer (qmckl_context), intent(in), value  :: context
+  integer (c_int64_t)   , intent(in), value   :: walk_num, elec_num, cord_num, nucl_num
+  real    (c_double )   , intent(in)          :: een_rescaled_e(elec_num, elec_num, 0:cord_num, walk_num)
+  real    (c_double )   , intent(in)          :: een_rescaled_n_gl(elec_num, 4, nucl_num, 0:cord_num, walk_num)
+  real    (c_double )   , intent(out)         :: forces_tmp_c(elec_num, 4, nucl_num,0:cord_num, 0:cord_num-1, walk_num)
+
+  integer*8 :: nw, i
+
+  integer*8 :: l, m, k, a,j
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) info = QMCKL_INVALID_CONTEXT
+  if (walk_num <= 0)                 info = QMCKL_INVALID_ARG_2
+  if (elec_num <= 0)                 info = QMCKL_INVALID_ARG_3
+  if (nucl_num <= 0)                 info = QMCKL_INVALID_ARG_4
+  if (cord_num <  0)                 info = QMCKL_INVALID_ARG_5
+  if (info /= QMCKL_SUCCESS)         return
+
+  do nw=1, walk_num
+    do i=0, cord_num-1
+      info = qmckl_dgemm(context,'N','N',elec_num*1_8,&
+            nucl_num*(cord_num+1)*4_8, elec_num*1_8, -1.0d0,     &
+            een_rescaled_e(1,1,i,nw),1_8*elec_num,              &
+            een_rescaled_n_gl(1,1,1,0,nw),elec_num*1_8,         &
+            0.0d0,                                              &
+            forces_tmp_c(1,1,1,0,i,nw),1_8*elec_num)
+    end do
+  end do
+
+
+
+end function qmckl_compute_forces_tmp_c
+
+! Compute
+!      :PROPERTIES:
+!      :Name:     qmckl_compute_forces_dtmp_c
+!      :CRetType: qmckl_exit_code
+!      :FRetType: qmckl_exit_code
+!      :END:
+
+!      #+NAME: qmckl_forces_dtmp_c_args
+!      | Variable            | Type                                                                   | In/Out | Description                           |
+!      |---------------------+------------------------------------------------------------------------+--------+---------------------------------------|
+!      | ~context~           | ~qmckl_context~                                                        | in     | Global state                          |
+!      | ~walk_num~          | ~int64_t~                                                              | in     | Number of walkers                     |
+!      | ~elec_num~          | ~int64_t~                                                              | in     | Number of electrons                   |
+!      | ~nucl_num~          | ~int64_t~                                                              | in     | Number of nuclei                      |
+!      | ~cord_num~          | ~int64_t~                                                              | in     | order of polynomials                  |
+!      | ~een_rescaled_e_gl~ | ~double[walk_num][0:cord_num][elec_num][4][elec_num]~                  | in     | Electron-nucleus rescaled             |
+!      | ~een_rescaled_n_gl~ | ~double[walk_num][0:cord_num][nucl_num][4][elec_num]~                  | in     | Electron-nucleus rescaled derivatives |
+!      | ~forces_dtmp_c~     | ~double[walk_num][0:cord_num-1][0:cord_num][4][nucl_num][4][elec_num]~ | out    | Force of derivative of the P matrix   |
+!      |---------------------+------------------------------------------------------------------------+--------+---------------------------------------|
+     
+
+integer(qmckl_exit_code) function qmckl_compute_forces_dtmp_c_doc( &
+     context, walk_num, elec_num, nucl_num, cord_num,&
+     een_rescaled_e_gl, een_rescaled_n_gl, forces_dtmp_c) &
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
+  use qmckl
+  implicit none
+  integer (qmckl_context), intent(in), value  :: context
+  integer (c_int64_t)   , intent(in), value   :: walk_num, elec_num, cord_num, nucl_num
+  real    (c_double )   , intent(in)          :: een_rescaled_e_gl(elec_num, 4, elec_num, 0:cord_num, walk_num)
+  real    (c_double )   , intent(in)          :: een_rescaled_n_gl(elec_num, 4, nucl_num, 0:cord_num, walk_num)
+  real    (c_double )   , intent(out)         :: forces_dtmp_c(elec_num, 4, nucl_num,4,0:cord_num, 0:cord_num-1, walk_num)
+
+  integer*8 :: nw, i, k
+
+  integer*8 :: l, m, a,j, kk
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) info = QMCKL_INVALID_CONTEXT
+  if (walk_num <= 0)                 info = QMCKL_INVALID_ARG_2
+  if (elec_num <= 0)                 info = QMCKL_INVALID_ARG_3
+  if (nucl_num <= 0)                 info = QMCKL_INVALID_ARG_4
+  if (cord_num <  0)                 info = QMCKL_INVALID_ARG_5
+  if (info /= QMCKL_SUCCESS)         return
+
+  do nw = 1, walk_num
+    do l = 0, cord_num-1
+      do m = 1, cord_num
+        do k = 1, 4
+          do a = 1, nucl_num
+            do kk = 1, 4
+              do i = 1, elec_num
+                forces_dtmp_c(i,kk,a,k,m,l,nw) = 0.d0
+                do j = 1, elec_num
+                  forces_dtmp_c(i,kk,a,k,m,l,nw) = forces_dtmp_c(i,kk,a,k,m,l,nw) - &
+                        een_rescaled_e_gl(i,kk,j,l,nw) * een_rescaled_n_gl(j,k,a,m,nw)
+                end do
+              end do
+            end do
+          end do
+        end do
+      end do
+    end do
+  end do
+
+end function qmckl_compute_forces_dtmp_c_doc
+
+integer(qmckl_exit_code) function qmckl_compute_forces_dtmp_c_hpc( &
+     context, walk_num, elec_num, nucl_num, cord_num,&
+     een_rescaled_e_gl, een_rescaled_n_gl, forces_dtmp_c) &
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
+  use qmckl
+  implicit none
+  integer(qmckl_context), intent(in), value   :: context
+  integer (c_int64_t)   , intent(in), value   :: walk_num, elec_num, cord_num, nucl_num
+  real    (c_double )   , intent(in)          :: een_rescaled_e_gl(elec_num, 4, elec_num, 0:cord_num, walk_num)
+  real    (c_double )   , intent(in)          :: een_rescaled_n_gl(elec_num, 4, nucl_num, 0:cord_num, walk_num)
+  real    (c_double )   , intent(out)         :: forces_dtmp_c(elec_num, 4, nucl_num,4,0:cord_num, 0:cord_num-1, walk_num)
+
+  integer*8 :: nw, i, k
+  integer*8 :: l, m, a,j, kk
+  double precision, allocatable :: tmp(:,:,:,:)
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) info = QMCKL_INVALID_CONTEXT
+  if (walk_num <= 0)                 info = QMCKL_INVALID_ARG_2
+  if (elec_num <= 0)                 info = QMCKL_INVALID_ARG_3
+  if (nucl_num <= 0)                 info = QMCKL_INVALID_ARG_4
+  if (cord_num <  0)                 info = QMCKL_INVALID_ARG_5
+  if (info /= QMCKL_SUCCESS)         return
+
+  allocate(tmp(elec_num, 4, 4, nucl_num))
+
+  do nw = 1, walk_num
+    do l = 0, cord_num-1
+      do m = 1, cord_num
+         info = qmckl_dgemm(context,'N','N', elec_num*4, 4*nucl_num, elec_num, -1.d0, &
+              een_rescaled_e_gl(1,1,1,l,nw), elec_num*4_8, &
+              een_rescaled_n_gl(1,1,1,m,nw), elec_num, 0.d0, &
+              tmp, elec_num*4_8)
+        do k = 1, 4
+          do a = 1, nucl_num
+             forces_dtmp_c(:,:,a,k,m,l,nw) = tmp(:,:,k,a)
+          end do
+        end do
+      end do
+    end do
+  end do
+
+  deallocate(tmp)
+
+end function qmckl_compute_forces_dtmp_c_hpc
+
+! Compute
+!      :PROPERTIES:
+!      :Name:     qmckl_compute_forces_jastrow_een
+!      :CRetType: qmckl_exit_code
+!      :FRetType: qmckl_exit_code
+!      :END:
+
+!      #+NAME: qmckl_forces_jastrow_een_args
+!      | Variable              | Type                                                                | In/Out | Description                                      |
+!      |-----------------------+---------------------------------------------------------------------+--------+--------------------------------------------------|
+!      | ~context~             | ~qmckl_context~                                                     | in     | Global state                                     |
+!      | ~walk_num~            | ~int64_t~                                                           | in     | Number of walkers                                |
+!      | ~elec_num~            | ~int64_t~                                                           | in     | Number of electrons                              |
+!      | ~nucl_num~            | ~int64_t~                                                           | in     | Number of nuclei                                 |
+!      | ~cord_num~            | ~int64_t~                                                           | in     | order of polynomials                             |
+!      | ~dim_c_vector~        | ~int64_t~                                                           | in     | dimension of full coefficient vector             |
+!      | ~c_vector_full~       | ~double[dim_c_vector][nucl_num]~                                    | in     | full coefficient vector                          |
+!      | ~lkpm_combined_index~ | ~int64_t[4][dim_c_vector]~                                          | in     | combined indices                                 |
+!      | ~een_rescaled_n~      | ~double[walk_num][0:cord_num][nucl_num][elec_num]~                  | in     | Electron-nucleus rescaled                        |
+!      | ~een_rescaled_n_gl~   | ~double[walk_num][0:cord_num][nucl_num][4][elec_num]~               | in     | Electron-nucleus rescaled derivatives            |
+!      | ~tmp_c~               | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][elec_num]~    | in     | P matrix                                         |
+!      | ~forces_tmp_c~        | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][4][elec_num]~ | in     | Force of P matrix                                |
+!      | ~forces_jastrow_een~  | ~double[walk_num][nucl_num][3]~                                     | out    | Force of electron-electron-nucleus Jastrow value |
+!      |-----------------------+---------------------------------------------------------------------+--------+--------------------------------------------------|
+
+
+integer(qmckl_exit_code) function qmckl_compute_forces_jastrow_een( &
+     context, walk_num, elec_num, nucl_num, cord_num,&
+     dim_c_vector, c_vector_full, lkpm_combined_index, &
+    een_rescaled_n, een_rescaled_n_gl, tmp_c, forces_tmp_c,forces_jastrow_een) &
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
+  use qmckl
+  implicit none
+  integer(qmckl_context), intent(in), value  :: context
+  integer (c_int64_t)   , intent(in), value  :: walk_num, elec_num, cord_num, nucl_num, dim_c_vector
+  integer (c_int64_t)   , intent(in)  :: lkpm_combined_index(dim_c_vector,4)
+  real    (c_double )   , intent(in)  :: c_vector_full(nucl_num, dim_c_vector)
+  real    (c_double )   , intent(in)  :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
+  real    (c_double )   , intent(in)  :: een_rescaled_n_gl(elec_num, 4, nucl_num, 0:cord_num, walk_num)
+  real    (c_double )   , intent(in)  :: tmp_c(elec_num, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
+  real    (c_double )   , intent(in)  :: forces_tmp_c(elec_num,4, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
+  real    (c_double )   , intent(out) :: forces_jastrow_een(3, nucl_num, walk_num)
+
+  integer*8 :: i, a, j, l, k, p, m, n, nw, ii
+  double precision :: accu, accu2, cn
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) info = QMCKL_INVALID_CONTEXT
+  if (walk_num <= 0)                 info = QMCKL_INVALID_ARG_2
+  if (elec_num <= 0)                 info = QMCKL_INVALID_ARG_3
+  if (nucl_num <= 0)                 info = QMCKL_INVALID_ARG_4
+  if (cord_num <  0)                 info = QMCKL_INVALID_ARG_5
+  if (info /= QMCKL_SUCCESS)         return
+
+  forces_jastrow_een = 0.d0
+
+  if (cord_num == 0) return
+
+  do nw =1, walk_num
+    do n = 1, dim_c_vector
+      l = lkpm_combined_index(n, 1)
+      k = lkpm_combined_index(n, 2)
+      p = lkpm_combined_index(n, 3)
+      m = lkpm_combined_index(n, 4)
+
+      do a = 1, nucl_num
+        cn = c_vector_full(a, n)
+        if(cn == 0.d0) cycle
+          do j = 1, elec_num
+            do ii = 1, 3
+              accu = een_rescaled_n(j,a,m,nw) * forces_tmp_c(j,ii,a,m+l,k,nw) &
+                  - een_rescaled_n_gl(j,ii,a,m,nw) * tmp_c(j,a,m+l,k,nw)
+
+              forces_jastrow_een(ii, a, nw) = forces_jastrow_een(ii, a, nw) + accu * cn
+            end do
+          end do
+      end do
+    end do
+  end do
+
+end function qmckl_compute_forces_jastrow_een
+
+! Compute
+!      :PROPERTIES:
+!      :Name:     qmckl_compute_forces_een_rescaled_n_gl
+!      :CRetType: qmckl_exit_code
+!      :FRetType: qmckl_exit_code
+!      :END:
+
+!      #+NAME: qmckl_compute_forces_een_rescaled_n_gl_args
+!      | Variable            | Type                                                     | In/Out | Description                                              |
+!      |---------------------+----------------------------------------------------------+--------+----------------------------------------------------------|
+!      | ~context~           | ~qmckl_context~                                          | in     | Global state                                             |
+!      | ~walk_num~          | ~int64_t~                                                | in     | Number of walkers                                        |
+!      | ~elec_num~          | ~int64_t~                                                | in     | Number of electrons                                      |
+!      | ~nucl_num~          | ~int64_t~                                                | in     | Number of atoms                                          |
+!      | ~type_nucl_num~     | ~int64_t~                                                | in     | Number of atom types                                     |
+!      | ~type_nucl_vector~  | ~int64_t[nucl_num]~                                      | in     | Types of atoms                                           |
+!      | ~cord_num~          | ~int64_t~                                                | in     | Order of polynomials                                     |
+!      | ~rescale_factor_en~ | ~double[nucl_num]~                                       | in     | Factor to rescale ee distances                           |
+!      | ~en_distance~       | ~double[walk_num][elec_num][nucl_num]~                   | in     | Electron-nucleus distances                               |
+!      | ~een_rescaled_n~    | ~double[walk_num][0:cord_num][nucl_num][elec_num]~       | in     | Electron-nucleus rescaled distances                      |
+!      | ~een_rescaled_n_gl~ | ~double[walk_num][0:cord_num][nucl_num][4][elec_num]~    | in     | Electron-nucleus rescaled distances derivativies         |
+!      | ~forces_een_n~      | ~double[walk_num][0:cord_num][3][nucl_num][4][elec_num]~ | out    | Force of electron-nucleus rescaled distances derivatives |
+!      |---------------------+----------------------------------------------------------+--------+----------------------------------------------------------|
+
+
+integer(qmckl_exit_code) function qmckl_compute_forces_een_rescaled_n_gl( &
+     context, walk_num, elec_num, nucl_num, type_nucl_num, type_nucl_vector, &
+     cord_num, rescale_factor_en, &
+     en_distance, een_rescaled_n, een_rescaled_n_gl,forces_een_n) &
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
+  use qmckl
+  implicit none
+  integer(qmckl_context), intent(in), value  :: context
+  integer (c_int64_t)   , intent(in), value  :: walk_num, elec_num, nucl_num, type_nucl_num, cord_num
+  integer (c_int64_t)   , intent(in)  :: type_nucl_vector(nucl_num)
+  real    (c_double )   , intent(in)  :: rescale_factor_en(type_nucl_num)
+  real    (c_double )   , intent(in)  :: en_distance(nucl_num,elec_num,walk_num)
+  real    (c_double )   , intent(in)  :: een_rescaled_n(elec_num,nucl_num,0:cord_num,walk_num)
+  real    (c_double )   , intent(in)  :: een_rescaled_n_gl(elec_num,4,nucl_num,0:cord_num,walk_num)
+  real    (c_double )   , intent(out) :: forces_een_n(elec_num,4,nucl_num,3,0:cord_num,walk_num)
+
+  double precision                    :: x, ria_inv, kappa_l, temp
+  integer*8                           :: i, a, k, l, nw, m, n
+
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (walk_num <= 0) then
+     info = QMCKL_INVALID_ARG_2
+     return
+  endif
+
+  if (elec_num <= 0) then
+     info = QMCKL_INVALID_ARG_3
+     return
+  endif
+
+  if (nucl_num <= 0) then
+     info = QMCKL_INVALID_ARG_4
+     return
+  endif
+
+  if (cord_num < 0) then
+     info = QMCKL_INVALID_ARG_5
+     return
+  endif
+
+
+
+  !forces_een_n = 0.0d0
+  !do nw = 1, walk_num
+  !  do l = 0, cord_num
+  !    do a = 1, nucl_num
+  !      kappa_l = dble(l)*rescale_factor_en(type_nucl_vector(a)+1)
+  !      do i = 1, elec_num
+  !        ria_inv = 1.0d0 / en_distance(a,i,nw)
+  !        do n = 1, 3
+  !          do m = 1, 3
+  !            if (m == n) then
+  !              forces_een_n(i,m,a,n,l,nw) = forces_een_n(i,m,a,n,l,nw) + &
+  !                    kappa_l*een_rescaled_n(i,a,l,nw) * ria_inv
+  !            end if
+  !            temp = een_rescaled_n_gl(i,m,a,l,nw) * een_rescaled_n_gl(i,n,a,l,nw) / een_rescaled_n(i,a,l,nw)
+  !            forces_een_n(i,m,a,n,l,nw) = forces_een_n(i,m,a,n,l,nw) - &
+  !               temp * ria_inv / kappa_l - temp
+  !          end do
+  !          forces_een_n(i,4,a,n,l,nw) = forces_een_n(i,4,a,n,l,nw) + &
+  !            (2.0d0 * ria_inv * ria_inv &
+  !            - een_rescaled_n_gl(i,4,a,l,nw)/een_rescaled_n(i,a,l,nw)) * &
+  !            een_rescaled_n_gl(i,n,a,l,nw)
+  !        end do
+  !      end do
+  !    end do
+  !  end do
+  !end do
+
+
+    forces_een_n = 0.0d0
+    do nw = 1, walk_num
+    do i = 1, elec_num
+      do a = 1, nucl_num
+        do l = 0, cord_num
+          kappa_l = dble(l)*rescale_factor_en(type_nucl_vector(a)+1)
+          do m = 1, 4
+            do n = 1, 3
+              if (l == 0) then
+                forces_een_n(i,m,a,n,l,nw) = 0.0d0
+              else
+                if (m == n) then
+                  forces_een_n(i,m,a,n,l,nw) = forces_een_n(i,m,a,n,l,nw) + &
+                       kappa_l*een_rescaled_n(i,a,l,nw)/en_distance(a,i,nw)
+                end if
+                if (m < 4) then
+                forces_een_n(i,m,a,n,l,nw) = forces_een_n(i,m,a,n,l,nw) - &
+                  een_rescaled_n_gl(i,m,a,l,nw) * een_rescaled_n_gl(i,n,a,l,nw) / &
+                  (kappa_l*een_rescaled_n(i,a,l,nw)*en_distance(a,i,nw)) - &
+                   een_rescaled_n_gl(i,m,a,l,nw) * &
+                   een_rescaled_n_gl(i,n,a,l,nw)/een_rescaled_n(i,a,l,nw)
+                else
+                forces_een_n(i,m,a,n,l,nw) = forces_een_n(i,m,a,n,l,nw) + &
+                  2.0d0 * een_rescaled_n_gl(i,n,a,l,nw) / &
+                  (en_distance(a,i,nw)*en_distance(a,i,nw)) - &
+                  een_rescaled_n_gl(i,m,a,l,nw) * &
+                  een_rescaled_n_gl(i,n,a,l,nw)/een_rescaled_n(i,a,l,nw)
+                end if
+
+              end if
+            end do
+          end do
+        end do
+      end do
+    end do
+  end do
+
+
+end function qmckl_compute_forces_een_rescaled_n_gl
+
+! Compute
+!      :PROPERTIES:
+!      :Name:     qmckl_compute_forces_jastrow_een_g
+!      :CRetType: qmckl_exit_code
+!      :FRetType: qmckl_exit_code
+!      :END:
+
+!      #+NAME: qmckl_forces_jastrow_een_g_args
+!      | Variable               | Type                                                                   | In/Out | Description                                              |
+!      |------------------------+------------------------------------------------------------------------+--------+----------------------------------------------------------|
+!      | ~context~              | ~qmckl_context~                                                        | in     | Global state                                             |
+!      | ~walk_num~             | ~int64_t~                                                              | in     | Number of walkers                                        |
+!      | ~elec_num~             | ~int64_t~                                                              | in     | Number of electrons                                      |
+!      | ~nucl_num~             | ~int64_t~                                                              | in     | Number of nuclei                                         |
+!      | ~cord_num~             | ~int64_t~                                                              | in     | order of polynomials                                     |
+!      | ~dim_c_vector~         | ~int64_t~                                                              | in     | dimension of full coefficient vector                     |
+!      | ~c_vector_full~        | ~double[dim_c_vector][nucl_num]~                                       | in     | full coefficient vector                                  |
+!      | ~lkpm_combined_index~  | ~int64_t[4][dim_c_vector]~                                             | in     | combined indices                                         |
+!      | ~en_distance~          | ~double[elec_num][nucl_num]~                                           | in     | Electron-nucleus distance                                |
+!      | ~tmp_c~                | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][elec_num]~       | in     | P matrix                                                 |
+!      | ~dtmp_c~               | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][4][elec_num]~    | in     | Derivative of P matrix                                   |
+!      | ~forces_tmp_c~         | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][4][elec_num]~    | in     | Force of P matrix                                        |
+!      | ~forces_dtmp_c~        | ~double[walk_num][0:cord_num-1][0:cord_num][4][nucl_num][4][elec_num]~ | in     | Force of derivative of P matrix                          |
+!      | ~forces_een_n~         | ~double[walk_num][0:cord_num][3][nucl_num][4][elec_num]~               | in     | Force of derivatives of electron-nucleus rescaled factor |
+!      | ~een_rescaled_n~       | ~double[walk_num][0:cord_num][nucl_num][elec_num]~                     | in     | Electron-nucleus rescaled factor                         |
+!      | ~een_rescaled_n_gl~    | ~double[walk_num][0:cord_num][nucl_num][4][elec_num]~                  | in     | Derivative of electron-nucleus rescaled factor           |
+!      | ~forces_jastrow_een_g~ | ~double[walk_num][3][nucl_num][3][elec_num]~                           | out    | Force of the electron-electron-nucleus Jastrow gradient  |
+!      |------------------------+------------------------------------------------------------------------+--------+----------------------------------------------------------|
+
+
+integer(qmckl_exit_code) function qmckl_compute_forces_jastrow_een_g( &
+     context, walk_num, elec_num, nucl_num, &
+     cord_num, dim_c_vector, c_vector_full, lkpm_combined_index, &
+     en_distance, tmp_c, dtmp_c, forces_tmp_c, forces_dtmp_c, forces_een_n, een_rescaled_n, &
+    een_rescaled_n_gl, forces_jastrow_een_g)&
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
+  use qmckl
+  implicit none
+  integer(qmckl_context), intent(in), value  :: context
+  integer (c_int64_t)   , intent(in), value  :: walk_num, elec_num, cord_num, nucl_num, dim_c_vector
+  integer (c_int64_t)   , intent(in)  :: lkpm_combined_index(dim_c_vector,4)
+  real    (c_double )   , intent(in)  :: c_vector_full(nucl_num, dim_c_vector)
+  real    (c_double )   , intent(in)  :: en_distance(nucl_num, elec_num)
+  real    (c_double )   , intent(in)  :: tmp_c(elec_num, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
+  real    (c_double )   , intent(in)  :: dtmp_c(elec_num, 4, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
+  real    (c_double )   , intent(in)  :: forces_tmp_c(elec_num, 4,nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
+  real    (c_double )   , intent(in)  :: forces_dtmp_c(elec_num, 4, nucl_num,4,0:cord_num, 0:cord_num-1,  walk_num)
+  real    (c_double )   , intent(in)  :: forces_een_n(elec_num, 4, nucl_num, 3, 0:cord_num, walk_num)
+  real    (c_double )   , intent(in)  :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
+  real    (c_double )   , intent(in)  :: een_rescaled_n_gl(elec_num, 4, nucl_num, 0:cord_num, walk_num)
+  real    (c_double )   , intent(out) :: forces_jastrow_een_g(elec_num,3,nucl_num,3,walk_num)
+
+  integer*8 :: i, a, j, l, k, m, n, nw, ii, jj
+  double precision :: accu, accu2, cn
+
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) info = QMCKL_INVALID_CONTEXT
+  if (walk_num <= 0)                 info = QMCKL_INVALID_ARG_2
+  if (elec_num <= 0)                 info = QMCKL_INVALID_ARG_3
+  if (nucl_num <= 0)                 info = QMCKL_INVALID_ARG_4
+  if (cord_num <  0)                 info = QMCKL_INVALID_ARG_5
+  if (info /= QMCKL_SUCCESS)         return
+
+
+
+  if (cord_num == 0) return
+  forces_jastrow_een_g = 0.0d0
+  do nw =1, walk_num
+     do n = 1, dim_c_vector
+        l = lkpm_combined_index(n, 1)
+        k = lkpm_combined_index(n, 2)
+        m = lkpm_combined_index(n, 4)
+
+        do a = 1, nucl_num
+           cn = c_vector_full(a, n)
+           if(cn == 0.d0) cycle
+
+           do ii = 1, 3
+              do i = 1, elec_num
+                do jj = 1, 3
+                forces_jastrow_een_g(i, ii, a, jj, nw) = forces_jastrow_een_g(i, ii, a, jj, nw) + (&
+                    tmp_c(i,a,              m,  k,nw) *  forces_een_n(i,ii,a,jj  ,m+l,nw)  &
+                  + forces_tmp_c(i,jj,a,    m,  k,nw) *  een_rescaled_n_gl(i,ii,a,m+l,nw)  &
+                  + tmp_c(i,a,              m+l,k,nw) *  forces_een_n(i,ii,a,jj,  m,  nw)  &
+                  + forces_tmp_c(i,jj,a,    m+l,k,nw) *  een_rescaled_n_gl(i,ii,a,m,  nw)  &
+                  - dtmp_c(i,ii,a,          m,  k,nw) *  een_rescaled_n_gl(i,jj,a,m+l,nw)  &
+                  + forces_dtmp_c(i,ii,a,jj,m,  k,nw) *  een_rescaled_n(i,a,      m+l,nw)  &
+                  - dtmp_c(i,ii,a,          m+l,k,nw) *  een_rescaled_n_gl(i,jj,a,m,  nw)  &
+                  + forces_dtmp_c(i,ii,a,jj,m+l,k,nw) *  een_rescaled_n(i,a,      m,  nw)  &
+                 ) * cn
+
+                end do
+              end do
+           end do
+
+        end do
+     end do
+  end do
+
+end function qmckl_compute_forces_jastrow_een_g
+
+! Compute
+!      :PROPERTIES:
+!      :Name:     qmckl_compute_forces_jastrow_een_l
+!      :CRetType: qmckl_exit_code
+!      :FRetType: qmckl_exit_code
+!      :END:
+
+!      #+NAME: qmckl_forces_jastrow_een_l_args
+!      | Variable               | Type                                                                   | In/Out | Description                                             |
+!      |------------------------+------------------------------------------------------------------------+--------+---------------------------------------------------------|
+!      | ~context~              | ~qmckl_context~                                                        | in     | Global state                                            |
+!      | ~walk_num~             | ~int64_t~                                                              | in     | Number of walkers                                       |
+!      | ~elec_num~             | ~int64_t~                                                              | in     | Number of electrons                                     |
+!      | ~nucl_num~             | ~int64_t~                                                              | in     | Number of nuclei                                        |
+!      | ~cord_num~             | ~int64_t~                                                              | in     | order of polynomials                                    |
+!      | ~dim_c_vector~         | ~int64_t~                                                              | in     | dimension of full coefficient vector                    |
+!      | ~c_vector_full~        | ~double[dim_c_vector][nucl_num]~                                       | in     | full coefficient vector                                 |
+!      | ~lkpm_combined_index~  | ~int64_t[4][dim_c_vector]~                                             | in     | combined indices                                        |
+!      | ~en_distance~          | ~double[elec_num][nucl_num]~                                           | in     | Electron-nucleus distance                               |
+!      | ~tmp_c~                | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][elec_num]~       | in     | P matrix                                                |
+!      | ~dtmp_c~               | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][4][elec_num]~    | in     | Derivative of P matrix                                  |
+!      | ~forces_tmp_c~         | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][4][elec_num]~    | in     | Force of P matrix                                       |
+!      | ~forces_dtmp_c~        | ~double[walk_num][0:cord_num-1][0:cord_num][4][nucl_num][4][elec_num]~ | in     | Force of derivative of P matrix                         |
+!      | ~forces_een_n~         | ~double[walk_num][0:cord_num][3][nucl_num][4][elec_num]~               | in     | Force of derivative of electron-nucleus rescaled factor |
+!      | ~een_rescaled_n~       | ~double[walk_num][0:cord_num][nucl_num][elec_num]~                     | in     | Electron-nucleus rescaled factor                        |
+!      | ~een_rescaled_n_gl~    | ~double[walk_num][0:cord_num][nucl_num][4][elec_num]~                  | in     | Derivative of electron-nucleus rescaled factor          |
+!      | ~forces_jastrow_een_l~ | ~double[walk_num][3][nucl_num]~                                        | out    | Force of electron-electron-nucleus Jastrow Laplacian    |
+!      |------------------------+------------------------------------------------------------------------+--------+---------------------------------------------------------|
+
+
+integer(qmckl_exit_code) function qmckl_compute_forces_jastrow_een_l( &
+     context, walk_num, elec_num, nucl_num, &
+     cord_num, dim_c_vector, c_vector_full, lkpm_combined_index, &
+     en_distance, tmp_c, dtmp_c, forces_tmp_c, forces_dtmp_c, forces_een_n, een_rescaled_n, &
+      een_rescaled_n_gl, forces_jastrow_een_l)&
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
+  use qmckl
+  implicit none
+  integer(qmckl_context), intent(in), value  :: context
+  integer (c_int64_t)   , intent(in), value  :: walk_num, elec_num, cord_num, nucl_num, dim_c_vector
+  integer (c_int64_t)   , intent(in)  :: lkpm_combined_index(dim_c_vector,4)
+  real    (c_double )   , intent(in)  :: c_vector_full(nucl_num, dim_c_vector)
+  real    (c_double )   , intent(in)  :: en_distance(nucl_num, elec_num)
+  real    (c_double )   , intent(in)  :: tmp_c(elec_num, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
+  real    (c_double )   , intent(in)  :: dtmp_c(elec_num, 4, nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
+  real    (c_double )   , intent(in)  :: forces_tmp_c(elec_num, 4,nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
+  real    (c_double )   , intent(in)  :: forces_dtmp_c(elec_num, 4, nucl_num,4,0:cord_num, 0:cord_num-1,  walk_num)
+  real    (c_double )   , intent(in)  :: forces_een_n(elec_num, 4, nucl_num, 3, 0:cord_num, walk_num)
+  real    (c_double )   , intent(in)  :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
+  real    (c_double )   , intent(in)  :: een_rescaled_n_gl(elec_num, 4, nucl_num, 0:cord_num, walk_num)
+  real    (c_double )   , intent(out) :: forces_jastrow_een_l(nucl_num,3,walk_num)
+
+  integer*8 :: i, a, j, l, k, m, n, nw, ii, jj
+  double precision :: accu, accu2, cn
+
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) info = QMCKL_INVALID_CONTEXT
+  if (walk_num <= 0)                 info = QMCKL_INVALID_ARG_2
+  if (elec_num <= 0)                 info = QMCKL_INVALID_ARG_3
+  if (nucl_num <= 0)                 info = QMCKL_INVALID_ARG_4
+  if (cord_num <  0)                 info = QMCKL_INVALID_ARG_5
+  if (info /= QMCKL_SUCCESS)         return
+
+
+
+  if (cord_num == 0) return
+  forces_jastrow_een_l = 0.0d0
+  do nw =1, walk_num
+     do n = 1, dim_c_vector
+        l = lkpm_combined_index(n, 1)
+        k = lkpm_combined_index(n, 2)
+        m = lkpm_combined_index(n, 4)
+
+        do a = 1, nucl_num
+           cn = c_vector_full(a, n)
+           if(cn == 0.d0) cycle
+
+           do ii = 1, 3
+              do i = 1, elec_num
+                forces_jastrow_een_l(a, ii, nw) = forces_jastrow_een_l(a, ii, nw) + (&
+                     tmp_c(i,a,             m,  k,nw) *  forces_een_n(i,4,a,ii  ,m+l,nw) &
+                   + forces_tmp_c(i,ii,a,   m,  k,nw) *  een_rescaled_n_gl(i,4,a,m+l,nw) &
+                   + tmp_c(i,a,             m+l,k,nw) *  forces_een_n(i,4,a,ii,  m,  nw) &
+                   + forces_tmp_c(i,ii,a,   m+l,k,nw) *  een_rescaled_n_gl(i,4,a,m,  nw) &
+                   - dtmp_c(i,4,a,          m,  k,nw) *  een_rescaled_n_gl(i,ii,a,m+l,nw) &
+                   + forces_dtmp_c(i,4,a,ii,m,  k,nw) *  een_rescaled_n(i,a,      m+l,nw) &
+                   - dtmp_c(i,4,a,          m+l,k,nw) *  een_rescaled_n_gl(i,ii,a,m,  nw) &
+                   + forces_dtmp_c(i,4,a,ii,m+l,k,nw) *  een_rescaled_n(i,a,      m,  nw) &
+                 )   * cn
+              end do
+           end do
+
+           cn = cn + cn
+            do ii = 1, 3
+              do i = 1, elec_num
+                do jj = 1, 3
+                  forces_jastrow_een_l(a, ii, nw) = forces_jastrow_een_l(a, ii, nw) + (&
+                      dtmp_c(i,jj,a,m, k,nw) * forces_een_n(i,jj,a,ii ,m+l,nw) + &
+                      dtmp_c(i,jj,a,m+l, k,nw) * forces_een_n(i,jj,a,ii ,m,nw) + &
+                      forces_dtmp_c(i,jj,a,ii,m, k,nw) * een_rescaled_n_gl(i,jj,a,m+l,nw) + &
+                      forces_dtmp_c(i,jj,a,ii,m+l, k,nw) * een_rescaled_n_gl(i,jj,a,m,nw) &
+                    ) * cn
+                end do
+              end do
+            end do
+        end do
+     end do
+  end do
+
+end function qmckl_compute_forces_jastrow_een_l
+
+! Compute
+!      :PROPERTIES:
+!      :Name:     qmckl_compute_forces_jastrow_delta_p_doc
+!      :CRetType: qmckl_exit_code
+!      :FRetType: qmckl_exit_code
+!      :END:
+
+!      #+NAME: qmckl_forces_delta_p_args
+!      | Variable                   | Type                                                                | In/Out | Description                                            |
+!      |----------------------------+---------------------------------------------------------------------+--------+--------------------------------------------------------|
+!      | ~context~                  | ~qmckl_context~                                                     | in     | Global state                                           |
+!      | ~num~                      | ~int64_t~                                                           | in     | Index of single electron                               |
+!      | ~walk_num~                 | ~int64_t~                                                           | in     | Number of walkers                                      |
+!      | ~elec_num~                 | ~int64_t~                                                           | in     | Number of electrons                                    |
+!      | ~nucl_num~                 | ~int64_t~                                                           | in     | Number of nuclei                                       |
+!      | ~cord_num~                 | ~int64_t~                                                           | in     | order of polynomials                                   |
+!      | ~een_rescaled_n~           | ~double[walk_num][0:cord_num][nucl_num][elec_num]~                  | in     | Electron-nucleus rescaled distances                    |
+!      | ~een_rescaled_e~           | ~double[walk_num][0:cord_num][elec_num][elec_num]~                  | in     | Electron-electron rescaled distances                   |
+!      | ~een_rescaled_single_n~    | ~double[walk_num][0:cord_num][nucl_num]~                            | in     | Electron-nucleus single rescaled distances             |
+!      | ~een_rescaled_single_e~    | ~double[walk_num][0:cord_num][elec_num]~                            | in     | Electron-electron single rescaled distances            |
+!      | ~een_rescaled_n_gl~        | ~double[walk_num][0:cord_num][nucl_num][4][elec_num]~               | in     | Electron-nucleus rescaled distances derivatives        |
+!      | ~een_rescaled_single_n_gl~ | ~double[walk_num][0:cord_num][nucl_num][4]~                         | in     | Electron-nucleus single rescaled distances derivatives |
+!      | ~forces_delta_p~           | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][3][elec_num]~ | out    | Force of $\delta P$ matrix                             |
+!      |----------------------------+---------------------------------------------------------------------+--------+--------------------------------------------------------|
+
+
+integer(qmckl_exit_code) function qmckl_compute_forces_jastrow_delta_p_doc( &
+     context, num_in, walk_num, elec_num, nucl_num, cord_num,   &
+     een_rescaled_n, een_rescaled_e, een_rescaled_single_n, een_rescaled_single_e, &
+     een_rescaled_n_gl, een_rescaled_single_n_gl, forces_delta_p) &
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
+  use qmckl
+  implicit none
+  integer(qmckl_context), intent(in), value  :: context
+  integer(c_int64_t)    , intent(in), value  :: num_in, walk_num, elec_num, cord_num, nucl_num
+  real(c_double)        , intent(in)  :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_e(elec_num, elec_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_single_n(nucl_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_single_e(elec_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_n_gl(elec_num, 4, nucl_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(in)  :: een_rescaled_single_n_gl(4, nucl_num, 0:cord_num, walk_num)
+  real(c_double)        , intent(out)  :: forces_delta_p(elec_num,3,nucl_num,0:cord_num, 0:cord_num-1,  walk_num)
+
+  double precision        :: tmp1, tmp2
+  double precision        :: delta_e(elec_num)
+
+
+
+
+  integer*8 :: i, a, j, l, k, p, m, n, nw, num
+  double precision :: tmp, accu
+  integer*8        :: LDA, LDB, LDC
+
+  num = num_in + 1_8
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) info = QMCKL_INVALID_CONTEXT
+  if (walk_num <= 0)                 info = QMCKL_INVALID_ARG_3
+  if (elec_num <= 0)                 info = QMCKL_INVALID_ARG_4
+  if (nucl_num <= 0)                 info = QMCKL_INVALID_ARG_5
+  if (cord_num <  0)                 info = QMCKL_INVALID_ARG_6
+  if (info /= QMCKL_SUCCESS)         return
+
+
+  if (cord_num == 0) then
+     forces_delta_p = 0.d0
+     return
+  endif
+
+
+  do nw=1, walk_num
+    do m=0, cord_num-1
+
+      do j = 1, elec_num
+        delta_e(j) =  een_rescaled_e(j,num,m,nw) - een_rescaled_single_e(j,m,nw)
+      end do
+
+      do l=1, cord_num
+        do a = 1, nucl_num
+          do k = 1, 3
+            tmp1 = een_rescaled_n_gl(num, k, a, l, nw)
+            tmp2 = een_rescaled_single_n_gl(k,a,l,nw)
+            accu = 0.d0
+            do j = 1, elec_num
+              forces_delta_p(j,k,a,l,m,nw) =  een_rescaled_e(j,num,m,nw) * tmp1 - &
+                een_rescaled_single_e(j,m,nw)  * tmp2
+
+              accu = accu + delta_e(j) * een_rescaled_n_gl(j,k,a,l,nw)
+            end do
+            forces_delta_p(num,k,a,l,m,nw) = forces_delta_p(num,k,a,l,m,nw) + accu
+          end do
+        end do
+      end do
+    end do
+  end do
+
+end function qmckl_compute_forces_jastrow_delta_p_doc
+
+! Compute
+!      :PROPERTIES:
+!      :Name:     qmckl_compute_forces_jastrow_single_een
+!      :CRetType: qmckl_exit_code
+!      :FRetType: qmckl_exit_code
+!      :END:
+
+!      #+NAME: qmckl_forces_single_een_args
+!      | Variable                    | Type                                                                | In/Out | Description                                            |
+!      |-----------------------------+---------------------------------------------------------------------+--------+--------------------------------------------------------|
+!      | ~context~                   | ~qmckl_context~                                                     | in     | Global state                                           |
+!      | ~num~                       | ~int64_t~                                                           | in     | Index of single electron                               |
+!      | ~walk_num~                  | ~int64_t~                                                           | in     | Number of walkers                                      |
+!      | ~elec_num~                  | ~int64_t~                                                           | in     | Number of electrons                                    |
+!      | ~nucl_num~                  | ~int64_t~                                                           | in     | Number of nuclei                                       |
+!      | ~cord_num~                  | ~int64_t~                                                           | in     | order of polynomials                                   |
+!      | ~dim_c_vector~              | ~int64_t~                                                           | in     | dimension of full coefficient vector                   |
+!      | ~c_vector_full~             | ~double[dim_c_vector][nucl_num]~                                    | in     | full coefficient vector                                |
+!      | ~lkpm_combined_index~       | ~int64_t[4][dim_c_vector]~                                          | in     | combined indices                                       |
+!      | ~delta_p~                   | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][elec_num]~    | in     | $\delta P$ matrix                                      |
+!      | ~forces_delta_p~            | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][3][elec_num]~ | in     | Force of $\delta P$matrix                              |
+!      | ~tmp_c~                     | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][elec_num]~    | in     | P matrix                                               |
+!      | ~forces_tmp_c~              | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][4][elec_num]~ | in     | Force of P matrix                                      |
+!      | ~een_rescaled_n~            | ~double[walk_num][0:cord_num][nucl_num][elec_num]~                  | in     | Electron-nucleus rescaled distances                    |
+!      | ~een_rescaled_single_n~     | ~double[walk_num][0:cord_num][nucl_num]~                            | in     | Electron-nucleus single rescaled distances             |
+!      | ~een_rescaled_n_gl~         | ~double[walk_num][0:cord_num][nucl_num][4][elec_num]~               | in     | Electron-nucleus rescaled distances derivatives        |
+!      | ~een_rescaled_single_n_gl~  | ~double[walk_num][0:cord_num][nucl_num][4]~                         | in     | Electron-nucleus single rescaled distances derivatives |
+!      | ~forces_jastrow_single_een~ | ~double[walk_num][nucl_num][3]~                                     | out    | Single electron--electron-nucleus Jastrow forces       |
+!      |-----------------------------+---------------------------------------------------------------------+--------+--------------------------------------------------------|
+
+
+function qmckl_compute_forces_jastrow_single_een_doc( &
+     context, num_in, walk_num, elec_num, nucl_num, cord_num, &
+     dim_c_vector, c_vector_full, lkpm_combined_index, &
+     delta_p, forces_delta_p, tmp_c, forces_tmp_c, &
+     een_rescaled_n, een_rescaled_single_n, een_rescaled_n_gl, een_rescaled_single_n_gl, forces_jastrow_single_een) &
+     bind(C) result(info)
+  use qmckl
+  implicit none
+
+  integer (qmckl_context), intent(in), value :: context
+  integer (c_int64_t) , intent(in)  , value :: num_in
+  integer (c_int64_t) , intent(in)  , value :: walk_num
+  integer (c_int64_t) , intent(in)  , value :: elec_num
+  integer (c_int64_t) , intent(in)  , value :: nucl_num
+  integer (c_int64_t) , intent(in)  , value :: dim_c_vector
+  integer (c_int64_t) , intent(in)  , value :: cord_num
+  integer(c_int64_t)   , intent(in)  :: lkpm_combined_index(dim_c_vector,4)
+  real(c_double)      , intent(in)  :: c_vector_full(nucl_num, dim_c_vector)
+  real    (c_double ) , intent(in)          :: delta_p(elec_num, nucl_num,0:cord_num, 0:cord_num-1, walk_num)
+  real    (c_double ) , intent(in)          :: forces_delta_p(elec_num, 3, nucl_num,0:cord_num, 0:cord_num-1, walk_num)
+  real    (c_double ) , intent(in)          :: tmp_c(elec_num, nucl_num,0:cord_num, 0:cord_num-1, walk_num)
+  real    (c_double ) , intent(in)          :: forces_tmp_c(elec_num, 4, nucl_num,0:cord_num, 0:cord_num-1, walk_num)
+  real    (c_double ) , intent(in)          :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
+  real    (c_double ) , intent(in)          :: een_rescaled_single_n(nucl_num, 0:cord_num, walk_num)
+  real    (c_double ) , intent(in)          :: een_rescaled_n_gl(elec_num, 4, nucl_num, 0:cord_num, walk_num)
+  real    (c_double ) , intent(in)          :: een_rescaled_single_n_gl(4, nucl_num, 0:cord_num, walk_num)
+  real    (c_double ) , intent(out)         :: forces_jastrow_single_een(3,nucl_num,walk_num)
+  integer(qmckl_exit_code)                   :: info
+
+  double precision        :: een_rescaled_delta_n(nucl_num, 0:cord_num), een_rescaled_delta_n_gl(3,nucl_num, 0:cord_num)
+
+  integer*8 :: i, a, j, l, k, p, m, n, nw, num, kk
+  double precision :: accu, accu2, cn
+  integer*8                           :: LDA, LDB, LDC
+
+  num = num_in + 1
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) info = QMCKL_INVALID_CONTEXT
+  if (walk_num <= 0)                 info = QMCKL_INVALID_ARG_3
+  if (elec_num <= 0)                 info = QMCKL_INVALID_ARG_4
+  if (nucl_num <= 0)                 info = QMCKL_INVALID_ARG_5
+  if (cord_num <  0)                 info = QMCKL_INVALID_ARG_6
+  if (info /= QMCKL_SUCCESS)         return
+
+  forces_jastrow_single_een = 0.0d0
+
+  if (cord_num == 0) return
+
+  do nw =1, walk_num
+    een_rescaled_delta_n(:,:) = een_rescaled_single_n(:,:,nw) - een_rescaled_n(num,:,:,nw)
+    do kk = 1,3
+      een_rescaled_delta_n_gl(kk,:,:) = een_rescaled_single_n_gl(kk,:,:,nw) - een_rescaled_n_gl(num,kk,:,:,nw)
+    end do
+    do n = 1, dim_c_vector
+        l = lkpm_combined_index(n, 1)
+        k = lkpm_combined_index(n, 2)
+        p = lkpm_combined_index(n, 3)
+        m = lkpm_combined_index(n, 4)
+
+        do a = 1, nucl_num
+          cn = c_vector_full(a, n)
+          if(cn == 0.d0) cycle
+          do kk = 1, 3
+            accu = 0.0d0
+            do j = 1, elec_num
+                accu = accu - een_rescaled_n_gl(j,kk,a,m,nw) * delta_p(j,a,m+l,k,nw) + &
+                    een_rescaled_n(j,a,m,nw) * forces_delta_p(j,kk,a,m+l,k,nw)
+            end do
+            accu = accu - een_rescaled_delta_n_gl(kk,a,m) * (tmp_c(num,a,m+l,k,nw) + delta_p(num,a,m+l,k,nw)) + &
+                een_rescaled_delta_n(a,m) * (forces_tmp_c(num,kk,a,m+l,k,nw) + forces_delta_p(num,kk,a,m+l,k,nw))
+            forces_jastrow_single_een(kk,a,nw) = forces_jastrow_single_een(kk,a,nw) + accu * cn
+
+          end do
+        end do
+    end do
+  end do
+
+
+end function qmckl_compute_forces_jastrow_single_een_doc
+
+function qmckl_compute_forces_jastrow_single_een_hpc( &
+     context, num_in, walk_num, elec_num, nucl_num, cord_num, &
+     dim_c_vector, c_vector_full, lkpm_combined_index, &
+     delta_p, forces_delta_p, tmp_c, forces_tmp_c, &
+     een_rescaled_n, een_rescaled_single_n, een_rescaled_n_gl, een_rescaled_single_n_gl, forces_jastrow_single_een) &
+     bind(C) result(info)
+  use qmckl
+  implicit none
+
+  integer (qmckl_context), intent(in), value :: context
+  integer (c_int64_t) , intent(in)  , value :: num_in
+  integer (c_int64_t) , intent(in)  , value :: walk_num
+  integer (c_int64_t) , intent(in)  , value :: elec_num
+  integer (c_int64_t) , intent(in)  , value :: nucl_num
+  integer (c_int64_t) , intent(in)  , value :: dim_c_vector
+  integer (c_int64_t) , intent(in)  , value :: cord_num
+  integer(c_int64_t)   , intent(in)  :: lkpm_combined_index(dim_c_vector,4)
+  real(c_double)      , intent(in)  :: c_vector_full(nucl_num, dim_c_vector)
+  real    (c_double ) , intent(in)          :: delta_p(elec_num, nucl_num,0:cord_num, 0:cord_num-1, walk_num)
+  real    (c_double ) , intent(in)          :: forces_delta_p(elec_num, 3, nucl_num,0:cord_num, 0:cord_num-1, walk_num)
+  real    (c_double ) , intent(in)          :: tmp_c(elec_num, nucl_num,0:cord_num, 0:cord_num-1, walk_num)
+  real    (c_double ) , intent(in)          :: forces_tmp_c(elec_num, 4, nucl_num,0:cord_num, 0:cord_num-1, walk_num)
+  real    (c_double ) , intent(in)          :: een_rescaled_n(elec_num, nucl_num, 0:cord_num, walk_num)
+  real    (c_double ) , intent(in)          :: een_rescaled_single_n(nucl_num, 0:cord_num, walk_num)
+  real    (c_double ) , intent(in)          :: een_rescaled_n_gl(elec_num, 4, nucl_num, 0:cord_num, walk_num)
+  real    (c_double ) , intent(in)          :: een_rescaled_single_n_gl(4, nucl_num, 0:cord_num, walk_num)
+  real    (c_double ) , intent(out)         :: forces_jastrow_single_een(3,nucl_num,walk_num)
+  integer(qmckl_exit_code)                   :: info
+
+  double precision, allocatable :: een_rescaled_delta_n(:, :), een_rescaled_delta_n_gl(:,:,:)
+
+  integer*8 :: i, a, j, l, k, p, m, n, nw, num, kk
+  double precision :: accu2, cn
+  double precision, allocatable :: accu(:,:), tmp(:)
+  double precision, external :: ddot
+  integer :: elec_num4
+
+  
+  num = num_in + 1
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) info = QMCKL_INVALID_CONTEXT
+  if (walk_num <= 0)                 info = QMCKL_INVALID_ARG_3
+  if (elec_num <= 0)                 info = QMCKL_INVALID_ARG_4
+  if (nucl_num <= 0)                 info = QMCKL_INVALID_ARG_5
+  if (cord_num <  0)                 info = QMCKL_INVALID_ARG_6
+  if (info /= QMCKL_SUCCESS)         return
+
+  forces_jastrow_single_een = 0.0d0
+
+  if (cord_num == 0) return
+
+  allocate(een_rescaled_delta_n(nucl_num, 0:cord_num), een_rescaled_delta_n_gl(3,nucl_num, 0:cord_num), &
+           accu(3,nucl_num), tmp(nucl_num))
+
+  elec_num4 = int(elec_num,4)
+  do nw =1, walk_num
+    een_rescaled_delta_n(:,:) = een_rescaled_single_n(:,:,nw) - een_rescaled_n(num,:,:,nw)
+    een_rescaled_delta_n_gl(1:3,:,:) = een_rescaled_single_n_gl(1:3,:,:,nw) - een_rescaled_n_gl(num,1:3,:,:,nw)
+    do n = 1, dim_c_vector
+        l = lkpm_combined_index(n, 1)
+        k = lkpm_combined_index(n, 2)
+        p = lkpm_combined_index(n, 3)
+        m = lkpm_combined_index(n, 4)
+
+        do a = 1, nucl_num
+          cn = c_vector_full(a, n)
+          accu(1:3,a) = 0.0d0
+          if(cn == 0.d0) cycle
+          tmp(a) = tmp_c(num,a,m+l,k,nw) + delta_p(num,a,m+l,k,nw)
+          call dgemv('T', elec_num4, 3, -1.d0, een_rescaled_n_gl(1,1,a,m,nw), elec_num4, &
+                     delta_p(1,a,m+l,k,nw), 1, 0.d0, accu(1,a), 1)
+          call dgemv('T', elec_num4, 3, 1.d0, forces_delta_p(1,1,a,m+l,k,nw), elec_num4, &
+                     een_rescaled_n(1,a,m,nw), 1, 1.d0, accu(1,a), 1)
+
+        enddo
+        
+        accu(1,:) = accu(1,:) - een_rescaled_delta_n_gl(1,:,m)*tmp(:)
+        accu(2,:) = accu(2,:) - een_rescaled_delta_n_gl(2,:,m)*tmp(:)
+        accu(3,:) = accu(3,:) - een_rescaled_delta_n_gl(3,:,m)*tmp(:)
+
+        accu(1,:) = accu(1,:) + een_rescaled_delta_n(:,m)*forces_tmp_c(num,1,:,m+l,k,nw)
+        accu(2,:) = accu(2,:) + een_rescaled_delta_n(:,m)*forces_tmp_c(num,2,:,m+l,k,nw)
+        accu(3,:) = accu(3,:) + een_rescaled_delta_n(:,m)*forces_tmp_c(num,3,:,m+l,k,nw)
+
+        accu(1,:) = accu(1,:) + een_rescaled_delta_n(:,m)*forces_delta_p(num,1,:,m+l,k,nw)
+        accu(2,:) = accu(2,:) + een_rescaled_delta_n(:,m)*forces_delta_p(num,2,:,m+l,k,nw)
+        accu(3,:) = accu(3,:) + een_rescaled_delta_n(:,m)*forces_delta_p(num,3,:,m+l,k,nw)
+
+        forces_jastrow_single_een(1,:,nw) = forces_jastrow_single_een(1,:,nw) + accu(1,:) * c_vector_full(:,n)
+        forces_jastrow_single_een(2,:,nw) = forces_jastrow_single_een(2,:,nw) + accu(2,:) * c_vector_full(:,n)
+        forces_jastrow_single_een(3,:,nw) = forces_jastrow_single_een(3,:,nw) + accu(3,:) * c_vector_full(:,n)
+    end do
+  end do
+
+
+end function qmckl_compute_forces_jastrow_single_een_hpc
+
+! Compute
+!    :PROPERTIES:
+!    :Name:     qmckl_compute_forces_ao_value
+!    :CRetType: qmckl_exit_code
+!    :FRetType: qmckl_exit_code
+!    :END:
+
+!      #+NAME: qmckl_forces_ao_value_args_doc
+!     | Variable            | Type                                     | In/Out | Description                                  |
+!     |---------------------+------------------------------------------+--------+----------------------------------------------|
+!     | ~context~           | ~qmckl_context~                          | in     | Global state                                 |
+!     | ~ao_num~            | ~int64_t~                                | in     | Number of AOs                                |
+!     | ~shell_num~         | ~int64_t~                                | in     | Number of shells                             |
+!     | ~point_num~         | ~int64_t~                                | in     | Number of points                             |
+!     | ~nucl_num~          | ~int64_t~                                | in     | Number of nuclei                             |
+!     | ~nucleus_index~     | ~int64_t[nucl_num]~                      | in     | Index of the 1st shell of each nucleus       |
+!     | ~nucleus_shell_num~ | ~int64_t[nucl_num]~                      | in     | Number of shells per nucleus                 |
+!     | ~shell_ang_mom~     | ~int32_t[shell_num]~                     | in     | Angular momentum of each shell               |
+!     | ~ao_factor~         | ~double[ao_num]~                         | in     | Normalization factor of the AOs              |
+!     | ~ao_vgl~            | ~double[point_num][5][shell_num]~        | in     | Value, gradients and Laplacian of the shells |
+!     | ~forces_ao_value~   | ~double[nucl_num][point_num][3][ao_num]~ | out    | Forces of the AOs                            |
+!     |---------------------+------------------------------------------+--------+----------------------------------------------|
+
+
+function qmckl_compute_forces_ao_value_doc(context, &
+     ao_num, shell_num, point_num, nucl_num, &
+     nucleus_index, nucleus_shell_num, &
+     shell_ang_mom, ao_factor, ao_vgl, forces_ao_value) &
+     bind(C) result(info)
+  use qmckl_constants
+  use qmckl, only : qmckl_ao_polynomial_vgl, qmckl_get_numprec_precision
+  implicit none
+  integer (qmckl_context), intent(in) , value :: context
+  integer (c_int64_t) , intent(in)  , value :: ao_num
+  integer (c_int64_t) , intent(in)  , value :: shell_num
+  integer (c_int64_t) , intent(in)  , value :: point_num
+  integer (c_int64_t) , intent(in)  , value :: nucl_num
+  integer (c_int64_t) , intent(in)          :: nucleus_index(nucl_num)
+  integer (c_int64_t) , intent(in)          :: nucleus_shell_num(nucl_num)
+  integer (c_int32_t) , intent(in)          :: shell_ang_mom(shell_num)
+  real    (c_double ) , intent(in)          :: ao_factor(ao_num)
+  real    (c_double ) , intent(in)          :: ao_vgl(ao_num,5,point_num)
+  real    (c_double ) , intent(out)         :: forces_ao_value(ao_num,3,point_num,nucl_num)
+  integer(qmckl_exit_code) :: info
+
+  integer           :: l, il, k
+  integer*8         :: ipoint, inucl
+  integer*8         :: ishell_start, ishell_end, ishell
+  integer           :: lstart(0:20)
+  double precision  :: x, y, z, r2
+  double precision  :: cutoff
+
+  integer         , allocatable  ::  ao_index(:)
+  allocate(ao_index(ao_num))
+
+  !forces_ao_value = 0.d0
+
+  ! Pre-computed data
+  do l=0,20
+     lstart(l) = l*(l+1)*(l+2)/6 +1
+  end do
+
+  k=1
+  do inucl=1,nucl_num
+     ishell_start = nucleus_index(inucl) + 1
+     ishell_end   = nucleus_index(inucl) + nucleus_shell_num(inucl)
+     do ishell = ishell_start, ishell_end
+        l = shell_ang_mom(ishell)
+        ao_index(ishell) = k
+        k = k + lstart(l+1) - lstart(l)
+     end do
+  end do
+  info = QMCKL_SUCCESS
+
+
+  do ipoint = 1, point_num
+     do inucl=1,nucl_num
+        ! Loop over shells
+        ishell_start = nucleus_index(inucl) + 1
+        ishell_end   = nucleus_index(inucl) + nucleus_shell_num(inucl)
+        do ishell = ishell_start, ishell_end
+           l = shell_ang_mom(ishell)
+           do k = ao_index(ishell), ao_index(ishell) + lstart(l+1)-lstart(l) -1
+              forces_ao_value(k,1,ipoint,inucl) = -ao_vgl(k,2,ipoint)
+              forces_ao_value(k,2,ipoint,inucl) = -ao_vgl(k,3,ipoint)
+              forces_ao_value(k,3,ipoint,inucl) = -ao_vgl(k,4,ipoint)
+           end do
+        end do
+     end do
+  end do
+
+  deallocate(ao_index)
+
+end function qmckl_compute_forces_ao_value_doc
+
+! Compute
+!    :PROPERTIES:
+!    :Name:     qmckl_compute_forces_mo_value
+!    :CRetType: qmckl_exit_code
+!    :FRetType: qmckl_exit_code
+!    :END:
+
+!     #+NAME: qmckl_forces_mo_value_args
+!     | Variable            | Type                                     | In/Out | Description                                     |
+!     |---------------------+------------------------------------------+--------+-------------------------------------------------|
+!     | ~context~           | ~qmckl_context~                          | in     | Global state                                    |
+!     | ~nucl_num~          | ~int64_t~                                | in     | Number of AOs                                   |
+!     | ~ao_num~            | ~int64_t~                                | in     | Number of AOs                                   |
+!     | ~mo_num~            | ~int64_t~                                | in     | Number of MOs                                   |
+!     | ~point_num~         | ~int64_t~                                | in     | Number of points                                |
+!     | ~shell_num~         | ~int64_t~                                | in     | Number of shells                                |
+!     | ~nucleus_index~     | ~int64_t[nucl_num]~                      | in     | Index of the 1st shell of each nucleus          |
+!     | ~nucleus_shell_num~ | ~int64_t[nucl_num]~                      | in     | Number of shells per nucleus                    |
+!     | ~shell_ang_mom~     | ~int32_t[shell_num]~                     | in     | Angular momentum of each shell                  |
+!     | ~coefficient_t~     | ~double[mo_num][ao_num]~                 | in     | Transpose of the AO to MO transformation matrix |
+!     | ~ao_vgl~            | ~double[point_num][3][ao_num]~           | in     | AO values, gradient and Laplacian               |
+!     | ~forces_mo_value~   | ~double[nucl_num][point_num][3][mo_num]~ | out    | Forces of MOs                                   |
+!     |---------------------+------------------------------------------+--------+-------------------------------------------------|
+
+
+
+integer(qmckl_exit_code)  function qmckl_compute_forces_mo_value_doc(context, &
+     nucl_num,ao_num, mo_num, point_num, shell_num, nucleus_index, nucleus_shell_num, &
+     shell_ang_mom, coefficient_t, ao_vgl, forces_mo_value) &
+     result(info) bind(C)
+  use, intrinsic :: iso_c_binding
+  use qmckl
+  implicit none
+  integer(qmckl_context), intent(in), value :: context
+  integer(c_int64_t)    , intent(in), value ::nucl_num, ao_num, mo_num, point_num, shell_num
+  real(c_double)      , intent(in)          :: ao_vgl(ao_num,5,point_num)
+  real(c_double)      , intent(in)          :: coefficient_t(mo_num,ao_num)
+  integer (c_int64_t) , intent(in)          :: nucleus_index(nucl_num)
+  integer (c_int64_t) , intent(in)          :: nucleus_shell_num(nucl_num)
+  integer (c_int32_t) , intent(in)          :: shell_ang_mom(shell_num)
+  real(c_double)      , intent(out)         :: forces_mo_value(mo_num,3,point_num,nucl_num)
+
+
+  integer*8 :: i,j,a, m, ishell_start, ishell_end, il, ishell
+  integer :: l, k
+  double precision :: c1, c2, c3, coef
+
+  integer, allocatable  ::  ao_index(:)
+  integer           :: lstart(0:20)
+
+  allocate(ao_index(ao_num))
+
+  do l=0,20
+    lstart(l) = l*(l+1)*(l+2)/6 +1
+  end do
+
+  k=1
+  do a=1,nucl_num
+     ishell_start = nucleus_index(a) + 1
+     ishell_end   = nucleus_index(a) + nucleus_shell_num(a)
+     do ishell = ishell_start, ishell_end
+        l = shell_ang_mom(ishell)
+        ao_index(ishell) = k
+        k = k + lstart(l+1) - lstart(l)
+     end do
+  end do
+
+
+  info = QMCKL_SUCCESS
+  do a=1,nucl_num
+    ishell_start = nucleus_index(a) + 1
+    ishell_end   = nucleus_index(a) + nucleus_shell_num(a)
+    do j=1,point_num
+      forces_mo_value(:,:,j,a) = 0.0d0
+      do ishell = ishell_start, ishell_end
+        l = shell_ang_mom(ishell)
+        do k=ao_index(ishell), ao_index(ishell) + lstart(l+1)-lstart(l)-1
+          c1 = ao_vgl(k,2,j)
+          c2 = ao_vgl(k,3,j)
+          c3 = ao_vgl(k,4,j)
+          do i=1,mo_num
+            coef = coefficient_t(i,k)
+            forces_mo_value(i,1,j,a) = forces_mo_value(i,1,j,a) - c1 * coef
+            forces_mo_value(i,2,j,a) = forces_mo_value(i,2,j,a) - c2 * coef
+            forces_mo_value(i,3,j,a) = forces_mo_value(i,3,j,a) - c3 * coef
+          end do
+        end do
+      end do
+    end do
+  end do
+
+  deallocate(ao_index)
+
+
+
+end function qmckl_compute_forces_mo_value_doc
+
+! Compute
+!    :PROPERTIES:
+!    :Name:     qmckl_compute_forces_mo_g
+!    :CRetType: qmckl_exit_code
+!    :FRetType: qmckl_exit_code
+!    :END:
+
+!     #+NAME: qmckl_compute_forces_mo_g_args
+!     | Variable            | Type                                        | In/Out | Description                                     |
+!     |---------------------+---------------------------------------------+--------+-------------------------------------------------|
+!     | ~context~           | ~qmckl_context~                             | in     | Global state                                    |
+!     | ~ao_num~            | ~int64_t~                                   | in     | Number of AOs                                   |
+!     | ~mo_num~            | ~int64_t~                                   | in     | Number of MOs                                   |
+!     | ~point_num~         | ~int64_t~                                   | in     | Number of points                                |
+!     | ~nucl_num~          | ~int64_t~                                   | in     | Number of nuclei                                |
+!     | ~shell_num~         | ~int64_t~                                   | in     | Number of shells                                |
+!     | ~nucleus_index~     | ~int64_t[nucl_num]~                         | in     | Index of the 1st shell of each nucleus          |
+!     | ~nucleus_shell_num~ | ~int64_t[nucl_num]~                         | in     | Number of shells per nucleus                    |
+!     | ~shell_ang_mom~     | ~int32_t[shell_num]~                        | in     | Angular momentum of each shell                  |
+!     | ~coefficient_t~     | ~double[mo_num][ao_num]~                    | in     | Transpose of the AO to MO transformation matrix |
+!     | ~ao_hessian~        | ~double[3][point_num][4][ao_num]~           | in     | Hessian of AOs                                  |
+!     | ~forces_mo_g~       | ~double[nucl_num][3][point_num][3][mo_num]~ | out    | Forces on gradients of MOs                      |
+!     |---------------------+---------------------------------------------+--------+-------------------------------------------------|
+
+
+
+integer function qmckl_compute_forces_mo_g_doc(context, &
+     ao_num, mo_num, point_num, nucl_num, &
+     shell_num, nucleus_index, nucleus_shell_num, shell_ang_mom, &
+     coefficient_t, ao_hessian, forces_mo_g) &
+     bind(C) result(info)
+  use qmckl
+  implicit none
+  integer(qmckl_context), intent(in), value  :: context
+  integer (c_int64_t)   , intent(in), value  :: nucl_num, ao_num, mo_num, point_num, shell_num
+  integer (c_int64_t) ,   intent(in)         :: nucleus_index(nucl_num)
+  integer (c_int64_t) ,   intent(in)         :: nucleus_shell_num(nucl_num)
+  integer (c_int32_t) ,   intent(in)         :: shell_ang_mom(shell_num)
+  real    (c_double )   , intent(in)         :: coefficient_t(mo_num,ao_num)
+  real    (c_double )   , intent(in)         :: ao_hessian(ao_num,4,point_num,3)
+  real    (c_double )   , intent(out)        :: forces_mo_g(mo_num,3,point_num,3,nucl_num)
+  integer*8 :: i,j, m, n,a
+  double precision :: c1
+
+  double precision, allocatable :: tmp(:,:,:,:)
+  
+  allocate(tmp(ao_num,3,point_num,3))
+  do a=1,nucl_num
+  ! BROKEN
+     tmp(:,1:3,:,:) = ao_hessian(:,1:3,:,:)
+     info = qmckl_dgemm(context, 'N', 'N', mo_num, 3*point_num*3, ao_num, &
+       -1.d0, coefficient_t, mo_num, &
+       tmp, ao_num, 0.d0, forces_mo_g(1,1,1,1,a), mo_num)
+     if (info /= 0) return
+  end do
+
+
+  deallocate(tmp)
+
+end function qmckl_compute_forces_mo_g_doc
+
+integer function qmckl_compute_forces_mo_g_hpc(context, &
+     ao_num, mo_num, point_num, nucl_num, &
+     shell_num, nucleus_index, nucleus_shell_num, shell_ang_mom, &
+     coefficient_t, ao_hessian, forces_mo_g) &
+     bind(C) result(info)
+  use qmckl
+  implicit none
+  integer(qmckl_context), intent(in), value  :: context
+  integer (c_int64_t)   , intent(in), value  :: nucl_num, ao_num, mo_num, point_num, shell_num
+  integer (c_int64_t) ,   intent(in)         :: nucleus_index(nucl_num)
+  integer (c_int64_t) ,   intent(in)         :: nucleus_shell_num(nucl_num)
+  integer (c_int32_t) ,   intent(in)         :: shell_ang_mom(shell_num)
+  real    (c_double )   , intent(in)         :: coefficient_t(mo_num,ao_num)
+  real    (c_double )   , intent(in)         :: ao_hessian(ao_num,4,point_num,3)
+  real    (c_double )   , intent(out)        :: forces_mo_g(mo_num,3,point_num,3,nucl_num)
+  integer*8 :: i,j, m, n,a
+  double precision :: c1
+
+  integer           :: l, il, k, ao_ind
+  integer*8         :: ishell_start, ishell_end, ishell
+  integer           :: lstart(0:20)
+
+  integer         , allocatable  ::  ao_index(:)
+  allocate(ao_index(ao_num))
+
+  do l=0,20
+     lstart(l) = l*(l+1)*(l+2)/6 +1
+  end do
+
+  k=1
+  do a=1,nucl_num
+     ishell_start = nucleus_index(a) + 1
+     ishell_end   = nucleus_index(a) + nucleus_shell_num(a)
+     do ishell = ishell_start, ishell_end
+        l = shell_ang_mom(ishell)
+        ao_index(ishell) = k
+        k = k + lstart(l+1) - lstart(l)
+     end do
+  end do
+  info = QMCKL_SUCCESS
+
+
+  do a=1,nucl_num
+     ishell_start = nucleus_index(a) + 1
+     ishell_end   = nucleus_index(a) + nucleus_shell_num(a)
+     do n = 1, 3
+        do j=1,point_num
+           forces_mo_g(:,:,j,n,a) = 0.d0
+           do m = 1, 3
+              do ishell = ishell_start, ishell_end
+                 l = shell_ang_mom(ishell)
+                 il = lstart(l+1)-lstart(l)
+                 ao_ind = ao_index(ishell) 
+                 do k = ao_ind, ao_ind + il - 1
+                    c1 = ao_hessian(k, m, j, n)
+                    if (c1 /= 0.d0) then
+                       do i=1,mo_num
+                          forces_mo_g(i, m, j, n, a) = forces_mo_g(i, m, j, n, a) - &
+                               coefficient_t(i,k) * c1
+                       end do
+                    end if
+                 end do
+              end do
+           end do
+        end do
+     end do
+  end do
+
+  deallocate(ao_index)
+
+
+end function qmckl_compute_forces_mo_g_hpc
+
+! Compute
+!    :PROPERTIES:
+!    :Name:     qmckl_compute_forces_mo_l
+!    :CRetType: qmckl_exit_code
+!    :FRetType: qmckl_exit_code
+!    :END:
+
+!     #+NAME: qmckl_compute_forces_mo_l_args
+!     | Variable            | Type                                        | In/Out | Description                                     |
+!     |---------------------+---------------------------------------------+--------+-------------------------------------------------|
+!     | ~context~           | ~qmckl_context~                             | in     | Global state                                    |
+!     | ~ao_num~            | ~int64_t~                                   | in     | Number of AOs                                   |
+!     | ~mo_num~            | ~int64_t~                                   | in     | Number of MOs                                   |
+!     | ~point_num~         | ~int64_t~                                   | in     | Number of points                                |
+!     | ~nucl_num~          | ~int64_t~                                   | in     | Number of nuclei                                |
+!     | ~shell_num~         | ~int64_t~                                   | in     | Number of shells                                |
+!     | ~nucleus_index~     | ~int64_t[nucl_num]~                         | in     | Index of the 1st shell of each nucleus          |
+!     | ~nucleus_shell_num~ | ~int64_t[nucl_num]~                         | in     | Number of shells per nucleus                    |
+!     | ~shell_ang_mom~     | ~int32_t[shell_num]~                        | in     | Angular momentum of each shell                  |
+!     | ~coefficient_t~     | ~double[mo_num][ao_num]~                    | in     | Transpose of the AO to MO transformation matrix |
+!     | ~ao_hessian~        | ~double[3][point_num][4][ao_num]~           | in     | Hessian of AOs                                  |
+!     | ~forces_mo_l~       | ~double[nucl_num][3][point_num][mo_num]~    | out    | Forces on MO Laplacian                          |
+!     |---------------------+---------------------------------------------+--------+-------------------------------------------------|
+
+
+
+integer function qmckl_compute_forces_mo_l_doc(context, &
+     ao_num, mo_num, point_num, nucl_num, &
+     shell_num, nucleus_index, nucleus_shell_num, shell_ang_mom, &
+     coefficient_t, ao_hessian, forces_mo_l) &
+     bind(C) result(info)
+  use qmckl
+  implicit none
+  integer(qmckl_context), intent(in), value  :: context
+  integer (c_int64_t)   , intent(in), value  :: nucl_num, ao_num, mo_num, point_num, shell_num
+  integer (c_int64_t) ,   intent(in)         :: nucleus_index(nucl_num)
+  integer (c_int64_t) ,   intent(in)         :: nucleus_shell_num(nucl_num)
+  integer (c_int32_t) ,   intent(in)         :: shell_ang_mom(shell_num)
+  real    (c_double )   , intent(in)         :: coefficient_t(mo_num,ao_num)
+  real    (c_double )   , intent(in)         :: ao_hessian(ao_num,4,point_num,3)
+  real    (c_double )   , intent(out)        :: forces_mo_l(mo_num,point_num,3,nucl_num)
+  integer*8 :: i,j, m, n,a, il, ishell, ishell_start, ishell_end
+  integer           :: lstart(0:20)
+  integer           :: l, k
+  double precision :: c1
+
+  integer         , allocatable  ::  ao_index(:)
+  allocate(ao_index(ao_num))
+
+  do l=0,20
+    lstart(l) = l*(l+1)*(l+2)/6 +1
+  end do
+
+  k=1
+  do a=1,nucl_num
+     ishell_start = nucleus_index(a) + 1
+     ishell_end   = nucleus_index(a) + nucleus_shell_num(a)
+     do ishell = ishell_start, ishell_end
+        l = shell_ang_mom(ishell)
+        ao_index(ishell) = k
+        k = k + lstart(l+1) - lstart(l)
+     end do
+  end do
+
+  forces_mo_l = 0.d0
+  info = QMCKL_SUCCESS
+
+  do a=1, nucl_num
+    ishell_start = nucleus_index(a) + 1
+    ishell_end   = nucleus_index(a) + nucleus_shell_num(a)
+    do j=1,point_num
+      do n = 1, 3
+        do ishell = ishell_start, ishell_end
+          k = ao_index(ishell)
+          l = shell_ang_mom(ishell)
+          do il = lstart(l), lstart(l+1)-1
+            c1  = ao_hessian(k, 4, j, n)
+            if (c1 == 0.d0) then
+              k = k + 1
+              cycle
+            end if
+            do i=1,mo_num
+              forces_mo_l(i, j, n, a) = forces_mo_l(i, j, n, a) - coefficient_t(i,k) * c1
+            end do
+            k = k+1
+          end do
+        end do
+      end do
+    end do
+  end do
+
+
+  deallocate(ao_index)
+
+  !do a=1,nucl_num
+  !  do m = 1, 3
+  !   info = qmckl_dgemm(context,'N', 'N', mo_num, point_num, ao_num, &
+  !              -1.d0, coefficient_t, mo_num, &
+  !              ao_hessian(:, 4, :, m, a), ao_num, &
+  !              1.d0, forces_mo_l(:, :, m, a), mo_num)
+  !  end do
+  !end do
+
+
+
+end function qmckl_compute_forces_mo_l_doc
