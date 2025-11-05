@@ -729,6 +729,7 @@ integer(qmckl_exit_code) function qmckl_compute_single_ee_distance(context, &
           single_coord(1,k), 3_8, &
           single_ee_distance(1,k), elec_num)
      if (info /= QMCKL_SUCCESS) then
+        print *, 'Error in qmckl_distance in qmckl_compute_single_ee_distance'
         exit
      endif
      single_ee_distance(num,k) = 0.0d0
@@ -2221,6 +2222,12 @@ qmckl_compute_jastrow_champ_factor_single_een_hpc_c(
   if (elec_num <= 0) return qmckl_failwith(context, QMCKL_INVALID_ARG_4, "qmckl_compute_jastrow_champ_factor_single_een_hpc_c", "elec_num<=0");
   if (nucl_num <= 0) return qmckl_failwith(context, QMCKL_INVALID_ARG_5, "qmckl_compute_jastrow_champ_factor_single_een_hpc_c", "nucl_num<=0");
   if (cord_num < 0)  return qmckl_failwith(context, QMCKL_INVALID_ARG_6, "qmckl_compute_jastrow_champ_factor_single_een_hpc_c", "cord_num<0");
+
+  if (cord_num == 0) {                            /* trivial case */
+    for (int64_t nw = 0; nw < walk_num; ++nw) delta_een[nw] = 0.0;
+    return QMCKL_SUCCESS;
+  }
+
   if (!lkpm_combined_index || !c_vector_full || !een_rescaled_n || !een_rescaled_e ||
       !een_rescaled_single_n || !een_rescaled_single_e || !delta_een)
     return qmckl_failwith(context, QMCKL_FAILURE,
@@ -2228,11 +2235,6 @@ qmckl_compute_jastrow_champ_factor_single_een_hpc_c(
                           "NULL pointer argument");
 
   const int64_t cord_dim = cord_num + 1;
-
-  if (cord_num == 0) {                            /* trivial case */
-    for (int64_t nw = 0; nw < walk_num; ++nw) delta_een[nw] = 0.0;
-    return QMCKL_SUCCESS;
-  }
   const int64_t stride_e = elec_num + 1;
   const int64_t t_count = 2;
   const size_t total_nonzeros_elems = stride_e * nucl_num * t_count;
@@ -2498,7 +2500,12 @@ qmckl_compute_jastrow_champ_factor_single_een (qmckl_context context,
                           const double* een_rescaled_single_e,
                           double* const delta_een )
 {
+if (cord_num == 0) {
+    return qmckl_compute_jastrow_champ_factor_single_een_doc(context, num, walk_num, elec_num, nucl_num, cord_num, dim_c_vector,
+     c_vector_full, lkpm_combined_index, een_rescaled_n, een_rescaled_e, een_rescaled_single_n, een_rescaled_single_e, delta_een );
+ }
 #ifdef HAVE_HPC
+
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
 
@@ -5300,8 +5307,8 @@ function qmckl_compute_ee_rescaled_single_doc(context, &
   endif
 
   do k=1,walk_num
-      do i=1,elec_num
-     ee_rescaled_single(i,k) = (1.0d0 - dexp(-rescale_factor_ee * single_ee_distance(i,k))) * inverse_rescale_factor_ee
+     do i=1,elec_num
+        ee_rescaled_single(i,k) = (1.0d0 - dexp(-rescale_factor_ee * single_ee_distance(i,k))) * inverse_rescale_factor_ee
      enddo
   end do
 
@@ -5976,6 +5983,7 @@ function qmckl_compute_ee_rescaled_single_gl_doc(context, num_in,  &
 
      ! prepare the actual een table
      do i = 1, elec_num
+        if (i .eq. num) cycle
         rij_inv = 1.0d0 / single_ee_distance(i, nw)
         do ii = 1, 3
           elel_dist_gl(ii, i) = (elec_coord(i,nw, ii) - coord(ii,nw)) * rij_inv
@@ -5984,6 +5992,7 @@ function qmckl_compute_ee_rescaled_single_gl_doc(context, num_in,  &
      end do
 
       do i = 1, elec_num
+        if (i .eq. num) cycle
         kappa_l = -1 * rescale_factor_ee
         ee_rescaled_single_gl(1, i, nw) = elel_dist_gl(1, i)
         ee_rescaled_single_gl(2, i, nw) = elel_dist_gl(2, i)
@@ -7172,8 +7181,8 @@ function qmckl_compute_en_rescaled_single_doc(context, &
      return
   endif
 
-  do i=1, nucl_num
-     do k=1,walk_num
+  do k=1,walk_num
+    do i=1, nucl_num
         en_rescaled_single(i,k) = (1.0d0 - dexp(-rescale_factor_en(type_nucl_vector(i)+1) * &
              single_en_distance(i,k))) / rescale_factor_en(type_nucl_vector(i)+1)
      end do
@@ -9078,6 +9087,7 @@ qmckl_get_jastrow_champ_single_accept(qmckl_context context)
     ctx->single_point.delta_een_gl_date = ctx->single_point.date;
     ctx->single_point.delta_een_g_date = ctx->single_point.date;
     ctx->forces.forces_jastrow_single_een_date = ctx->single_point.date;
+    ctx->single_point.tmp_date = ctx->single_point.date;
   }
   ctx->single_point.single_ee_distance_date = ctx->single_point.date;
   ctx->single_point.single_en_distance_date = ctx->single_point.date;
