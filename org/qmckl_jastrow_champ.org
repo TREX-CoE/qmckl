@@ -13911,6 +13911,83 @@ function qmckl_compute_jastrow_champ_factor_een_doc( &
 end function qmckl_compute_jastrow_champ_factor_een_doc
      #+end_src
 
+   #+begin_src c :tangle (eval c) :comments org
+qmckl_exit_code
+qmckl_compute_jastrow_champ_factor_een_hpc(const qmckl_context context,
+                                           const int64_t walk_num,
+                                           const int64_t elec_num,
+                                           const int64_t nucl_num,
+                                           const int64_t cord_num,
+                                           const int64_t dim_c_vector,
+                                           const double* restrict c_vector_full,
+                                           const int64_t* restrict lkpm_combined_index,
+                                           const double* restrict tmp_c,
+                                           const double* restrict een_rescaled_n,
+                                           double* restrict const factor_een)
+{
+
+  int64_t info = QMCKL_SUCCESS;
+
+  if (context == QMCKL_NULL_CONTEXT) return QMCKL_INVALID_CONTEXT;
+  if (walk_num <= 0)                 return QMCKL_INVALID_ARG_2;
+  if (elec_num <= 0)                 return QMCKL_INVALID_ARG_3;
+  if (nucl_num <= 0)                 return QMCKL_INVALID_ARG_4;
+  if (cord_num <  0)                 return QMCKL_INVALID_ARG_5;
+
+
+  memset(factor_een, 0, walk_num*sizeof(double));
+
+  if (cord_num == 0) {
+    return QMCKL_SUCCESS;
+  }
+
+  const size_t elec_num2 = elec_num + elec_num;
+  const size_t elec_num3 = elec_num2 + elec_num;
+
+#ifdef HAVE_OPENMP
+#pragma omp parallel for
+#endif
+  for (size_t nw = 0; nw < (size_t) walk_num; ++nw) {
+    for (size_t n = 0; n < (size_t) dim_c_vector; ++n) {
+      const size_t l = lkpm_combined_index[n];
+      const size_t k = lkpm_combined_index[n+  dim_c_vector];
+      const size_t m = lkpm_combined_index[n+3*dim_c_vector];
+
+      const size_t en = elec_num*nucl_num;
+      const size_t len = l*en;
+      const size_t c1 = cord_num+1;
+      const size_t cn = cord_num*nw;
+      const size_t addr0 = en*(m+c1*(k+cn));
+      const size_t addr1 = en*(m+c1*nw);
+
+      const double* restrict tmp_c_mlkn = &(tmp_c[addr0]) + len;
+      const double* restrict een_rescaled_n_mnw = &(een_rescaled_n[addr1]);
+
+      const double* restrict cv = &(c_vector_full[n*nucl_num]);
+      for (size_t a = 0; a < (size_t) nucl_num; a++) {
+        double cn = cv[a];
+        if (cn == 0.0) continue;
+
+        const size_t ishift  = elec_num*a;
+
+        const double* restrict tmp_c_amlkn = tmp_c_mlkn + ishift;
+        const double* restrict een_rescaled_n_amnw  = een_rescaled_n_mnw + ishift;
+
+        double accu = 0.;
+#ifdef HAVE_OPENMP
+#pragma omp simd
+#endif
+        for (size_t j = 0; j < (size_t) elec_num; ++j) {
+          accu = accu + tmp_c_amlkn[j] * een_rescaled_n_amnw [j];
+        }
+        factor_een[nw] += cn * accu;
+
+      }
+    }
+  }
+  return info;
+}
+   #+end_src
 # #+CALL: generate_c_header(table=qmckl_factor_een_args,rettyp=qmckl_exit_code),fname=get_value("Name"))
 
  #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
@@ -13957,7 +14034,7 @@ qmckl_compute_jastrow_champ_factor_een (const qmckl_context context,
                           double* const factor_een )
 {
 #ifdef HAVE_HPC
-  return qmckl_compute_jastrow_champ_factor_een_doc
+  return qmckl_compute_jastrow_champ_factor_een_hpc
 #else
   return qmckl_compute_jastrow_champ_factor_een_doc
 #endif
@@ -14709,13 +14786,13 @@ qmckl_compute_jastrow_champ_factor_een_gl_hpc(const qmckl_context context,
                                                    const int64_t nucl_num,
                                                    const int64_t cord_num,
                                                    const int64_t dim_c_vector,
-                                                   const double *c_vector_full,
-                                                   const int64_t *lkpm_combined_index,
-                                                   const double *tmp_c,
-                                                   const double *dtmp_c,
-                                                   const double *een_rescaled_n,
-                                                   const double *een_rescaled_n_gl,
-                                                   double* const factor_een_gl)
+                                                   const double* restrict c_vector_full,
+                                                   const int64_t* restrict lkpm_combined_index,
+                                                   const double* restrict tmp_c,
+                                                   const double* restrict dtmp_c,
+                                                   const double* restrict een_rescaled_n,
+                                                   const double* restrict een_rescaled_n_gl,
+                                                   double* restrict const factor_een_gl)
 {
 
   int64_t info = QMCKL_SUCCESS;
