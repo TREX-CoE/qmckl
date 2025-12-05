@@ -14,12 +14,11 @@ assert( qmckl_context_check(context) ==  context );
 /* Creation:4 ends here */
 
 /* [[file:../org/qmckl_context.org::*Copy][Copy:4]] */
-/*
 qmckl_context new_context = qmckl_context_copy(context);
-munit_assert_int64(new_context, !=, QMCKL_NULL_CONTEXT);
-munit_assert_int64(new_context, !=, context);
-munit_assert_int64(qmckl_context_check(new_context), ==, new_context);
-*/
+assert(new_context != QMCKL_NULL_CONTEXT);
+assert(new_context != context);
+assert(qmckl_context_check(new_context) == new_context);
+qmckl_context_destroy(new_context);
 /* Copy:4 ends here */
 
 /* Destroy valid context */
