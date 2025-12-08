@@ -127,25 +127,26 @@ int main() {
    when initializing the library:
 
    #+NAME: constant_data
-   |---------------------------+-----------------------+----------------------------------------------------------------------|
-   | Variable                  | Type                  | Description                                                          |
-   |---------------------------+-----------------------+----------------------------------------------------------------------|
-   | ~type~                    | ~char~                | Gaussian (~'G'~) or Slater (~'S'~)                                   |
-   | ~shell_num~               | ~int64_t~             | Number of shells                                                     |
-   | ~prim_num~                | ~int64_t~             | Total number of primitives                                           |
-   | ~nucleus_index~           | ~int64_t[nucl_num]~   | Index of the first shell of each nucleus                             |
-   | ~nucleus_shell_num~       | ~int64_t[nucl_num]~   | Number of shells per nucleus                                         |
-   | ~shell_ang_mom~           | ~int32_t[shell_num]~  | Angular momentum of each shell                                       |
-   | ~shell_prim_num~          | ~int64_t[shell_num]~  | Number of primitives in each shell                                   |
-   | ~shell_prim_index~        | ~int64_t[shell_num]~  | Address of the first primitive of each shell in the ~EXPONENT~ array |
-   | ~shell_factor~            | ~double[shell_num]~   | Normalization factor for each shell                                  |
-   | ~exponent~                | ~double[prim_num]~    | Array of exponents                                                   |
-   | ~coefficient~             | ~double[prim_num]~    | Array of coefficients                                                |
-   | ~prim_factor~             | ~double[prim_num]~    | Normalization factors of the primtives                               |
-   | ~ao_num~                  | ~int64_t~             | Number of AOs                                                        |
-   | ~ao_cartesian~            | ~bool~                | If true, use polynomials. Otherwise, use spherical harmonics         |
-   | ~ao_factor~               | ~double[ao_num]~      | Normalization factor of the AO                                       |
-   |---------------------------+-----------------------+----------------------------------------------------------------------|
+   |---------------------+----------------------+----------------------------------------------------------------------|
+   | Variable            | Type                 | Description                                                          |
+   |---------------------+----------------------+----------------------------------------------------------------------|
+   | ~type~              | ~char~               | Gaussian (~'G'~) or Slater (~'S'~)                                   |
+   | ~shell_num~         | ~int64_t~            | Number of shells                                                     |
+   | ~prim_num~          | ~int64_t~            | Total number of primitives                                           |
+   | ~nucleus_index~     | ~int64_t[nucl_num]~  | Index of the first shell of each nucleus                             |
+   | ~nucleus_shell_num~ | ~int64_t[nucl_num]~  | Number of shells per nucleus                                         |
+   | ~r_power~           | ~int32_t[shell_num]~ | Power of r in Slater type orbitals ($n_s$)                           |
+   | ~shell_ang_mom~     | ~int32_t[shell_num]~ | Angular momentum of each shell                                       |
+   | ~shell_prim_num~    | ~int64_t[shell_num]~ | Number of primitives in each shell                                   |
+   | ~shell_prim_index~  | ~int64_t[shell_num]~ | Address of the first primitive of each shell in the ~EXPONENT~ array |
+   | ~shell_factor~      | ~double[shell_num]~  | Normalization factor for each shell                                  |
+   | ~exponent~          | ~double[prim_num]~   | Array of exponents                                                   |
+   | ~coefficient~       | ~double[prim_num]~   | Array of coefficients                                                |
+   | ~prim_factor~       | ~double[prim_num]~   | Normalization factors of the primtives                               |
+   | ~ao_num~            | ~int64_t~            | Number of AOs                                                        |
+   | ~ao_cartesian~      | ~bool~               | If true, use polynomials. Otherwise, use spherical harmonics         |
+   | ~ao_factor~         | ~double[ao_num]~     | Normalization factor of the AO                                       |
+   |---------------------+----------------------+----------------------------------------------------------------------|
 
    The following data is computed when the basis is finalized:
 
@@ -299,6 +300,7 @@ typedef struct qmckl_ao_basis_struct {
   int64_t            ao_num;
   int64_t * restrict nucleus_index;
   int64_t * restrict nucleus_shell_num;
+  int32_t * restrict r_power;
   int32_t * restrict shell_ang_mom;
   int64_t * restrict shell_prim_num;
   int64_t * restrict shell_prim_index;
@@ -650,7 +652,6 @@ qmckl_set_ao_basis_nucleus_index (qmckl_context context,
   <<post2>>
 }
      #+end_src
-
 
      #+begin_src c :comments org :tangle (eval h_func)
 qmckl_exit_code
@@ -1194,6 +1195,70 @@ qmckl_set_ao_basis_ao_factor (qmckl_context context,
 }
      #+end_src
 
+     #+begin_src c :comments org :tangle (eval h_func)
+qmckl_exit_code
+qmckl_set_ao_basis_r_power (qmckl_context context,
+                            const int32_t* r_power,
+                            const int64_t size_max);
+     #+end_src
+
+     #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
+qmckl_exit_code
+qmckl_set_ao_basis_r_power (qmckl_context context,
+                            const int32_t* r_power,
+                            const int64_t size_max)
+{
+//  Optional, so we don't need the mask here
+  int32_t mask = 0;
+
+  <<pre2>>
+
+  const int64_t shell_num = ctx->ao_basis.shell_num;
+
+  if (shell_num == 0L) {
+    return qmckl_failwith( context,
+                           QMCKL_FAILURE,
+                           "qmckl_set_ao_basis_r_power",
+                           "shell_num is not set");
+  }
+
+  if (size_max < shell_num) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_3,
+                           "qmckl_set_ao_basis_r_power",
+                           "input array too small");
+  }
+
+  if (ctx->ao_basis.r_power != NULL) {
+    qmckl_exit_code rc = qmckl_free(context, ctx->ao_basis.r_power);
+    if (rc != QMCKL_SUCCESS) {
+      return qmckl_failwith( context, rc,
+                             "qmckl_set_ao_basis_r_power",
+                             NULL);
+    }
+  }
+
+
+  qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+  mem_info.size = shell_num * sizeof(int32_t);
+  int32_t * new_array = (int32_t*) qmckl_malloc(context, mem_info);
+
+  if (new_array == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_ALLOCATION_FAILED,
+                           "qmckl_set_ao_basis_r_power",
+                           NULL);
+  }
+
+  memcpy(new_array, r_power, mem_info.size);
+
+  ctx->ao_basis.r_power = new_array;
+
+  <<post2>>
+}
+     #+end_src
+
+
 
      #+begin_src c :comments org :tangle (eval h_func)
 qmckl_exit_code
@@ -1274,6 +1339,18 @@ interface
     integer (c_int64_t) , intent(in)          :: shell_num(*)
     integer (c_int64_t) , intent(in)  , value :: size_max
   end function qmckl_set_ao_basis_nucleus_shell_num
+end interface
+
+interface
+  integer(c_int32_t) function qmckl_set_ao_basis_r_power(context, &
+       r_power, size_max) bind(C)
+    use qmckl_constants
+    import
+    implicit none
+    integer (c_int64_t) , intent(in)  , value :: context
+    integer (c_int32_t) , intent(in)          :: r_power(*)
+    integer (c_int64_t) , intent(in)  , value :: size_max
+  end function qmckl_set_ao_basis_r_power
 end interface
 
 interface
@@ -1624,6 +1701,60 @@ qmckl_get_ao_basis_nucleus_index (const qmckl_context context,
   assert (ctx->ao_basis.nucleus_index != NULL);
   memcpy(nucleus_index, ctx->ao_basis.nucleus_index,
          (size_t) ctx->nucleus.num * sizeof(int64_t));
+  return QMCKL_SUCCESS;
+}
+
+
+    #+end_src
+
+
+    #+begin_src c :comments org :tangle (eval h_func)
+qmckl_exit_code
+qmckl_get_ao_basis_r_power (const qmckl_context context,
+                            int32_t* const r_power,
+                            const int64_t size_max);
+    #+end_src
+
+    #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
+qmckl_exit_code
+qmckl_get_ao_basis_r_power (const qmckl_context context,
+                            int32_t* const r_power,
+                            const int64_t size_max)
+{
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_get_ao_basis_r_power",
+                           NULL);
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  if ( (ctx->ao_basis.uninitialized) != 0) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_get_ao_basis_r_power",
+                           NULL);
+  }
+
+  if (r_power == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_get_ao_basis_r_power",
+                           "NULL pointer");
+  }
+
+  if (size_max < ctx->ao_basis.shell_num) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_3,
+                           "qmckl_get_ao_basis_r_power",
+                           "Array too small. Expected shell_num");
+  }
+
+  assert (ctx->ao_basis.r_power != NULL);
+  memcpy(r_power, ctx->ao_basis.r_power,
+         (size_t) ctx->ao_basis.shell_num * sizeof(int32_t));
   return QMCKL_SUCCESS;
 }
 
@@ -2192,6 +2323,18 @@ interface
 end interface
 
 interface
+  integer(c_int32_t) function qmckl_get_ao_basis_r_power(context, &
+       r_power, size_max) bind(C)
+    use qmckl_constants
+    import
+    implicit none
+    integer (c_int64_t) , intent(in)  , value :: context
+    integer (c_int32_t) , intent(out)         :: r_power(*)
+    integer (c_int64_t) , intent(in)  , value :: size_max
+  end function qmckl_get_ao_basis_r_power
+end interface
+
+interface
   integer(c_int32_t) function qmckl_get_ao_basis_shell_ang_mom(context, &
        shell_ang_mom, size_max) bind(C)
     use qmckl_constants
@@ -2577,6 +2720,35 @@ qmckl_exit_code qmckl_finalize_basis(qmckl_context context) {
   qmckl_exit_code rc = qmckl_get_nucleus_num(context, &nucl_num);
   if (rc != QMCKL_SUCCESS) return rc;
 
+  /* r_power */
+  {
+    if (ctx->ao_basis.r_power == NULL) {
+
+      int32_t* r_power = (int32_t*) malloc( (ctx->ao_basis.shell_num) * sizeof(int32_t));
+      
+      if (r_power == NULL) {
+        return qmckl_failwith( context,
+                               QMCKL_ALLOCATION_FAILED,
+                               "ao_basis.r_power",
+                               NULL);
+      }
+      
+      for (int64_t i=0 ; i< ctx->ao_basis.shell_num ; ++i) {
+        r_power[i] = 0;
+      }
+
+      rc = qmckl_set_ao_basis_r_power(context, r_power, ctx->ao_basis.shell_num);
+      free(r_power);
+
+      if (rc != QMCKL_SUCCESS) {
+        return qmckl_failwith(context,
+                             QMCKL_FAILURE,
+                             "ao_basis.r_power",
+                             NULL);
+      }
+      
+    }
+  }
   /* nucleus_prim_index */
   {
     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
@@ -2698,50 +2870,10 @@ qmckl_exit_code qmckl_finalize_basis(qmckl_context context) {
   }
 
 
-/*
-  // Find distance beyond which all AOs are zero using computed Gaussians.
-  {
-    qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-    mem_info.size = ctx->nucleus.num * 53 * sizeof(double);
-    
-    ctx->ao_basis.nucleus_range = (double *) qmckl_malloc(context, mem_info);
-
-    if (ctx->ao_basis.nucleus_range == NULL) {
-      return qmckl_failwith( context,
-                             QMCKL_ALLOCATION_FAILED,
-                             "ao_basis.nucleus_range",
-                             NULL);
-    }
-
-    for (int64_t i=0 ; i<ctx->nucleus.num * 53 ; ++i) {
-      ctx->ao_basis.nucleus_range[i] = 50.;
-    }
-
-    if (ctx->ao_basis.type == 'G') {
-      rc = qmckl_compute_nucleus_range_gaussian(context,
-                                                ctx->ao_basis.ao_num,
-                                                ctx->ao_basis.shell_num,
-                                                ctx->ao_basis.prim_num,
-                                                nucl_num,
-                                                ctx->nucleus.coord.data,
-                                                ctx->ao_basis.nucleus_index,
-                                                ctx->ao_basis.nucleus_shell_num,
-                                                ctx->ao_basis.nucleus_max_ang_mom,
-                                                ctx->ao_basis.shell_prim_index,
-                                                ctx->ao_basis.shell_prim_num,
-                                                ctx->ao_basis.shell_ang_mom,
-                                                ctx->ao_basis.ao_factor,
-                                                ctx->ao_basis.exponent,
-                                                ctx->ao_basis.coefficient_normalized,
-                                                ctx->ao_basis.nucleus_range);
-    }
-  }
-*/
-
   /* Find distance beyond which all AOs are zero.
      The distance is obtained by sqrt(-log(epsilon)*range) */
   {
-    if (ctx->ao_basis.type == 'G') {
+    if (ctx->ao_basis.type == 'G' || ctx->ao_basis.type == 'S') {
       qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
       mem_info.size = ctx->nucleus.num * sizeof(double);
 
@@ -2762,7 +2894,8 @@ qmckl_exit_code qmckl_finalize_basis(qmckl_context context) {
           for (int64_t iprim=ctx->ao_basis.shell_prim_index[ishell] ;
                iprim < ctx->ao_basis.shell_prim_index[ishell] + ctx->ao_basis.shell_prim_num[ishell] ;
                ++iprim) {
-            double range = 1./ctx->ao_basis.exponent[iprim];
+            double n_val = (double)(ctx->ao_basis.r_power[ishell] + 1);
+            double range = n_val/ctx->ao_basis.exponent[iprim];
             ctx->ao_basis.nucleus_range[inucl] =
               ctx->ao_basis.nucleus_range[inucl] > range ?
               ctx->ao_basis.nucleus_range[inucl] : range;
