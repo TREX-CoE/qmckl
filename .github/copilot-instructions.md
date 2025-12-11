@@ -84,7 +84,7 @@ make -j check
 
 ### Error Handling
 
-- **All functions return `qmckl_exit_code`** (a `int32_t` type)
+- **All functions return `qmckl_exit_code`** (an `int32_t` type)
 - **Success**: Return `QMCKL_SUCCESS` (value 0)
 - **Errors**: Return specific error codes like `QMCKL_INVALID_ARG_1`, `QMCKL_INVALID_ARG_2`, etc.
 - **Never abort**: Library functions should never cause the program to abort
