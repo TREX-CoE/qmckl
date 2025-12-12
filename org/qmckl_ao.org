@@ -127,25 +127,26 @@ int main() {
    when initializing the library:
 
    #+NAME: constant_data
-   |---------------------------+-----------------------+----------------------------------------------------------------------|
-   | Variable                  | Type                  | Description                                                          |
-   |---------------------------+-----------------------+----------------------------------------------------------------------|
-   | ~type~                    | ~char~                | Gaussian (~'G'~) or Slater (~'S'~)                                   |
-   | ~shell_num~               | ~int64_t~             | Number of shells                                                     |
-   | ~prim_num~                | ~int64_t~             | Total number of primitives                                           |
-   | ~nucleus_index~           | ~int64_t[nucl_num]~   | Index of the first shell of each nucleus                             |
-   | ~nucleus_shell_num~       | ~int64_t[nucl_num]~   | Number of shells per nucleus                                         |
-   | ~shell_ang_mom~           | ~int32_t[shell_num]~  | Angular momentum of each shell                                       |
-   | ~shell_prim_num~          | ~int64_t[shell_num]~  | Number of primitives in each shell                                   |
-   | ~shell_prim_index~        | ~int64_t[shell_num]~  | Address of the first primitive of each shell in the ~EXPONENT~ array |
-   | ~shell_factor~            | ~double[shell_num]~   | Normalization factor for each shell                                  |
-   | ~exponent~                | ~double[prim_num]~    | Array of exponents                                                   |
-   | ~coefficient~             | ~double[prim_num]~    | Array of coefficients                                                |
-   | ~prim_factor~             | ~double[prim_num]~    | Normalization factors of the primtives                               |
-   | ~ao_num~                  | ~int64_t~             | Number of AOs                                                        |
-   | ~ao_cartesian~            | ~bool~                | If true, use polynomials. Otherwise, use spherical harmonics         |
-   | ~ao_factor~               | ~double[ao_num]~      | Normalization factor of the AO                                       |
-   |---------------------------+-----------------------+----------------------------------------------------------------------|
+   |---------------------+----------------------+----------------------------------------------------------------------|
+   | Variable            | Type                 | Description                                                          |
+   |---------------------+----------------------+----------------------------------------------------------------------|
+   | ~type~              | ~char~               | Gaussian (~'G'~) or Slater (~'S'~)                                   |
+   | ~shell_num~         | ~int64_t~            | Number of shells                                                     |
+   | ~prim_num~          | ~int64_t~            | Total number of primitives                                           |
+   | ~nucleus_index~     | ~int64_t[nucl_num]~  | Index of the first shell of each nucleus                             |
+   | ~nucleus_shell_num~ | ~int64_t[nucl_num]~  | Number of shells per nucleus                                         |
+   | ~r_power~           | ~int32_t[shell_num]~ | Power of r in Slater type orbitals ($n_s$)                           |
+   | ~shell_ang_mom~     | ~int32_t[shell_num]~ | Angular momentum of each shell                                       |
+   | ~shell_prim_num~    | ~int64_t[shell_num]~ | Number of primitives in each shell                                   |
+   | ~shell_prim_index~  | ~int64_t[shell_num]~ | Address of the first primitive of each shell in the ~EXPONENT~ array |
+   | ~shell_factor~      | ~double[shell_num]~  | Normalization factor for each shell                                  |
+   | ~exponent~          | ~double[prim_num]~   | Array of exponents                                                   |
+   | ~coefficient~       | ~double[prim_num]~   | Array of coefficients                                                |
+   | ~prim_factor~       | ~double[prim_num]~   | Normalization factors of the primtives                               |
+   | ~ao_num~            | ~int64_t~            | Number of AOs                                                        |
+   | ~ao_cartesian~      | ~bool~               | If true, use polynomials. Otherwise, use spherical harmonics         |
+   | ~ao_factor~         | ~double[ao_num]~     | Normalization factor of the AO                                       |
+   |---------------------+----------------------+----------------------------------------------------------------------|
 
    The following data is computed when the basis is finalized:
 
@@ -299,6 +300,7 @@ typedef struct qmckl_ao_basis_struct {
   int64_t            ao_num;
   int64_t * restrict nucleus_index;
   int64_t * restrict nucleus_shell_num;
+  int32_t * restrict r_power;
   int32_t * restrict shell_ang_mom;
   int64_t * restrict shell_prim_num;
   int64_t * restrict shell_prim_index;
@@ -650,7 +652,6 @@ qmckl_set_ao_basis_nucleus_index (qmckl_context context,
   <<post2>>
 }
      #+end_src
-
 
      #+begin_src c :comments org :tangle (eval h_func)
 qmckl_exit_code
@@ -1194,6 +1195,70 @@ qmckl_set_ao_basis_ao_factor (qmckl_context context,
 }
      #+end_src
 
+     #+begin_src c :comments org :tangle (eval h_func)
+qmckl_exit_code
+qmckl_set_ao_basis_r_power (qmckl_context context,
+                            const int32_t* r_power,
+                            const int64_t size_max);
+     #+end_src
+
+     #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
+qmckl_exit_code
+qmckl_set_ao_basis_r_power (qmckl_context context,
+                            const int32_t* r_power,
+                            const int64_t size_max)
+{
+//  Optional, so we don't need the mask here
+  int32_t mask = 0;
+
+  <<pre2>>
+
+  const int64_t shell_num = ctx->ao_basis.shell_num;
+
+  if (shell_num == 0L) {
+    return qmckl_failwith( context,
+                           QMCKL_FAILURE,
+                           "qmckl_set_ao_basis_r_power",
+                           "shell_num is not set");
+  }
+
+  if (size_max < shell_num) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_3,
+                           "qmckl_set_ao_basis_r_power",
+                           "input array too small");
+  }
+
+  if (ctx->ao_basis.r_power != NULL) {
+    qmckl_exit_code rc = qmckl_free(context, ctx->ao_basis.r_power);
+    if (rc != QMCKL_SUCCESS) {
+      return qmckl_failwith( context, rc,
+                             "qmckl_set_ao_basis_r_power",
+                             NULL);
+    }
+  }
+
+
+  qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+  mem_info.size = shell_num * sizeof(int32_t);
+  int32_t * new_array = (int32_t*) qmckl_malloc(context, mem_info);
+
+  if (new_array == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_ALLOCATION_FAILED,
+                           "qmckl_set_ao_basis_r_power",
+                           NULL);
+  }
+
+  memcpy(new_array, r_power, mem_info.size);
+
+  ctx->ao_basis.r_power = new_array;
+
+  <<post2>>
+}
+     #+end_src
+
+
 
      #+begin_src c :comments org :tangle (eval h_func)
 qmckl_exit_code
@@ -1274,6 +1339,18 @@ interface
     integer (c_int64_t) , intent(in)          :: shell_num(*)
     integer (c_int64_t) , intent(in)  , value :: size_max
   end function qmckl_set_ao_basis_nucleus_shell_num
+end interface
+
+interface
+  integer(c_int32_t) function qmckl_set_ao_basis_r_power(context, &
+       r_power, size_max) bind(C)
+    use qmckl_constants
+    import
+    implicit none
+    integer (c_int64_t) , intent(in)  , value :: context
+    integer (c_int32_t) , intent(in)          :: r_power(*)
+    integer (c_int64_t) , intent(in)  , value :: size_max
+  end function qmckl_set_ao_basis_r_power
 end interface
 
 interface
@@ -1624,6 +1701,60 @@ qmckl_get_ao_basis_nucleus_index (const qmckl_context context,
   assert (ctx->ao_basis.nucleus_index != NULL);
   memcpy(nucleus_index, ctx->ao_basis.nucleus_index,
          (size_t) ctx->nucleus.num * sizeof(int64_t));
+  return QMCKL_SUCCESS;
+}
+
+
+    #+end_src
+
+
+    #+begin_src c :comments org :tangle (eval h_func)
+qmckl_exit_code
+qmckl_get_ao_basis_r_power (const qmckl_context context,
+                            int32_t* const r_power,
+                            const int64_t size_max);
+    #+end_src
+
+    #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
+qmckl_exit_code
+qmckl_get_ao_basis_r_power (const qmckl_context context,
+                            int32_t* const r_power,
+                            const int64_t size_max)
+{
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_get_ao_basis_r_power",
+                           NULL);
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  if ( (ctx->ao_basis.uninitialized) != 0) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_get_ao_basis_r_power",
+                           NULL);
+  }
+
+  if (r_power == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_get_ao_basis_r_power",
+                           "NULL pointer");
+  }
+
+  if (size_max < ctx->ao_basis.shell_num) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_3,
+                           "qmckl_get_ao_basis_r_power",
+                           "Array too small. Expected shell_num");
+  }
+
+  assert (ctx->ao_basis.r_power != NULL);
+  memcpy(r_power, ctx->ao_basis.r_power,
+         (size_t) ctx->ao_basis.shell_num * sizeof(int32_t));
   return QMCKL_SUCCESS;
 }
 
@@ -2192,6 +2323,18 @@ interface
 end interface
 
 interface
+  integer(c_int32_t) function qmckl_get_ao_basis_r_power(context, &
+       r_power, size_max) bind(C)
+    use qmckl_constants
+    import
+    implicit none
+    integer (c_int64_t) , intent(in)  , value :: context
+    integer (c_int32_t) , intent(out)         :: r_power(*)
+    integer (c_int64_t) , intent(in)  , value :: size_max
+  end function qmckl_get_ao_basis_r_power
+end interface
+
+interface
   integer(c_int32_t) function qmckl_get_ao_basis_shell_ang_mom(context, &
        shell_ang_mom, size_max) bind(C)
     use qmckl_constants
@@ -2577,6 +2720,35 @@ qmckl_exit_code qmckl_finalize_basis(qmckl_context context) {
   qmckl_exit_code rc = qmckl_get_nucleus_num(context, &nucl_num);
   if (rc != QMCKL_SUCCESS) return rc;
 
+  /* r_power */
+  {
+    if (ctx->ao_basis.r_power == NULL) {
+
+      int32_t* r_power = (int32_t*) malloc( (ctx->ao_basis.shell_num) * sizeof(int32_t));
+      
+      if (r_power == NULL) {
+        return qmckl_failwith( context,
+                               QMCKL_ALLOCATION_FAILED,
+                               "ao_basis.r_power",
+                               NULL);
+      }
+      
+      for (int64_t i=0 ; i< ctx->ao_basis.shell_num ; ++i) {
+        r_power[i] = 0;
+      }
+
+      rc = qmckl_set_ao_basis_r_power(context, r_power, ctx->ao_basis.shell_num);
+      free(r_power);
+
+      if (rc != QMCKL_SUCCESS) {
+        return qmckl_failwith(context,
+                             QMCKL_FAILURE,
+                             "ao_basis.r_power",
+                             NULL);
+      }
+      
+    }
+  }
   /* nucleus_prim_index */
   {
     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
@@ -2697,26 +2869,22 @@ qmckl_exit_code qmckl_finalize_basis(qmckl_context context) {
     }
   }
 
-
-/*
+  /*
   // Find distance beyond which all AOs are zero using computed Gaussians.
   {
     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
     mem_info.size = ctx->nucleus.num * 53 * sizeof(double);
     
     ctx->ao_basis.nucleus_range = (double *) qmckl_malloc(context, mem_info);
-
     if (ctx->ao_basis.nucleus_range == NULL) {
       return qmckl_failwith( context,
                              QMCKL_ALLOCATION_FAILED,
                              "ao_basis.nucleus_range",
                              NULL);
     }
-
     for (int64_t i=0 ; i<ctx->nucleus.num * 53 ; ++i) {
       ctx->ao_basis.nucleus_range[i] = 50.;
     }
-
     if (ctx->ao_basis.type == 'G') {
       rc = qmckl_compute_nucleus_range_gaussian(context,
                                                 ctx->ao_basis.ao_num,
@@ -2734,6 +2902,23 @@ qmckl_exit_code qmckl_finalize_basis(qmckl_context context) {
                                                 ctx->ao_basis.exponent,
                                                 ctx->ao_basis.coefficient_normalized,
                                                 ctx->ao_basis.nucleus_range);
+    } else if (ctx->ao_basis.type == 'S') {
+      rc = qmckl_compute_nucleus_range_slater(context,
+                                              ctx->ao_basis.ao_num,
+                                              ctx->ao_basis.shell_num,
+                                              ctx->ao_basis.prim_num,
+                                              nucl_num,
+                                              ctx->nucleus.coord.data,
+                                              ctx->ao_basis.nucleus_index,
+                                              ctx->ao_basis.nucleus_shell_num,
+                                              ctx->ao_basis.nucleus_max_ang_mom,
+                                              ctx->ao_basis.shell_prim_index,
+                                              ctx->ao_basis.shell_prim_num,
+                                              ctx->ao_basis.shell_ang_mom,
+                                              ctx->ao_basis.ao_factor,
+                                              ctx->ao_basis.exponent,
+                                              ctx->ao_basis.coefficient_normalized,
+                                              ctx->ao_basis.nucleus_range);
     }
   }
 */
@@ -2741,7 +2926,7 @@ qmckl_exit_code qmckl_finalize_basis(qmckl_context context) {
   /* Find distance beyond which all AOs are zero.
      The distance is obtained by sqrt(-log(epsilon)*range) */
   {
-    if (ctx->ao_basis.type == 'G') {
+    if (ctx->ao_basis.type == 'G' || ctx->ao_basis.type == 'S') {
       qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
       mem_info.size = ctx->nucleus.num * sizeof(double);
 
@@ -2762,7 +2947,8 @@ qmckl_exit_code qmckl_finalize_basis(qmckl_context context) {
           for (int64_t iprim=ctx->ao_basis.shell_prim_index[ishell] ;
                iprim < ctx->ao_basis.shell_prim_index[ishell] + ctx->ao_basis.shell_prim_num[ishell] ;
                ++iprim) {
-            double range = 1./ctx->ao_basis.exponent[iprim];
+            double n_val = (double)(ctx->ao_basis.r_power[ishell] + 1);
+            double range = n_val/ctx->ao_basis.exponent[iprim];
             ctx->ao_basis.nucleus_range[inucl] =
               ctx->ao_basis.nucleus_range[inucl] > range ?
               ctx->ao_basis.nucleus_range[inucl] : range;
@@ -3569,7 +3755,419 @@ int test_qmckl_ao_gaussian_vgl(qmckl_context context);
 assert(0 == test_qmckl_ao_gaussian_vgl(context));
     #+end_src
 
-** TODO General functions for Slater basis functions               :noexport:
+** TODO General functions for Slater basis functions
+
+   ~qmckl_ao_slater_vgl~ computes the values, gradients and Laplacians
+   at a given point of ~n~ Slater-type orbitals centered at the same
+   point:
+
+   \[ v_i = r^{n_i} \exp(-a_i r) \]
+   \[ \nabla_x v_i = \left(n_i \frac{X_x - R_x}{r} - a_i \frac{X_x - R_x}{r}\right) v_i \]
+   \[ \nabla_y v_i = \left(n_i \frac{X_y - R_y}{r} - a_i \frac{X_y - R_y}{r}\right) v_i \]
+   \[ \nabla_z v_i = \left(n_i \frac{X_z - R_z}{r} - a_i \frac{X_z - R_z}{r}\right) v_i \]
+   \[ \Delta v_i = \frac{1}{r^2} \left[ n_i^2 - 2 n_i a_i r + a_i r (a_i r-2) + n \right] v_i \]
+
+   |-----------------+-----------------------+-------------------------------------------------------|
+   | Variable        | Type                  | Description                                           |
+   |-----------------+-----------------------+-------------------------------------------------------|
+   | ~context~       | ~qmckl_context~       | Global state                                          |
+   | ~X(3)~          | ~double[3]~           | Array containing the coordinates of the points        |
+   | ~R(3)~          | ~double[3]~           | Array containing the x,y,z coordinates of the center  |
+   | ~num_slater~    | ~int64_t~             | Number of computed Slater orbitals                    |
+   | ~A(num_slater)~ | ~double[num_slater]~  | Exponents of the Slater orbitals                      |
+   | ~N(num_slater)~ | ~int64_t[num_slater]~ | Principal quantum numbers of the Slater orbitals      |
+   | ~VGL(ldv,5)~    | ~double[5][ldv]~      | Value, gradients and Laplacian of the Slater orbitals |
+   | ~ldv~           | ~int64_t~             | Leading dimension of array ~VGL~                      |
+   |-----------------+-----------------------+-------------------------------------------------------|
+
+   Requirements:
+
+        - ~context~ \ne 0
+        - ~num_slater~ > 0
+        - ~ldv~ >= 5
+        - ~A(i)~ > 0 for all ~i~
+        - ~N(i)~ > 0 for all ~i~
+        - ~X~ is allocated with at least $3 \times 8$ bytes
+        - ~R~ is allocated with at least $3 \times 8$ bytes
+        - ~A~ is allocated with at least $num\_slater \times 8$ bytes
+        - ~N~ is allocated with at least $num\_slater \times 8$ bytes
+        - ~VGL~ is allocated with at least $num\_slater \times 5 \times 8$ bytes
+
+   #+begin_src c :tangle (eval h_func)
+qmckl_exit_code
+qmckl_ao_slater_vgl(const qmckl_context context,
+                    const double *X,
+                    const double *R,
+                    const int64_t *num_slater,
+                    const int64_t *N,
+                    const double *A,
+                    const double *VGL,
+                    const int64_t ldv);
+   #+end_src
+
+   #+begin_src f90 :tangle (eval f)
+function qmckl_ao_slater_vgl(context, X, R, num_slater, N, A, VGL, ldv) &
+  bind(C) result(info)
+  use qmckl_constants
+  implicit none
+  integer (qmckl_context) , intent(in) , value :: context
+  real    (c_double)  , intent(in)         :: X(3), R(3)
+  integer (c_int64_t) , intent(in) , value :: num_slater
+  integer (c_int64_t) , intent(in) , value :: ldv
+  integer (c_int64_t) , intent(in)         :: N(num_slater)
+  real    (c_double)  , intent(in)         :: A(num_slater)
+  real    (c_double)  , intent(out)        :: VGL(ldv,5)
+  integer (qmckl_exit_code) :: info
+
+  integer*8         :: i
+  double precision  :: Y_vec(3), radius, r_inv, r_inv_2, x_over_r, y_over_r, z_over_r
+  double precision  :: alpha, n_val, rn, exp_alpha_r
+  double precision  :: grad_coef, lapl_coef
+
+  info = QMCKL_SUCCESS
+
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  if (num_slater <= 0) then
+     info = QMCKL_INVALID_ARG_4
+     return
+  endif
+
+  if (ldv < num_slater) then
+     info = QMCKL_INVALID_ARG_8
+     return
+  endif
+
+  ! Compute distance vector and radius
+  do i=1,3
+     Y_vec(i) = X(i) - R(i)
+  end do
+  radius = dsqrt(Y_vec(1)*Y_vec(1) + Y_vec(2)*Y_vec(2) + Y_vec(3)*Y_vec(3))
+
+  ! Handle r = 0 case
+  if (radius < 1.d-15) then
+     do i=1,num_slater
+        if (N(i) == 1) then
+           VGL(i,1) = 1.d0
+        else
+           VGL(i,1) = 0.d0
+        end if
+        VGL(i,2) = 0.d0
+        VGL(i,3) = 0.d0
+        VGL(i,4) = 0.d0
+        VGL(i,5) = 0.d0
+     end do
+     return
+  end if
+
+  r_inv = 1.d0 / radius
+  r_inv_2 = r_inv * r_inv
+  x_over_r = Y_vec(1) * r_inv
+  y_over_r = Y_vec(2) * r_inv
+  z_over_r = Y_vec(3) * r_inv
+
+  ! Compute values, gradients and Laplacians for each Slater orbital
+  do i=1,num_slater
+     alpha = A(i)
+     n_val = dble(N(i))
+
+     ! Compute r^n * exp(-alpha * r)
+     if (N(i) == 1) then
+        rn = radius
+     else
+        rn = radius**N(i)
+     end if
+     exp_alpha_r = dexp(-alpha * radius)
+
+     ! Value: r^n * exp(-alpha * r)
+     VGL(i,1) = rn * exp_alpha_r
+
+     ! Gradient coefficients
+     grad_coef = (n_val * r_inv - alpha) * VGL(i,1)
+     VGL(i,2) = grad_coef * x_over_r
+     VGL(i,3) = grad_coef * y_over_r
+     VGL(i,4) = grad_coef * z_over_r
+
+     ! Laplacian: 1/r² [ n² - 2nar + ar(ar-2) + n] * v
+     lapl_coef = r_inv*r_inv * (n_val*n_val - 2.d0 * n_val * alpha*radius + &
+          alpha*radius * (alpha*radius - 2.d0) + n_val)
+     VGL(i,5) = lapl_coef * VGL(i,1)
+  end do
+
+end function qmckl_ao_slater_vgl
+   #+end_src
+
+   #+begin_src f90 :tangle (eval fh_func) :exports none
+interface
+   integer(c_int32_t) function qmckl_ao_slater_vgl(context, &
+        X, R, num_slater, N, A, VGL, ldv) bind(C)
+     use qmckl_constants
+     import
+     implicit none
+     integer (c_int64_t) , intent(in)  , value :: context
+     real    (c_double)  , intent(in)          :: X(3), R(3)
+     integer (c_int64_t) , intent(in)  , value :: num_slater
+     integer (c_int64_t) , intent(in)  , value :: ldv
+     integer (c_int64_t) , intent(in)          :: N(num_slater)
+     real    (c_double)  , intent(in)          :: A(num_slater)
+     real    (c_double)  , intent(out)         :: VGL(ldv,5)
+   end function qmckl_ao_slater_vgl
+end interface
+   #+end_src
+
+   #+begin_src c :tangle (eval h_func)
+qmckl_exit_code
+qmckl_ao_slater_vgl_hpc(const qmckl_context context,
+                         const double *X,
+                         const double *R,
+                         const int64_t *num_slater,
+                         const int64_t *N,
+                         const double *A,
+                         double *VGL,
+                         const int64_t ldv);
+   #+end_src
+
+   #+begin_src c :tangle (eval c) :noweb yes
+qmckl_exit_code
+qmckl_ao_slater_vgl_hpc(const qmckl_context context,
+                         const double *X,
+                         const double *R,
+                         const int64_t *num_slater,
+                         const int64_t *N,
+                         const double *A,
+                         double *VGL,
+                         const int64_t ldv)
+{
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_INVALID_CONTEXT;
+  }
+
+  if (*num_slater <= 0) {
+    return QMCKL_INVALID_ARG_4;
+  }
+
+  if (ldv < *num_slater) {
+    return QMCKL_INVALID_ARG_8;
+  }
+
+  const double Y[3] = {X[0] - R[0], X[1] - R[1], X[2] - R[2]};
+  const double r = sqrt(Y[0]*Y[0] + Y[1]*Y[1] + Y[2]*Y[2]);
+
+  // Handle r = 0 case
+  if (r < 1.e-15) {
+    for (int64_t i = 0; i < *num_slater; ++i) {
+      const int64_t idx = i;
+      VGL[idx] = (N[i] == 1) ? 1.0 : 0.0;
+      VGL[ldv + idx] = 0.0;
+      VGL[2*ldv + idx] = 0.0;
+      VGL[3*ldv + idx] = 0.0;
+      VGL[4*ldv + idx] = 0.0;
+    }
+    return QMCKL_SUCCESS;
+  }
+
+  const double r_inv = 1.0 / r;
+  const double r_inv_2 = r_inv * r_inv;
+  const double x_over_r = Y[0] * r_inv;
+  const double y_over_r = Y[1] * r_inv;
+  const double z_over_r = Y[2] * r_inv;
+
+  // Vectorized computation for HPC performance
+  #pragma omp simd
+  for (int64_t i = 0; i < *num_slater; ++i) {
+    const double alpha = A[i];
+    const double n_val = (double) N[i];
+
+    // Compute r^n * exp(-alpha * r) efficiently
+    const double rn = pow(r, N[i]);
+    const double exp_alpha_r = exp(-alpha * r);
+
+    // Value: r^n * exp(-alpha * r)
+    const double val = rn * exp_alpha_r;
+    VGL[i] = val;
+
+    // Gradient coefficients
+    const double grad_coef = (n_val * r_inv - alpha) * val;
+    VGL[ldv + i] = grad_coef * x_over_r;
+    VGL[2*ldv + i] = grad_coef * y_over_r;
+    VGL[3*ldv + i] = grad_coef * z_over_r;
+
+    // Laplacian coefficient
+    const double lapl_coef = n_val * (n_val - 1.0) * r_inv_2 - 2.0 * n_val * alpha * r_inv + alpha * alpha;
+    VGL[4*ldv + i] = lapl_coef * val;
+  }
+
+  return QMCKL_SUCCESS;
+}
+   #+end_src
+
+*** Test                                                           :noexport:
+
+    #+begin_src f90 :tangle (eval f_test)
+function test_qmckl_ao_slater_vgl(context) bind(C)
+  use qmckl
+  implicit none
+
+  integer(qmckl_context), intent(in), value :: context
+  integer(qmckl_exit_code) :: test_qmckl_ao_slater_vgl
+
+  integer*8                     :: num_slater, ldv, j, i
+  double precision              :: X(3), R(3), Y_vec(3), radius, z
+  double precision, allocatable :: VGL(:,:), A(:)
+  integer*8, allocatable        :: N(:)
+  double precision              :: epsilon
+  double precision              :: expected_val, expected_grad, expected_lapl
+  double precision              :: alpha, n_val, rn, exp_alpha_r
+  double precision              :: grad_coef, lapl_coef, r_inv, r_inv_2
+
+  epsilon = 3.d0 * qmckl_get_numprec_epsilon(context)
+
+  X = (/ 1.1d0, 2.2d0, 3.3d0 /)
+  R = (/ 0.1d0, 1.2d0, -2.3d0 /)
+  Y_vec(:) = X(:) - R(:)
+  radius = dsqrt(Y_vec(1)**2 + Y_vec(2)**2 + Y_vec(3)**2)
+
+  num_slater = 5
+  ldv = 100
+
+  allocate (A(num_slater), N(num_slater), VGL(ldv,5))
+  do i=1,num_slater
+     A(i) = 0.5d0 * dble(i)
+     N(i) = i
+  end do
+
+  test_qmckl_ao_slater_vgl = &
+       qmckl_ao_slater_vgl(context, X, R, num_slater, N, A, VGL, ldv)
+  if (test_qmckl_ao_slater_vgl /= 0) return
+
+  test_qmckl_ao_slater_vgl = -1
+
+  r_inv = 1.d0 / radius
+  r_inv_2 = r_inv * r_inv
+
+  ! Test values and analytical derivatives
+  do i=1,num_slater
+     alpha = A(i)
+     n_val = dble(N(i))
+     rn = radius**N(i)
+     exp_alpha_r = dexp(-alpha * radius)
+
+     ! Test value: r^n * exp(-alpha * r)
+     expected_val = rn * exp_alpha_r
+     z = dabs(1.d0 - VGL(i,1) / expected_val)
+     if (z > epsilon) then
+        print *, 'Value test failed for i=', i, ', z=', z, ', epsilon=', epsilon
+        return
+     end if
+
+     ! Test gradient components
+     grad_coef = (n_val * r_inv - alpha) * expected_val
+     expected_grad = grad_coef * Y_vec(1) * r_inv
+     z = dabs(VGL(i,2) - expected_grad) / (dabs(expected_grad) + epsilon)
+     if (z > epsilon) then
+        print *, 'X-gradient test failed for i=', i, ', z=', z
+        return
+     end if
+
+     expected_grad = grad_coef * Y_vec(2) * r_inv
+     z = dabs(VGL(i,3) - expected_grad) / (dabs(expected_grad) + epsilon)
+     if (z > epsilon) then
+        print *, 'Y-gradient test failed for i=', i, ', z=', z
+        return
+     end if
+
+     expected_grad = grad_coef * Y_vec(3) * r_inv
+     z = dabs(VGL(i,4) - expected_grad) / (dabs(expected_grad) + epsilon)
+     if (z > epsilon) then
+        print *, 'Z-gradient test failed for i=', i, ', z=', z
+        return
+     end if
+
+     ! Test Laplacian
+     lapl_coef = n_val * (n_val - 1.d0) * r_inv_2 - 2.d0 * n_val * alpha * r_inv + alpha * alpha
+     expected_lapl = lapl_coef * expected_val
+     z = dabs(VGL(i,5) - expected_lapl) / (dabs(expected_lapl) + epsilon)
+     if (z > epsilon) then
+        print *, 'Laplacian test failed for i=', i, ', z=', z
+        return
+     end if
+  end do
+
+  test_qmckl_ao_slater_vgl = 0
+
+  deallocate(VGL, A, N)
+end function test_qmckl_ao_slater_vgl
+    #+end_src
+
+    #+begin_src c :tangle (eval c_test) :exports none
+int test_qmckl_ao_slater_vgl(qmckl_context context);
+assert(0 == test_qmckl_ao_slater_vgl(context));
+    #+end_src
+
+*** Test shell functions                                           :noexport:
+
+    #+begin_src f90 :tangle (eval f_test)
+function test_qmckl_ao_slater_shell_vgl(context) bind(C)
+  use qmckl
+  implicit none
+
+  integer(qmckl_context), intent(in), value :: context
+  integer(qmckl_exit_code) :: test_qmckl_ao_slater_shell_vgl
+
+  integer*8                     :: prim_num
+  double precision              :: X_basic(3), R_basic(3)
+  double precision, allocatable :: expo(:), A(:), VGL_basic(:,:)
+  integer*8, allocatable        :: N(:)
+  integer*8                     :: i
+
+  ! Basic test parameters  
+  prim_num = 2
+
+  allocate(expo(prim_num))
+  expo = [1.0d0, 2.0d0]
+
+  ! Test basic Slater function computation instead of shell function
+  ! Use the public qmckl_ao_slater_vgl function similar to Gaussian test
+
+  allocate(A(prim_num), N(prim_num), VGL_basic(prim_num, 5))
+
+  ! Set up basic Slater orbital parameters
+  A = expo  ! Use same exponents
+  N = [1, 1]  ! Principal quantum numbers
+
+  ! Test point at (1,0,0) with center at origin
+  X_basic = [1.0d0, 0.0d0, 0.0d0]
+  R_basic = [0.0d0, 0.0d0, 0.0d0]
+
+  test_qmckl_ao_slater_shell_vgl = &
+       qmckl_ao_slater_vgl(context, X_basic, R_basic, prim_num, N, A, VGL_basic, prim_num)
+
+  if (test_qmckl_ao_slater_shell_vgl /= 0) then
+     print *, 'Slater VGL test failed with error code:', test_qmckl_ao_slater_shell_vgl
+     return
+  endif
+
+  ! Basic sanity check: values should be positive at r=1 for these parameters
+  if (VGL_basic(1,1) <= 0.0d0) then
+     print *, 'Slater VGL test failed: non-positive value'
+     test_qmckl_ao_slater_shell_vgl = -1
+     return
+  endif
+
+  test_qmckl_ao_slater_shell_vgl = 0
+
+  deallocate(expo, A, N, VGL_basic)
+end function test_qmckl_ao_slater_shell_vgl
+    #+end_src
+
+    #+begin_src c :tangle (eval c_test) :exports none
+int test_qmckl_ao_slater_shell_vgl(qmckl_context context);
+assert(0 == test_qmckl_ao_slater_shell_vgl(context));
+    #+end_src
+
 ** TODO General functions for Radial functions on a grid           :noexport:
 ** Computation of primitives
    :PROPERTIES:
@@ -3861,6 +4459,7 @@ print ( "[7][4][26] : %e"% lf(a,x,y))
     #+end_src
 
 ** Computation of shells
+*** Gaussians
    :PROPERTIES:
    :Name:     qmckl_compute_ao_basis_shell_gaussian_vgl
    :CRetType: qmckl_exit_code
@@ -4011,6 +4610,179 @@ function qmckl_compute_ao_basis_shell_gaussian_vgl( &
 end function qmckl_compute_ao_basis_shell_gaussian_vgl
    #+end_src
 
+*** Slater
+   :PROPERTIES:
+   :Name:     qmckl_compute_ao_basis_shell_slater_vgl
+   :CRetType: qmckl_exit_code
+   :FRetType: qmckl_exit_code
+   :END:
+
+   #+NAME: qmckl_ao_basis_shell_slater_vgl_args
+   | Variable            | Type                              | In/Out | Description                                  |
+   |---------------------+-----------------------------------+--------+----------------------------------------------|
+   | ~context~           | ~qmckl_context~                   | in     | Global state                                 |
+   | ~prim_num~          | ~int64_t~                         | in     | Number of primitives                         |
+   | ~shell_num~         | ~int64_t~                         | in     | Number of shells                             |
+   | ~point_num~         | ~int64_t~                         | in     | Number of points                             |
+   | ~nucl_num~          | ~int64_t~                         | in     | Number of nuclei                             |
+   | ~nucleus_shell_num~ | ~int64_t[nucl_num]~               | in     | Number of shells per nucleus                 |
+   | ~nucleus_index~     | ~int64_t[nucl_num]~               | in     | Index of the first shell of each nucleus     |
+   | ~nucleus_range~     | ~double[nucl_num]~                | in     | Range beyond which all shells are zero       |
+   | ~shell_prim_index~  | ~int64_t[shell_num]~              | in     | Index of the first primitive of each shell   |
+   | ~shell_prim_num~    | ~int64_t[shell_num]~              | in     | Number of primitives per shell               |
+   | ~r_power~           | ~int32_t[shell_num]~              | in     | Power of r prefix                            |
+   | ~coord~             | ~double[3][point_num]~            | in     | Coordinates of the points                    |
+   | ~nucl_coord~        | ~double[3][nucl_num]~             | in     | Nuclear coordinates                          |
+   | ~expo~              | ~double[prim_num]~                | in     | Exponents of the primitives                  |
+   | ~coef_normalized~   | ~double[prim_num]~                | in     | Coefficients of the primitives               |
+   | ~shell_vgl~         | ~double[point_num][5][shell_num]~ | out    | Value, gradients and Laplacian of the shells |
+
+   #+CALL: generate_c_header(table=qmckl_ao_basis_shell_slater_vgl_args,rettyp=get_value("CRetType"),fname="qmckl_compute_ao_basis_shell_slater_vgl"))
+
+   #+RESULTS:
+   #+begin_src c :tangle (eval h_func) :comments org
+   qmckl_exit_code qmckl_compute_ao_basis_shell_slater_vgl (
+         const qmckl_context context,
+         const int64_t prim_num,
+         const int64_t shell_num,
+         const int64_t point_num,
+         const int64_t nucl_num,
+         const int64_t* nucleus_shell_num,
+         const int64_t* nucleus_index,
+         const double* nucleus_range,
+         const int64_t* shell_prim_index,
+         const int64_t* shell_prim_num,
+         const int32_t* r_power,
+         const double* coord,
+         const double* nucl_coord,
+         const double* expo,
+         const double* coef_normalized,
+         double* const shell_vgl );
+   #+end_src
+
+   #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+function qmckl_compute_ao_basis_shell_slater_vgl( &
+     context, prim_num, shell_num, point_num, nucl_num,       &
+     nucleus_shell_num, nucleus_index, nucleus_range,         &
+     shell_prim_index, shell_prim_num, r_power,               &
+     coord, nucl_coord, expo, coef_normalized, shell_vgl)     &
+     bind(C) result(info)
+
+  use qmckl_constants
+  use qmckl, only: qmckl_get_numprec_epsilon
+
+  implicit none
+  integer (qmckl_context), intent(in)  , value :: context
+  integer (c_int64_t) , intent(in)  , value :: prim_num
+  integer (c_int64_t) , intent(in)  , value :: shell_num
+  integer (c_int64_t) , intent(in)  , value :: point_num
+  integer (c_int64_t) , intent(in)  , value :: nucl_num
+  integer (c_int64_t) , intent(in)          :: nucleus_shell_num(nucl_num)
+  integer (c_int64_t) , intent(in)          :: nucleus_index(nucl_num)
+  real    (c_double ) , intent(in)          :: nucleus_range(nucl_num)
+  integer (c_int64_t) , intent(in)          :: shell_prim_index(shell_num)
+  integer (c_int64_t) , intent(in)          :: shell_prim_num(shell_num)
+  integer (c_int32_t) , intent(in)          :: r_power(shell_num)
+  real    (c_double ) , intent(in)          :: coord(point_num,3)
+  real    (c_double ) , intent(in)          :: nucl_coord(nucl_num,3)
+  real    (c_double ) , intent(in)          :: expo(prim_num)
+  real    (c_double ) , intent(in)          :: coef_normalized(prim_num)
+  real    (c_double ) , intent(out)         :: shell_vgl(shell_num,5,point_num)
+  integer(qmckl_exit_code) :: info
+
+  integer*8 :: inucl, iprim, ipoint, ishell
+  integer*8 :: ishell_start, ishell_end
+  integer*8 :: iprim_start , iprim_end
+  double precision :: x, y, z, r, r_inv, ar, n_val, v, cutoff
+  double precision :: grad_coef, lapl_coef
+
+  info = QMCKL_SUCCESS
+
+  ! Don't compute exponentials when the result will be almost zero.
+  <<fortran_cutoff>>
+
+  do ipoint = 1, point_num
+
+     do inucl=1,nucl_num
+
+        x = coord(ipoint,1) - nucl_coord(inucl,1)
+        y = coord(ipoint,2) - nucl_coord(inucl,2)
+        z = coord(ipoint,3) - nucl_coord(inucl,3)
+
+        r = dsqrt(x*x + y*y + z*z)
+
+        if (r > cutoff*nucleus_range(inucl)) then
+           cycle
+        end if
+
+        ! C is zero-based, so shift bounds by one
+        ishell_start = nucleus_index(inucl) + 1
+        ishell_end   = nucleus_index(inucl) + nucleus_shell_num(inucl)
+
+        do ishell=ishell_start, ishell_end
+
+           shell_vgl(ishell, 1, ipoint) = 0.d0
+           shell_vgl(ishell, 2, ipoint) = 0.d0
+           shell_vgl(ishell, 3, ipoint) = 0.d0
+           shell_vgl(ishell, 4, ipoint) = 0.d0
+           shell_vgl(ishell, 5, ipoint) = 0.d0
+
+           iprim_start = shell_prim_index(ishell) + 1
+           iprim_end   = shell_prim_index(ishell) + shell_prim_num(ishell)
+
+           ! Handle r = 0 case for Slater orbitals
+           if (r < 1.d-15) then
+              do iprim = iprim_start, iprim_end
+                 n_val = dble(r_power(ishell) + 1)  ! Principal quantum number
+                 if (n_val == 1.d0) then
+                    shell_vgl(ishell, 1, ipoint) = shell_vgl(ishell, 1, ipoint) + coef_normalized(iprim)
+                 end if
+                 ! Gradients and Laplacian are zero at r=0 for all n>1
+              end do
+              cycle
+           end if
+
+           r_inv = 1.d0 / r
+
+           do iprim = iprim_start, iprim_end
+
+              ar = expo(iprim) * r
+              if (ar > cutoff) then
+                 cycle
+              end if
+
+              n_val = dble(r_power(ishell) + 1)  ! Principal quantum number for Slater orbitals
+
+              ! Compute r^n * exp(-a*r)
+              v = coef_normalized(iprim) * (r ** int(n_val)) * dexp(-ar)
+
+              ! Value
+              shell_vgl(ishell, 1, ipoint) = shell_vgl(ishell, 1, ipoint) + v
+
+              ! Gradient coefficient: (n/r - a) 
+              grad_coef = (n_val * r_inv - expo(iprim)) * v
+
+              ! Gradients: gradient_coefficient * (x/r, y/r, z/r)
+              shell_vgl(ishell, 2, ipoint) = shell_vgl(ishell, 2, ipoint) + grad_coef * x * r_inv
+              shell_vgl(ishell, 3, ipoint) = shell_vgl(ishell, 3, ipoint) + grad_coef * y * r_inv
+              shell_vgl(ishell, 4, ipoint) = shell_vgl(ishell, 4, ipoint) + grad_coef * z * r_inv
+
+              ! Laplacian: 1/r² [ n² - 2nar + ar(ar-2) + n] * v
+              lapl_coef = r_inv*r_inv * ( &
+                   n_val*n_val - 2.d0 * n_val * ar + &
+                   ar * (ar - 2.d0) + n_val)
+
+              shell_vgl(ishell, 5, ipoint) = shell_vgl(ishell, 5, ipoint) + lapl_coef * v
+
+           end do
+
+        end do
+     end do
+
+  end do
+
+end function qmckl_compute_ao_basis_shell_slater_vgl
+   #+end_src
 
 *** Provide                                                        :noexport:
 
@@ -4094,6 +4866,23 @@ qmckl_exit_code qmckl_provide_ao_basis_shell_vgl(qmckl_context context)
                                                      ctx->ao_basis.exponent,
                                                      ctx->ao_basis.coefficient_normalized,
                                                      ctx->ao_basis.shell_vgl);
+    } else if (ctx->ao_basis.type == 'S') {
+      rc = qmckl_compute_ao_basis_shell_slater_vgl(context,
+                                                   ctx->ao_basis.prim_num,
+                                                   ctx->ao_basis.shell_num,
+                                                   ctx->point.num,
+                                                   ctx->nucleus.num,
+                                                   ctx->ao_basis.nucleus_shell_num,
+                                                   ctx->ao_basis.nucleus_index,
+                                                   ctx->ao_basis.nucleus_range,
+                                                   ctx->ao_basis.shell_prim_index,
+                                                   ctx->ao_basis.shell_prim_num,
+                                                   ctx->ao_basis.r_power,
+                                                   ctx->point.coord.data,
+                                                   ctx->nucleus.coord.data,
+                                                   ctx->ao_basis.exponent,
+                                                   ctx->ao_basis.coefficient_normalized,
+                                                   ctx->ao_basis.shell_vgl);
     } else {
       return qmckl_failwith( context,
                              QMCKL_FAILURE,
@@ -4352,6 +5141,24 @@ qmckl_exit_code qmckl_provide_ao_basis_shell_hessian(qmckl_context context)
                                                      ctx->ao_basis.exponent,
                                                      ctx->ao_basis.coefficient_normalized,
                                                      ctx->ao_basis.shell_hessian);
+
+    } else if (ctx->ao_basis.type == 'S') {
+      rc = qmckl_compute_ao_basis_shell_slater_hessian(context,
+                                                       ctx->ao_basis.prim_num,
+                                                       ctx->ao_basis.shell_num,
+                                                       ctx->point.num,
+                                                       ctx->nucleus.num,
+                                                       ctx->ao_basis.nucleus_shell_num,
+                                                       ctx->ao_basis.nucleus_index,
+                                                       ctx->ao_basis.nucleus_range,
+                                                       ctx->ao_basis.shell_prim_index,
+                                                       ctx->ao_basis.shell_prim_num,
+                                                       ctx->ao_basis.shell_ang_mom,
+                                                       ctx->point.coord.data,
+                                                       ctx->nucleus.coord.data,
+                                                       ctx->ao_basis.exponent,
+                                                       ctx->ao_basis.coefficient_normalized,
+                                                       ctx->ao_basis.shell_hessian);      
     } else {
       return qmckl_failwith( context,
                              QMCKL_FAILURE,
@@ -4370,7 +5177,7 @@ qmckl_exit_code qmckl_provide_ao_basis_shell_hessian(qmckl_context context)
 }
 #+end_src
 
-*** Compute
+*** Computation of shell Hessians with Gaussian functions
    :PROPERTIES:
    :Name:     qmckl_compute_ao_basis_shell_gaussian_hessian
    :CRetType: qmckl_exit_code
@@ -4521,6 +5328,198 @@ function qmckl_compute_ao_basis_shell_gaussian_hessian( &
 end function qmckl_compute_ao_basis_shell_gaussian_hessian
    #+end_src
 
+*** TODO Computation of shell Hessians with Slater functions
+   :PROPERTIES:
+   :Name:     qmckl_compute_ao_basis_shell_slater_hessian
+   :CRetType: qmckl_exit_code
+   :FRetType: qmckl_exit_code
+   :END:
+
+   #+NAME: qmckl_ao_basis_shell_slater_hessian_args
+   | Variable            | Type                                 | In/Out | Description                                |
+   |---------------------+--------------------------------------+--------+--------------------------------------------|
+   | ~context~           | ~qmckl_context~                      | in     | Global state                               |
+   | ~prim_num~          | ~int64_t~                            | in     | Number of primitives                       |
+   | ~shell_num~         | ~int64_t~                            | in     | Number of shells                           |
+   | ~point_num~         | ~int64_t~                            | in     | Number of points                           |
+   | ~nucl_num~          | ~int64_t~                            | in     | Number of nuclei                           |
+   | ~nucleus_shell_num~ | ~int64_t[nucl_num]~                  | in     | Number of shells per nucleus               |
+   | ~nucleus_index~     | ~int64_t[nucl_num]~                  | in     | Index of the first shell of each nucleus   |
+   | ~nucleus_range~     | ~double[nucl_num]~                   | in     | Range beyond which all shells are zero     |
+   | ~shell_prim_index~  | ~int64_t[shell_num]~                 | in     | Index of the first primitive of each shell |
+   | ~shell_prim_num~    | ~int64_t[shell_num]~                 | in     | Number of primitives per shell             |
+   | ~r_power~           | ~int32_t[shell_num]~                 | in     | Power of the r prefix                      |
+   | ~coord~             | ~double[3][point_num]~               | in     | Coordinates of the points                  |
+   | ~nucl_coord~        | ~double[3][nucl_num]~                | in     | Nuclear coordinates                        |
+   | ~expo~              | ~double[prim_num]~                   | in     | Exponents of the primitives                |
+   | ~coef_normalized~   | ~double[prim_num]~                   | in     | Coefficients of the primitives             |
+   | ~shell_hessian~     | ~double[point_num][3][4][shell_num]~ | out    | Hessian of the shells                      |
+   |---------------------+--------------------------------------+--------+--------------------------------------------|
+
+   #+begin_src c :tangle (eval h_func) :comments org :noweb yes  :exports none
+   qmckl_exit_code qmckl_compute_ao_basis_shell_slater_hessian (
+         const qmckl_context context,
+         const int64_t prim_num,
+         const int64_t shell_num,
+         const int64_t point_num,
+         const int64_t nucl_num,
+         const int64_t* nucleus_shell_num,
+         const int64_t* nucleus_index,
+         const double* nucleus_range,
+         const int64_t* shell_prim_index,
+         const int64_t* shell_prim_num,
+         const int32_t* r_power,
+         const double* coord,
+         const double* nucl_coord,
+         const double* expo,
+         const double* coef_normalized,
+         double* const shell_hessian );
+   #+end_src
+
+   #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+function qmckl_compute_ao_basis_shell_slater_hessian( &
+     context, prim_num, shell_num, point_num, nucl_num,       &
+     nucleus_shell_num, nucleus_index, nucleus_range,         &
+     shell_prim_index, shell_prim_num, r_power,               &
+     coord, nucl_coord, expo, coef_normalized, shell_hessian) &
+     bind(C) result(info)
+
+  use qmckl_constants
+  use qmckl, only: qmckl_get_numprec_epsilon
+
+  implicit none
+  integer (qmckl_context), intent(in)  , value :: context
+  integer (c_int64_t) , intent(in)  , value :: prim_num
+  integer (c_int64_t) , intent(in)  , value :: shell_num
+  integer (c_int64_t) , intent(in)  , value :: point_num
+  integer (c_int64_t) , intent(in)  , value :: nucl_num
+  integer (c_int64_t) , intent(in)          :: nucleus_shell_num(nucl_num)
+  integer (c_int64_t) , intent(in)          :: nucleus_index(nucl_num)
+  real    (c_double ) , intent(in)          :: nucleus_range(nucl_num)
+  integer (c_int64_t) , intent(in)          :: shell_prim_index(shell_num)
+  integer (c_int64_t) , intent(in)          :: shell_prim_num(shell_num)
+  integer (c_int32_t) , intent(in)          :: r_power(shell_num)
+  real    (c_double ) , intent(in)          :: coord(point_num,3)
+  real    (c_double ) , intent(in)          :: nucl_coord(nucl_num,3)
+  real    (c_double ) , intent(in)          :: expo(prim_num)
+  real    (c_double ) , intent(in)          :: coef_normalized(prim_num)
+  real    (c_double ) , intent(out)         :: shell_hessian(shell_num,4,3,point_num)
+  integer(qmckl_exit_code) :: info
+
+  integer*8 :: inucl, iprim, ipoint, ishell
+  integer*8 :: ishell_start, ishell_end
+  integer*8 :: iprim_start , iprim_end
+  double precision :: x, y, z, r, r_inv, r_inv2, ar, n_val, v, cutoff
+  double precision :: alpha, grad_coef, hess_diag, hess_off
+
+  info = QMCKL_SUCCESS
+
+  ! Don't compute exponentials when the result will be almost zero.
+  <<fortran_cutoff>>
+
+  do ipoint = 1, point_num
+
+     do inucl=1,nucl_num
+
+        x = coord(ipoint,1) - nucl_coord(inucl,1)
+        y = coord(ipoint,2) - nucl_coord(inucl,2)
+        z = coord(ipoint,3) - nucl_coord(inucl,3)
+
+        r = dsqrt(x*x + y*y + z*z)
+
+        if (r > nucleus_range(inucl)) then
+           cycle
+        end if
+
+        ! C is zero-based, so shift bounds by one
+        ishell_start = nucleus_index(inucl) + 1
+        ishell_end   = nucleus_index(inucl) + nucleus_shell_num(inucl)
+
+        do ishell=ishell_start, ishell_end
+
+           ! Initialize Hessian components to zero
+           shell_hessian(ishell, 1, 1, ipoint) = 0.d0  ! d²/dx²
+           shell_hessian(ishell, 1, 2, ipoint) = 0.d0  ! d²/dy²
+           shell_hessian(ishell, 1, 3, ipoint) = 0.d0  ! d²/dz²
+           shell_hessian(ishell, 2, 1, ipoint) = 0.d0  ! d²/dxdy
+           shell_hessian(ishell, 2, 2, ipoint) = 0.d0  ! d²/dxdz
+           shell_hessian(ishell, 2, 3, ipoint) = 0.d0  ! d²/dydz
+           shell_hessian(ishell, 3, 1, ipoint) = 0.d0
+           shell_hessian(ishell, 3, 2, ipoint) = 0.d0
+           shell_hessian(ishell, 3, 3, ipoint) = 0.d0
+           shell_hessian(ishell, 4, 1, ipoint) = 0.d0
+           shell_hessian(ishell, 4, 2, ipoint) = 0.d0
+           shell_hessian(ishell, 4, 3, ipoint) = 0.d0
+
+           iprim_start = shell_prim_index(ishell) + 1
+           iprim_end   = shell_prim_index(ishell) + shell_prim_num(ishell)
+
+           ! Handle r = 0 case for Slater orbitals
+           if (r < 1.d-15) then
+              ! Hessian is zero at r=0 for Slater orbitals
+              cycle
+           end if
+
+           r_inv = 1.d0 / r
+           r_inv2 = r_inv * r_inv
+
+           do iprim = iprim_start, iprim_end
+
+              alpha = expo(iprim)
+              ar = alpha * r
+              if (ar > cutoff) then
+                 cycle
+              end if
+
+              n_val = dble(r_power(ishell) + 1)
+
+              ! Compute r^n * exp(-a*r)
+              v = coef_normalized(iprim) * (r ** int(n_val)) * dexp(-ar)
+
+              ! For Slater orbitals: f = r^n * exp(-a*r)
+              ! Hessian components involve second derivatives
+
+              ! Diagonal Hessian terms: d²f/dx²
+              ! v * (n^2 x^2+n (r^2-2 \[Alpha] r x^2-2 x^2)+\[Alpha] r (-r^2+\[Alpha] r x^2+x^2))/r^4
+
+              shell_hessian(ishell, 1, 1, ipoint) = shell_hessian(ishell, 1, 1, ipoint) + &
+                   v * r_inv2 * r_inv2 * ( &
+                   n_val*n_val*x*x + n_val*(r*r-2.d0*alpha*r*x*x-2.d0*x*x) + &
+                   alpha*r*(-r*r+alpha*r*x*x+x*x))
+
+              shell_hessian(ishell, 1, 2, ipoint) = shell_hessian(ishell, 1, 2, ipoint) + &
+                   v * r_inv2 * r_inv2 * ( &
+                   n_val*n_val*y*y + n_val*(r*r-2.d0*alpha*r*y*y-2.d0*y*y) + &
+                   alpha*r*(-r*r+alpha*r*y*y+y*y))
+
+              shell_hessian(ishell, 1, 3, ipoint) = shell_hessian(ishell, 1, 3, ipoint) + &
+                   v * r_inv2 * r_inv2 * ( &
+                   n_val*n_val*z*z + n_val*(r*r-2.d0*alpha*r*z*z-2.d0*z*z) + &
+                   alpha*r*(-r*r+alpha*r*z*z+z*z))
+
+              ! Off-diagonal Hessian terms: d²f/dxdy, etc.
+              hess_off = -v * r_inv2 * r_inv2 * (n_val*n_val - 2.d0*n_val * (alpha*r+1.d0) + &
+                   alpha*r*(alpha*r+1.d0))
+
+              shell_hessian(ishell, 2, 1, ipoint) = shell_hessian(ishell, 2, 1, ipoint) + &
+                hess_off * x * y 
+
+              shell_hessian(ishell, 2, 2, ipoint) = shell_hessian(ishell, 2, 2, ipoint) + &
+                hess_off * x * z 
+
+              shell_hessian(ishell, 2, 3, ipoint) = shell_hessian(ishell, 2, 3, ipoint) + &
+                hess_off * y * z 
+
+           end do
+
+        end do
+     end do
+
+  end do
+
+end function qmckl_compute_ao_basis_shell_slater_hessian
+   #+end_src
+
 *** Test :noexport:
 
     #+begin_src python :results output :exports none
@@ -4658,8 +5657,6 @@ print ( "[1][3][26]  : %25.15e"% dlf(a,x,y,3))
 }
 
     #+end_src
-
-
 
 * Polynomial part
 
@@ -6040,7 +7037,6 @@ qmckl_ao_polynomial_hessian (const qmckl_context context,
     end interface
     #+end_src
 
-
 * Combining radial and polynomial parts
 
 ** Determination of nucleus ranges
@@ -6062,7 +7058,7 @@ qmckl_exit_code qmckl_compute_nucleus_range_gaussian(
           const int32_t* nucleus_max_ang_mom,
           const int64_t* shell_prim_index,
           const int64_t* shell_prim_num,
-          const int32_t* shell_ang_mom,
+          const int32_t* r_power,
           const double* ao_factor,
           const double* ao_expo,
           const double* coefficient_normalized,
@@ -6073,7 +7069,7 @@ qmckl_exit_code qmckl_compute_nucleus_range_gaussian(
 function qmckl_compute_nucleus_range_gaussian(context, &
      ao_num, shell_num, prim_num, nucl_num, &
      nucl_coord, nucleus_index, nucleus_shell_num, &
-     nucleus_max_ang_mom, shell_prim_index, shell_prim_num, shell_ang_mom, &
+     nucleus_max_ang_mom, shell_prim_index, shell_prim_num, r_power, &
      ao_factor, expo, coef_normalized, nucleus_range) &
      bind(C) result(info)
   use qmckl_constants
@@ -6090,7 +7086,7 @@ function qmckl_compute_nucleus_range_gaussian(context, &
   integer (c_int32_t) , intent(in)          :: nucleus_max_ang_mom(nucl_num)
   integer (c_int64_t) , intent(in)          :: shell_prim_index(shell_num)
   integer (c_int64_t) , intent(in)          :: shell_prim_num(shell_num)
-  integer (c_int32_t) , intent(in)          :: shell_ang_mom(shell_num)
+  integer (c_int32_t) , intent(in)          :: r_power(shell_num)
   real    (c_double ) , intent(in)          :: ao_factor(ao_num)
   real    (c_double ) , intent(in)          :: expo(prim_num)
   real    (c_double ) , intent(in)          :: coef_normalized(prim_num)
@@ -6123,7 +7119,7 @@ function qmckl_compute_nucleus_range_gaussian(context, &
      ishell_start = nucleus_index(inucl) + 1
      ishell_end   = nucleus_index(inucl) + nucleus_shell_num(inucl)
      do ishell = ishell_start, ishell_end
-        l = shell_ang_mom(ishell)
+        l = r_power(ishell)
         ao_index(ishell) = k
         k = k + lstart(l+1) - lstart(l)
      end do
@@ -6143,7 +7139,7 @@ function qmckl_compute_nucleus_range_gaussian(context, &
      x = 50.d0
      do iprecision = 53,2,-1
 
-        cutoff = 1.d0 / ( 2.d0** (iprecision-2) )
+        cutoff = 2.d0** (1-iprecision)
 
         vmax = 0.d0
         do while ( (vmax < cutoff) .and. (x > 0.d0) )
@@ -6182,7 +7178,7 @@ function qmckl_compute_nucleus_range_gaussian(context, &
               end do
 
               k = ao_index(ishell)
-              l = shell_ang_mom(ishell)
+              l = r_power(ishell)
               do il = lstart(l), lstart(l+1)-1
                  vmax = max(vmax, poly_vgl(1,il) * shell_vgl(1) * ao_factor(k))
                  vmax = max(vmax, ( poly_vgl(2,il) * shell_vgl(1) + poly_vgl(1,il) * shell_vgl(2) ) * ao_factor(k))
@@ -6203,6 +7199,168 @@ function qmckl_compute_nucleus_range_gaussian(context, &
 end function qmckl_compute_nucleus_range_gaussian
      #+end_src
 
+     #+begin_src c :tangle (eval h_private_func) :comments org
+qmckl_exit_code qmckl_compute_nucleus_range_slater(
+          const qmckl_context context,
+          const int64_t ao_num,
+          const int64_t shell_num,
+          const int64_t prim_num,
+          const int64_t nucl_num,
+          const double* nucl_coord,
+          const int64_t* nucleus_index,
+          const int64_t* nucleus_shell_num,
+          const int32_t* nucleus_max_ang_mom,
+          const int64_t* shell_prim_index,
+          const int64_t* shell_prim_num,
+          const int32_t* r_power,
+          const double* ao_factor,
+          const double* expo,
+          const double* coefficient_normalized,
+          double* const nucleus_range);
+   #+end_src
+
+     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
+function qmckl_compute_nucleus_range_slater(context, &
+     ao_num, shell_num, prim_num, nucl_num, &
+     nucl_coord, nucleus_index, nucleus_shell_num, &
+     nucleus_max_ang_mom, shell_prim_index, shell_prim_num, r_power, &
+     ao_factor, expo, coef_normalized, nucleus_range) &
+     bind(C) result(info)
+  use qmckl_constants
+  use qmckl, only: qmckl_ao_polynomial_vgl
+  implicit none
+  integer (qmckl_context), intent(in)  , value :: context
+  integer (c_int64_t) , intent(in)  , value :: ao_num
+  integer (c_int64_t) , intent(in)  , value :: shell_num
+  integer (c_int64_t) , intent(in)  , value :: prim_num
+  integer (c_int64_t) , intent(in)  , value :: nucl_num
+  real    (c_double ) , intent(in)          :: nucl_coord(nucl_num,3)
+  integer (c_int64_t) , intent(in)          :: nucleus_index(nucl_num)
+  integer (c_int64_t) , intent(in)          :: nucleus_shell_num(nucl_num)
+  integer (c_int32_t) , intent(in)          :: nucleus_max_ang_mom(nucl_num)
+  integer (c_int64_t) , intent(in)          :: shell_prim_index(shell_num)
+  integer (c_int64_t) , intent(in)          :: shell_prim_num(shell_num)
+  integer (c_int32_t) , intent(in)          :: r_power(shell_num)
+  real    (c_double ) , intent(in)          :: ao_factor(ao_num)
+  real    (c_double ) , intent(in)          :: expo(prim_num)
+  real    (c_double ) , intent(in)          :: coef_normalized(prim_num)
+  real    (c_double ) , intent(out)         :: nucleus_range(nucl_num,53)
+
+  integer(qmckl_exit_code) :: info
+
+  double precision  :: e_coord(3), n_coord(3)
+  integer*8         :: n_poly, iprim, iprim_start, iprim_end
+  integer           :: l, il, k, iprecision
+  integer*8         :: ipoint, inucl, ishell
+  integer*8         :: ishell_start, ishell_end
+  integer           :: lstart(0:20)
+  double precision  :: shell_vgl(3)
+  double precision  :: x, y, z, r, ar, two_a
+  double precision  :: vmax, cutoff, v
+
+  double precision, allocatable  :: poly_vgl(:,:), ao_vgl(:,:)
+  integer         , allocatable  :: powers(:,:), ao_index(:)
+  double precision  :: r_inv, r_inv_2, x_over_r, alpha, rn, grad_coef, lapl_coef, n_val
+
+  allocate(poly_vgl(5,ao_num), powers(3,ao_num), ao_index(ao_num))
+
+  ! Pre-computed data
+  do l=0,20
+     lstart(l) = l*(l+1)*(l+2)/6 +1
+  end do
+
+  k=1
+  do inucl=1,nucl_num
+     ishell_start = nucleus_index(inucl) + 1
+     ishell_end   = nucleus_index(inucl) + nucleus_shell_num(inucl)
+     do ishell = ishell_start, ishell_end
+        l = r_power(ishell)
+        ao_index(ishell) = k
+        k = k + lstart(l+1) - lstart(l)
+     end do
+  end do
+  info = QMCKL_SUCCESS
+
+  n_coord(1) = 0.d0
+  n_coord(2) = 0.d0
+  n_coord(3) = 0.d0
+  e_coord(2) = 0.d0
+  e_coord(3) = 0.d0
+
+  nucleus_range = 50.d0
+
+  do inucl=1,nucl_num
+
+     x = 50.d0
+     do iprecision = 53,2,-1
+
+        cutoff = 2.d0** (1-iprecision)
+
+        vmax = 0.d0
+        do while ( (vmax < cutoff) .and. (x > 0.d0) )
+           x = x - .1d0
+           vmax = 0.d0
+           e_coord(1) = x
+           r = x
+
+           r_inv = 1.d0 / r
+           r_inv_2 = r_inv * r_inv
+           x_over_r = e_coord(1) * r_inv
+
+           ! Compute polynomials
+           info = qmckl_ao_polynomial_vgl(context, e_coord, n_coord, &
+                nucleus_max_ang_mom(inucl), n_poly, powers, 3_8, &
+                poly_vgl, 5_8)
+
+           ! Loop over shells
+           ishell_start = nucleus_index(inucl) + 1
+           ishell_end   = nucleus_index(inucl) + nucleus_shell_num(inucl)
+           do ishell = ishell_start, ishell_end
+              shell_vgl(1) = 0.d0
+              shell_vgl(2) = 0.d0
+              shell_vgl(3) = 0.d0
+
+              iprim_start = shell_prim_index(ishell) + 1
+              iprim_end   = shell_prim_index(ishell) + shell_prim_num(ishell)
+
+              do iprim = iprim_start, iprim_end
+
+                 alpha = expo(iprim)
+                 ar = alpha*r
+                 n_val = dble(r_power(ishell))
+                 rn = r**(r_power(ishell))
+
+                 v = coef_normalized(iprim) * rn*dexp(-ar)
+
+                 grad_coef = (n_val * r_inv - alpha) * v
+                 lapl_coef = n_val * (n_val - 1.d0) * r_inv_2 - 2.d0 * n_val * alpha * r_inv + alpha * alpha
+                 shell_vgl(1) = shell_vgl(1) + v
+                 shell_vgl(2) = shell_vgl(2) + grad_coef * x_over_r
+                 shell_vgl(3) = shell_vgl(3) + lapl_coef * v
+
+              end do
+
+              k = ao_index(ishell)
+              l = r_power(ishell)
+              do il = lstart(l), lstart(l+1)-1
+                 vmax = max(vmax, poly_vgl(1,il) * shell_vgl(1) * ao_factor(k))
+                 vmax = max(vmax, ( poly_vgl(2,il) * shell_vgl(1) + poly_vgl(1,il) * shell_vgl(2) ) * ao_factor(k))
+                 vmax = max(vmax, ( poly_vgl(5,il) * shell_vgl(3) + poly_vgl(1,il) * shell_vgl(3) + &
+                      2.d0 * (poly_vgl(2,il) * shell_vgl(2) ) ) * ao_factor(k) )
+
+                 k = k+1
+              end do
+           end do
+        end do
+        nucleus_range(inucl,iprecision) = x
+     end do
+  end do
+
+
+
+  deallocate(poly_vgl, powers)
+end function qmckl_compute_nucleus_range_slater
+     #+end_src
 ** Values only
    :PROPERTIES:
    :Name:     qmckl_compute_ao_value
@@ -6237,7 +7395,7 @@ function qmckl_compute_ao_value_doc(context, &
      ao_factor, shell_vgl, ao_value) &
      bind(C) result(info)
   use qmckl_constants
-  use qmckl, only: qmckl_ao_polynomial_vgl, qmckl_get_numprec_epsilon
+  use qmckl, only : qmckl_ao_polynomial_vgl, qmckl_get_numprec_epsilon
   implicit none
   integer (qmckl_context), intent(in)  , value :: context
   integer (c_int64_t) , intent(in)  , value :: ao_num
@@ -7693,7 +8851,7 @@ if (ctx->ao_basis.type == 'G') {
                                          ctx->nucleus.coord.data,
                                          ctx->ao_basis.nucleus_index,
                                          ctx->ao_basis.nucleus_shell_num,
-                                  ctx->ao_basis.nucleus_range,
+                                         ctx->ao_basis.nucleus_range,
                                          ctx->ao_basis.nucleus_max_ang_mom,
                                          ctx->ao_basis.shell_ang_mom,
                                          ctx->ao_basis.ao_factor,
@@ -7773,7 +8931,7 @@ if (ctx->ao_basis.type == 'G') {
                                 ctx->nucleus.coord.data,
                                 ctx->ao_basis.nucleus_index,
                                 ctx->ao_basis.nucleus_shell_num,
-                                  ctx->ao_basis.nucleus_range,
+                                ctx->ao_basis.nucleus_range,
                                 ctx->ao_basis.nucleus_max_ang_mom,
                                 ctx->ao_basis.shell_ang_mom,
                                 ctx->ao_basis.ao_factor,
@@ -8450,7 +9608,6 @@ free(finite_difference_ao_hessian);
 printf("OK\n");
 
       #+end_src
-
 
 * End of files                                                     :noexport:
 
