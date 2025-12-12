@@ -79,13 +79,21 @@ int main() {
 
 * Context handling
 
-  The context variable is a handle for the state of the library,
-  and is stored in a data structure which can't be seen outside of
-  the library. To simplify compatibility with other languages, the
+  The context is the central data structure in QMCkl, serving as a handle
+  for the complete state of the library. All QMCkl functions require a context
+  as their first argument, and all computed data is stored within the context.
+  
+  The context variable is a handle for the state of the library, and is stored 
+  in a data structure which can't be seen outside of the library. This 
+  encapsulation provides a clean API boundary and allows internal implementation 
+  details to change without affecting user code.
+  
+  To simplify compatibility with other languages (particularly Fortran), the
   pointer to the internal data structure is converted into a 64-bit
-  signed integer, defined in the ~qmckl_context~ type.
+  signed integer, defined in the ~qmckl_context~ type. This approach avoids
+  issues with language interoperability related to opaque pointer types.
   A value of ~QMCKL_NULL_CONTEXT~ for the context is equivalent to a
-  ~NULL~ pointer.
+  ~NULL~ pointer and represents an invalid or uninitialized context.
 
   #+NAME: qmckl_context
   #+begin_src c :comments org :tangle (eval h_type)
@@ -98,15 +106,32 @@ typedef int64_t qmckl_context ;
       integer*8, parameter :: QMCKL_NULL_CONTEXT = 0
   #+end_src
 
-  An immutable context would have required to implement a garbage
-  collector. To keep the library simple, we have chosen to implement
-  the context as a mutable data structure, so it has to be handled
-  with care.
+** Design considerations
+
+  An immutable context would have been ideal from a functional programming
+  perspective and would have required implementation of a garbage
+  collector for proper memory management. However, to keep the library simple 
+  and avoid the complexity of automatic memory management, we have chosen to 
+  implement the context as a mutable data structure. This means it has to be 
+  handled with care: users must ensure proper initialization, avoid concurrent
+  modifications without synchronization, and explicitly destroy contexts when
+  they are no longer needed.
+  
+  The mutable design also provides better performance characteristics, as it
+  avoids the overhead of copying large data structures and allows for in-place
+  updates of computational results.
 
   By convention, in this file ~context~ is a ~qmckl_context~ variable
   and ~ctx~ is a ~qmckl_context_struct*~ pointer.
 
 ** Data structure
+
+   The context data structure contains all the state information needed by the
+   library, organized into logical sections. This includes the molecular system
+   description (nuclei, electrons, basis sets), computational parameters
+   (numerical precision), computed quantities (atomic orbitals, molecular
+   orbitals, Jastrow factors, etc.), and internal state management (error
+   handling, memory allocation tracking, thread synchronization).
 
    #+begin_src c :comments org :tangle (eval h_private_type) :noweb yes :exports none
 typedef struct qmckl_context_struct {
@@ -154,26 +179,37 @@ typedef struct qmckl_context_struct {
 
 } qmckl_context_struct;
    #+end_src
-    
-   The ~qmckl_extra~ pointer lets the other implementation of the library
-   add specific things to the context. For example a GPU implementation
-   of QMCkl will need to store the device ID in the context, and this
-   can be made by creating a private data structure containing all 
-   GPU-specific data, including the device ID.
 
-   A tag is used internally to check if the memory domain pointed
-   by a pointer is a valid context. This allows to check that even if
-   the pointer associated with a context is non-null, we can still
-   verify that it points to the expected data structure.
+** Extension mechanism
+    
+   The ~qmckl_extra~ pointer provides an extension mechanism that allows 
+   alternative implementations of the library to add implementation-specific 
+   data to the context. For example, a GPU implementation of QMCkl could store 
+   the device ID, CUDA streams, or device memory pointers in a custom data 
+   structure, and point to it from ~qmckl_extra~. This design allows the core 
+   library API to remain stable while supporting diverse implementation 
+   strategies.
+   
+** Validity checking
+
+   A tag is used internally to check if the memory domain pointed to
+   by a pointer is a valid context. This provides a sanity check that allows
+   verification that even if the pointer associated with a context is non-null, 
+   it actually points to the expected data structure and not to arbitrary memory.
+   This is particularly important for catching user errors like passing an
+   uninitialized context or a context that has already been destroyed.
 
    #+begin_src c :comments org :tangle (eval h_private_type) :noweb yes :exports none
 #define VALID_TAG   0xBEEFFACE
 #define INVALID_TAG 0xDEADBEEF
    #+end_src
 
-   The ~qmckl_context_check~ function checks if the domain pointed by
-   the pointer is a valid context. It returns the input ~qmckl_context~
-   if the context is valid, ~QMCKL_NULL_CONTEXT~ otherwise.
+   The ~qmckl_context_check~ function checks if the domain pointed to by
+   the pointer is a valid context by verifying the magic tag value. It returns 
+   the input ~qmckl_context~ if the context is valid (tag matches ~VALID_TAG~), 
+   or ~QMCKL_NULL_CONTEXT~ if the context is invalid. This function should be 
+   called at the beginning of every public API function to ensure the context
+   parameter is valid before attempting to use it.
 
    #+begin_src c :comments org :tangle (eval h_func) :noexport
 qmckl_context
