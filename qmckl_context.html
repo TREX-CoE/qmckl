@@ -3,7 +3,7 @@
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head>
-<!-- 2025-12-12 Fri 15:56 -->
+<!-- 2025-12-12 Fri 17:39 -->
 <meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Context</title>
@@ -226,43 +226,72 @@ org_html_manager.setup();  // activate after the parameters are set
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents" role="doc-toc">
 <ul>
-<li><a href="#orgadb3341">1. Context handling</a>
+<li><a href="#orgdd71f0a">1. Context handling</a>
 <ul>
-<li><a href="#orgc86a187">1.1. Data structure</a></li>
-<li><a href="#org4c93b66">1.2. Creation</a></li>
-<li><a href="#orgeae86ec">1.3. Locking</a></li>
-<li><a href="#orgc24615f">1.4. <span class="todo TODO">TODO</span> Copy</a></li>
-<li><a href="#org107a60f">1.5. Destroy</a></li>
+<li><a href="#orgba47239">1.1. Design considerations</a></li>
+<li><a href="#org9ffd1c0">1.2. Data structure</a></li>
+<li><a href="#org1357a94">1.3. Extension mechanism</a></li>
+<li><a href="#orge5aea29">1.4. Validity checking</a></li>
+<li><a href="#orgc070c5b">1.5. Creation</a></li>
+<li><a href="#org593af9b">1.6. Locking</a></li>
+<li><a href="#orgf283c0f">1.7. <span class="todo TODO">TODO</span> Copy</a></li>
+<li><a href="#orgc2c1690">1.8. Destroy</a></li>
 </ul>
 </li>
 </ul>
 </div>
 </div>
 
-<div id="outline-container-orgadb3341" class="outline-2">
-<h2 id="orgadb3341"><span class="section-number-2">1.</span> Context handling</h2>
+<div id="outline-container-orgdd71f0a" class="outline-2">
+<h2 id="orgdd71f0a"><span class="section-number-2">1.</span> Context handling</h2>
 <div class="outline-text-2" id="text-1">
 <p>
-The context variable is a handle for the state of the library,
-and is stored in a data structure which can't be seen outside of
-the library. To simplify compatibility with other languages, the
+The context is the central data structure in QMCkl, serving as a handle
+for the complete state of the library. All QMCkl functions require a context
+as their first argument, and all computed data is stored within the context.
+</p>
+
+<p>
+The context variable is a handle for the state of the library, and is stored 
+in a data structure which can't be seen outside of the library. This 
+encapsulation provides a clean API boundary and allows internal implementation 
+details to change without affecting user code.
+</p>
+
+<p>
+To simplify compatibility with other languages (particularly Fortran), the
 pointer to the internal data structure is converted into a 64-bit
-signed integer, defined in the <code>qmckl_context</code> type.
+signed integer, defined in the <code>qmckl_context</code> type. This approach avoids
+issues with language interoperability related to opaque pointer types.
 A value of <code>QMCKL_NULL_CONTEXT</code> for the context is equivalent to a
-<code>NULL</code> pointer.
+<code>NULL</code> pointer and represents an invalid or uninitialized context.
 </p>
 
 <div class="org-src-container">
-<pre class="src src-c" id="orgf8435a8"><span style="color: #a020f0;">typedef</span> <span style="color: #228b22;">int64_t</span> <span style="color: #228b22;">qmckl_context</span> ;
+<pre class="src src-c" id="orga5c9f64"><span style="color: #a020f0;">typedef</span> <span style="color: #228b22;">int64_t</span> <span style="color: #228b22;">qmckl_context</span> ;
 <span style="color: #483d8b;">#define</span> <span style="color: #a0522d;">QMCKL_NULL_CONTEXT</span> (qmckl_context) 0
 </pre>
 </div>
+</div>
+
+<div id="outline-container-orgba47239" class="outline-3">
+<h3 id="orgba47239"><span class="section-number-3">1.1.</span> Design considerations</h3>
+<div class="outline-text-3" id="text-1-1">
+<p>
+An immutable context would have been ideal from a functional programming
+perspective and would have required implementation of a garbage
+collector for proper memory management. However, to keep the library simple 
+and avoid the complexity of automatic memory management, we have chosen to 
+implement the context as a mutable data structure. This means it has to be 
+handled with care: users must ensure proper initialization, avoid concurrent
+modifications without synchronization, and explicitly destroy contexts when
+they are no longer needed.
+</p>
 
 <p>
-An immutable context would have required to implement a garbage
-collector. To keep the library simple, we have chosen to implement
-the context as a mutable data structure, so it has to be handled
-with care.
+The mutable design also provides better performance characteristics, as it
+avoids the overhead of copying large data structures and allows for in-place
+updates of computational results.
 </p>
 
 <p>
@@ -270,29 +299,56 @@ By convention, in this file <code>context</code> is a <code>qmckl_context</code>
 and <code>ctx</code> is a <code>qmckl_context_struct*</code> pointer.
 </p>
 </div>
+</div>
 
-<div id="outline-container-orgc86a187" class="outline-3">
-<h3 id="orgc86a187"><span class="section-number-3">1.1.</span> Data structure</h3>
-<div class="outline-text-3" id="text-1-1">
+<div id="outline-container-org9ffd1c0" class="outline-3">
+<h3 id="org9ffd1c0"><span class="section-number-3">1.2.</span> Data structure</h3>
+<div class="outline-text-3" id="text-1-2">
 <p>
-The <code>qmckl_extra</code> pointer lets the other implementation of the library
-add specific things to the context. For example a GPU implementation
-of QMCkl will need to store the device ID in the context, and this
-can be made by creating a private data structure containing all 
-GPU-specific data, including the device ID.
+The context data structure contains all the state information needed by the
+library, organized into logical sections. This includes the molecular system
+description (nuclei, electrons, basis sets), computational parameters
+(numerical precision), computed quantities (atomic orbitals, molecular
+orbitals, Jastrow factors, etc.), and internal state management (error
+handling, memory allocation tracking, thread synchronization).
+</p>
+</div>
+</div>
+
+<div id="outline-container-org1357a94" class="outline-3">
+<h3 id="org1357a94"><span class="section-number-3">1.3.</span> Extension mechanism</h3>
+<div class="outline-text-3" id="text-1-3">
+<p>
+The <code>qmckl_extra</code> pointer provides an extension mechanism that allows 
+alternative implementations of the library to add implementation-specific 
+data to the context. For example, a GPU implementation of QMCkl could store 
+the device ID, CUDA streams, or device memory pointers in a custom data 
+structure, and point to it from <code>qmckl_extra</code>. This design allows the core 
+library API to remain stable while supporting diverse implementation 
+strategies.
+</p>
+</div>
+</div>
+
+<div id="outline-container-orge5aea29" class="outline-3">
+<h3 id="orge5aea29"><span class="section-number-3">1.4.</span> Validity checking</h3>
+<div class="outline-text-3" id="text-1-4">
+<p>
+A tag is used internally to check if the memory domain pointed to
+by a pointer is a valid context. This provides a sanity check that allows
+verification that even if the pointer associated with a context is non-null, 
+it actually points to the expected data structure and not to arbitrary memory.
+This is particularly important for catching user errors like passing an
+uninitialized context or a context that has already been destroyed.
 </p>
 
 <p>
-A tag is used internally to check if the memory domain pointed
-by a pointer is a valid context. This allows to check that even if
-the pointer associated with a context is non-null, we can still
-verify that it points to the expected data structure.
-</p>
-
-<p>
-The <code>qmckl_context_check</code> function checks if the domain pointed by
-the pointer is a valid context. It returns the input <code>qmckl_context</code>
-if the context is valid, <code>QMCKL_NULL_CONTEXT</code> otherwise.
+The <code>qmckl_context_check</code> function checks if the domain pointed to by
+the pointer is a valid context by verifying the magic tag value. It returns 
+the input <code>qmckl_context</code> if the context is valid (tag matches <code>VALID_TAG</code>), 
+or <code>QMCKL_NULL_CONTEXT</code> if the context is invalid. This function should be 
+called at the beginning of every public API function to ensure the context
+parameter is valid before attempting to use it.
 </p>
 
 <div class="org-src-container">
@@ -308,7 +364,7 @@ to be recomputed. The date is incremented when the context is touched.
 
 <p>
 When a new element is added to the context, the functions
-<a href="#org4c93b66"><code>qmckl_context_create</code></a> <a href="#org107a60f"><code>qmckl_context_destroy</code></a> and <a href="#orgc24615f"><code>qmckl_context_copy</code></a>
+<a href="#orgc070c5b"><code>qmckl_context_create</code></a> <a href="#orgc2c1690"><code>qmckl_context_destroy</code></a> and <a href="#orgf283c0f"><code>qmckl_context_copy</code></a>
 should be updated in order to make deep copies.
 </p>
 
@@ -330,9 +386,9 @@ This has the effect to increment the date of the context.
 </div>
 
 
-<div id="outline-container-org4c93b66" class="outline-3">
-<h3 id="org4c93b66"><span class="section-number-3">1.2.</span> Creation</h3>
-<div class="outline-text-3" id="text-1-2">
+<div id="outline-container-orgc070c5b" class="outline-3">
+<h3 id="orgc070c5b"><span class="section-number-3">1.5.</span> Creation</h3>
+<div class="outline-text-3" id="text-1-5">
 <p>
 To create a new context, <code>qmckl_context_create()</code> should be used.
 </p>
@@ -348,9 +404,9 @@ To create a new context, <code>qmckl_context_create()</code> should be used.
 </div>
 </div>
 </div>
-<div id="outline-container-orgeae86ec" class="outline-3">
-<h3 id="orgeae86ec"><span class="section-number-3">1.3.</span> Locking</h3>
-<div class="outline-text-3" id="text-1-3">
+<div id="outline-container-org593af9b" class="outline-3">
+<h3 id="org593af9b"><span class="section-number-3">1.6.</span> Locking</h3>
+<div class="outline-text-3" id="text-1-6">
 <p>
 For thread safety, the context may be locked/unlocked. The lock is
 initialized with the <code>PTHREAD_MUTEX_RECURSIVE</code> attribute, and the
@@ -365,18 +421,18 @@ number of times the thread has locked it is saved in the
 </div>
 </div>
 </div>
-<div id="outline-container-orgc24615f" class="outline-3">
-<h3 id="orgc24615f"><span class="section-number-3">1.4.</span> <span class="todo TODO">TODO</span> Copy</h3>
-<div class="outline-text-3" id="text-1-4">
+<div id="outline-container-orgf283c0f" class="outline-3">
+<h3 id="orgf283c0f"><span class="section-number-3">1.7.</span> <span class="todo TODO">TODO</span> Copy</h3>
+<div class="outline-text-3" id="text-1-7">
 <p>
 <code>qmckl_context_copy</code> makes a deep copy of a context. It returns
 <code>QMCKL_NULL_CONTEXT</code> upon failure.
 </p>
 </div>
 </div>
-<div id="outline-container-org107a60f" class="outline-3">
-<h3 id="org107a60f"><span class="section-number-3">1.5.</span> Destroy</h3>
-<div class="outline-text-3" id="text-1-5">
+<div id="outline-container-orgc2c1690" class="outline-3">
+<h3 id="orgc2c1690"><span class="section-number-3">1.8.</span> Destroy</h3>
+<div class="outline-text-3" id="text-1-8">
 <p>
 The context is destroyed with <code>qmckl_context_destroy</code>, leaving the ancestors untouched.
 It frees the context, and returns the previous context.
@@ -393,7 +449,7 @@ It frees the context, and returns the previous context.
 </div>
 <div id="postamble" class="status">
 <p class="author">Author: TREX CoE</p>
-<p class="date">Created: 2025-12-12 Fri 15:56</p>
+<p class="date">Created: 2025-12-12 Fri 17:39</p>
 <p class="validation"><a href="https://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>
