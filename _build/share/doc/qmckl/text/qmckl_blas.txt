@@ -1,0 +1,914 @@
+                            ________________
+
+                             BLAS FUNCTIONS
+
+                                TREX CoE
+                            ________________
+
+
+Table of Contents
+_________________
+
+-
+1. Data types
+.. 1. Vector
+..... 1. Allocation and deallocation
+.. 2. Matrix
+.. 3. Tensor
+.. 4. Reshaping
+..... 1. Vector -> Matrix
+..... 2. Vector -> Tensor
+..... 3. Matrix -> Vector
+..... 4. Matrix -> Tensor
+..... 5. Tensor -> Vector
+..... 6. Tensor -> Matrix
+.. 5. Access macros
+.. 6. Set all elements
+..... 1. Vector
+..... 2. Matrix
+..... 3. Tensor
+.. 7. Copy to/from to `double*'
+.. 8. Allocate and copy to `double*'
+2. Matrix operations
+.. 1. `qmckl_dgemm'
+.. 2. `qmckl_dgemm_safe'
+.. 3. `qmckl_matmul'
+.. 4. `qmckl_adjugate'
+.. 5. `qmckl_adjugate_safe'
+..... 1. C interface
+.. 6. `qmckl_transpose'
+.. 7. `qmckl_dgemm_sparse_nn'
+.. 8. `qmckl_dgemm_sparse_b_nn'
+.. 9. `qmckl_dgemv'
+.. 10. `qmckl_dger'
+3. Utilities
+
+
+
+
+
+-
+=
+
+  This module defines basic linear algebra data types and operations
+  used throughout the QMCkl library. These fundamental structures and
+  operations provide the mathematical foundation for quantum chemistry
+  calculations, enabling efficient manipulation of vectors and matrices.
+
+  The data types defined here are deliberately kept private to the
+  library implementation. This design choice allows high-performance
+  computing (HPC) implementations to use whatever underlying data
+  structures they prefer - whether standard arrays, GPU memory buffers,
+  distributed arrays, or other specialized formats - without affecting
+  the public API.
+
+  These data types are expected to be used internally within QMCkl for
+  intermediate calculations and data organization. They are not intended
+  to be passed to or from external codes, maintaining a clean separation
+  between the library's internal implementation and its public
+  interface.
+
+
+1 Data types
+============
+
+  The library defines standard mathematical objects as structured data
+  types with associated operations. These types encapsulate both the
+  data and its metadata (such as dimensions), enabling type-safe and
+  dimension-aware computations.
+
+  These data types are used internally in QMCkl, so the current section
+  is intended for QMCkl developers.
+
+
+1.1 Vector
+~~~~~~~~~~
+
+  A vector represents a one-dimensional array of double-precision
+  floating-point numbers. The structure includes both the data pointer
+  and the size, ensuring that operations on vectors can verify
+  dimensional compatibility.
+
+   Variable  Type       Description             
+  ----------------------------------------------
+   `size'    `int64_t'  Dimension of the vector 
+   `data'    `double*'  Elements                
+
+  ,----
+  | typedef struct qmckl_vector {
+  |   double* restrict data;
+  |   int64_t size;
+  | } qmckl_vector;
+  `----
+
+
+1.1.1 Allocation and deallocation
+---------------------------------
+
+  ,----
+  | qmckl_vector
+  | qmckl_vector_alloc( qmckl_context context,
+  |                     const int64_t size);
+  `----
+
+  Allocates a new vector of the specified size. The function returns a
+  `qmckl_vector' structure containing the allocated memory and size
+  information.  If the allocation fails, the returned vector will have a
+  size of zero, which can be checked by the caller to detect allocation
+  failures.
+
+  ,----
+  | qmckl_exit_code
+  | qmckl_vector_free( qmckl_context context,
+  |                    qmckl_vector* vector);
+  `----
+
+
+1.2 Matrix
+~~~~~~~~~~
+
+   Variable  Type          Description                 
+  -----------------------------------------------------
+   `size'    `int64_t[2]'  Dimension of each component 
+   `data'    `double*'     Elements                    
+
+  The dimensions use Fortran ordering: two elements differing by one in
+  the first dimension are consecutive in memory.
+
+  ,----
+  | typedef struct qmckl_matrix {
+  |   double* restrict data;
+  |   int64_t size[2];
+  | } qmckl_matrix;
+  `----
+
+
+  ,----
+  | qmckl_matrix
+  | qmckl_matrix_alloc( qmckl_context context,
+  |                     const int64_t size1,
+  |                     const int64_t size2);
+  `----
+
+  Allocates a new matrix. If the allocation failed the sizes are zero.
+
+  ,----
+  | qmckl_exit_code
+  | qmckl_matrix_free( qmckl_context context,
+  |                    qmckl_matrix* matrix);
+  `----
+
+
+1.3 Tensor
+~~~~~~~~~~
+
+   Variable  Type                               Description                 
+  --------------------------------------------------------------------------
+   `order'   `int32_t'                          Order of the tensor         
+   `size'    `int64_t[QMCKL_TENSOR_ORDER_MAX]'  Dimension of each component 
+   `data'    `double*'                          Elements                    
+
+  The dimensions use Fortran ordering: two elements differing by one in
+  the first dimension are consecutive in memory.
+
+  ,----
+  | #define QMCKL_TENSOR_ORDER_MAX 16
+  | 
+  | typedef struct qmckl_tensor {
+  |   double* restrict data;
+  |   int32_t order;
+  |   int32_t __space__;
+  |   int64_t size[QMCKL_TENSOR_ORDER_MAX];
+  | } qmckl_tensor;
+  `----
+
+
+  ,----
+  | qmckl_tensor
+  | qmckl_tensor_alloc( qmckl_context context,
+  |                     const int32_t order,
+  |                     const int64_t* size);
+  `----
+
+  Allocates memory for a tensor. If the allocation failed, the size is
+  zero.
+
+  ,----
+  | qmckl_exit_code
+  | qmckl_tensor_free (qmckl_context context,
+  |                    qmckl_tensor* tensor);
+  `----
+
+
+1.4 Reshaping
+~~~~~~~~~~~~~
+
+  Reshaping occurs in-place and the pointer to the data is copied.
+
+
+1.4.1 Vector -> Matrix
+----------------------
+
+  ,----
+  | qmckl_matrix
+  | qmckl_matrix_of_vector(const qmckl_vector vector,
+  |                        const int64_t size1,
+  |                        const int64_t size2);
+  `----
+
+  Reshapes a vector into a matrix.
+
+
+1.4.2 Vector -> Tensor
+----------------------
+
+  ,----
+  | qmckl_tensor
+  | qmckl_tensor_of_vector(const qmckl_vector vector,
+  |                        const int32_t order,
+  |                        const int64_t* size);
+  `----
+
+  Reshapes a vector into a tensor.
+
+
+1.4.3 Matrix -> Vector
+----------------------
+
+  ,----
+  | qmckl_vector
+  | qmckl_vector_of_matrix(const qmckl_matrix matrix);
+  `----
+
+  Reshapes a matrix into a vector.
+
+
+1.4.4 Matrix -> Tensor
+----------------------
+
+  ,----
+  | qmckl_tensor
+  | qmckl_tensor_of_matrix(const qmckl_matrix matrix,
+  |                        const int32_t order,
+  |                        const int64_t* size);
+  `----
+
+  Reshapes a matrix into a tensor.
+
+
+1.4.5 Tensor -> Vector
+----------------------
+
+  ,----
+  | qmckl_vector
+  | qmckl_vector_of_tensor(const qmckl_tensor tensor);
+  `----
+
+  Reshapes a tensor into a vector.
+
+
+1.4.6 Tensor -> Matrix
+----------------------
+
+  ,----
+  | qmckl_matrix
+  | qmckl_matrix_of_tensor(const qmckl_tensor tensor,
+  |                        const int64_t size1,
+  |                        const int64_t size2);
+  `----
+
+  Reshapes a tensor into a vector.
+
+
+1.5 Access macros
+~~~~~~~~~~~~~~~~~
+
+  Macros are provided to ease the access to vectors, matrices and
+  tensors. Matrices use column-major ordering, as in Fortran.
+
+  ,----
+  | double qmckl_vec (qmckl_vector v, int64_t i);           //  v[i]
+  | double qmckl_mat (qmckl_matrix m, int64_t i, int64_t j) // m[j][i]
+  | 
+  | double qmckl_ten3(qmckl_tensor t, int64_t i, int64_t j, int64_t k); // t[k][j][i]
+  | double qmckl_ten4(qmckl_tensor t, int64_t i, int64_t j, int64_t k, int64_t l);
+  | double qmckl_ten5(qmckl_tensor t, int64_t i, int64_t j, int64_t k, int64_t l, int64_t m);
+  | double qmckl_ten6(qmckl_tensor t, int64_t i, int64_t j, int64_t k, int64_t l, int64_t m, int64_t n);
+  | ...
+  `----
+
+  For example:
+
+
+1.6 Set all elements
+~~~~~~~~~~~~~~~~~~~~
+
+1.6.1 Vector
+------------
+
+  ,----
+  | qmckl_vector
+  | qmckl_vector_set(qmckl_vector vector, double value);
+  `----
+
+
+1.6.2 Matrix
+------------
+
+  ,----
+  | qmckl_matrix
+  | qmckl_matrix_set(qmckl_matrix matrix, double value);
+  `----
+
+
+1.6.3 Tensor
+------------
+
+  ,----
+  | qmckl_tensor
+  | qmckl_tensor_set(qmckl_tensor tensor, double value);
+  `----
+
+
+1.7 Copy to/from to `double*'
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ,----
+  | qmckl_exit_code
+  | qmckl_double_of_vector(const qmckl_context context,
+  |                        const qmckl_vector vector,
+  |                        double* const target,
+  |                        const int64_t size_max);
+  `----
+
+  Converts a vector to a `double*'.
+
+  ,----
+  | qmckl_exit_code
+  | qmckl_double_of_matrix(const qmckl_context context,
+  |                        const qmckl_matrix matrix,
+  |                        double* const target,
+  |                        const int64_t size_max);
+  `----
+
+  Converts a matrix to a `double*'.
+
+  ,----
+  | qmckl_exit_code
+  | qmckl_double_of_tensor(const qmckl_context context,
+  |                        const qmckl_tensor tensor,
+  |                        double* const target,
+  |                        const int64_t size_max);
+  `----
+
+  Converts a tensor to a `double*'.
+
+  ,----
+  | qmckl_exit_code
+  | qmckl_vector_of_double(const qmckl_context context,
+  |                        const double* target,
+  |                        const int64_t size_max,
+  |                        qmckl_vector* vector);
+  `----
+
+  Converts a `double*' to a vector.
+
+  ,----
+  | qmckl_exit_code
+  | qmckl_matrix_of_double(const qmckl_context context,
+  |                        const double* target,
+  |                        const int64_t size_max,
+  |                        qmckl_matrix* matrix);
+  `----
+
+  Converts a `double*' to a matrix.
+
+  ,----
+  | qmckl_exit_code
+  | qmckl_tensor_of_double(const qmckl_context context,
+  |                        const double* target,
+  |                        const int64_t size_max,
+  |                        qmckl_tensor* tensor);
+  `----
+
+  Converts a `double*' to a tensor.
+
+
+1.8 Allocate and copy to `double*'
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  ,----
+  | double* qmckl_alloc_double_of_vector(const qmckl_context context,
+  |                                      const qmckl_vector vector);
+  `----
+
+  ,----
+  | double* qmckl_alloc_double_of_matrix(const qmckl_context context,
+  |                                      const qmckl_matrix matrix);
+  `----
+
+
+  ,----
+  | double* qmckl_alloc_double_of_tensor(const qmckl_context context,
+  |                                      const qmckl_tensor tensor);
+  `----
+
+
+2 Matrix operations
+===================
+
+2.1 `qmckl_dgemm'
+~~~~~~~~~~~~~~~~~
+
+  Matrix multiplication with a BLAS interface:
+
+  \[ C_{ij} = \beta C_{ij} + \alpha \sum_{k} A_{ik} \cdot B_{kj} \]
+
+   Variable   Type             In/Out  Description                           
+  ---------------------------------------------------------------------------
+   `context'  `qmckl_context'  in      Global state                          
+   `TransA'   `char'           in      'T' is transposed                     
+   `TransB'   `char'           in      'T' is transposed                     
+   `m'        `int64_t'        in      Number of rows of the input matrix    
+   `n'        `int64_t'        in      Number of columns of the input matrix 
+   `k'        `int64_t'        in      Number of columns of the input matrix 
+   `alpha'    `double'         in      alpha                                 
+   `A'        `double[][lda]'  in      Array containing the matrix $A$       
+   `lda'      `int64_t'        in      Leading dimension of array `A'        
+   `B'        `double[][ldb]'  in      Array containing the matrix $B$       
+   `ldb'      `int64_t'        in      Leading dimension of array `B'        
+   `beta'     `double'         in      beta                                  
+   `C'        `double[][ldc]'  out     Array containing the matrix $C$       
+   `ldc'      `int64_t'        in      Leading dimension of array `C'        
+
+  Requirements:
+
+  - `context' is not `QMCKL_NULL_CONTEXT'
+  - `m > 0'
+  - `n > 0'
+  - `k > 0'
+  - `lda >= m'
+  - `ldb >= n'
+  - `ldc >= n'
+  - `A' is allocated with at least $m \times k \times 8$ bytes
+  - `B' is allocated with at least $k \times n \times 8$ bytes
+  - `C' is allocated with at least $m \times n \times 8$ bytes
+
+  ,----
+  | qmckl_exit_code qmckl_dgemm (
+  |       const qmckl_context context,
+  |       const char TransA,
+  |       const char TransB,
+  |       const int64_t m,
+  |       const int64_t n,
+  |       const int64_t k,
+  |       const double alpha,
+  |       const double* A,
+  |       const int64_t lda,
+  |       const double* B,
+  |       const int64_t ldb,
+  |       const double beta,
+  |       double* const C,
+  |       const int64_t ldc ); 
+  `----
+
+
+2.2 `qmckl_dgemm_safe'
+~~~~~~~~~~~~~~~~~~~~~~
+
+  "Size-safe" proxy function with the same functionality as
+  `qmckl_dgemm' but with 3 additional arguments. These arguments
+  `size_max_M' (where `M' is a matix) are required primarily for the
+  Python API, where compatibility with NumPy arrays implies that sizes
+  of the input and output arrays are provided.
+
+   Variable      Type             In/Out  Description                           
+  ------------------------------------------------------------------------------
+   `context'     `qmckl_context'  in      Global state                          
+   `TransA'      `char'           in      'T' is transposed                     
+   `TransB'      `char'           in      'T' is transposed                     
+   `m'           `int64_t'        in      Number of rows of the input matrix    
+   `n'           `int64_t'        in      Number of columns of the input matrix 
+   `k'           `int64_t'        in      Number of columns of the input matrix 
+   `alpha'       `double'         in      alpha                                 
+   `A'           `double[][lda]'  in      Array containing the matrix $A$       
+   `size_max_A'  `int64_t'        in      Size of the matrix $A$                
+   `lda'         `int64_t'        in      Leading dimension of array `A'        
+   `B'           `double[][ldb]'  in      Array containing the matrix $B$       
+   `size_max_B'  `int64_t'        in      Size of the matrix $B$                
+   `ldb'         `int64_t'        in      Leading dimension of array `B'        
+   `beta'        `double'         in      beta                                  
+   `C'           `double[][ldc]'  out     Array containing the matrix $C$       
+   `size_max_C'  `int64_t'        in      Size of the matrix $C$                
+   `ldc'         `int64_t'        in      Leading dimension of array `C'        
+
+  Requirements:
+
+  - `context' is not `QMCKL_NULL_CONTEXT'
+  - `m > 0'
+  - `n > 0'
+  - `k > 0'
+  - `lda >= m'
+  - `ldb >= n'
+  - `ldc >= n'
+  - `A' is allocated with at least $m \times k \times 8$ bytes
+  - `B' is allocated with at least $k \times n \times 8$ bytes
+  - `C' is allocated with at least $m \times n \times 8$ bytes
+  - `size_max_A >= m * k'
+  - `size_max_B >= k * n'
+  - `size_max_C >= m * n'
+
+  ,----
+  | qmckl_exit_code qmckl_dgemm_safe (
+  |       const qmckl_context context,
+  |       const char TransA,
+  |       const char TransB,
+  |       const int64_t m,
+  |       const int64_t n,
+  |       const int64_t k,
+  |       const double alpha,
+  |       const double* A,
+  |       const int64_t size_max_A,
+  |       const int64_t lda,
+  |       const double* B,
+  |       const int64_t size_max_B,
+  |       const int64_t ldb,
+  |       const double beta,
+  |       double* const C,
+  |       const int64_t size_max_C,
+  |       const int64_t ldc ); 
+  `----
+
+
+2.3 `qmckl_matmul'
+~~~~~~~~~~~~~~~~~~
+
+  Matrix multiplication using the `qmckl_matrix' data type:
+
+  \[ C_{ij} = \beta C_{ij} + \alpha \sum_{k} A_{ik} \cdot B_{kj} \]
+
+   Variable   Type             In/Out  Description       
+  -------------------------------------------------------
+   `context'  `qmckl_context'  in      Global state      
+   `TransA'   `char'           in      'T' is transposed 
+   `TransB'   `char'           in      'T' is transposed 
+   `alpha'    `double'         in      alpha             
+   `A'        `qmckl_matrix'   in      Matrix $A$        
+   `B'        `qmckl_matrix'   in      Matrix $B$        
+   `beta'     `double'         in      beta              
+   `C'        `qmckl_matrix'   out     Matrix $C$        
+
+  ,----
+  | qmckl_exit_code qmckl_matmul (
+  |       const qmckl_context context,
+  |       const char TransA,
+  |       const char TransB,
+  |       const double alpha,
+  |       const qmckl_matrix A,
+  |       const qmckl_matrix B,
+  |       const double beta,
+  |       qmckl_matrix* const C ); 
+  `----
+
+
+2.4 `qmckl_adjugate'
+~~~~~~~~~~~~~~~~~~~~
+
+  Given a matrix $\mathbf{A}$, the adjugate matrix
+  $\text{adj}(\mathbf{A})$ is the transpose of the cofactors matrix of
+  $\mathbf{A}$.
+
+  \[ \mathbf{B} = \text{adj}(\mathbf{A}) = \text{det}(\mathbf{A}) \,
+     \mathbf{A}^{-1} \]
+
+  See also: <https://en.wikipedia.org/wiki/Adjugate_matrix>
+
+   Variable   Type             In/Out  Description                                    
+  ------------------------------------------------------------------------------------
+   `context'  `qmckl_context'  in      Global state                                   
+   `n'        `int64_t'        in      Number of rows and columns of the input matrix 
+   `A'        `double[][lda]'  in      Array containing the $n \times n$ matrix $A$   
+   `lda'      `int64_t'        in      Leading dimension of array `A'                 
+   `B'        `double[][ldb]'  out     Adjugate of $A$                                
+   `ldb'      `int64_t'        in      Leading dimension of array `B'                 
+   `det_l'    `double'         inout   determinant of $A$                             
+
+  Requirements:
+
+  - `context' is not `QMCKL_NULL_CONTEXT'
+  - `n > 0'
+  - `lda >= m'
+  - `A' is allocated with at least $m \times m \times 8$ bytes
+  - `ldb >= m'
+  - `B' is allocated with at least $m \times m \times 8$ bytes
+
+  ,----
+  | qmckl_exit_code qmckl_adjugate (
+  |       const qmckl_context context,
+  |       const int64_t n,
+  |       const double* A,
+  |       const int64_t lda,
+  |       double* const B,
+  |       const int64_t ldb,
+  |       double* det_l ); 
+  `----
+
+  For small matrices (<= 5* 5), we use specialized routines for
+  performance motivations. For larger sizes, we rely on the LAPACK
+  library.
+
+  ,----
+  | subroutine adjugate_general(context, na, A, LDA, B, LDB, det_l)
+  |   use qmckl
+  |   implicit none
+  |   integer(qmckl_context), intent(in) :: context
+  |   integer*8, intent(in)              :: LDA
+  |   integer*8, intent(in)              :: LDB
+  |   integer*8, intent(in)              :: na
+  |   double precision, intent(in)       :: A (LDA,na)
+  |   double precision, intent(out)      :: B (LDB,na)
+  |   double precision, intent(inout)    :: det_l
+  | 
+  |   double precision :: work(LDA*max(na,64))
+  |   integer          :: inf
+  |   integer          :: ipiv(LDA)
+  |   integer          :: lwork
+  |   integer(8)       :: i, j
+  | 
+  `----
+
+  We first copy the array `A' into array `B'.
+
+  ,----
+  | B(1:na,1:na) = A(1:na,1:na)
+  `----
+
+  Then, we compute the LU factorization $LU=A$ using the `dgetrf'
+  routine.
+
+  ,----
+  | call dgetrf(na, na, B, LDB, ipiv, inf )
+  `----
+
+  By convention, the determinant of $L$ is equal to one, so the
+  determinant of $A$ is equal to the determinant of $U$, which is simply
+  computed as the product of its diagonal elements.
+
+  ,----
+  | det_l = 1.d0
+  | j=0_8
+  | do i=1,na
+  |  j = j+min(abs(ipiv(i)-i),1)
+  |  det_l = det_l*B(i,i)
+  | enddo
+  `----
+
+  As `dgetrf' returns $PLU=A$ where $P$ is a permutation matrix, the
+  sign of the determinant is computed as $-1^m$ where $m$ is the number
+  of permutations.
+
+  ,----
+  | if (iand(j,1_8) /= 0_8)  then
+  |   det_l = -det_l
+  | endif
+  `----
+
+  Then, the inverse of $A$ is computed using `dgetri':
+
+  ,----
+  | lwork = SIZE(work)
+  | call dgetri(na, B, LDB, ipiv, work, lwork, inf )
+  `----
+
+  and the adjugate matrix is computed as the product of the determinant
+  with the inverse:
+
+  ,----
+  |   B(1:na,1:na) = B(1:na,1:na)*det_l
+  | 
+  | end subroutine adjugate_general
+  `----
+
+
+2.5 `qmckl_adjugate_safe'
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  "Size-safe" proxy function with the same functionality as
+  `qmckl_adjugate' but with 2 additional arguments. These arguments
+  `size_max_M' (where `M' is a matix) are required primarily for the
+  Python API, where compatibility with NumPy arrays implies that sizes
+  of the input and output arrays are provided.
+
+
+   Variable      Type             In/Out  Description                                    
+  ---------------------------------------------------------------------------------------
+   `context'     `qmckl_context'  in      Global state                                   
+   `n'           `int64_t'        in      Number of rows and columns of the input matrix 
+   `A'           `double[][lda]'  in      Array containing the $n \times n$ matrix $A$   
+   `size_max_A'  `int64_t'        in      Size of the matrix $A$                         
+   `lda'         `int64_t'        in      Leading dimension of array `A'                 
+   `B'           `double[][ldb]'  out     Adjugate of $A$                                
+   `size_max_B'  `int64_t'        in      Size of the matrix $B$                         
+   `ldb'         `int64_t'        in      Leading dimension of array `B'                 
+   `det_l'       `double'         inout   determinant of $A$                             
+
+  Requirements:
+
+  - `context' is not `QMCKL_NULL_CONTEXT'
+  - `n > 0'
+  - `lda >= m'
+  - `A' is allocated with at least $m \times m \times 8$ bytes
+  - `ldb >= m'
+  - `B' is allocated with at least $m \times m \times 8$ bytes
+  - `size_max_A >= m * m'
+  - `size_max_B >= m * m'
+
+  ,----
+  | qmckl_exit_code qmckl_adjugate_safe (
+  |       const qmckl_context context,
+  |       const int64_t n,
+  |       const double* A,
+  |       const int64_t size_max_A,
+  |       const int64_t lda,
+  |       double* const B,
+  |       const int64_t size_max_B,
+  |       const int64_t ldb,
+  |       double* det_l ); 
+  `----
+
+  For small matrices (<= 5* 5), we use specialized routines for
+  performance motivations. For larger sizes, we rely on the LAPACK
+  library.
+
+
+2.5.1 C interface
+-----------------
+
+
+2.6 `qmckl_transpose'
+~~~~~~~~~~~~~~~~~~~~~
+
+  Transposes a matrix: $A^\dagger_{ji} = A_{ij}$.
+
+   Variable   Type             In/Out  Description       
+  -------------------------------------------------------
+   `context'  `qmckl_context'  in      Global state      
+   `A'        `qmckl_matrix'   in      Input matrix      
+   `At'       `qmckl_matrix'   out     Transposed matrix 
+
+
+2.7 `qmckl_dgemm_sparse_nn'
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Sparse matrix multiplication using CSR (Compressed Sparse Row) format
+  for both matrices:
+
+  \[ C_{ij} = \beta C_{ij} + \alpha \sum_{k} A_{ik} \cdot B_{kj} \]
+
+  This function performs matrix multiplication where both $A$ and $B$
+  are stored in CSR (Compressed Sparse Row) format. The function
+  automatically switches between sparse and dense BLAS implementations
+  based on the matrix density threshold.
+
+   Variable   Type             In/Out  Description                                 
+  ---------------------------------------------------------------------------------
+   `context'  `qmckl_context'  in      Global state                                
+   `m'        `int64_t'        in      Number of rows of matrix $A$ and $C$        
+   `n'        `int64_t'        in      Number of columns of matrix $B$ and $C$     
+   `k'        `int64_t'        in      Number of columns of $A$ and rows of $B$    
+   `alpha'    `double'         in      Scalar $\alpha$                             
+   `A'        `CSRMatrix*'     in      CSR format sparse matrix $A$ ($m \times k$) 
+   `B'        `CSRMatrix*'     in      CSR format sparse matrix $B$ ($k \times n$) 
+   `beta'     `double'         in      Scalar $\beta$                              
+   `C'        `double*'        out     Dense output matrix $C$ ($m \times n$)      
+   `ldc'      `int64_t'        in      Leading dimension of array `C'              
+
+  Requirements:
+
+  - `context' is not `QMCKL_NULL_CONTEXT'
+  - `m > 0'
+  - `n > 0'
+  - `k > 0'
+  - `A' is not `NULL' and properly initialized as CSR matrix
+  - `B' is not `NULL' and properly initialized as CSR matrix
+  - `C' is allocated with at least $m \times n$ elements
+  - `ldc >= m'
+
+
+2.8 `qmckl_dgemm_sparse_b_nn'
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Sparse matrix multiplication where $A$ is dense and $B$ is in CSC
+  (Compressed Sparse Column) format:
+
+  \[ C_{ij} = \beta C_{ij} + \alpha \sum_{k} A_{ik} \cdot B_{kj} \]
+
+  This function performs matrix multiplication where $A$ is a dense
+  matrix and $B$ is stored in CSC (Compressed Sparse Column) format. The
+  function automatically switches between sparse and dense BLAS
+  implementations based on the matrix $B$ density threshold.
+
+   Variable   Type             In/Out  Description                                 
+  ---------------------------------------------------------------------------------
+   `context'  `qmckl_context'  in      Global state                                
+   `m'        `int64_t'        in      Number of rows of matrix $A$ and $C$        
+   `n'        `int64_t'        in      Number of columns of matrix $B$ and $C$     
+   `k'        `int64_t'        in      Number of columns of $A$ and rows of $B$    
+   `alpha'    `double'         in      Scalar $\alpha$                             
+   `A'        `double*'        in      Dense matrix $A$ ($m \times k$)             
+   `LDA'      `int64_t'        in      Leading dimension of array `A'              
+   `B'        `CSCMatrix*'     in      CSC format sparse matrix $B$ ($k \times n$) 
+   `beta'     `double'         in      Scalar $\beta$                              
+   `C'        `double*'        out     Dense output matrix $C$ ($m \times n$)      
+   `ldc'      `int64_t'        in      Leading dimension of array `C'              
+
+  Requirements:
+
+  - `context' is not `QMCKL_NULL_CONTEXT'
+  - `m > 0'
+  - `n > 0'
+  - `k > 0'
+  - `A' is not `NULL' and allocated with at least $m \times k$ elements
+  - `LDA >= m'
+  - `B' is not `NULL' and properly initialized as CSC matrix
+  - `C' is allocated with at least $m \times n$ elements
+  - `ldc >= m'
+
+
+2.9 `qmckl_dgemv'
+~~~~~~~~~~~~~~~~~
+
+  Matrix-vector multiplication with a BLAS interface:
+
+  \[ Y_{i} = \sum_{j} \alpha A_{ij} X_j + \beta Y_i \]
+
+   Variable   Type             In/Out  Description                           
+  ---------------------------------------------------------------------------
+   `context'  `qmckl_context'  in      Global state                          
+   `Trans'    `char'           in      'T' is transposed                     
+   `m'        `int64_t'        in      Number of rows of the input matrix    
+   `n'        `int64_t'        in      Number of columns of the input matrix 
+   `alpha'    `double'         in      $\alpha$                              
+   `A'        `double[][lda]'  in      Array containing the matrix $A$       
+   `lda'      `int64_t'        in      Leading dimension of array `A'        
+   `X'        `double[]'       in      Array containing the vector $x$       
+   `incx'     `int64_t'        in      Increment of the elements of `x'      
+   `beta'     `double'         in      $\beta$                               
+   `y'        `double[]'       in      Array containing the vector $y$       
+   `incy'     `int64_t'        in      Increment of the elements of `y'      
+  ,----
+  | qmckl_exit_code qmckl_dgemv (
+  |       const qmckl_context context,
+  |       const char Trans,
+  |       const int64_t m,
+  |       const int64_t n,
+  |       const double alpha,
+  |       const double* A,
+  |       const int64_t lda,
+  |       const double* X,
+  |       const int64_t incx,
+  |       const double beta,
+  |       const double* y,
+  |       const int64_t incy ); 
+  `----
+
+
+2.10 `qmckl_dger'
+~~~~~~~~~~~~~~~~~
+
+  Rank-1 update
+
+  \[ A = \alpha x y^{\dagger} + A \]
+
+   Variable   Type             In/Out  Description                           
+  ---------------------------------------------------------------------------
+   `context'  `qmckl_context'  in      Global state                          
+   `m'        `int64_t'        in      Number of rows of the input matrix    
+   `n'        `int64_t'        in      Number of columns of the input matrix 
+   `alpha'    `double'         in      $\alpha$                              
+   `X'        `double[]'       in      Array containing the vector $x$       
+   `incx'     `int64_t'        in      Increment of the elements of `x'      
+   `y'        `double[]'       in      Array containing the vector $y$       
+   `incy'     `int64_t'        in      Increment of the elements of `y'      
+   `A'        `double[][lda]'  inout   Array containing the matrix $A$       
+   `lda'      `int64_t'        in      Leading dimension of array `A'        
+
+  ,----
+  | qmckl_exit_code qmckl_dger (
+  |       const qmckl_context context,
+  |       const int64_t m,
+  |       const int64_t n,
+  |       const double alpha,
+  |       const double* X,
+  |       const int64_t incx,
+  |       const double* y,
+  |       const int64_t incy,
+  |       double* A,
+  |       const int64_t lda ); 
+  `----
+
+
+3 Utilities
+===========
+
+  Trick to make MKL efficient on AMD

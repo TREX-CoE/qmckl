@@ -1,0 +1,341 @@
+                               __________
+
+                                NUCLEUS
+
+                                TREX CoE
+                               __________
+
+
+Table of Contents
+_________________
+
+1. Context
+.. 1. Data structure
+.. 2. Initialization tracking
+.. 3. Access functions
+.. 4. Initialization functions
+.. 5. Deep copy
+2. Computation
+.. 1. Nucleus-nucleus distances
+..... 1. Get
+..... 2. Compute
+.. 2. Nuclear repulsion energy
+..... 1. Get
+..... 2. Compute
+
+
+
+
+
+1 Context
+=========
+
+  The nucleus module stores both input data (nuclear positions and
+  charges) and computed derived quantities (inter-nuclear distances and
+  repulsion energy) in the context. This organization allows for
+  efficient caching: derived quantities are only recomputed when the
+  underlying input data changes.
+
+  The following data is stored in the context:
+
+  --------------------------------------------------------------------------
+   `uninitialized'  int32_t       Keeps bit set for uninitialized data      
+   `num'            int64_t       Total number of nuclei                    
+   `provided'       bool          If true, `nucleus' is valid               
+   `charge'         qmckl_vector  Nuclear charges                           
+   `coord'          qmckl_matrix  Nuclear coordinates, in transposed format 
+   `coord_date'     int64_t       Nuclear coordinates, date if modified     
+
+  Computed data:
+
+  ---------------------------------------------------------------------------------------
+   `nn_distance'       qmckl_matrix  Nucleus-nucleus distances                           
+   `nn_distance_date'  int64_t       Date when Nucleus-nucleus distances were computed   
+   `repulsion'         double        Nuclear repulsion energy                            
+   `repulsion_date'    int64_t       Date when the nuclear repulsion energy was computed 
+
+
+1.1 Data structure
+~~~~~~~~~~~~~~~~~~
+
+  The nucleus data structure consolidates all nuclear information in a
+  single C structure. The date fields enable automatic recomputation
+  detection: when coordinates change, the `coord_date' is updated,
+  triggering recomputation of dependent quantities like distances and
+  repulsion energy when they are next requested.
+
+
+1.2 Initialization tracking
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  The `uninitialized' integer serves as a bit field where each bit
+  represents whether a specific initialization function has been
+  called. Initially, certain bits are set to one, and each
+  initialization function clears its corresponding bit. When all
+  required initialization functions have been called, the
+  `uninitialized' field becomes zero, the struct is fully initialized,
+  and `provided' is set to `true'.
+
+  This mechanism ensures that the nucleus data is complete before being
+  used in calculations. Some values may be initialized by default and
+  are not tracked by this mechanism.
+
+
+1.3 Access functions
+~~~~~~~~~~~~~~~~~~~~
+
+  When all the data relative to nuclei have been set, the following
+  function returns `true'.
+
+  ,----
+  | bool qmckl_nucleus_provided (const qmckl_context context);
+  `----
+
+
+1.4 Initialization functions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  To set the data relative to the nuclei in the context, the following
+  functions need to be called.
+
+  ,----
+  | qmckl_exit_code
+  | qmckl_set_nucleus_num(qmckl_context context,
+  |                       const int64_t num);
+  `----
+
+  Sets the number of nuclei.
+
+  ,----
+  | qmckl_exit_code
+  | qmckl_set_nucleus_charge(qmckl_context context,
+  |                          const double* charge,
+  |                          const int64_t size_max);
+  `----
+
+  Sets the nuclear charges of all the atoms.
+
+  ,----
+  | qmckl_exit_code
+  | qmckl_set_nucleus_coord(qmckl_context context,
+  |                         const char transp,
+  |                         const double* coord,
+  |                         const int64_t size_max);
+  `----
+
+  Sets the nuclear coordinates of all the atoms. The coordinates are be
+  given in atomic units.
+
+
+1.5 Deep copy
+~~~~~~~~~~~~~
+
+  Performs a deep copy of the nucleus structure from `src' to `dest'.
+  Memory allocations are done using the provided context.
+
+  ,----
+  | qmckl_exit_code qmckl_copy_nucleus(qmckl_context context, const qmckl_nucleus_struct* src, qmckl_nucleus_struct* dest) {
+  | 
+  |   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+  |     return QMCKL_INVALID_CONTEXT;
+  |   }
+  | 
+  |   if (src == NULL || dest == NULL) {
+  |     return qmckl_failwith(context,
+  |                           QMCKL_INVALID_ARG_2,
+  |                           "qmckl_copy_nucleus",
+  |                           "NULL pointer");
+  |   }
+  | 
+  |   /* Copy scalar fields */
+  |   dest->num = src->num;
+  |   dest->repulsion_date = src->repulsion_date;
+  |   dest->nn_distance_date = src->nn_distance_date;
+  |   dest->coord_date = src->coord_date;
+  |   dest->repulsion = src->repulsion;
+  |   dest->uninitialized = src->uninitialized;
+  |   dest->provided = src->provided;
+  | 
+  |   /* Deep copy charge vector */
+  |   if (src->charge.data != NULL && src->charge.size > 0) {
+  |     size_t size = src->charge.size * sizeof(double);
+  |     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+  |     mem_info.size = size;
+  |     dest->charge.data = (double*) qmckl_malloc(context, mem_info);
+  |     if (dest->charge.data == NULL) {
+  |       return QMCKL_ALLOCATION_FAILED;
+  |     }
+  |     memcpy(dest->charge.data, src->charge.data, size);
+  |     dest->charge.size = src->charge.size;
+  |   } else {
+  |     dest->charge.data = NULL;
+  |     dest->charge.size = 0;
+  |   }
+  | 
+  |   /* Deep copy coord matrix */
+  |   if (src->coord.data != NULL && src->coord.size[0] > 0) {
+  |     size_t size = src->coord.size[0] * src->coord.size[1] * sizeof(double);
+  |     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+  |     mem_info.size = size;
+  |     dest->coord.data = (double*) qmckl_malloc(context, mem_info);
+  |     if (dest->coord.data == NULL) {
+  |       return QMCKL_ALLOCATION_FAILED;
+  |     }
+  |     memcpy(dest->coord.data, src->coord.data, size);
+  |     dest->coord.size[0] = src->coord.size[0];
+  |     dest->coord.size[1] = src->coord.size[1];
+  |   } else {
+  |     dest->coord.data = NULL;
+  |     dest->coord.size[0] = 0;
+  |     dest->coord.size[1] = 0;
+  |   }
+  | 
+  |   /* Deep copy nn_distance matrix */
+  |   if (src->nn_distance.data != NULL && src->nn_distance.size[0] > 0) {
+  |     size_t size = src->nn_distance.size[0] * src->nn_distance.size[1] * sizeof(double);
+  |     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+  |     mem_info.size = size;
+  |     dest->nn_distance.data = (double*) qmckl_malloc(context, mem_info);
+  |     if (dest->nn_distance.data == NULL) {
+  |       return QMCKL_ALLOCATION_FAILED;
+  |     }
+  |     memcpy(dest->nn_distance.data, src->nn_distance.data, size);
+  |     dest->nn_distance.size[0] = src->nn_distance.size[0];
+  |     dest->nn_distance.size[1] = src->nn_distance.size[1];
+  |   } else {
+  |     dest->nn_distance.data = NULL;
+  |     dest->nn_distance.size[0] = 0;
+  |     dest->nn_distance.size[1] = 0;
+  |   }
+  | 
+  |   return QMCKL_SUCCESS;
+  | }
+  `----
+
+
+2 Computation
+=============
+
+  The computed data is stored in the context so that it can be reused by
+  different kernels. To ensure that the data is valid, for each computed
+  data the date of the context is stored when it is computed.  To know
+  if some data needs to be recomputed, we check if the date of the
+  dependencies are more recent than the date of the data to compute. If
+  it is the case, then the data is recomputed and the current date is
+  stored.
+
+
+2.1 Nucleus-nucleus distances
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+2.1.1 Get
+---------
+
+  ,----
+  | qmckl_exit_code
+  | qmckl_get_nucleus_nn_distance(qmckl_context context,
+  |                               double* distance,
+  |                               const int64_t size_max);
+  `----
+
+
+2.1.2 Compute
+-------------
+
+   `qmckl_context'  `context'                          in   Global state                   
+   `int64_t'        `nucl_num'                         in   Number of nuclei               
+   `double'         `coord[3][nucl_num]'               in   Nuclear coordinates (au)       
+   `double'         `nn_distance[nucl_num][nucl_num]'  out  Nucleus-nucleus distances (au) 
+
+  ,----
+  | integer function qmckl_compute_nn_distance_f(context, nucl_num, coord, nn_distance) &
+  |      result(info)
+  |   use qmckl
+  |   implicit none
+  |   integer(qmckl_context), intent(in)  :: context
+  |   integer*8             , intent(in)  :: nucl_num
+  |   double precision      , intent(in)  :: coord(nucl_num,3)
+  |   double precision      , intent(out) :: nn_distance(nucl_num,nucl_num)
+  | 
+  |   integer*8 :: k
+  | 
+  |   info = QMCKL_SUCCESS
+  | 
+  |   if (context == QMCKL_NULL_CONTEXT) then
+  |      info = QMCKL_INVALID_CONTEXT
+  |      return
+  |   endif
+  | 
+  |   if (nucl_num <= 0) then
+  |      info = QMCKL_INVALID_ARG_2
+  |      return
+  |   endif
+  | 
+  |   info = qmckl_distance(context, 'T', 'T', nucl_num, nucl_num, &
+  |           coord, nucl_num, &
+  |           coord, nucl_num, &
+  |           nn_distance, nucl_num)
+  | 
+  | end function qmckl_compute_nn_distance_f
+  `----
+
+
+2.2 Nuclear repulsion energy
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  \[ V_{NN} = \sum_{A=1}^{N-1} \sum_{B>A}^N \frac{Q_A Q_B}{R_{AB}} \]
+
+
+2.2.1 Get
+---------
+
+  ,----
+  | qmckl_exit_code qmckl_get_nucleus_repulsion(qmckl_context context, double* const energy);
+  `----
+
+
+2.2.2 Compute
+-------------
+
+   `qmckl_context'  `context'                          in   Global state                   
+   `int64_t'        `nucl_num'                         in   Number of nuclei               
+   `double'         `charge[nucl_num]'                 in   Nuclear charges (au)           
+   `double'         `nn_distance[nucl_num][nucl_num]'  in   Nucleus-nucleus distances (au) 
+   `double'         `energy'                           out  Nuclear repulsion energy       
+
+  ,----
+  | integer function qmckl_compute_nucleus_repulsion_f(context, nucl_num, charge, nn_distance, energy) &
+  |      result(info)
+  |   use qmckl
+  |   implicit none
+  |   integer(qmckl_context), intent(in)  :: context
+  |   integer*8             , intent(in)  :: nucl_num
+  |   double precision      , intent(in)  :: charge(nucl_num)
+  |   double precision      , intent(in)  :: nn_distance(nucl_num,nucl_num)
+  |   double precision      , intent(out) :: energy
+  | 
+  |   integer*8 :: i, j
+  | 
+  |   info = QMCKL_SUCCESS
+  | 
+  |   if (context == QMCKL_NULL_CONTEXT) then
+  |      info = QMCKL_INVALID_CONTEXT
+  |      return
+  |   endif
+  | 
+  |   if (nucl_num <= 0) then
+  |      info = QMCKL_INVALID_ARG_2
+  |      return
+  |   endif
+  | 
+  |   energy = 0.d0
+  |   do j=2, nucl_num
+  |      do i=1, j-1
+  |         if (dabs(nn_distance(i,j)) > 1e-5) then
+  |           energy = energy + charge(i) * charge(j) / nn_distance(i,j)
+  |         endif
+  |      end do
+  |   end do
+  | 
+  | end function qmckl_compute_nucleus_repulsion_f
+  `----

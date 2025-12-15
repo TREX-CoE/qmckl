@@ -1,0 +1,938 @@
+                       __________________________
+
+                        INTER-PARTICLE DISTANCES
+
+                                TREX CoE
+                       __________________________
+
+
+Table of Contents
+_________________
+
+1. Squared distance
+.. 1. `qmckl_distance_sq'
+..... 1. Performance
+2. Distance
+.. 1. `qmckl_distance'
+..... 1. Requirements
+..... 2. C header
+..... 3. Source
+..... 4. Performance
+3. Rescaled Distance
+.. 1. `qmckl_distance_rescaled'
+..... 1. Requirements
+..... 2. C header
+..... 3. Source
+..... 4. Performance
+4. Rescaled Distance Derivatives
+.. 1. `qmckl_distance_rescaled_gl'
+
+
+
+
+
+1 Squared distance
+==================
+
+1.1 `qmckl_distance_sq'
+~~~~~~~~~~~~~~~~~~~~~~~
+
+  The `qmckl_distance_sq' function computes the matrix of squared
+  Euclidean distances between all pairs of points from two sets. For
+  each point in set A and each point in set B, it calculates the squared
+  distance, which avoids the computational cost of square root
+  operations that would be needed for actual distances. In many quantum
+  chemistry applications, squared distances are directly needed (e.g.,
+  in Gaussian functions), making this an efficient choice.
+
+  The function computes:
+
+  \[ C_{ij} = \sum_{k=1}^3 (A_{k,i}-B_{k,j})^2 \]
+
+  where $A$ and $B$ are sets of 3D points and $C$ is the resulting
+  distance matrix.  The function supports both normal and transposed
+  input matrices through the `transa' and `transb' parameters, allowing
+  efficient handling of data in different memory layouts.
+
+   Variable   Type              In/Out  Description                                   
+  ------------------------------------------------------------------------------------
+   `context'  `qmckl_context'   in      Global state                                  
+   `transa'   `char'            in      Array `A' is `'N'': Normal, `'T'': Transposed 
+   `transb'   `char'            in      Array `B' is `'N'': Normal, `'T'': Transposed 
+   `m'        `int64_t'         in      Number of points in the first set             
+   `n'        `int64_t'         in      Number of points in the second set            
+   `A'        `double[][lda]'   in      Array containing the $m \times 3$ matrix $A$  
+   `lda'      `int64_t'         in      Leading dimension of array `A'                
+   `B'        `double[][ldb]'   in      Array containing the $n \times 3$ matrix $B$  
+   `ldb'      `int64_t'         in      Leading dimension of array `B'                
+   `C'        `double[n][ldc]'  out     Array containing the $m \times n$ matrix $C$  
+   `ldc'      `int64_t'         in      Leading dimension of array `C'                
+
+  Requirements:
+
+  - `context' is not `QMCKL_NULL_CONTEXT'
+  - `m > 0'
+  - `n > 0'
+  - `lda >= 3' if `transa == 'N''
+  - `lda >= m' if `transa == 'T''
+  - `ldb >= 3' if `transb == 'N''
+  - `ldb >= n' if `transb == 'T''
+  - `ldc >= m'
+  - `A' is allocated with at least $3 \times m \times 8$ bytes
+  - `B' is allocated with at least $3 \times n \times 8$ bytes
+  - `C' is allocated with at least $m \times n \times 8$ bytes
+
+  ,----
+  | qmckl_exit_code qmckl_distance_sq (
+  |       const qmckl_context context,
+  |       const char transa,
+  |       const char transb,
+  |       const int64_t m,
+  |       const int64_t n,
+  |       const double* A,
+  |       const int64_t lda,
+  |       const double* B,
+  |       const int64_t ldb,
+  |       double* const C,
+  |       const int64_t ldc ); 
+  `----
+
+  ,----
+  | function qmckl_distance_sq(context, transa, transb, m, n, &
+  |      A, LDA, B, LDB, C, LDC) &
+  |      bind(C) result(info)
+  | 
+  |   use qmckl_constants
+  |   implicit none
+  | 
+  |   integer (qmckl_context) , intent(in)  , value :: context
+  |   character(c_char)   , intent(in)  , value :: transa
+  |   character(c_char)   , intent(in)  , value :: transb
+  |   integer (c_int64_t) , intent(in)  , value :: m
+  |   integer (c_int64_t) , intent(in)  , value :: n
+  |   integer (c_int64_t) , intent(in)  , value :: lda
+  |   integer (c_int64_t) , intent(in)  , value :: ldb
+  |   integer (c_int64_t) , intent(in)  , value :: ldc
+  |   real    (c_double ) , intent(in)          :: A(lda,*)
+  |   real    (c_double ) , intent(in)          :: B(ldb,*)
+  |   real    (c_double ) , intent(out)         :: C(ldc,n)
+  | 
+  |   integer(qmckl_exit_code) :: info
+  | 
+  |   integer*8 :: i,j
+  |   real*8    :: x, y, z
+  |   integer   :: transab
+  | 
+  |   info = QMCKL_SUCCESS
+  | 
+  |   if (context == QMCKL_NULL_CONTEXT) then
+  |      info = QMCKL_INVALID_CONTEXT
+  |      return
+  |   endif
+  | 
+  |   if (m <= 0_8) then
+  |      info = QMCKL_INVALID_ARG_4
+  |      return
+  |   endif
+  | 
+  |   if (n <= 0_8) then
+  |      info = QMCKL_INVALID_ARG_5
+  |      return
+  |   endif
+  | 
+  |   if (transa == 'N' .or. transa == 'n') then
+  |      transab = 0
+  |   else if (transa == 'T' .or. transa == 't') then
+  |      transab = 1
+  |   else
+  |      transab = -100
+  |   endif
+  | 
+  |   if (transb == 'N' .or. transb == 'n') then
+  |      continue
+  |   else if (transb == 'T' .or. transb == 't') then
+  |      transab = transab + 2
+  |   else
+  |      transab = -100
+  |   endif
+  | 
+  |   if (transab < 0) then
+  |      info = QMCKL_INVALID_ARG_1
+  |      return
+  |   endif
+  | 
+  |   if (iand(transab,1) == 0 .and. LDA < 3) then
+  |      info = QMCKL_INVALID_ARG_7
+  |      return
+  |   endif
+  | 
+  |   if (iand(transab,1) == 1 .and. LDA < m) then
+  |      info = QMCKL_INVALID_ARG_7
+  |      return
+  |   endif
+  | 
+  |   if (iand(transab,2) == 0 .and. LDB < 3) then
+  |      info = QMCKL_INVALID_ARG_7
+  |      return
+  |   endif
+  | 
+  |   if (iand(transab,2) == 2 .and. LDB < n) then
+  |      info = QMCKL_INVALID_ARG_7
+  |      return
+  |   endif
+  | 
+  | 
+  |   select case (transab)
+  | 
+  |   case(0)
+  | 
+  |      do j=1,n
+  |         do i=1,m
+  |            x = A(1,i) - B(1,j)
+  |            y = A(2,i) - B(2,j)
+  |            z = A(3,i) - B(3,j)
+  |            C(i,j) = x*x + y*y + z*z
+  |         end do
+  |      end do
+  | 
+  |   case(1)
+  | 
+  |      do j=1,n
+  |         do i=1,m
+  |            x = A(i,1) - B(1,j)
+  |            y = A(i,2) - B(2,j)
+  |            z = A(i,3) - B(3,j)
+  |            C(i,j) = x*x + y*y + z*z
+  |         end do
+  |      end do
+  | 
+  |   case(2)
+  | 
+  |      do j=1,n
+  |         do i=1,m
+  |            x = A(1,i) - B(j,1)
+  |            y = A(2,i) - B(j,2)
+  |            z = A(3,i) - B(j,3)
+  |            C(i,j) = x*x + y*y + z*z
+  |         end do
+  |      end do
+  | 
+  |   case(3)
+  | 
+  |      do j=1,n
+  |         do i=1,m
+  |            x = A(i,1) - B(j,1)
+  |            y = A(i,2) - B(j,2)
+  |            z = A(i,3) - B(j,3)
+  |            C(i,j) = x*x + y*y + z*z
+  |         end do
+  |      end do
+  | 
+  |   end select
+  | 
+  | end function qmckl_distance_sq
+  `----
+
+
+1.1.1 Performance
+-----------------
+
+  This function is more efficient when `A' and `B' are transposed.
+
+
+2 Distance
+==========
+
+2.1 `qmckl_distance'
+~~~~~~~~~~~~~~~~~~~~
+
+  `qmckl_distance' computes the matrix of the distances between all
+  pairs of points in two sets, one point within each set:
+
+  \[ C_{ij} = \sqrt{\sum_{k=1}^3 (A_{k,i}-B_{k,j})^2} \]
+
+  If the input array is normal (`'N''), the xyz coordinates are in the
+  leading dimension: `[n][3]' in C and `(3,n)' in Fortran.
+
+   Variable   Type              In/Out  Description                                   
+  ------------------------------------------------------------------------------------
+   `context'  `qmckl_context'   in      Global state                                  
+   `transa'   `char'            in      Array `A' is `'N'': Normal, `'T'': Transposed 
+   `transb'   `char'            in      Array `B' is `'N'': Normal, `'T'': Transposed 
+   `m'        `int64_t'         in      Number of points in the first set             
+   `n'        `int64_t'         in      Number of points in the second set            
+   `A'        `double[][lda]'   in      Array containing the $m \times 3$ matrix $A$  
+   `lda'      `int64_t'         in      Leading dimension of array `A'                
+   `B'        `double[][ldb]'   in      Array containing the $n \times 3$ matrix $B$  
+   `ldb'      `int64_t'         in      Leading dimension of array `B'                
+   `C'        `double[n][ldc]'  out     Array containing the $m \times n$ matrix $C$  
+   `ldc'      `int64_t'         in      Leading dimension of array `C'                
+
+
+2.1.1 Requirements
+------------------
+
+  - `context' is not `QMCKL_NULL_CONTEXT'
+  - `m > 0'
+  - `n > 0'
+  - `lda >= 3' if `transa == 'N''
+  - `lda >= m' if `transa == 'T''
+  - `ldb >= 3' if `transb == 'N''
+  - `ldb >= n' if `transb == 'T''
+  - `ldc >= m'
+  - `A' is allocated with at least $3 \times m \times 8$ bytes
+  - `B' is allocated with at least $3 \times n \times 8$ bytes
+  - `C' is allocated with at least $m \times n \times 8$ bytes
+
+
+2.1.2 C header
+--------------
+
+  ,----
+  | qmckl_exit_code qmckl_distance (
+  |       const qmckl_context context,
+  |       const char transa,
+  |       const char transb,
+  |       const int64_t m,
+  |       const int64_t n,
+  |       const double* A,
+  |       const int64_t lda,
+  |       const double* B,
+  |       const int64_t ldb,
+  |       double* const C,
+  |       const int64_t ldc ); 
+  `----
+
+
+2.1.3 Source
+------------
+
+  ,----
+  | function qmckl_distance(context, transa, transb, m, n, &
+  |      A, LDA, B, LDB, C, LDC) &
+  |      bind(C) result(info)
+  |   use qmckl_constants
+  |   implicit none
+  |   integer(qmckl_context), intent(in), value  :: context
+  |   character(c_char)   , intent(in)  , value :: transa
+  |   character(c_char)   , intent(in)  , value :: transb
+  |   integer (c_int64_t) , intent(in)  , value :: m
+  |   integer (c_int64_t) , intent(in)  , value :: n
+  |   integer (c_int64_t) , intent(in)  , value :: lda
+  |   integer (c_int64_t) , intent(in)  , value :: ldb
+  |   integer (c_int64_t) , intent(in)  , value :: ldc
+  |   real    (c_double ) , intent(in)          :: A(lda,*)
+  |   real    (c_double ) , intent(in)          :: B(ldb,*)
+  |   real    (c_double ) , intent(out)         :: C(ldc,n)
+  |   integer (qmckl_exit_code) :: info
+  | 
+  |   integer*8 :: i,j
+  |   real*8    :: x, y, z
+  |   integer   :: transab
+  | 
+  |   info = QMCKL_SUCCESS
+  | 
+  |   if (context == QMCKL_NULL_CONTEXT) then
+  |      info = QMCKL_INVALID_CONTEXT
+  |      return
+  |   endif
+  | 
+  |   if (m <= 0_8) then
+  |      info = QMCKL_INVALID_ARG_4
+  |      return
+  |   endif
+  | 
+  |   if (n <= 0_8) then
+  |      info = QMCKL_INVALID_ARG_5
+  |      return
+  |   endif
+  | 
+  |   if (transa == 'N' .or. transa == 'n') then
+  |      transab = 0
+  |   else if (transa == 'T' .or. transa == 't') then
+  |      transab = 1
+  |   else
+  |      transab = -100
+  |   endif
+  | 
+  |   if (transb == 'N' .or. transb == 'n') then
+  |      continue
+  |   else if (transb == 'T' .or. transb == 't') then
+  |      transab = transab + 2
+  |   else
+  |      transab = -100
+  |   endif
+  | 
+  |   if (transab < 0) then
+  |      info = QMCKL_INVALID_ARG_1
+  |      return
+  |   endif
+  | 
+  |   ! check for LDA
+  |   if (iand(transab,1) == 0 .and. LDA < 3) then
+  |      info = QMCKL_INVALID_ARG_7
+  |      return
+  |   endif
+  | 
+  |   if (iand(transab,1) == 1 .and. LDA < m) then
+  |      info = QMCKL_INVALID_ARG_7
+  |      return
+  |   endif
+  | 
+  |   ! check for LDB
+  |   if (iand(transab,1) == 0 .and. LDB < 3) then
+  |      info = QMCKL_INVALID_ARG_9
+  |      return
+  |   endif
+  | 
+  |   if (iand(transab,1) == 1 .and. LDB < n) then
+  |      info = QMCKL_INVALID_ARG_9
+  |      return
+  |   endif
+  | 
+  |   ! check for LDC
+  |   if (LDC < m) then
+  |      info = QMCKL_INVALID_ARG_11
+  |      return
+  |   endif
+  | 
+  | 
+  |   select case (transab)
+  | 
+  |   case(0)
+  | 
+  |      do j=1,n
+  |         do i=1,m
+  |            x = A(1,i) - B(1,j)
+  |            y = A(2,i) - B(2,j)
+  |            z = A(3,i) - B(3,j)
+  |            C(i,j) = x*x + y*y + z*z
+  |         end do
+  |         C(:,j) = dsqrt(C(:,j))
+  |      end do
+  | 
+  |   case(1)
+  | 
+  |      do j=1,n
+  |         do i=1,m
+  |            x = A(i,1) - B(1,j)
+  |            y = A(i,2) - B(2,j)
+  |            z = A(i,3) - B(3,j)
+  |            C(i,j) = x*x + y*y + z*z
+  |         end do
+  |         C(:,j) = dsqrt(C(:,j))
+  |      end do
+  | 
+  |   case(2)
+  | 
+  |      do j=1,n
+  |         do i=1,m
+  |            x = A(1,i) - B(j,1)
+  |            y = A(2,i) - B(j,2)
+  |            z = A(3,i) - B(j,3)
+  |            C(i,j) = x*x + y*y + z*z
+  |         end do
+  |         C(:,j) = dsqrt(C(:,j))
+  |      end do
+  | 
+  |   case(3)
+  | 
+  |      do j=1,n
+  |         do i=1,m
+  |            x = A(i,1) - B(j,1)
+  |            y = A(i,2) - B(j,2)
+  |            z = A(i,3) - B(j,3)
+  |            C(i,j) = x*x + y*y + z*z
+  |         end do
+  |         C(:,j) = dsqrt(C(:,j))
+  |      end do
+  | 
+  |   end select
+  | 
+  | end function qmckl_distance
+  `----
+
+
+2.1.4 Performance
+-----------------
+
+  This function is more efficient when `A' and `B' are transposed.
+
+
+3 Rescaled Distance
+===================
+
+3.1 `qmckl_distance_rescaled'
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  `qmckl_distance_rescaled' computes the matrix of the rescaled
+  distances between all pairs of points in two sets, one point within
+  each set:
+
+  \[ C_{ij} = \frac{ 1 - e^{-\kappa r_{ij}}}{\kappa} \]
+
+  If the input array is normal (`'N''), the xyz coordinates are in the
+  leading dimension: `[n][3]' in C and `(3,n)' in Fortran.
+
+   Variable                Type              In/Out  Description                                   
+  -------------------------------------------------------------------------------------------------
+   `context'               `qmckl_context'   in      Global state                                  
+   `transa'                `char'            in      Array `A' is `'N'': Normal, `'T'': Transposed 
+   `transb'                `char'            in      Array `B' is `'N'': Normal, `'T'': Transposed 
+   `m'                     `int64_t'         in      Number of points in the first set             
+   `n'                     `int64_t'         in      Number of points in the second set            
+   `A'                     `double[][lda]'   in      Array containing the $m \times 3$ matrix $A$  
+   `lda'                   `int64_t'         in      Leading dimension of array `A'                
+   `B'                     `double[][ldb]'   in      Array containing the $n \times 3$ matrix $B$  
+   `ldb'                   `int64_t'         in      Leading dimension of array `B'                
+   `C'                     `double[n][ldc]'  out     Array containing the $m \times n$ matrix $C$  
+   `ldc'                   `int64_t'         in      Leading dimension of array `C'                
+   `rescale_factor_kappa'  `double'          in      Factor for calculating rescaled distances     
+
+
+3.1.1 Requirements
+------------------
+
+  - `context' is not `QMCKL_NULL_CONTEXT'
+  - `m > 0'
+  - `n > 0'
+  - `lda >= 3' if `transa == 'N''
+  - `lda >= m' if `transa == 'T''
+  - `ldb >= 3' if `transb == 'N''
+  - `ldb >= n' if `transb == 'T''
+  - `ldc >= m'
+  - `A' is allocated with at least $3 \times m \times 8$ bytes
+  - `B' is allocated with at least $3 \times n \times 8$ bytes
+  - `C' is allocated with at least $m \times n \times 8$ bytes
+
+
+3.1.2 C header
+--------------
+
+  ,----
+  | qmckl_exit_code qmckl_distance_rescaled (
+  |       const qmckl_context context,
+  |       const char transa,
+  |       const char transb,
+  |       const int64_t m,
+  |       const int64_t n,
+  |       const double* A,
+  |       const int64_t lda,
+  |       const double* B,
+  |       const int64_t ldb,
+  |       double* const C,
+  |       const int64_t ldc,
+  |       const double rescale_factor_kappa ); 
+  `----
+
+
+3.1.3 Source
+------------
+
+  ,----
+  | function qmckl_distance_rescaled(context, transa, transb, m, n, &
+  |      A, LDA, B, LDB, C, LDC, rescale_factor_kappa) &
+  |      bind(C) result(info)
+  |   use qmckl_constants
+  |   implicit none
+  |   integer (qmckl_context), intent(in)  , value :: context
+  |   character(c_char  ) , intent(in)  , value :: transa
+  |   character(c_char  ) , intent(in)  , value :: transb
+  |   integer (c_int64_t) , intent(in)  , value :: m
+  |   integer (c_int64_t) , intent(in)  , value :: n
+  |   integer (c_int64_t) , intent(in)  , value :: lda
+  |   integer (c_int64_t) , intent(in)  , value :: ldb
+  |   integer (c_int64_t) , intent(in)  , value :: ldc
+  |   real    (c_double ) , intent(in)  , value :: rescale_factor_kappa
+  |   real    (c_double ) , intent(in)          :: A(lda,*)
+  |   real    (c_double ) , intent(in)          :: B(ldb,*)
+  |   real    (c_double ) , intent(out)         :: C(ldc,n)
+  |   integer(qmckl_exit_code) :: info
+  | 
+  |   integer*8 :: i,j
+  |   real*8    :: x, y, z, dist, rescale_factor_kappa_inv
+  |   integer   :: transab
+  | 
+  |   rescale_factor_kappa_inv = 1.0d0/rescale_factor_kappa;
+  | 
+  |   info = QMCKL_SUCCESS
+  | 
+  |   if (context == QMCKL_NULL_CONTEXT) then
+  |      info = QMCKL_INVALID_CONTEXT
+  |      return
+  |   endif
+  | 
+  |   if (m <= 0_8) then
+  |      info = QMCKL_INVALID_ARG_4
+  |      return
+  |   endif
+  | 
+  |   if (n <= 0_8) then
+  |      info = QMCKL_INVALID_ARG_5
+  |      return
+  |   endif
+  | 
+  |   if (transa == 'N' .or. transa == 'n') then
+  |      transab = 0
+  |   else if (transa == 'T' .or. transa == 't') then
+  |      transab = 1
+  |   else
+  |      transab = -100
+  |   endif
+  | 
+  |   if (transb == 'N' .or. transb == 'n') then
+  |      continue
+  |   else if (transb == 'T' .or. transb == 't') then
+  |      transab = transab + 2
+  |   else
+  |      transab = -100
+  |   endif
+  | 
+  |   ! check for LDA
+  |   if (transab < 0) then
+  |      info = QMCKL_INVALID_ARG_1
+  |      return
+  |   endif
+  | 
+  |   if (iand(transab,1) == 0 .and. LDA < 3) then
+  |      info = QMCKL_INVALID_ARG_7
+  |      return
+  |   endif
+  | 
+  |   if (iand(transab,1) == 1 .and. LDA < m) then
+  |      info = QMCKL_INVALID_ARG_7
+  |      return
+  |   endif
+  | 
+  |   ! check for LDB
+  |   if (iand(transab,2) == 0 .and. LDB < 3) then
+  |      info = QMCKL_INVALID_ARG_9
+  |      return
+  |   endif
+  | 
+  |   if (iand(transab,2) == 2 .and. LDB < n) then
+  |      info = QMCKL_INVALID_ARG_9
+  |      return
+  |   endif
+  | 
+  |   ! check for LDC
+  |   if (LDC < m) then
+  |      info = QMCKL_INVALID_ARG_11
+  |      return
+  |   endif
+  | 
+  | 
+  |   select case (transab)
+  | 
+  |   case(0)
+  | 
+  |      do j=1,n
+  |         do i=1,m
+  |            x = A(1,i) - B(1,j)
+  |            y = A(2,i) - B(2,j)
+  |            z = A(3,i) - B(3,j)
+  |            dist = dsqrt(x*x + y*y + z*z)
+  |            C(i,j) = (1.0d0 - dexp(-rescale_factor_kappa * dist)) * rescale_factor_kappa_inv
+  |         end do
+  |      end do
+  | 
+  |   case(1)
+  | 
+  |      do j=1,n
+  |         do i=1,m
+  |            x = A(i,1) - B(1,j)
+  |            y = A(i,2) - B(2,j)
+  |            z = A(i,3) - B(3,j)
+  |            dist = dsqrt(x*x + y*y + z*z)
+  |            C(i,j) = (1.0d0 - dexp(-rescale_factor_kappa * dist)) * rescale_factor_kappa_inv
+  |         end do
+  |      end do
+  | 
+  |   case(2)
+  | 
+  |      do j=1,n
+  |         do i=1,m
+  |            x = A(1,i) - B(j,1)
+  |            y = A(2,i) - B(j,2)
+  |            z = A(3,i) - B(j,3)
+  |            dist = dsqrt(x*x + y*y + z*z)
+  |            C(i,j) = (1.0d0 - dexp(-rescale_factor_kappa * dist)) * rescale_factor_kappa_inv
+  |         end do
+  |      end do
+  | 
+  |   case(3)
+  | 
+  |      do j=1,n
+  |         do i=1,m
+  |            x = A(i,1) - B(j,1)
+  |            y = A(i,2) - B(j,2)
+  |            z = A(i,3) - B(j,3)
+  |            dist = dsqrt(x*x + y*y + z*z)
+  |            C(i,j) = (1.0d0 - dexp(-rescale_factor_kappa * dist)) * rescale_factor_kappa_inv
+  |         end do
+  |      end do
+  | 
+  |   end select
+  | 
+  | end function qmckl_distance_rescaled
+  `----
+
+
+3.1.4 Performance
+-----------------
+
+  This function is more efficient when `A' and `B' are transposed.
+
+
+4 Rescaled Distance Derivatives
+===============================
+
+4.1 `qmckl_distance_rescaled_gl'
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  `qmckl_distance_rescaled_gl' computes the matrix of the gradient and
+  Laplacian of the rescaled distance with respect to the electron
+  coordinates. The derivative is a rank 3 tensor.  The first dimension
+  has a dimension of 4 of which the first three coordinates contains the
+  gradient vector and the last index is the Laplacian.
+
+
+  \[ C(r_{ij}) = \left( 1 - \exp(-\kappa\, r_{ij})\right)/\kappa \]
+
+  Here the gradient is defined as follows:
+
+  \[ \nabla_i C(r_{ij}) = \left(\frac{\partial C(r_{ij})}{\partial
+     x_i},\frac{\partial C(r_{ij})}{\partial y_i},\frac{\partial
+     C(r_{ij})}{\partial z_i} \right) \] and the Laplacian is defined as
+     follows:
+
+  \[ \Delta_i C(r_{ij}) = \frac{\partial^2}{\partial x_i^2} +
+     \frac{\partial^2}{\partial y_i^2} + \frac{\partial^2}{\partial
+     z_i^2} \]
+
+  Using the above three formulas, the expression for the gradient and
+  Laplacian is:
+
+  \[ \frac{\partial C(r_{ij})}{\partial x_i} = \frac{|(x_i -
+     x_j)|}{r_{ij}} \exp (- \kappa \, r_{ij}) \]
+
+  \[ \Delta C_{ij}(r_{ij}) = \left[ \frac{2}{r_{ij}} - \kappa \right]
+     \exp (- \kappa \, r_{ij}) \]
+
+  If the input array is normal (`'N''), the xyz coordinates are in the
+  leading dimension: `[n][3]' in C and `(3,n)' in Fortran.
+
+   Variable                Type                 In/Out  Description                                           
+  ------------------------------------------------------------------------------------------------------------
+   `context'               `qmckl_context'      in      Global state                                          
+   `transa'                `char'               in      Array `A' is `'N'': Normal, `'T'': Transposed         
+   `transb'                `char'               in      Array `B' is `'N'': Normal, `'T'': Transposed         
+   `m'                     `int64_t'            in      Number of points in the first set                     
+   `n'                     `int64_t'            in      Number of points in the second set                    
+   `A'                     `double[][lda]'      in      Array containing the $m \times 3$ matrix $A$          
+   `lda'                   `int64_t'            in      Leading dimension of array `A'                        
+   `B'                     `double[][ldb]'      in      Array containing the $n \times 3$ matrix $B$          
+   `ldb'                   `int64_t'            in      Leading dimension of array `B'                        
+   `C'                     `double[n][ldc][4]'  out     Array containing the $4 \times m \times n$ matrix $C$ 
+   `ldc'                   `int64_t'            in      Leading dimension of array `C'                        
+   `rescale_factor_kappa'  `double'             in      Factor for calculating rescaled distances derivatives 
+
+  Requirements:
+
+  - `context' is not `QMCKL_NULL_CONTEXT'
+  - `m > 0'
+  - `n > 0'
+  - `lda >= 3' if `transa == 'N''
+  - `lda >= m' if `transa == 'T''
+  - `ldb >= 3' if `transb == 'N''
+  - `ldb >= n' if `transb == 'T''
+  - `ldc >= m'
+  - `A' is allocated with at least $3 \times m \times 8$ bytes
+  - `B' is allocated with at least $3 \times n \times 8$ bytes
+  - `C' is allocated with at least $4 \times m \times n \times 8$ bytes
+
+  ,----
+  | qmckl_exit_code qmckl_distance_rescaled_gl (
+  |       const qmckl_context context,
+  |       const char transa,
+  |       const char transb,
+  |       const int64_t m,
+  |       const int64_t n,
+  |       const double* A,
+  |       const int64_t lda,
+  |       const double* B,
+  |       const int64_t ldb,
+  |       double* const C,
+  |       const int64_t ldc,
+  |       const double rescale_factor_kappa ); 
+  `----
+
+  ,----
+  | function qmckl_distance_rescaled_gl(context, transa, transb, m, n, &
+  |      A, LDA, B, LDB, C, LDC, rescale_factor_kappa) &
+  |      bind(C) result(info)
+  |   use qmckl_constants
+  |   implicit none
+  | 
+  |   integer(qmckl_exit_code) :: info
+  |   integer (qmckl_context), intent(in)  , value :: context
+  |   character(c_char  ) , intent(in)  , value :: transa
+  |   character(c_char  ) , intent(in)  , value :: transb
+  |   integer (c_int64_t) , intent(in)  , value :: m
+  |   integer (c_int64_t) , intent(in)  , value :: n
+  |   integer (c_int64_t) , intent(in)  , value :: lda
+  |   integer (c_int64_t) , intent(in)  , value :: ldb
+  |   integer (c_int64_t) , intent(in)  , value :: ldc
+  |   real    (c_double ) , intent(in)  , value :: rescale_factor_kappa
+  |   real    (c_double ) , intent(in)          :: A(lda,*)
+  |   real    (c_double ) , intent(in)          :: B(ldb,*)
+  |   real    (c_double ) , intent(out)         :: C(4,ldc,n)
+  | 
+  |   integer*8 :: i,j
+  |   real*8    :: x, y, z, dist, dist_inv
+  |   real*8    :: rij
+  |   integer   :: transab
+  | 
+  |   info = QMCKL_SUCCESS
+  | 
+  |   if (context == QMCKL_NULL_CONTEXT) then
+  |      info = QMCKL_INVALID_CONTEXT
+  |      return
+  |   endif
+  | 
+  |   if (m <= 0_8) then
+  |      info = QMCKL_INVALID_ARG_4
+  |      return
+  |   endif
+  | 
+  |   if (n <= 0_8) then
+  |      info = QMCKL_INVALID_ARG_5
+  |      return
+  |   endif
+  | 
+  |   if (transa == 'N' .or. transa == 'n') then
+  |      transab = 0
+  |   else if (transa == 'T' .or. transa == 't') then
+  |      transab = 1
+  |   else
+  |      transab = -100
+  |   endif
+  | 
+  |   if (transb == 'N' .or. transb == 'n') then
+  |      continue
+  |   else if (transb == 'T' .or. transb == 't') then
+  |      transab = transab + 2
+  |   else
+  |      transab = -100
+  |   endif
+  | 
+  |   ! check for LDA
+  |   if (transab < 0) then
+  |      info = QMCKL_INVALID_ARG_1
+  |      return
+  |   endif
+  | 
+  |   if (iand(transab,1) == 0 .and. LDA < 3) then
+  |      info = QMCKL_INVALID_ARG_7
+  |      return
+  |   endif
+  | 
+  |   if (iand(transab,1) == 1 .and. LDA < m) then
+  |      info = QMCKL_INVALID_ARG_7
+  |      return
+  |   endif
+  | 
+  |   ! check for LDB
+  |   if (iand(transab,2) == 0 .and. LDB < 3) then
+  |      info = QMCKL_INVALID_ARG_9
+  |      return
+  |   endif
+  | 
+  |   if (iand(transab,2) == 2 .and. LDB < n) then
+  |      info = QMCKL_INVALID_ARG_9
+  |      return
+  |   endif
+  | 
+  |   ! check for LDC
+  |   if (LDC < m) then
+  |      info = QMCKL_INVALID_ARG_11
+  |      return
+  |   endif
+  | 
+  | 
+  |   select case (transab)
+  | 
+  |   case(0)
+  | 
+  |      do j=1,n
+  |         do i=1,m
+  |            x = A(1,i) - B(1,j)
+  |            y = A(2,i) - B(2,j)
+  |            z = A(3,i) - B(3,j)
+  |            dist = max(1.d-20, dsqrt(x*x + y*y + z*z))
+  |            dist_inv = 1.0d0/dist
+  |            rij = dexp(-rescale_factor_kappa * dist)
+  |            C(1,i,j) = x * dist_inv * rij
+  |            C(2,i,j) = y * dist_inv * rij
+  |            C(3,i,j) = z * dist_inv * rij
+  |            C(4,i,j) = (2.0d0 * dist_inv - rescale_factor_kappa) * rij
+  |         end do
+  |      end do
+  | 
+  |   case(1)
+  | 
+  |      do j=1,n
+  |         do i=1,m
+  |            x = A(i,1) - B(1,j)
+  |            y = A(i,2) - B(2,j)
+  |            z = A(i,3) - B(3,j)
+  |            dist = max(1.d-20, dsqrt(x*x + y*y + z*z))
+  |            dist_inv = 1.0d0/dist
+  |            rij = dexp(-rescale_factor_kappa * dist)
+  |            C(1,i,j) = x * dist_inv * rij
+  |            C(2,i,j) = y * dist_inv * rij
+  |            C(3,i,j) = z * dist_inv * rij
+  |            C(4,i,j) = (2.0d0 * dist_inv - rescale_factor_kappa) * rij
+  |         end do
+  |      end do
+  | 
+  |   case(2)
+  | 
+  |      do j=1,n
+  |         do i=1,m
+  |            x = A(1,i) - B(j,1)
+  |            y = A(2,i) - B(j,2)
+  |            z = A(3,i) - B(j,3)
+  |            dist = max(1.d-20, dsqrt(x*x + y*y + z*z))
+  |            dist_inv = 1.0d0/dist
+  |            rij = dexp(-rescale_factor_kappa * dist)
+  |            C(1,i,j) = x * dist_inv * rij
+  |            C(2,i,j) = y * dist_inv * rij
+  |            C(3,i,j) = z * dist_inv * rij
+  |            C(4,i,j) = (2.0d0 * dist_inv - rescale_factor_kappa) * rij
+  |         end do
+  |      end do
+  | 
+  |   case(3)
+  | 
+  |      do j=1,n
+  |         do i=1,m
+  |            x = A(i,1) - B(j,1)
+  |            y = A(i,2) - B(j,2)
+  |            z = A(i,3) - B(j,3)
+  |            dist = max(1.d-20, dsqrt(x*x + y*y + z*z))
+  |            dist_inv = 1.0d0/dist
+  |            rij = dexp(-rescale_factor_kappa * dist)
+  |            C(1,i,j) = x * dist_inv * rij
+  |            C(2,i,j) = y * dist_inv * rij
+  |            C(3,i,j) = z * dist_inv * rij
+  |            C(4,i,j) = (2.0d0 * dist_inv - rescale_factor_kappa) * rij
+  |         end do
+  |      end do
+  | 
+  |   end select
+  | 
+  | end function qmckl_distance_rescaled_gl
+  `----
+
+  This function is more efficient when `A' and `B' are transposed.

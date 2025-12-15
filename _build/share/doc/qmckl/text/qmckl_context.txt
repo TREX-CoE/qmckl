@@ -1,0 +1,194 @@
+                               __________
+
+                                CONTEXT
+
+                                TREX CoE
+                               __________
+
+
+Table of Contents
+_________________
+
+1. Context handling
+.. 1. Design considerations
+.. 2. Data structure
+.. 3. Extension mechanism
+.. 4. Validity checking
+.. 5. Creation
+.. 6. Locking
+.. 7. Copy
+.. 8. Destroy
+
+
+
+
+
+1 Context handling
+==================
+
+  The context is the central data structure in QMCkl, serving as a
+  handle for the complete state of the library. All QMCkl functions
+  require a context as their first argument, and all computed data is
+  stored within the context.
+
+  The context variable is a handle for the state of the library, and is
+  stored in a data structure which can't be seen outside of the
+  library. This encapsulation provides a clean API boundary and allows
+  internal implementation details to change without affecting user code.
+
+  To simplify compatibility with other languages (particularly Fortran),
+  the pointer to the internal data structure is converted into a 64-bit
+  signed integer, defined in the `qmckl_context' type. This approach
+  avoids issues with language interoperability related to opaque pointer
+  types.  A value of `QMCKL_NULL_CONTEXT' for the context is equivalent
+  to a `NULL' pointer and represents an invalid or uninitialized
+  context.
+
+  ,----
+  | typedef int64_t qmckl_context ;
+  | #define QMCKL_NULL_CONTEXT (qmckl_context) 0
+  `----
+
+
+1.1 Design considerations
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  An immutable context would have been ideal from a functional
+  programming perspective and would have required implementation of a
+  garbage collector for proper memory management. However, to keep the
+  library simple and avoid the complexity of automatic memory
+  management, we have chosen to implement the context as a mutable data
+  structure. This means it has to be handled with care: users must
+  ensure proper initialization, avoid concurrent modifications without
+  synchronization, and explicitly destroy contexts when they are no
+  longer needed.
+
+  The mutable design also provides better performance characteristics,
+  as it avoids the overhead of copying large data structures and allows
+  for in-place updates of computational results.
+
+  By convention, in this file `context' is a `qmckl_context' variable
+  and `ctx' is a `qmckl_context_struct*' pointer.
+
+
+1.2 Data structure
+~~~~~~~~~~~~~~~~~~
+
+  The context data structure contains all the state information needed
+  by the library, organized into logical sections. This includes the
+  molecular system description (nuclei, electrons, basis sets),
+  computational parameters (numerical precision), computed quantities
+  (atomic orbitals, molecular orbitals, Jastrow factors, etc.), and
+  internal state management (error handling, memory allocation tracking,
+  thread synchronization).
+
+
+1.3 Extension mechanism
+~~~~~~~~~~~~~~~~~~~~~~~
+
+  The `qmckl_extra' pointer provides an extension mechanism that allows
+  alternative implementations of the library to add
+  implementation-specific data to the context. For example, a GPU
+  implementation of QMCkl could store the device ID, CUDA streams, or
+  device memory pointers in a custom data structure, and point to it
+  from `qmckl_extra'. This design allows the core library API to remain
+  stable while supporting diverse implementation strategies.
+
+
+1.4 Validity checking
+~~~~~~~~~~~~~~~~~~~~~
+
+  A tag is used internally to check if the memory domain pointed to by a
+  pointer is a valid context. This provides a sanity check that allows
+  verification that even if the pointer associated with a context is
+  non-null, it actually points to the expected data structure and not to
+  arbitrary memory.  This is particularly important for catching user
+  errors like passing an uninitialized context or a context that has
+  already been destroyed.
+
+  The `qmckl_context_check' function checks if the domain pointed to by
+  the pointer is a valid context by verifying the magic tag value. It
+  returns the input `qmckl_context' if the context is valid (tag matches
+  `VALID_TAG'), or `QMCKL_NULL_CONTEXT' if the context is invalid. This
+  function should be called at the beginning of every public API
+  function to ensure the context parameter is valid before attempting to
+  use it.
+
+  ,----
+  | qmckl_context
+  | qmckl_context_check (const qmckl_context context) ;
+  `----
+
+  The context keeps a /date/ that allows to check which data needs to be
+  recomputed. The date is incremented when the context is touched.
+
+  When a new element is added to the context, the functions
+  [`qmckl_context_create'] [`qmckl_context_destroy'] and
+  [`qmckl_context_copy'] should be updated in order to make deep copies.
+
+  When the electron coordinates have changed, the context is touched
+  using the following function.
+
+  ,----
+  | qmckl_exit_code
+  | qmckl_context_touch (const qmckl_context context);
+  `----
+
+  This has the effect to increment the date of the context.
+
+
+[`qmckl_context_create'] See section 1.5
+
+[`qmckl_context_destroy'] See section 1.8
+
+[`qmckl_context_copy'] See section 1.7
+
+
+1.5 Creation
+~~~~~~~~~~~~
+
+  To create a new context, `qmckl_context_create()' should be used.
+  - Upon success, it returns a pointer to a new context with the
+    `qmckl_context' type
+  - It returns `QMCKL_NULL_CONTEXT' upon failure to allocate the
+    internal data structure
+  - A new context always has all its members initialized with a NULL
+    value
+
+  ,----
+  | qmckl_context qmckl_context_create();
+  `----
+
+
+1.6 Locking
+~~~~~~~~~~~
+
+  For thread safety, the context may be locked/unlocked. The lock is
+  initialized with the `PTHREAD_MUTEX_RECURSIVE' attribute, and the
+  number of times the thread has locked it is saved in the `lock_count'
+  attribute.
+
+  ,----
+  | void qmckl_lock  (qmckl_context context);
+  | void qmckl_unlock(qmckl_context context);
+  `----
+
+
+1.7 Copy
+~~~~~~~~
+
+  `qmckl_context_copy' makes a deep copy of a context. It returns
+  `QMCKL_NULL_CONTEXT' upon failure.
+
+
+1.8 Destroy
+~~~~~~~~~~~
+
+  The context is destroyed with `qmckl_context_destroy', leaving the
+  ancestors untouched.  It frees the context, and returns the previous
+  context.
+
+  ,----
+  | qmckl_exit_code
+  | qmckl_context_destroy (const qmckl_context context);
+  `----
