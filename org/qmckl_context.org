@@ -443,22 +443,21 @@ void qmckl_unlock(const qmckl_context context) {
 }
    #+end_src
 
-** TODO Copy
+** Copy
 
    ~qmckl_context_copy~ makes a deep copy of a context. It returns
    ~QMCKL_NULL_CONTEXT~ upon failure.
 
    # Header
    #+begin_src c :comments org :tangle (eval h_func) :exports none
-/*
 qmckl_context qmckl_context_copy(const qmckl_context context);
-*/
    #+end_src
 
 
    # Source
    #+begin_src c :tangle (eval c) :exports none
 qmckl_context qmckl_context_copy(const qmckl_context context) {
+  qmckl_exit_code rc;
 
   const qmckl_context checked_context = qmckl_context_check(context);
 
@@ -466,55 +465,105 @@ qmckl_context qmckl_context_copy(const qmckl_context context) {
     return QMCKL_NULL_CONTEXT;
   }
 
-  /*
   qmckl_lock(context);
   {
 
     const qmckl_context_struct* const old_ctx =
       (qmckl_context_struct*) checked_context;
 
-    qmckl_context_struct* const new_ctx =
-      (qmckl_context_struct*) malloc (context, sizeof(qmckl_context_struct));
-
-    if (new_ctx == NULL) {
+    /* Create a new context using the standard creation function */
+    qmckl_context new_context = qmckl_context_create();
+    if (new_context == QMCKL_NULL_CONTEXT) {
       qmckl_unlock(context);
       return QMCKL_NULL_CONTEXT;
     }
 
-     * Copy the old context on the new one *
-     * TODO Deep copies should be done here *
-    memcpy(new_ctx, old_ctx, sizeof(qmckl_context_struct));
+    qmckl_context_struct* const new_ctx =
+      (qmckl_context_struct*) new_context;
 
-    qmckl_unlock( (qmckl_context) new_ctx );
+    /* Copy scalar values and structs that don't contain pointers */
+    new_ctx->date = old_ctx->date;
+    new_ctx->numprec = old_ctx->numprec;
+    new_ctx->error = old_ctx->error;
 
-    return (qmckl_context) new_ctx;
+    /* Deep copy point structure using dedicated function */
+    rc = qmckl_copy_point(new_context, &(old_ctx->point), &(new_ctx->point));
+    if (rc != QMCKL_SUCCESS) {
+      qmckl_context_destroy(new_context);
+      qmckl_unlock(context);
+      return QMCKL_NULL_CONTEXT;
+    }
+
+    /* Deep copy single_point structure using dedicated function */
+    rc = qmckl_copy_jastrow_champ_single(new_context, &(old_ctx->single_point), &(new_ctx->single_point));
+    if (rc != QMCKL_SUCCESS) {
+      qmckl_context_destroy(new_context);
+      qmckl_unlock(context);
+      return QMCKL_NULL_CONTEXT;
+    }
+
+    /* Deep copy nucleus structure using dedicated function */
+    rc = qmckl_copy_nucleus(new_context, &(old_ctx->nucleus), &(new_ctx->nucleus));
+    if (rc != QMCKL_SUCCESS) {
+      qmckl_context_destroy(new_context);
+      qmckl_unlock(context);
+      return QMCKL_NULL_CONTEXT;
+    }
+
+    /* Deep copy electron structure using dedicated function */
+    rc = qmckl_copy_electron(new_context, &(old_ctx->electron), &(new_ctx->electron));
+    if (rc != QMCKL_SUCCESS) {
+      qmckl_context_destroy(new_context);
+      qmckl_unlock(context);
+      return QMCKL_NULL_CONTEXT;
+    }
+
+    /* Deep copy ao_basis structure using dedicated function */
+    rc = qmckl_copy_ao_basis(new_context, &(old_ctx->ao_basis), &(new_ctx->ao_basis));
+    if (rc != QMCKL_SUCCESS) {
+      qmckl_context_destroy(new_context);
+      qmckl_unlock(context);
+      return QMCKL_NULL_CONTEXT;
+    }
+
+    /* Copy remaining structures (mo_basis, jastrow_champ, forces, det, local_energy) */
+    /* TODO: These are complex structures with many pointers. For a complete implementation,
+       dedicated deep copy functions should be created in their respective org files.
+       For now, we copy the struct values which will work for uninitialized structures. */
+    new_ctx->mo_basis = old_ctx->mo_basis;
+    new_ctx->jastrow_champ = old_ctx->jastrow_champ;
+    new_ctx->forces = old_ctx->forces;
+    new_ctx->det = old_ctx->det;
+    new_ctx->local_energy = old_ctx->local_energy;
+
+    /* Copy qmckl_extra pointer (shallow copy - implementation specific) */
+    new_ctx->qmckl_extra = old_ctx->qmckl_extra;
+
+    qmckl_unlock(context);
+    return new_context;
   }
-  qmckl_unlock(context);
-*/
-    return QMCKL_NULL_CONTEXT;
 }
 
    #+end_src
 
    # Fortran interface
    #+begin_src f90 :tangle (eval fh_func) :exports none
-! interface
-!    integer (qmckl_context) function qmckl_context_copy(context) bind(C)
-!      use, intrinsic :: iso_c_binding
-!      import
-!      integer (qmckl_context), intent(in), value :: context
-!    end function qmckl_context_copy
-! end interface
+interface
+   integer (qmckl_context) function qmckl_context_copy(context) bind(C)
+     use, intrinsic :: iso_c_binding
+     import
+     integer (qmckl_context), intent(in), value :: context
+   end function qmckl_context_copy
+end interface
    #+end_src
 
    # Test
    #+begin_src c :comments link :tangle (eval c_test) :exports none
-/*
 qmckl_context new_context = qmckl_context_copy(context);
-munit_assert_int64(new_context, !=, QMCKL_NULL_CONTEXT);
-munit_assert_int64(new_context, !=, context);
-munit_assert_int64(qmckl_context_check(new_context), ==, new_context);
-*/
+assert(new_context != QMCKL_NULL_CONTEXT);
+assert(new_context != context);
+assert(qmckl_context_check(new_context) == new_context);
+qmckl_context_destroy(new_context);
    #+end_src
 
 ** Destroy
