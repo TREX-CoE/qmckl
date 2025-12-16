@@ -1,0 +1,75 @@
+name: Linux binary distribution (glibc 2.28, MKL)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Build inside Rocky Linux 8
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/work \
+            -w /work \
+            rockylinux:8 \
+            bash -eux <<'EOF'
+
+          # --------------------------------------------------
+          # System dependencies
+          # --------------------------------------------------
+          dnf install -y \
+            gcc gcc-gfortran \
+            make cmake \
+            patchelf \
+            curl \
+            which \
+            file
+
+          # --------------------------------------------------
+          # Intel oneAPI MKL (classic, redistributable)
+          # --------------------------------------------------
+          curl -fsSL https://registrationcenter-download.intel.com/akdlm/IRC_NAS/19170/l_onemkl_p_2024.0.0.49564_offline.sh -o mkl.sh
+          bash mkl.sh -s -a -s --eula accept
+
+          source /opt/intel/oneapi/setvars.sh
+
+          # --------------------------------------------------
+          # Build QMCKL
+          # --------------------------------------------------
+          mkdir -p build
+          cd build
+
+          ../configure \
+            --enable-hpc \
+            --disable-doc \
+            --with-openmp \
+            --prefix=/opt/qmckl \
+            CFLAGS=" -g -march=x86-64-v3 -O3 -flto -fopenmp-simd" \
+            FCFLAGS="-g -march=x86-64-v3 -O3 -flto -fopenmp-simd"
+
+          make -j$(nproc)
+          make install
+
+          # --------------------------------------------------
+          # Binary distribution
+          # --------------------------------------------------
+          cd /work
+          tools/build_binary_dist.sh
+
+          EOF
+
+      - name: Upload binary tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: qmckl-linux-x86_64
+          path: qmckl-*-linux-x86_64.tar.gz
+
+
