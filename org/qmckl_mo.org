@@ -53,6 +53,7 @@ cusp is exact.
 #ifndef QMCKL_MO_HPF
 #define QMCKL_MO_HPF
 
+#include "qmckl_mo_private_type.h"
 #include "qmckl_blas_private_type.h"
   #+end_src
 
@@ -365,6 +366,108 @@ qmckl_exit_code qmckl_finalize_mo_basis(qmckl_context context) {
   }
 
   return qmckl_context_touch(context);
+}
+   #+end_src
+
+
+** Deep copy                                                       :noexport:
+
+   #+begin_src c :comments org :tangle (eval h_private_func) :exports none
+qmckl_exit_code qmckl_copy_mo_basis(qmckl_context context, const qmckl_mo_basis_struct* src, qmckl_mo_basis_struct* dest);
+   #+end_src
+
+   Performs a deep copy of the MO basis structure from ~src~ to ~dest~.
+   Memory allocations are done using the provided context.
+
+   #+begin_src c :comments org :tangle (eval c)
+qmckl_exit_code qmckl_copy_mo_basis(qmckl_context context, const qmckl_mo_basis_struct* src, qmckl_mo_basis_struct* dest) {
+  
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_INVALID_CONTEXT;
+  }
+
+  if (src == NULL || dest == NULL) {
+    return qmckl_failwith(context,
+                          QMCKL_INVALID_ARG_2,
+                          "qmckl_copy_mo_basis",
+                          "NULL pointer");
+  }
+
+  /* If source is not provided/initialized, just copy the struct */
+  if (!src->provided) {
+    *dest = *src;
+    return QMCKL_SUCCESS;
+  }
+
+  /* Copy scalar fields */
+  dest->mo_num = src->mo_num;
+  dest->mo_vgl_date = src->mo_vgl_date;
+  dest->mo_value_date = src->mo_value_date;
+  dest->uninitialized = src->uninitialized;
+  dest->provided = src->provided;
+
+  /* Get ao_num from the context for array size calculations */
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  int64_t ao_num = ctx->ao_basis.ao_num;
+  int64_t mo_num = src->mo_num;
+
+  /* Deep copy coefficient array */
+  if (src->coefficient != NULL && ao_num > 0 && mo_num > 0) {
+    qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+    mem_info.size = ao_num * mo_num * sizeof(double);
+    dest->coefficient = (double*) qmckl_malloc(context, mem_info);
+    if (dest->coefficient == NULL) return QMCKL_ALLOCATION_FAILED;
+    memcpy(dest->coefficient, src->coefficient, mem_info.size);
+  } else {
+    dest->coefficient = NULL;
+  }
+
+  /* Deep copy coefficient_t array */
+  if (src->coefficient_t != NULL && ao_num > 0 && mo_num > 0) {
+    qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+    mem_info.size = ao_num * mo_num * sizeof(double);
+    dest->coefficient_t = (double*) qmckl_malloc(context, mem_info);
+    if (dest->coefficient_t == NULL) return QMCKL_ALLOCATION_FAILED;
+    memcpy(dest->coefficient_t, src->coefficient_t, mem_info.size);
+  } else {
+    dest->coefficient_t = NULL;
+  }
+
+  /* Deep copy r_cusp array */
+  if (src->r_cusp != NULL && ctx->nucleus.num > 0) {
+    qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+    mem_info.size = ctx->nucleus.num * sizeof(double);
+    dest->r_cusp = (double*) qmckl_malloc(context, mem_info);
+    if (dest->r_cusp == NULL) return QMCKL_ALLOCATION_FAILED;
+    memcpy(dest->r_cusp, src->r_cusp, mem_info.size);
+  } else {
+    dest->r_cusp = NULL;
+  }
+
+  /* Deep copy mo_vgl array - this is a computed array, set to NULL to recompute */
+  dest->mo_vgl = NULL;
+  dest->mo_vgl_date = 0;
+
+  /* Deep copy mo_value array - this is a computed array, set to NULL to recompute */
+  dest->mo_value = NULL;
+  dest->mo_value_date = 0;
+
+  /* Deep copy cusp_param tensor */
+  if (src->cusp_param.data != NULL && src->cusp_param.size[0] > 0) {
+    dest->cusp_param = qmckl_tensor_alloc(context, src->cusp_param.order, src->cusp_param.size);
+    if (dest->cusp_param.data == NULL) return QMCKL_ALLOCATION_FAILED;
+    
+    /* Calculate total size of tensor data */
+    int64_t tensor_size = 1;
+    for (int32_t i = 0; i < src->cusp_param.order; ++i) {
+      tensor_size *= src->cusp_param.size[i];
+    }
+    memcpy(dest->cusp_param.data, src->cusp_param.data, tensor_size * sizeof(double));
+  } else {
+    memset(&(dest->cusp_param), 0, sizeof(qmckl_tensor));
+  }
+
+  return QMCKL_SUCCESS;
 }
    #+end_src
 
