@@ -112,7 +112,7 @@ AS_IF([test "x$with_icc" = "xyes"], [
 F77=$FC
 AM_PROG_AR
 AM_MAINTAINER_MODE()
-LT_INIT
+LT_INIT([shared static])
 AC_CONFIG_SRCDIR([configure.ac])
 AC_CONFIG_HEADERS([include/config.h])
 AC_CONFIG_MACRO_DIR([m4])

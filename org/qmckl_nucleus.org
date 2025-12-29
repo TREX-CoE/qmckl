@@ -2,7 +2,15 @@
 #+SETUPFILE: ../tools/theme.setup
 #+INCLUDE: ../tools/lib.org
 
-All the data relative to the molecular geometry is described here.
+This module handles all data related to the molecular geometry, which forms
+the fundamental framework for quantum chemistry calculations. The nuclear
+coordinates and charges define the external potential that electrons experience,
+and the nucleus-nucleus interactions contribute to the total energy of the system.
+
+The nucleus data structure stores essential information about the atomic nuclei
+in the molecular system, including their positions, charges, and derived
+quantities such as inter-nuclear distances and nuclear repulsion energy. These
+quantities are fundamental inputs for electronic structure calculations.
 
 * Headers                                                          :noexport:
    #+begin_src elisp :noexport :results none
@@ -10,18 +18,19 @@ All the data relative to the molecular geometry is described here.
 #+end_src
 
 
-  #+begin_src c :tangle (eval h_private_func)
+  #+begin_src c :tangle (eval h_private_func) :exports none
 #ifndef QMCKL_NUCLEUS_HPF
 #define QMCKL_NUCLEUS_HPF
+#include "qmckl_nucleus_private_type.h"
   #+end_src
 
-  #+begin_src c :tangle (eval h_private_type)
+  #+begin_src c :tangle (eval h_private_type) :exports none
 #ifndef QMCKL_NUCLEUS_HPT
 #define QMCKL_NUCLEUS_HPT
 #include <stdbool.h>
   #+end_src
 
-  #+begin_src c :tangle (eval c_test) :noweb yes
+  #+begin_src c :tangle (eval c_test) :noweb yes :exports none
 #include "qmckl.h"
 #include <assert.h>
 #include <stdio.h>
@@ -37,7 +46,7 @@ int main() {
   context = qmckl_context_create();
   #+end_src
 
-  #+begin_src c :tangle (eval c)
+  #+begin_src c :tangle (eval c) :exports none
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -65,27 +74,38 @@ int main() {
 
 * Context
 
-  The following data stored in the context:
+  The nucleus module stores both input data (nuclear positions and charges)
+  and computed derived quantities (inter-nuclear distances and repulsion energy)
+  in the context. This organization allows for efficient caching: derived
+  quantities are only recomputed when the underlying input data changes.
+  
+  The following data is stored in the context:
 
-  |------------------------+--------------+-------------------------------------------|
-  | ~uninitialized~        | int32_t      | Keeps bit set for uninitialized data      |
-  | ~num~                  | int64_t      | Total number of nuclei                    |
-  | ~provided~             | bool         | If true, ~nucleus~ is valid               |
-  | ~charge~               | qmckl_vector | Nuclear charges                           |
-  | ~coord~                | qmckl_matrix | Nuclear coordinates, in transposed format |
-  | ~coord_date~           | int64_t      | Nuclear coordinates, date if modified     |
+  |-----------------+----------------+-------------------------------------------|
+  | ~uninitialized~ | ~int32_t~      | Keeps bit set for uninitialized data      |
+  | ~num~           | ~int64_t~      | Total number of nuclei                    |
+  | ~provided~      | ~bool~         | If true, ~nucleus~ is valid               |
+  | ~charge~        | ~qmckl_vector~ | Nuclear charges                           |
+  | ~coord~         | ~qmckl_matrix~ | Nuclear coordinates, in transposed format |
+  | ~coord_date~    | ~int64_t~      | Nuclear coordinates, date if modified     |
 
   Computed data:
   
-  |-----------------------------+--------------+------------------------------------------------------------|
-  | ~nn_distance~               | qmckl_matrix | Nucleus-nucleus distances                                  |
-  | ~nn_distance_date~          | int64_t      | Date when Nucleus-nucleus distances were computed          |
-  | ~repulsion~                 | double       | Nuclear repulsion energy                                   |
-  | ~repulsion_date~            | int64_t      | Date when the nuclear repulsion energy was computed        |
+  |--------------------+----------------+-----------------------------------------------------|
+  | ~nn_distance~      | ~qmckl_matrix~ | Nucleus-nucleus distances                           |
+  | ~nn_distance_date~ | ~int64_t~      | Date when Nucleus-nucleus distances were computed   |
+  | ~repulsion~        | ~double~       | Nuclear repulsion energy                            |
+  | ~repulsion_date~   | ~int64_t~      | Date when the nuclear repulsion energy was computed |
 
 ** Data structure
 
-   #+begin_src c :comments org :tangle (eval h_private_type)
+   The nucleus data structure consolidates all nuclear information in a single
+   C structure. The date fields enable automatic recomputation detection: when
+   coordinates change, the ~coord_date~ is updated, triggering recomputation
+   of dependent quantities like distances and repulsion energy when they are
+   next requested.
+
+   #+begin_src c :comments org :tangle (eval h_private_type) :exports none
 typedef struct qmckl_nucleus_struct {
   int64_t      num;
   int64_t      repulsion_date;
@@ -101,18 +121,24 @@ typedef struct qmckl_nucleus_struct {
 
    #+end_src
 
-   The ~uninitialized~ integer contains one bit set to one for each
-   initialization function which has not been called. It becomes equal
-   to zero after all initialization functions have been called. The
-   struct is then initialized and ~provided == true~.
-   Some values are initialized by default, and are not concerned by
-   this mechanism.
+** Initialization tracking
 
-   #+begin_src c :comments org :tangle (eval h_private_func)
+   The ~uninitialized~ integer serves as a bit field where each bit represents
+   whether a specific initialization function has been called. Initially, certain
+   bits are set to one, and each initialization function clears its corresponding
+   bit. When all required initialization functions have been called, the
+   ~uninitialized~ field becomes zero, the struct is fully initialized, and
+   ~provided~ is set to ~true~.
+   
+   This mechanism ensures that the nucleus data is complete before being used
+   in calculations. Some values may be initialized by default and are not tracked
+   by this mechanism.
+
+   #+begin_src c :comments org :tangle (eval h_private_func) :exports none
 qmckl_exit_code qmckl_init_nucleus(qmckl_context context);
    #+end_src
 
-   #+begin_src c :comments org :tangle (eval c)
+   #+begin_src c :comments org :tangle (eval c) :exports none
 qmckl_exit_code qmckl_init_nucleus(qmckl_context context) {
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
@@ -584,10 +610,97 @@ interface
 end interface
     #+end_src
 
+** Deep copy                                                       :noexport:
 
-** Test
+    #+begin_src c :comments org :tangle (eval h_private_func) :exports none
+qmckl_exit_code qmckl_copy_nucleus(qmckl_context context, const qmckl_nucleus_struct* src, qmckl_nucleus_struct* dest);
+    #+end_src
 
-    #+begin_src c :tangle (eval c_test)
+    Performs a deep copy of the nucleus structure from ~src~ to ~dest~.
+    Memory allocations are done using the provided context.
+
+    #+begin_src c :comments org :tangle (eval c)
+qmckl_exit_code qmckl_copy_nucleus(qmckl_context context, const qmckl_nucleus_struct* src, qmckl_nucleus_struct* dest) {
+  
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_INVALID_CONTEXT;
+  }
+
+  if (src == NULL || dest == NULL) {
+    return qmckl_failwith(context,
+                          QMCKL_INVALID_ARG_2,
+                          "qmckl_copy_nucleus",
+                          "NULL pointer");
+  }
+
+  /* Copy scalar fields */
+  dest->num = src->num;
+  dest->repulsion_date = src->repulsion_date;
+  dest->nn_distance_date = src->nn_distance_date;
+  dest->coord_date = src->coord_date;
+  dest->repulsion = src->repulsion;
+  dest->uninitialized = src->uninitialized;
+  dest->provided = src->provided;
+
+  /* Deep copy charge vector */
+  if (src->charge.data != NULL && src->charge.size > 0) {
+    size_t size = src->charge.size * sizeof(double);
+    qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+    mem_info.size = size;
+    dest->charge.data = (double*) qmckl_malloc(context, mem_info);
+    if (dest->charge.data == NULL) {
+      return QMCKL_ALLOCATION_FAILED;
+    }
+    memcpy(dest->charge.data, src->charge.data, size);
+    dest->charge.size = src->charge.size;
+  } else {
+    dest->charge.data = NULL;
+    dest->charge.size = 0;
+  }
+
+  /* Deep copy coord matrix */
+  if (src->coord.data != NULL && src->coord.size[0] > 0) {
+    size_t size = src->coord.size[0] * src->coord.size[1] * sizeof(double);
+    qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+    mem_info.size = size;
+    dest->coord.data = (double*) qmckl_malloc(context, mem_info);
+    if (dest->coord.data == NULL) {
+      return QMCKL_ALLOCATION_FAILED;
+    }
+    memcpy(dest->coord.data, src->coord.data, size);
+    dest->coord.size[0] = src->coord.size[0];
+    dest->coord.size[1] = src->coord.size[1];
+  } else {
+    dest->coord.data = NULL;
+    dest->coord.size[0] = 0;
+    dest->coord.size[1] = 0;
+  }
+
+  /* Deep copy nn_distance matrix */
+  if (src->nn_distance.data != NULL && src->nn_distance.size[0] > 0) {
+    size_t size = src->nn_distance.size[0] * src->nn_distance.size[1] * sizeof(double);
+    qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+    mem_info.size = size;
+    dest->nn_distance.data = (double*) qmckl_malloc(context, mem_info);
+    if (dest->nn_distance.data == NULL) {
+      return QMCKL_ALLOCATION_FAILED;
+    }
+    memcpy(dest->nn_distance.data, src->nn_distance.data, size);
+    dest->nn_distance.size[0] = src->nn_distance.size[0];
+    dest->nn_distance.size[1] = src->nn_distance.size[1];
+  } else {
+    dest->nn_distance.data = NULL;
+    dest->nn_distance.size[0] = 0;
+    dest->nn_distance.size[1] = 0;
+  }
+
+  return QMCKL_SUCCESS;
+}
+    #+end_src
+
+** Test                                                            :noexport:
+
+    #+begin_src c :tangle (eval c_test) :exports none
 const double*   nucl_charge   = chbrclf_charge;
 const double*   nucl_coord    = &(chbrclf_nucl_coord[0][0]);
 
@@ -765,20 +878,24 @@ qmckl_exit_code qmckl_provide_nn_distance(qmckl_context context)
 *** Compute
 
     #+NAME: qmckl_nn_distance_args
-   | qmckl_context | context                         | in  | Global state                   |
-   | int64_t       | nucl_num                        | in  | Number of nuclei               |
-   | double        | coord[3][nucl_num]              | in  | Nuclear coordinates (au)       |
-   | double        | nn_distance[nucl_num][nucl_num] | out | Nucleus-nucleus distances (au) |
+   | ~qmckl_context~ | ~context~                         | in  | Global state                   |
+   | ~int64_t~       | ~nucl_num~                        | in  | Number of nuclei               |
+   | ~double~        | ~coord[3][nucl_num]~              | in  | Nuclear coordinates (au)       |
+   | ~double~        | ~nn_distance[nucl_num][nucl_num]~ | out | Nucleus-nucleus distances (au) |
 
     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_nn_distance_f(context, nucl_num, coord, nn_distance) &
-     result(info)
-  use qmckl
+function qmckl_compute_nn_distance(context, nucl_num, coord, nn_distance) &
+     result(info) bind(C)
+  use qmckl_constants
+  use qmckl, only: qmckl_distance
   implicit none
-  integer(qmckl_context), intent(in)  :: context
-  integer*8             , intent(in)  :: nucl_num
-  double precision      , intent(in)  :: coord(nucl_num,3)
-  double precision      , intent(out) :: nn_distance(nucl_num,nucl_num)
+
+  integer(qmckl_context), intent(in), value :: context
+  integer (c_int64_t) , intent(in)  , value :: nucl_num
+  real    (c_double ) , intent(in)          :: coord(nucl_num,3)
+  real    (c_double ) , intent(out)         :: nn_distance(nucl_num,nucl_num)
+
+  integer(qmckl_exit_code) :: info
 
   integer*8 :: k
 
@@ -799,7 +916,7 @@ integer function qmckl_compute_nn_distance_f(context, nucl_num, coord, nn_distan
           coord, nucl_num, &
           nn_distance, nucl_num)
 
-end function qmckl_compute_nn_distance_f
+end function qmckl_compute_nn_distance
     #+end_src
 
     #+begin_src c :tangle (eval h_private_func) :comments org :exports none
@@ -811,32 +928,9 @@ qmckl_exit_code qmckl_compute_nn_distance (
     #+end_src
 
 
-    #+CALL: generate_c_interface(table=qmckl_nn_distance_args,rettyp="qmckl_exit_code",fname="qmckl_compute_nn_distance")
+*** Test                                                            :noexport:
 
-    #+RESULTS:
-    #+begin_src f90 :tangle (eval f) :comments org :exports none
-    integer(c_int32_t) function qmckl_compute_nn_distance &
-        (context, nucl_num, coord, nn_distance) &
-        bind(C) result(info)
-
-      use, intrinsic :: iso_c_binding
-      implicit none
-
-      integer (c_int64_t) , intent(in)  , value :: context
-      integer (c_int64_t) , intent(in)  , value :: nucl_num
-      real    (c_double ) , intent(in)          :: coord(nucl_num,3)
-      real    (c_double ) , intent(out)         :: nn_distance(nucl_num,nucl_num)
-
-      integer(c_int32_t), external :: qmckl_compute_nn_distance_f
-      info = qmckl_compute_nn_distance_f &
-             (context, nucl_num, coord, nn_distance)
-
-    end function qmckl_compute_nn_distance
-    #+end_src
-
-*** Test
-
-     #+begin_src c :tangle (eval c_test)
+     #+begin_src c :tangle (eval c_test) :exports none
 /* Reference input data */
 
 assert(qmckl_nucleus_provided(context));
@@ -936,22 +1030,25 @@ qmckl_exit_code qmckl_provide_nucleus_repulsion(qmckl_context context)
 *** Compute
 
     #+NAME: qmckl_nucleus_repulsion_args
-   | qmckl_context | context                         | in  | Global state                   |
-   | int64_t       | nucl_num                        | in  | Number of nuclei               |
-   | double        | charge[nucl_num]                | in  | Nuclear charges (au)           |
-   | double        | nn_distance[nucl_num][nucl_num] | in  | Nucleus-nucleus distances (au) |
-   | double        | energy                          | out | Nuclear repulsion energy       |
+   | ~qmckl_context~ | ~context~                         | in  | Global state                   |
+   | ~int64_t~       | ~nucl_num~                        | in  | Number of nuclei               |
+   | ~double~        | ~charge[nucl_num]~                | in  | Nuclear charges (au)           |
+   | ~double~        | ~nn_distance[nucl_num][nucl_num]~ | in  | Nucleus-nucleus distances (au) |
+   | ~double~        | ~energy~                          | out | Nuclear repulsion energy       |
 
     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
-integer function qmckl_compute_nucleus_repulsion_f(context, nucl_num, charge, nn_distance, energy) &
-     result(info)
-  use qmckl
+function qmckl_compute_nucleus_repulsion(context, nucl_num, charge, nn_distance, energy) &
+     result(info) bind(C)
+  use qmckl_constants
   implicit none
-  integer(qmckl_context), intent(in)  :: context
-  integer*8             , intent(in)  :: nucl_num
-  double precision      , intent(in)  :: charge(nucl_num)
-  double precision      , intent(in)  :: nn_distance(nucl_num,nucl_num)
-  double precision      , intent(out) :: energy
+
+  integer(qmckl_context), intent(in), value  :: context
+  integer (c_int64_t) , intent(in)  , value :: nucl_num
+  real    (c_double ) , intent(in)          :: charge(nucl_num)
+  real    (c_double ) , intent(in)          :: nn_distance(nucl_num,nucl_num)
+  real    (c_double ) , intent(out)         :: energy
+
+  integer(qmckl_exit_code) :: info
 
   integer*8 :: i, j
 
@@ -976,7 +1073,7 @@ integer function qmckl_compute_nucleus_repulsion_f(context, nucl_num, charge, nn
      end do
   end do
 
-end function qmckl_compute_nucleus_repulsion_f
+end function qmckl_compute_nucleus_repulsion
     #+end_src
 
     #+begin_src c :tangle (eval h_private_func) :comments org :exports none
@@ -989,33 +1086,10 @@ qmckl_exit_code qmckl_compute_nucleus_repulsion (
   );
     #+end_src
 
-    #+CALL: generate_c_interface(table=qmckl_nucleus_repulsion_args,rettyp="qmckl_exit_code",fname="qmckl_compute_nucleus_repulsion")
 
-    #+RESULTS:
-    #+begin_src f90 :tangle (eval f) :comments org :exports none
-    integer(c_int32_t) function qmckl_compute_nucleus_repulsion &
-        (context, nucl_num, charge, nn_distance, energy) &
-        bind(C) result(info)
+*** Test                                                            :noexport:
 
-      use, intrinsic :: iso_c_binding
-      implicit none
-
-      integer (c_int64_t) , intent(in)  , value :: context
-      integer (c_int64_t) , intent(in)  , value :: nucl_num
-      real    (c_double ) , intent(in)          :: charge(nucl_num)
-      real    (c_double ) , intent(in)          :: nn_distance(nucl_num,nucl_num)
-      real    (c_double ) , intent(out)         :: energy
-
-      integer(c_int32_t), external :: qmckl_compute_nucleus_repulsion_f
-      info = qmckl_compute_nucleus_repulsion_f &
-             (context, nucl_num, charge, nn_distance, energy)
-
-    end function qmckl_compute_nucleus_repulsion
-    #+end_src
-
-*** Test
-
-     #+begin_src c :tangle (eval c_test)
+     #+begin_src c :tangle (eval c_test) :exports none
 /* Reference input data */
 
 assert(qmckl_nucleus_provided(context));
@@ -1028,16 +1102,16 @@ assert(rep - 318.2309879436158 < 1.e-10);
 
 * End of files                                                     :noexport:
 
-  #+begin_src c :tangle (eval h_private_type)
+  #+begin_src c :tangle (eval h_private_type) :exports none
 #endif
   #+end_src
 
-  #+begin_src c :tangle (eval h_private_func)
+  #+begin_src c :tangle (eval h_private_func) :exports none
 #endif
   #+end_src
 
-*** Test
-  #+begin_src c :tangle (eval c_test)
+*** Test                                                            :noexport:
+  #+begin_src c :tangle (eval c_test) :exports none
   if (qmckl_context_destroy(context) != QMCKL_SUCCESS)
     return QMCKL_FAILURE;
   return 0;

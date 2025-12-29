@@ -43,6 +43,21 @@
 import_array();
 %}
 
+%typemap(in) const int32_t* {
+  if (PyArray_Check($input)) {
+    PyArrayObject *arr = (PyArrayObject*)$input;
+    if (PyArray_TYPE(arr) == NPY_INT32) {
+      $1 = (const int32_t*)PyArray_DATA(arr);
+    } else {
+      PyErr_SetString(PyExc_TypeError, "Expected int32 array");
+      return NULL;
+    }
+  } else {
+    PyErr_SetString(PyExc_TypeError, "Expected array");
+    return NULL;
+  }
+}
+
 /* Typemaps below change the type of numpy array dimensions from int to int64_t */
 %numpy_typemaps(double, NPY_DOUBLE, int64_t)
 %numpy_typemaps(float, NPY_FLOAT, int64_t)

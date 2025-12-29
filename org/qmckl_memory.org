@@ -2,8 +2,22 @@
 #+SETUPFILE: ../tools/theme.setup
 #+INCLUDE: ../tools/lib.org
 
-We override the allocation functions to enable the possibility of
-optimized libraries to fine-tune the memory allocation.
+QMCkl provides custom memory management functions to enable fine-grained
+control over memory allocation and deallocation. This design allows optimized 
+implementations of the library to override the default allocation strategy to 
+take advantage of specialized memory allocators, aligned allocations for 
+vectorization, pinned memory for GPU transfers, or other hardware-specific 
+optimizations.
+
+By centralizing memory allocation through the context, the library can:
+- Track all allocations for proper cleanup when the context is destroyed
+- Implement custom allocation strategies (e.g., memory pools, aligned allocations)
+- Provide detailed memory usage statistics for profiling
+- Ensure thread-safe memory operations when needed
+
+The memory management API is designed to be simple and consistent with
+standard C memory functions, while providing the flexibility needed for
+high-performance computing environments.
 
 Example of usage:
   #+begin_src c
@@ -20,7 +34,7 @@ qmckl_free(data);
 
 * Headers                                                          :noexport:
 
-  #+begin_src c :tangle (eval c)
+  #+begin_src c :tangle (eval c) :exports none
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -41,7 +55,7 @@ qmckl_free(data);
 #include "qmckl_memory_private_func.h"
   #+end_src
 
-  #+begin_src c :tangle (eval c_test) :noweb yes
+  #+begin_src c :tangle (eval c_test) :noweb yes :exports none
 #include "qmckl.h"
 #include "assert.h"
 #ifdef HAVE_CONFIG_H
@@ -53,12 +67,12 @@ int main() {
   #+end_src
 
 
-  #+begin_src c :tangle (eval h_private_func) :noweb yes
+  #+begin_src c :tangle (eval h_private_func) :noweb yes :exports none
 #ifndef QMCKL_MEMORY_HPF
 #define QMCKL_MEMORY_HPF
   #+end_src
 
-  #+begin_src c :tangle (eval h_private_type) :noweb yes
+  #+begin_src c :tangle (eval h_private_type) :noweb yes :exports none
 #ifndef QMCKL_MEMORY_HPT
 #define QMCKL_MEMORY_HPT
 
@@ -68,14 +82,22 @@ int main() {
 
 * Memory data structure for the context
 
+  The QMCkl library maintains detailed information about all memory allocations
+  made through the context. This tracking enables automatic cleanup when the
+  context is destroyed and provides visibility into memory usage patterns.
+  
   Every time a new block of memory is allocated, the information
   relative to the allocation is stored in a new ~qmckl_memory_info_struct~.
   A ~qmckl_memory_info_struct~ contains the pointer to the memory block,
   its size in bytes, and extra implementation-specific information such as
-  alignment, pinning, if the memory should be allocated on CPU or GPU
-  /etc/.
+  alignment requirements, memory pinning status, whether the memory should be 
+  allocated on CPU or GPU, and other hardware-specific attributes.
+  
+  This metadata structure can be extended in specialized implementations to
+  support additional allocation strategies or memory types without changing
+  the public API.
 
-  #+begin_src c :tangle (eval h_private_type) :noweb yes
+  #+begin_src c :tangle (eval h_private_type) :noweb yes 
 typedef struct qmckl_memory_info_struct {
   size_t size;
   void*  pointer;
@@ -90,9 +112,11 @@ static const qmckl_memory_info_struct qmckl_memory_info_struct_zero =
 
   The ~memory~ element of the context is a data structure which
   contains an array of ~qmckl_memory_info_struct~, the size of the
-  array, and the number of allocated blocks.
+  array, and the number of allocated blocks. This dynamic array grows
+  as needed to accommodate new allocations, providing a complete registry
+  of all memory managed by the context.
 
-  #+begin_src c :tangle (eval h_private_type) :noweb yes
+  #+begin_src c :tangle (eval h_private_type) :noweb yes :exports none
 typedef struct qmckl_memory_struct {
   size_t                    n_allocated;
   size_t                    array_size;
@@ -102,24 +126,37 @@ typedef struct qmckl_memory_struct {
 
 * Passing info to allocation routines
 
-  Passing information to the allocation routine should be done by
-  passing an instance of a ~qmckl_memory_info_struct~.
+  Allocation parameters should be passed to the allocation routine using
+  an instance of a ~qmckl_memory_info_struct~. This structure-based approach
+  allows for extensibility - new allocation parameters can be added to the
+  structure in future versions without changing function signatures. It also
+  makes the allocation requests more self-documenting, as the ~qmckl_memory_info_struct~
+  explicitly specifies all allocation requirements.
 
 * Allocation/deallocation functions
 
-  Memory allocation inside the library should be done with
-  ~qmckl_malloc~. It lets the library choose how the memory will be
-  allocated, and a pointer is returned to the user.  The context is
-  passed to let the library store data related to the allocation
-  inside the context. In this particular implementation of the library,
-  we store a list of allocated pointers so that all the memory can be
-  properly freed when the library is de-initialized.
-  If the allocation failed, the ~NULL~ pointer is returned.
+** Memory allocation
 
-  The allocated memory block is zeroed using ~memset~.
+  Memory allocation inside the library should be done with
+  ~qmckl_malloc~. This function provides a centralized allocation mechanism
+  that allows the library to choose how and where memory will be allocated.
+  A pointer is returned to the caller, similar to standard ~malloc~.
+  
+  The context is passed to the function so that the library can store data 
+  related to the allocation inside the context. In this particular implementation 
+  of the library, we maintain a registry of allocated pointers so that all memory 
+  can be properly freed when the library is de-initialized. This prevents memory 
+  leaks and ensures clean shutdown.
+  
+  If the allocation fails, the ~NULL~ pointer is returned, following standard
+  C conventions. Callers should always check for ~NULL~ returns and handle
+  allocation failures appropriately.
+
+  For security and deterministic behavior, the allocated memory block is
+  zeroed using ~memset~ before being returned to the caller.
 
   # Header
-  #+begin_src c :tangle (eval h_private_func) :noexport
+  #+begin_src c :tangle (eval h_private_func)
 void* qmckl_malloc(qmckl_context context,
                    const qmckl_memory_info_struct info);
   #+end_src
@@ -156,8 +193,8 @@ void* qmckl_malloc(qmckl_context context,
   9. The function finds the first available ~qmckl_memory_info_struct~ slot
      in the element array of the ~qmckl_memory_struct~.
 
-  # Source
-  #+begin_src c :tangle (eval c)
+#  Source                                                          :noexport:
+  #+begin_src c :tangle (eval c) :exports none
 void* qmckl_malloc(qmckl_context context, const qmckl_memory_info_struct info) {
 
   assert (qmckl_context_check(context) != QMCKL_NULL_CONTEXT);
@@ -214,9 +251,8 @@ void* qmckl_malloc(qmckl_context context, const qmckl_memory_info_struct info) {
 }
   #+end_src
 
-
-   # Test                                                            :noexport:
-   #+begin_src c :tangle (eval c_test)
+#  Test                                                            :noexport:
+   #+begin_src c :tangle (eval c_test) :exports none
 /* Create a context */
 qmckl_context context = qmckl_context_create();
 
@@ -246,7 +282,7 @@ b[2] = 3;  assert(b[2] == 3);
   case some important information has been stored related to memory
   allocation and needs to be updated.
 
-  #+begin_src c :tangle (eval h_private_func)
+  #+begin_src c :tangle (eval h_private_func) 
 qmckl_exit_code qmckl_free(qmckl_context context,
                            void * const ptr);
   #+end_src
@@ -293,7 +329,7 @@ qmckl_exit_code qmckl_free(qmckl_context context,
      
      
    # Source
-   #+begin_src c :tangle (eval c)
+   #+begin_src c :tangle (eval c) :exports none
 qmckl_exit_code qmckl_free(qmckl_context context, void * const ptr) {
 
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
@@ -378,7 +414,7 @@ assert(rc == QMCKL_SUCCESS);
   bytes were allocated. Using ~qmckl_malloc_size~ allows to get this information.
 
   # Header
-  #+begin_src c :tangle (eval h_private_func) :noexport
+  #+begin_src c :tangle (eval h_private_func) 
 qmckl_exit_code
 qmckl_get_malloc_info(qmckl_context context,
                       const void* pointer, 
@@ -386,7 +422,7 @@ qmckl_get_malloc_info(qmckl_context context,
   #+end_src
 
   # Source
-  #+begin_src c :tangle (eval c)
+  #+begin_src c :tangle (eval c) :exports none
 qmckl_exit_code
 qmckl_get_malloc_info(qmckl_context context,
                       const void* ptr, 
@@ -439,7 +475,7 @@ qmckl_get_malloc_info(qmckl_context context,
 
 
    # Test                                                            :noexport:
-   #+begin_src c :tangle (eval c_test)
+   #+begin_src c :tangle (eval c_test) :exports none
 /* Create a context */
 context = qmckl_context_create();
 
@@ -463,17 +499,17 @@ rc = qmckl_context_destroy(context);
 
 * End of files                                                     :noexport:
 
-  #+begin_src c :comments org :tangle (eval h_private_func)
+  #+begin_src c :comments org :tangle (eval h_private_func) :exports none
 #endif
 
   #+end_src
 
-  #+begin_src c :comments org :tangle (eval h_private_type)
+  #+begin_src c :comments org :tangle (eval h_private_type) :exports none
 #endif
 
   #+end_src
 ** Test
-  #+begin_src c :comments org :tangle (eval c_test)
+  #+begin_src c :comments org :tangle (eval c_test) :exports none
   return 0;
 }
 
