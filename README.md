@@ -25,23 +25,31 @@ git clone https://github.com/TREX-CoE/qmckl.git
 This repository is primarily for maintainers who write the kernels in org-mode files and 
 generate the source code and documentation from these files.
 
+**About Org-mode**: Org-mode is a plain-text format, editable in any text editor—including 
+VS Code (which offers excellent support) or Vim (via plugins). Emacs is used here not as a 
+text editor but as a command-line tool to generate code from Org-mode files, much like cmake 
+or autoconf. Contributors need not master Emacs; they can edit Org-mode files in their 
+preferred environment, and our Makefile automates the rest.
+
 # Prerequisites and Dependencies
 
 ## Required Dependencies
 
-Before building QMCkl, you **must** install the following dependencies:
+Before building QMCkl, you should install the following dependencies:
 
-### 1. TREXIO Library
+### 1. TREXIO Library (Highly Recommended)
 
 **TREXIO** (TREX I/O) is a library for reading and writing wave function data files.
-QMCkl requires TREXIO to be installed.
+While TREXIO is enabled by default and highly encouraged, it can be disabled during 
+configuration with `./configure --without-trexio` if needed.
 
 - **Repository**: https://github.com/TREX-CoE/trexio
-- **Installation**:
+- **Releases**: https://github.com/TREX-CoE/trexio/releases
+- **Installation** (from latest release):
   ```bash
-  git clone https://github.com/TREX-CoE/trexio.git
-  cd trexio
-  ./autogen.sh
+  # Download the latest tar.gz from the releases page, then:
+  tar -xzf trexio-*.tar.gz
+  cd trexio-*
   ./configure --prefix=/path/to/install
   make
   make check
@@ -71,6 +79,10 @@ QMCkl requires TREXIO to be installed.
 **BLAS** (Basic Linear Algebra Subprograms) and **LAPACK** (Linear Algebra PACKage) 
 are required for linear algebra operations.
 
+**Performance Note**: Generic BLAS implementations will result in low performance. 
+Vendor-specific BLAS libraries such as Intel MKL or ARM Performance Libraries (ARMPL) 
+are highly recommended for optimal performance.
+
 - **Installation on Ubuntu/Debian**:
   ```bash
   sudo apt-get install libblas-dev liblapack-dev
@@ -81,12 +93,14 @@ are required for linear algebra operations.
   sudo yum install blas-devel lapack-devel
   ```
 
-- **Alternative**: Intel MKL (Math Kernel Library) provides optimized BLAS/LAPACK.
-  When using Intel compilers with `--with-icc` or `--with-ifort`, MKL is automatically used.
+- **Recommended**: Intel MKL (Math Kernel Library) or ARM Performance Libraries provide 
+  optimized BLAS/LAPACK. When using Intel compilers with `--with-icc` or `--with-ifort`, 
+  MKL is automatically used.
 
-### 3. HDF5
+### 3. HDF5 (Optional, Highly Recommended)
 
-**HDF5** is required by TREXIO for data storage.
+**HDF5** is an optional dependency of TREXIO for data storage, but it is highly recommended 
+and enabled by default in TREXIO's configuration.
 
 - **Installation on Ubuntu/Debian**:
   ```bash
@@ -103,7 +117,7 @@ are required for linear algebra operations.
 - **Autotools**: `autoconf`, `automake`, `libtool`
 - **C Compiler**: GCC or Intel ICC
 - **Fortran Compiler**: gfortran or Intel ifort/ifx
-- **pkg-config**: For finding library dependencies
+- **pkg-config** (optional): Helps find library dependencies
 
 - **Installation on Ubuntu/Debian**:
   ```bash
@@ -132,15 +146,11 @@ If you are working with the org-mode source files (maintainer mode):
 
 ### For Python API
 
-- **SWIG** (>= 4.0): For generating Python bindings
+- **SWIG** (>= 4.0, optional): For generating Python bindings
   ```bash
   sudo apt-get install swig   # Ubuntu/Debian
   sudo yum install swig       # RHEL/CentOS/Fedora
   ```
-
-### Optional Libraries
-
-- **QMCKLDGEMM**: Custom DGEMM implementation (optional, use `--with-qmckldgemm`)
 
 # Installation
 
@@ -148,10 +158,11 @@ If you are working with the org-mode source files (maintainer mode):
 
 **Prerequisites**: Ensure all [required dependencies](#required-dependencies) are installed first.
 
-1. **Download a source distribution** or clone the repository:
+1. **Download a source distribution**:
+   - Get the latest release from: https://github.com/TREX-CoE/qmckl/releases
    ```bash
-   git clone https://github.com/TREX-CoE/qmckl.git
-   cd qmckl
+   tar -xzf qmckl-*.tar.gz
+   cd qmckl-*
    ```
 
 2. **Configure the build**:
@@ -325,11 +336,12 @@ After installation, link your program against QMCkl by adding `-lqmckl` to your 
 
 ### Setting Library Paths
 
-If QMCkl was installed with a custom prefix, update your library search paths:
+If QMCkl was installed with a custom prefix, update your library and include search paths:
 
 ```bash
 export LIBRARY_PATH=$LIBRARY_PATH:/path/to/qmckl/lib
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/path/to/qmckl/lib
+export CPATH=$CPATH:/path/to/qmckl/include
 ```
 
 ### Using CMake
@@ -473,8 +485,8 @@ Run `./configure --help` to see all available options. Common options include:
 
 QMCkl has been tested on:
 
-- **Linux**: Ubuntu, Debian, RHEL, CentOS, Fedora
-- **macOS**: Recent versions with Homebrew or MacPorts
+- **CPUs**: x86 and ARM CPUs
+- **Operating Systems**: Ubuntu, Debian, RHEL, CentOS, Fedora, macOS (with Homebrew or MacPorts)
 - **Compilers**: GCC, Intel ICC/ICX, Intel ifort/ifx
 
 # License
@@ -488,7 +500,7 @@ See the [LICENSE](LICENSE) file for details.
 
 If you use QMCkl in your research, please cite:
 
-[Citation information will be added - check the project website]
+[arXiv:2512.16677v1](https://arxiv.org/abs/2512.16677v1)
 
 # Contributing
 
