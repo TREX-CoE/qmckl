@@ -39,7 +39,7 @@ VERSION_PATCH   = @VERSION_PATCH@
 
 SUBDIRS =
 CLEANFILES = qmckl.mod qmckl_verificarlo_f.mod qmckl_constants.mod
-EXTRA_DIST =
+EXTRA_DIST = 
 
 pkgconfigdir = $(libdir)/pkgconfig
 pkgconfig_DATA = pkgconfig/qmckl.pc
@@ -59,7 +59,9 @@ AM_CPPFLAGS += -DQMCKL_TEST_DIR=\"$(QMCKL_TEST_DIR)\"
 
 lib_LTLIBRARIES = src/libqmckl.la
 src_libqmckl_la_SOURCES = $(qmckl_h) $(qmckl_f) $(C_FILES) $(F_FILES) $(H_PRIVATE_FUNC_FILES) $(H_PRIVATE_TYPE_FILES)
-src_libqmckl_la_LDFLAGS = $(LDFLAGS)
+src_libqmckl_la_LDFLAGS = \
+  -version-info $(VERSION_MAJOR):$(VERSION_MINOR):$(VERSION_PATCH) \
+  -no-undefined
 
 CLEANFILES+=$(qmckl_fo) $(test_qmckl_o) $(FH_TYPE_FILES) $(FH_FUNC_FILES)
 
@@ -102,6 +104,14 @@ qmckl_wrap_c    =  python/src/qmckl_wrap.c
 qmckl_include_i =  python/src/qmckl_include.i
 qmckl_py        =  python/src/qmckl.py
 
+binary-dist: all
+	@echo "  BINDIST  qmckl (static + shared)"
+	@VERSION_MAJOR=$(VERSION_MAJOR) \
+	 VERSION_MINOR=$(VERSION_MINOR) \
+	 VERSION_PATCH=$(VERSION_PATCH) \
+	 srcdir="$(srcdir)" top_builddir="$(top_builddir)" \
+	 $(srcdir)/tools/build_binary_dist.sh
+
 if HAVE_PYTHON
 dist_python_DATA = $(setup_py) $(qmckl_py) $(qmckl_wrap_c) \
                    $(srcdir)/python/pyproject.toml \
@@ -124,7 +134,7 @@ python-test: $(test_py)
 
 endif
 
-.PHONY: cppcheck python-test python-install source
+.PHONY: cppcheck python-test python-install source binary-dist
 
 
 if QMCKL_DEVEL
@@ -152,6 +162,8 @@ EXTRA_DIST +=                 \
     tools/lib.org             \
     tools/tangle.sh           \
     tools/theme.setup
+
+EXTRA_DIST += tools/build_binary_dist.sh
 
 
 ## Silent

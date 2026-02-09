@@ -35,7 +35,7 @@
 
 AC_PREREQ([2.69])
 
-AC_INIT([qmckl],[1.0.0],[https://github.com/TREX-CoE/qmckl/issues],[],[https://trex-coe.github.io/qmckl/index.html])
+AC_INIT([qmckl],[1.1.0],[https://github.com/TREX-CoE/qmckl/issues],[],[https://trex-coe.github.io/qmckl/index.html])
 AC_CONFIG_AUX_DIR([tools])
 AM_INIT_AUTOMAKE([subdir-objects color-tests parallel-tests silent-rules 1.11])
 
@@ -112,7 +112,7 @@ AS_IF([test "x$with_icc" = "xyes"], [
 F77=$FC
 AM_PROG_AR
 AM_MAINTAINER_MODE()
-LT_INIT
+LT_INIT([shared static])
 AC_CONFIG_SRCDIR([configure.ac])
 AC_CONFIG_HEADERS([include/config.h])
 AC_CONFIG_MACRO_DIR([m4])

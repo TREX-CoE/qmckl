@@ -2,9 +2,19 @@
 #+SETUPFILE: ../tools/theme.setup
 #+INCLUDE: ../tools/lib.org
 
-The [[https://trex-coe.github.io/trexio/trex.html][TREXIO library]] enables easy and efficient input/output of wave
-function parameters. In this section we provide high-level functions
-to prepare the context by reading the required data from a TREXIO file.
+The [[https://trex-coe.github.io/trexio/trex.html][TREXIO library]] is a unified input/output system for quantum chemistry
+calculations, designed to store and exchange wavefunction data in a standardized
+format. TREXIO enables easy and efficient transfer of wavefunction parameters,
+molecular geometries, basis sets, and other quantum chemical data between
+different codes.
+
+In this section, we provide high-level convenience functions to initialize
+a QMCkl context by reading the required data from a TREXIO file. This allows
+users to easily import wavefunction data from other quantum chemistry codes
+that support TREXIO output, streamlining the workflow for QMC calculations.
+
+The functions handle both TEXT and HDF5 backends of TREXIO, automatically
+selecting the appropriate backend based on file format.
 
 * Headers                                                          :noexport:
   #+begin_src elisp :noexport :results none
@@ -12,7 +22,7 @@ to prepare the context by reading the required data from a TREXIO file.
 #+end_src
 
 
-  #+begin_src c :tangle (eval c_test) :noweb yes
+  #+begin_src c :tangle (eval c_test) :noweb yes :exports none
 #include "qmckl.h"
 #include <assert.h>
 #include <math.h>
@@ -31,7 +41,7 @@ int main() {
 #ifdef HAVE_TREXIO
   #+end_src
 
-  #+begin_src c :tangle (eval c)
+  #+begin_src c :tangle (eval c) :exports none
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -61,27 +71,31 @@ int main() {
 
 * Local functions
 
-  Functions defined in this section are all local: they should not be
-  exposed in the API. To identify them, we append ~_X~ to
-  their name.
+  Functions defined in this section are all local (internal to this module):
+  they should not be exposed in the public API. To identify them clearly,
+  we append ~_X~ to their name, indicating their private status.
 
-  Users are not able to call directly these functions, so by
-  construction the context can't be ~NULL~, hence we can check this
-  with an ~assert~ statement.
+  Users are not able to call these functions directly. Since they are only
+  called from within this module where the context validity has already been
+  checked, the context parameter can't be ~NULL~. Therefore, we verify this
+  precondition with an ~assert~ statement rather than returning an error code.
 
-  In the functions defined in this section, we use as local variables
+  In the functions defined in this section, we use the following local variable
+  naming conventions:
   - ~rc~: the return code for QMCkl functions
-  - ~rcio~: the return code for TREXIO functions.
+  - ~rcio~: the return code for TREXIO library functions.
 
 ** Open file
 
-   We first define a helper function to open a file by first trying to
-   use the TEXT back end, and then the HDF5 back end. If both
-   strategies fail, a ~NULL~ pointer is returned. This will allow to
+   We first define a helper function to open a TREXIO file by attempting
+   multiple backends. It tries to use the TEXT backend first, and if that fails,
+   attempts the HDF5 backend. If both strategies fail, a ~NULL~ pointer is 
+   returned. This flexible approach allows the function to handle TREXIO files
+   in either format without requiring the user to specify which format is used.
    open only once the file and call multiple small functions to read
    groups of data by passing the ~trexio_t~ handle.
 
-   #+begin_src c :tangle (eval c)
+   #+begin_src c :tangle (eval c) :exports none
 #ifdef HAVE_TREXIO
 trexio_t* qmckl_trexio_open_X(const char* file_name, qmckl_exit_code* rc)
 {
@@ -95,12 +109,7 @@ trexio_t* qmckl_trexio_open_X(const char* file_name, qmckl_exit_code* rc)
   if (file != NULL) return file;
 
   ,*rc = QMCKL_FAILURE;
-  /* TODO
-    return qmckl_failwith( context,
-                           QMCKL_FAILURE,
-                           "trexio_read_electron_up_num",
-                           trexio_string_of_error(rcio));
-                           */
+
   return NULL;
 }
 #endif
@@ -111,7 +120,7 @@ trexio_t* qmckl_trexio_open_X(const char* file_name, qmckl_exit_code* rc)
    In this section we read all the data into the electron data structure.
    We read the number of up-spin and down-spin electrons.
 
-   #+begin_src c :tangle (eval c)
+   #+begin_src c :tangle (eval c) :exports none
 #ifdef HAVE_TREXIO
 qmckl_exit_code
 qmckl_trexio_read_electron_X(qmckl_context context, trexio_t* const file)
@@ -156,7 +165,7 @@ qmckl_trexio_read_electron_X(qmckl_context context, trexio_t* const file)
 
    In this section we read the number of nuclei, the molecular geometry and nuclear charges.
 
-   #+begin_src c :tangle (eval c)
+   #+begin_src c :tangle (eval c) :exports none
 #ifdef HAVE_TREXIO
 qmckl_exit_code
 qmckl_trexio_read_nucleus_X(qmckl_context context, trexio_t* const file)
@@ -170,7 +179,7 @@ qmckl_trexio_read_nucleus_X(qmckl_context context, trexio_t* const file)
 
 *** Number of nuclei
 
-   #+begin_src c :tangle (eval c)
+   #+begin_src c :tangle (eval c) :exports none
   int64_t nucleus_num = 0L;
 
   rcio = trexio_read_nucleus_num_64(file, &nucleus_num);
@@ -190,7 +199,7 @@ qmckl_trexio_read_nucleus_X(qmckl_context context, trexio_t* const file)
 
 *** Nuclear charges
 
-   #+begin_src c :tangle (eval c)
+   #+begin_src c :tangle (eval c) :exports none
   {
     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
     mem_info.size = nucleus_num * sizeof(double);
@@ -230,7 +239,7 @@ qmckl_trexio_read_nucleus_X(qmckl_context context, trexio_t* const file)
     Now, we read the molecular geometry. It is stored in normal format
     in the TREXIO file (~'N'~), so it will be automatically transposed internally.
 
-   #+begin_src c :tangle (eval c)
+   #+begin_src c :tangle (eval c) :exports none
   {
     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
     mem_info.size = nucleus_num * 3 * sizeof(double);
@@ -266,7 +275,7 @@ qmckl_trexio_read_nucleus_X(qmckl_context context, trexio_t* const file)
    #+end_src
 
 
-   #+begin_src c :tangle (eval c)
+   #+begin_src c :tangle (eval c) :exports none
   assert ( qmckl_nucleus_provided(context) );
   return QMCKL_SUCCESS;
 }
@@ -277,7 +286,7 @@ qmckl_trexio_read_nucleus_X(qmckl_context context, trexio_t* const file)
 
    In this section we read the atomic basis set and atomic orbitals.
 
-   #+begin_src c :tangle (eval c)
+   #+begin_src c :tangle (eval c) :exports none
 #ifdef HAVE_TREXIO
 qmckl_exit_code
 qmckl_trexio_read_ao_X(qmckl_context context, trexio_t* const file)
@@ -297,7 +306,7 @@ qmckl_trexio_read_ao_X(qmckl_context context, trexio_t* const file)
 
 *** Basis set type
 
-   #+begin_src c :tangle (eval c)
+   #+begin_src c :tangle (eval c) :exports none
 #define MAX_STR_LEN 1024
   char basis_type[MAX_STR_LEN];
 
@@ -309,7 +318,9 @@ qmckl_trexio_read_ao_X(qmckl_context context, trexio_t* const file)
                            trexio_string_of_error(rcio));
   }
 
-  if (basis_type[0] == 'G') {
+  if (basis_type[0] == 'G' ||
+      basis_type[0] == 'S' ||
+      basis_type[0] == 'N' ) {
     rc = qmckl_set_ao_basis_type(context, basis_type[0]);
   } else {
     return qmckl_failwith( context,
@@ -325,7 +336,7 @@ qmckl_trexio_read_ao_X(qmckl_context context, trexio_t* const file)
 
 *** Number of shells
 
-   #+begin_src c :tangle (eval c)
+   #+begin_src c :tangle (eval c) :exports none
   int64_t shell_num = 0L;
 
   rcio = trexio_read_basis_shell_num_64(file, &shell_num);
@@ -346,7 +357,7 @@ qmckl_trexio_read_ao_X(qmckl_context context, trexio_t* const file)
 
 *** Number of primitives
 
-   #+begin_src c :tangle (eval c)
+   #+begin_src c :tangle (eval c) :exports none
   int64_t prim_num = 0L;
 
   rcio = trexio_read_basis_prim_num_64(file, &prim_num);
@@ -367,7 +378,7 @@ qmckl_trexio_read_ao_X(qmckl_context context, trexio_t* const file)
 
 *** Number of atomic orbitals
 
-   #+begin_src c :tangle (eval c)
+   #+begin_src c :tangle (eval c) :exports none
   int64_t ao_num = 0;
 
   rcio = trexio_read_ao_num_64(file, &ao_num);
@@ -388,7 +399,7 @@ qmckl_trexio_read_ao_X(qmckl_context context, trexio_t* const file)
 
 *** Nucleus_index array
 
-   #+begin_src c :tangle (eval c)
+   #+begin_src c :tangle (eval c) :exports none
   {
     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
 
@@ -465,7 +476,7 @@ qmckl_trexio_read_ao_X(qmckl_context context, trexio_t* const file)
 
 *** Number of shells per nucleus
 
-   #+begin_src c :tangle (eval c)
+   #+begin_src c :tangle (eval c) :exports none
   {
     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
 
@@ -545,9 +556,48 @@ qmckl_trexio_read_ao_X(qmckl_context context, trexio_t* const file)
   }
    #+end_src
 
-*** Angular momentum
+*** r power
 
    #+begin_src c :tangle (eval c)
+  {
+    qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+
+    /* Allocate array for data */
+    mem_info.size = shell_num * sizeof(int32_t);
+
+    int32_t* r_power = (int32_t*) qmckl_malloc(context, mem_info);
+
+    if (r_power == NULL) {
+      return qmckl_failwith( context,
+                             QMCKL_ALLOCATION_FAILED,
+                             "qmckl_trexio_read_basis_r_power",
+                             NULL);
+    }
+
+    assert (r_power != NULL);
+
+    /* Read data */
+    rcio = trexio_read_safe_basis_r_power_32(file, r_power, shell_num);
+    if (rcio != TREXIO_SUCCESS) {
+      for (int i=0 ; i<shell_num ; ++i) {
+        r_power[i] = 0;
+      }
+    }
+
+    /* Store data */
+    rc = qmckl_set_ao_basis_r_power(context, r_power, shell_num);
+
+    qmckl_free(context, r_power);
+    r_power = NULL;
+
+    if (rc != QMCKL_SUCCESS)
+      return rc;
+  }
+   #+end_src
+
+*** Angular momentum
+
+   #+begin_src c :tangle (eval c) :exports none
   {
     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
 
@@ -589,7 +639,7 @@ qmckl_trexio_read_ao_X(qmckl_context context, trexio_t* const file)
 
 *** Number of primitives per shell
 
-   #+begin_src c :tangle (eval c)
+   #+begin_src c :tangle (eval c) :exports none
   {
     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
 
@@ -672,7 +722,7 @@ qmckl_trexio_read_ao_X(qmckl_context context, trexio_t* const file)
 
 *** Indices of the primitives
 
-   #+begin_src c :tangle (eval c)
+   #+begin_src c :tangle (eval c) :exports none
   {
     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
 
@@ -749,7 +799,7 @@ qmckl_trexio_read_ao_X(qmckl_context context, trexio_t* const file)
 
 *** Normalization of the shells
 
-   #+begin_src c :tangle (eval c)
+   #+begin_src c :tangle (eval c) :exports none
   {
     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
 
@@ -791,7 +841,7 @@ qmckl_trexio_read_ao_X(qmckl_context context, trexio_t* const file)
 
 *** Exponents
 
-   #+begin_src c :tangle (eval c)
+   #+begin_src c :tangle (eval c) :exports none
   {
     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
 
@@ -833,7 +883,7 @@ qmckl_trexio_read_ao_X(qmckl_context context, trexio_t* const file)
 
 *** Coefficients
 
-   #+begin_src c :tangle (eval c)
+   #+begin_src c :tangle (eval c) :exports none
   {
     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
 
@@ -875,7 +925,7 @@ qmckl_trexio_read_ao_X(qmckl_context context, trexio_t* const file)
 
 *** Normalization of the primitivies
 
-   #+begin_src c :tangle (eval c)
+   #+begin_src c :tangle (eval c) :exports none
   {
     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
 
@@ -916,7 +966,7 @@ qmckl_trexio_read_ao_X(qmckl_context context, trexio_t* const file)
    #+end_src
 
 *** AO Normalization
-   #+begin_src c :tangle (eval c)
+   #+begin_src c :tangle (eval c) :exports none
   {
     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
 
@@ -958,7 +1008,7 @@ qmckl_trexio_read_ao_X(qmckl_context context, trexio_t* const file)
 
 
 
-   #+begin_src c :tangle (eval c)
+   #+begin_src c :tangle (eval c) :exports none
 
   return QMCKL_SUCCESS;
 }
@@ -968,7 +1018,7 @@ qmckl_trexio_read_ao_X(qmckl_context context, trexio_t* const file)
 
    In this section we read the MO coefficients.
 
-   #+begin_src c :tangle (eval c)
+   #+begin_src c :tangle (eval c) :exports none
 #ifdef HAVE_TREXIO
 qmckl_exit_code
 qmckl_trexio_read_mo_X(qmckl_context context, trexio_t* const file)
@@ -988,7 +1038,7 @@ qmckl_trexio_read_mo_X(qmckl_context context, trexio_t* const file)
 
 *** Number of MOs
 
-   #+begin_src c :tangle (eval c)
+   #+begin_src c :tangle (eval c) :exports none
   int64_t mo_num = 0L;
 
   rcio = trexio_read_mo_num_64(file, &mo_num);
@@ -1008,7 +1058,7 @@ qmckl_trexio_read_mo_X(qmckl_context context, trexio_t* const file)
 
 *** MO coefficients
 
-   #+begin_src c :tangle (eval c)
+   #+begin_src c :tangle (eval c) :exports none
   {
     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
     mem_info.size = ao_num * mo_num * sizeof(double);
@@ -1043,7 +1093,7 @@ qmckl_trexio_read_mo_X(qmckl_context context, trexio_t* const file)
   }
    #+end_src
 
-   #+begin_src c :tangle (eval c)
+   #+begin_src c :tangle (eval c) :exports none
 
   return QMCKL_SUCCESS;
 }
@@ -1077,7 +1127,7 @@ qmckl_trexio_read(const qmckl_context context,
     end interface
   #+end_src
 
-  #+begin_src c :tangle (eval c)
+  #+begin_src c :tangle (eval c) :exports none
 qmckl_exit_code
 qmckl_trexio_read(const qmckl_context context, const char* file_name, const int64_t size_max)
 {
@@ -1141,7 +1191,7 @@ qmckl_trexio_read(const qmckl_context context, const char* file_name, const int6
 
 * Test
 
-  #+begin_src c :tangle (eval c_test)
+  #+begin_src c :tangle (eval c_test) :exports none
 #ifdef HAVE_TREXIO
 
 qmckl_exit_code rc;
@@ -1163,7 +1213,7 @@ qmckl_check(context, rc);
 
 *** Electrons
 
-  #+begin_src c :tangle (eval c_test)
+  #+begin_src c :tangle (eval c_test) :exports none
 printf("Electrons\n");
 int64_t up_num, dn_num;
 rc = qmckl_get_electron_up_num(context, &up_num);
@@ -1178,7 +1228,7 @@ assert (dn_num == chbrclf_elec_dn_num);
 
 *** Nuclei
 
-  #+begin_src c :tangle (eval c_test)
+  #+begin_src c :tangle (eval c_test) :exports none
 printf("Nuclei\n");
 
 int64_t nucl_num;
@@ -1215,7 +1265,7 @@ coord = NULL;
 
 *** Atomic basis
 
-  #+begin_src c :tangle (eval c_test)
+  #+begin_src c :tangle (eval c_test) :exports none
 printf("Atomic basis\n");
 
 char basis_type;
@@ -1251,6 +1301,15 @@ for (int i=0 ; i<nucl_num ; i++) {
  }
 free(nucleus_shell_num);
 nucleus_shell_num = NULL;
+
+int32_t* r_power  = (int32_t*) malloc (shell_num * sizeof(int32_t));
+rc = qmckl_get_ao_basis_r_power(context, r_power, shell_num);
+qmckl_check(context, rc);
+for (int i=0 ; i<shell_num ; i++) {
+  assert (r_power[i] == 0);
+ }
+free(r_power);
+r_power = NULL;
 
 int32_t* shell_ang_mom  = (int32_t*) malloc (shell_num * sizeof(int32_t));
 rc = qmckl_get_ao_basis_shell_ang_mom(context, shell_ang_mom, shell_num);
@@ -1320,7 +1379,7 @@ prim_factor = NULL;
 
 *** MO Basis
 
-  #+begin_src c :tangle (eval c_test)
+  #+begin_src c :tangle (eval c_test) :exports none
 printf("MOs\n");
 
 int64_t mo_num;
@@ -1346,7 +1405,7 @@ charge = NULL;
 * End of files                                                     :noexport:
 
 *** Test
-  #+begin_src c :tangle (eval c_test)
+  #+begin_src c :tangle (eval c_test) :exports none
   if (qmckl_context_destroy(context) != QMCKL_SUCCESS)
     return QMCKL_FAILURE;
 #endif

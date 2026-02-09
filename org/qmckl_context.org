@@ -4,7 +4,7 @@
 
 * Headers                                                          :noexport:
 
-  #+begin_src c :tangle (eval c_test) :noweb yes
+  #+begin_src c :tangle (eval c_test) :noweb yes :exports none
 #include "qmckl.h"
 #include "assert.h"
 #ifdef HAVE_CONFIG_H
@@ -13,7 +13,7 @@
 int main() {
   #+end_src
 
-  #+begin_src c :tangle (eval h_private_type) :noweb yes
+  #+begin_src c :tangle (eval h_private_type) :noweb yes :exports none
 #ifndef QMCKL_CONTEXT_HPT
 #define QMCKL_CONTEXT_HPT
 
@@ -36,8 +36,8 @@ int main() {
 #include "qmckl_jastrow_champ_private_type.h"
 #include "qmckl_jastrow_champ_single_private_type.h"
 #include "qmckl_forces_private_type.h"
-#include "qmckl_determinant_private_type.h"
-#include "qmckl_local_energy_private_type.h"
+// #include "qmckl_determinant_private_type.h"
+// #include "qmckl_local_energy_private_type.h"
 #include "qmckl_point_private_func.h"
 #include "qmckl_nucleus_private_func.h"
 #include "qmckl_electron_private_func.h"
@@ -46,11 +46,11 @@ int main() {
 #include "qmckl_jastrow_champ_private_func.h"
 #include "qmckl_jastrow_champ_single_private_func.h"
 #include "qmckl_forces_private_func.h"
-#include "qmckl_determinant_private_func.h"
-#include "qmckl_local_energy_private_func.h"
+// #include "qmckl_determinant_private_func.h"
+// #include "qmckl_local_energy_private_func.h"
   #+end_src
 
-  #+begin_src c :tangle (eval c)
+  #+begin_src c :tangle (eval c) :exports none
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -79,13 +79,21 @@ int main() {
 
 * Context handling
 
-  The context variable is a handle for the state of the library,
-  and is stored in a data structure which can't be seen outside of
-  the library. To simplify compatibility with other languages, the
+  The context is the central data structure in QMCkl, serving as a handle
+  for the complete state of the library. All QMCkl functions require a context
+  as their first argument, and all computed data is stored within the context.
+  
+  The context variable is a handle for the state of the library, and is stored 
+  in a data structure which can't be seen outside of the library. This 
+  encapsulation provides a clean API boundary and allows internal implementation 
+  details to change without affecting user code.
+  
+  To simplify compatibility with other languages (particularly Fortran), the
   pointer to the internal data structure is converted into a 64-bit
-  signed integer, defined in the ~qmckl_context~ type.
+  signed integer, defined in the ~qmckl_context~ type. This approach avoids
+  issues with language interoperability related to opaque pointer types.
   A value of ~QMCKL_NULL_CONTEXT~ for the context is equivalent to a
-  ~NULL~ pointer.
+  ~NULL~ pointer and represents an invalid or uninitialized context.
 
   #+NAME: qmckl_context
   #+begin_src c :comments org :tangle (eval h_type)
@@ -98,15 +106,32 @@ typedef int64_t qmckl_context ;
       integer*8, parameter :: QMCKL_NULL_CONTEXT = 0
   #+end_src
 
-  An immutable context would have required to implement a garbage
-  collector. To keep the library simple, we have chosen to implement
-  the context as a mutable data structure, so it has to be handled
-  with care.
+** Design considerations
+
+  An immutable context would have been ideal from a functional programming
+  perspective and would have required implementation of a garbage
+  collector for proper memory management. However, to keep the library simple 
+  and avoid the complexity of automatic memory management, we have chosen to 
+  implement the context as a mutable data structure. This means it has to be 
+  handled with care: users must ensure proper initialization, avoid concurrent
+  modifications without synchronization, and explicitly destroy contexts when
+  they are no longer needed.
+  
+  The mutable design also provides better performance characteristics, as it
+  avoids the overhead of copying large data structures and allows for in-place
+  updates of computational results.
 
   By convention, in this file ~context~ is a ~qmckl_context~ variable
   and ~ctx~ is a ~qmckl_context_struct*~ pointer.
 
 ** Data structure
+
+   The context data structure contains all the state information needed by the
+   library, organized into logical sections. This includes the molecular system
+   description (nuclei, electrons, basis sets), computational parameters
+   (numerical precision), computed quantities (atomic orbitals, molecular
+   orbitals, Jastrow factors, etc.), and internal state management (error
+   handling, memory allocation tracking, thread synchronization).
 
    #+begin_src c :comments org :tangle (eval h_private_type) :noweb yes :exports none
 typedef struct qmckl_context_struct {
@@ -135,17 +160,17 @@ typedef struct qmckl_context_struct {
   qmckl_point_struct         point;
   qmckl_jastrow_champ_single_struct single_point;
 
-  /* -- Molecular system -- */
+  /* Molecular system */
   qmckl_nucleus_struct        nucleus;
   qmckl_electron_struct       electron;
   qmckl_ao_basis_struct       ao_basis;
   qmckl_mo_basis_struct       mo_basis;
   qmckl_jastrow_champ_struct  jastrow_champ;
   qmckl_forces_struct         forces;
-  qmckl_determinant_struct    det;
-  qmckl_local_energy_struct   local_energy;
 
   /* To be implemented:
+  qmckl_determinant_struct    det;
+  qmckl_local_energy_struct   local_energy;
   ,*/
 
   /* Pointer to implementation-specific data */
@@ -154,28 +179,39 @@ typedef struct qmckl_context_struct {
 
 } qmckl_context_struct;
    #+end_src
-    
-   The qmckl_extra pointer lets the other implementation of the library
-   add specific things to the context. For example a GPU implementation
-   of QMCkl will need to store the device ID in the context, and this
-   can be made by creating a private data structure containing all 
-   GPU-specific data, including the device ID.
 
-   A tag is used internally to check if the memory domain pointed
-   by a pointer is a valid context. This allows to check that even if
-   the pointer associated with a context is non-null, we can still
-   verify that it points to the expected data structure.
+** Extension mechanism
+    
+   The ~qmckl_extra~ pointer provides an extension mechanism that allows 
+   alternative implementations of the library to add implementation-specific 
+   data to the context. For example, a GPU implementation of QMCkl could store 
+   the device ID, CUDA streams, or device memory pointers in a custom data 
+   structure, and point to it from ~qmckl_extra~. This design allows the core 
+   library API to remain stable while supporting diverse implementation 
+   strategies.
+   
+** Validity checking
+
+   A tag is used internally to check if the memory domain pointed to
+   by a pointer is a valid context. This provides a sanity check that allows
+   verification that even if the pointer associated with a context is non-null, 
+   it actually points to the expected data structure and not to arbitrary memory.
+   This is particularly important for catching user errors like passing an
+   uninitialized context or a context that has already been destroyed.
 
    #+begin_src c :comments org :tangle (eval h_private_type) :noweb yes :exports none
 #define VALID_TAG   0xBEEFFACE
 #define INVALID_TAG 0xDEADBEEF
    #+end_src
 
-   The ~qmckl_context_check~ function checks if the domain pointed by
-   the pointer is a valid context. It returns the input ~qmckl_context~
-   if the context is valid, ~QMCKL_NULL_CONTEXT~ otherwise.
+   The ~qmckl_context_check~ function checks if the domain pointed to by
+   the pointer is a valid context by verifying the magic tag value. It returns 
+   the input ~qmckl_context~ if the context is valid (tag matches ~VALID_TAG~), 
+   or ~QMCKL_NULL_CONTEXT~ if the context is invalid. This function should be 
+   called at the beginning of every public API function to ensure the context
+   parameter is valid before attempting to use it.
 
-   #+begin_src c :comments org :tangle (eval h_func) :noexport
+   #+begin_src c :comments org :tangle (eval h_func) 
 qmckl_context
 qmckl_context_check (const qmckl_context context) ;
    #+end_src
@@ -235,7 +271,7 @@ qmckl_context_touch(const qmckl_context context)
 }
    #+end_src
 
-*** Fortran binding
+*** Fortran binding                                                :noexport:
 
   
     #+begin_src f90 :tangle (eval fh_func) :exports none
@@ -321,8 +357,10 @@ qmckl_context qmckl_context_create() {
     rc = qmckl_init_mo_basis(context);
     assert (rc == QMCKL_SUCCESS);
 
+    /*
     rc = qmckl_init_determinant(context);
     assert (rc == QMCKL_SUCCESS);
+    */
 
     rc = qmckl_init_jastrow_champ(context);
     assert (rc == QMCKL_SUCCESS);
@@ -407,22 +445,21 @@ void qmckl_unlock(const qmckl_context context) {
 }
    #+end_src
 
-** TODO Copy
+** Copy
 
    ~qmckl_context_copy~ makes a deep copy of a context. It returns
    ~QMCKL_NULL_CONTEXT~ upon failure.
 
    # Header
-   #+begin_src c :comments org :tangle (eval h_func) :exports none
-/*
+   #+begin_src c :comments org :tangle (eval h_func)
 qmckl_context qmckl_context_copy(const qmckl_context context);
-*/
    #+end_src
 
 
    # Source
    #+begin_src c :tangle (eval c) :exports none
 qmckl_context qmckl_context_copy(const qmckl_context context) {
+  qmckl_exit_code rc;
 
   const qmckl_context checked_context = qmckl_context_check(context);
 
@@ -430,55 +467,119 @@ qmckl_context qmckl_context_copy(const qmckl_context context) {
     return QMCKL_NULL_CONTEXT;
   }
 
-  /*
   qmckl_lock(context);
   {
 
     const qmckl_context_struct* const old_ctx =
       (qmckl_context_struct*) checked_context;
 
-    qmckl_context_struct* const new_ctx =
-      (qmckl_context_struct*) malloc (context, sizeof(qmckl_context_struct));
-
-    if (new_ctx == NULL) {
+    /* Create a new context using the standard creation function */
+    qmckl_context new_context = qmckl_context_create();
+    if (new_context == QMCKL_NULL_CONTEXT) {
       qmckl_unlock(context);
       return QMCKL_NULL_CONTEXT;
     }
 
-     * Copy the old context on the new one *
-     * TODO Deep copies should be done here *
-    memcpy(new_ctx, old_ctx, sizeof(qmckl_context_struct));
+    qmckl_context_struct* const new_ctx =
+      (qmckl_context_struct*) new_context;
 
-    qmckl_unlock( (qmckl_context) new_ctx );
+    /* Copy scalar values and structs that don't contain pointers */
+    new_ctx->date = old_ctx->date;
+    new_ctx->numprec = old_ctx->numprec;
+    new_ctx->error = old_ctx->error;
 
-    return (qmckl_context) new_ctx;
+    /* Deep copy point structure using dedicated function */
+    rc = qmckl_copy_point(new_context, &(old_ctx->point), &(new_ctx->point));
+    if (rc != QMCKL_SUCCESS) {
+      qmckl_context_destroy(new_context);
+      qmckl_unlock(context);
+      return QMCKL_NULL_CONTEXT;
+    }
+
+    /* Deep copy single_point structure using dedicated function */
+    rc = qmckl_copy_jastrow_champ_single(new_context, &(old_ctx->single_point), &(new_ctx->single_point));
+    if (rc != QMCKL_SUCCESS) {
+      qmckl_context_destroy(new_context);
+      qmckl_unlock(context);
+      return QMCKL_NULL_CONTEXT;
+    }
+
+    /* Deep copy nucleus structure using dedicated function */
+    rc = qmckl_copy_nucleus(new_context, &(old_ctx->nucleus), &(new_ctx->nucleus));
+    if (rc != QMCKL_SUCCESS) {
+      qmckl_context_destroy(new_context);
+      qmckl_unlock(context);
+      return QMCKL_NULL_CONTEXT;
+    }
+
+    /* Deep copy electron structure using dedicated function */
+    rc = qmckl_copy_electron(new_context, &(old_ctx->electron), &(new_ctx->electron));
+    if (rc != QMCKL_SUCCESS) {
+      qmckl_context_destroy(new_context);
+      qmckl_unlock(context);
+      return QMCKL_NULL_CONTEXT;
+    }
+
+    /* Deep copy ao_basis structure using dedicated function */
+    rc = qmckl_copy_ao_basis(new_context, &(old_ctx->ao_basis), &(new_ctx->ao_basis));
+    if (rc != QMCKL_SUCCESS) {
+      qmckl_context_destroy(new_context);
+      qmckl_unlock(context);
+      return QMCKL_NULL_CONTEXT;
+    }
+
+    /* Deep copy mo_basis structure using dedicated function */
+    rc = qmckl_copy_mo_basis(new_context, &(old_ctx->mo_basis), &(new_ctx->mo_basis));
+    if (rc != QMCKL_SUCCESS) {
+      qmckl_context_destroy(new_context);
+      qmckl_unlock(context);
+      return QMCKL_NULL_CONTEXT;
+    }
+
+    /* Deep copy jastrow_champ structure using dedicated function */
+    rc = qmckl_copy_jastrow_champ(new_context, &(old_ctx->jastrow_champ), &(new_ctx->jastrow_champ));
+    if (rc != QMCKL_SUCCESS) {
+      qmckl_context_destroy(new_context);
+      qmckl_unlock(context);
+      return QMCKL_NULL_CONTEXT;
+    }
+
+    /* Deep copy forces structure using dedicated function */
+    rc = qmckl_copy_forces(new_context, &(old_ctx->forces), &(new_ctx->forces));
+    if (rc != QMCKL_SUCCESS) {
+      qmckl_context_destroy(new_context);
+      qmckl_unlock(context);
+      return QMCKL_NULL_CONTEXT;
+    }
+
+    /* Copy qmckl_extra pointer (shallow copy - implementation specific) */
+    new_ctx->qmckl_extra = old_ctx->qmckl_extra;
+
+    qmckl_unlock(context);
+    return new_context;
   }
-  qmckl_unlock(context);
-*/
-    return QMCKL_NULL_CONTEXT;
 }
 
    #+end_src
 
    # Fortran interface
    #+begin_src f90 :tangle (eval fh_func) :exports none
-! interface
-!    integer (qmckl_context) function qmckl_context_copy(context) bind(C)
-!      use, intrinsic :: iso_c_binding
-!      import
-!      integer (qmckl_context), intent(in), value :: context
-!    end function qmckl_context_copy
-! end interface
+interface
+   integer (qmckl_context) function qmckl_context_copy(context) bind(C)
+     use, intrinsic :: iso_c_binding
+     import
+     integer (qmckl_context), intent(in), value :: context
+   end function qmckl_context_copy
+end interface
    #+end_src
 
    # Test
    #+begin_src c :comments link :tangle (eval c_test) :exports none
-/*
 qmckl_context new_context = qmckl_context_copy(context);
-munit_assert_int64(new_context, !=, QMCKL_NULL_CONTEXT);
-munit_assert_int64(new_context, !=, context);
-munit_assert_int64(qmckl_context_check(new_context), ==, new_context);
-*/
+assert(new_context != QMCKL_NULL_CONTEXT);
+assert(new_context != context);
+assert(qmckl_context_check(new_context) == new_context);
+qmckl_context_destroy(new_context);
    #+end_src
 
 ** Destroy
@@ -566,12 +667,12 @@ assert(qmckl_context_destroy(QMCKL_NULL_CONTEXT) == QMCKL_INVALID_CONTEXT);
 * End of files                                                     :noexport:
 
 
-  #+begin_src c :comments link :tangle (eval h_private_type)
+  #+begin_src c :comments link :tangle (eval h_private_type) :exports none
 #endif
   #+end_src
 
 *** Test
-     #+begin_src c :comments link :tangle (eval c_test)
+     #+begin_src c :comments link :tangle (eval c_test) :exports none
 return 0;
 }
      #+end_src
