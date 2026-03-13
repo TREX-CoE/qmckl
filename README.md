@@ -25,13 +25,9 @@ The simplest way to obtain the source files of QMCkl is to download a source
 distribution. This particular repository is for maintainers, who write the kernels
 in org-mode files and produce the source code and the documentation from these files.
 
-By default, QMCkl depends on:
-- a BLAS library
-- the [TREXIO library](https://github.com/TREX-CoE/trexio/releases/latest).
-
-The TREXIO dependency, can be deactivated by the `configure` script. See `configure --help` for more options.
-
 ## For maintainers
+=======
+**Prerequisites**: Ensure all [required dependencies](#required-dependencies) are installed first.
 
 ```
 ./autogen.sh
