@@ -151,7 +151,7 @@ typedef struct qmckl_context_struct {
   int                      lock_count;
   pthread_mutex_t          mutex;
 
-  /* Number of OpenMP threads */
+  /* Number of OpenMP threads for parallel regions (default: omp_get_max_threads() or 1) */
   int32_t                  num_threads;
 
   /* Error handling */
@@ -603,35 +603,40 @@ qmckl_context_destroy(new_context);
    ~omp_get_max_threads()~ when OpenMP is available, or 1 otherwise.
    
    ~qmckl_context_get_num_threads~ returns the number of OpenMP threads
-   stored in the context.
+   stored in the context via a pointer argument.
    
    # Header
    #+begin_src c :comments org :tangle (eval h_func)
-int32_t qmckl_context_get_num_threads(const qmckl_context context);
+qmckl_exit_code qmckl_context_get_num_threads(const qmckl_context context, int32_t* const num_threads);
    #+end_src
 
    # Source
    #+begin_src c :tangle (eval c) :exports none
-int32_t qmckl_context_get_num_threads(const qmckl_context context) {
-  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    return (int32_t) qmckl_failwith(context,
-                                    QMCKL_INVALID_CONTEXT,
-                                    "qmckl_context_get_num_threads",
-                                    "");
+qmckl_exit_code qmckl_context_get_num_threads(const qmckl_context context, int32_t* const num_threads) {
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT)
+    return QMCKL_INVALID_CONTEXT;
+
+  if (num_threads == NULL) {
+    return qmckl_failwith(context,
+                          QMCKL_INVALID_ARG_2,
+                          "qmckl_context_get_num_threads",
+                          "num_threads is a null pointer");
   }
 
   const qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
-  return ctx->num_threads;
+  *num_threads = ctx->num_threads;
+  return QMCKL_SUCCESS;
 }
    #+end_src
 
    # Fortran interface
    #+begin_src f90 :tangle (eval fh_func) :exports none
    interface
-      integer (c_int32_t) function qmckl_context_get_num_threads(context) bind(C)
+      integer (qmckl_exit_code) function qmckl_context_get_num_threads(context, num_threads) bind(C)
         use, intrinsic :: iso_c_binding
         import
         integer (qmckl_context), intent(in), value :: context
+        integer (c_int32_t), intent(out) :: num_threads
       end function qmckl_context_get_num_threads
    end interface
    #+end_src
@@ -654,7 +659,7 @@ qmckl_exit_code qmckl_context_set_num_threads(const qmckl_context context, const
     return qmckl_failwith(context,
                           QMCKL_INVALID_ARG_2,
                           "qmckl_context_set_num_threads",
-                          "num_threads <= 0");
+                          "num_threads must be positive");
   }
 
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
@@ -727,21 +732,29 @@ qmckl_exit_code qmckl_context_unset_num_threads(const qmckl_context context) {
    # Test
    #+begin_src c :tangle (eval c_test) :exports none
 {
-  int32_t initial_num_threads = qmckl_context_get_num_threads(context);
+  int32_t initial_num_threads;
+  assert(qmckl_context_get_num_threads(context, &initial_num_threads) == QMCKL_SUCCESS);
   assert(initial_num_threads > 0);
 
+  int32_t nt;
+
   assert(qmckl_context_set_num_threads(context, 1) == QMCKL_SUCCESS);
-  assert(qmckl_context_get_num_threads(context) == 1);
+  assert(qmckl_context_get_num_threads(context, &nt) == QMCKL_SUCCESS);
+  assert(nt == 1);
 
   assert(qmckl_context_set_num_threads(context, 2) == QMCKL_SUCCESS);
-  assert(qmckl_context_get_num_threads(context) == 2);
+  assert(qmckl_context_get_num_threads(context, &nt) == QMCKL_SUCCESS);
+  assert(nt == 2);
 
   assert(qmckl_context_unset_num_threads(context) == QMCKL_SUCCESS);
-  assert(qmckl_context_get_num_threads(context) == initial_num_threads);
+  assert(qmckl_context_get_num_threads(context, &nt) == QMCKL_SUCCESS);
+  assert(nt == initial_num_threads);
 
   assert(qmckl_context_set_num_threads(context, 0) == QMCKL_INVALID_ARG_2);
   assert(qmckl_context_set_num_threads(context, -1) == QMCKL_INVALID_ARG_2);
 
+  assert(qmckl_context_get_num_threads(QMCKL_NULL_CONTEXT, &nt) == QMCKL_INVALID_CONTEXT);
+  assert(qmckl_context_get_num_threads(context, NULL) == QMCKL_INVALID_ARG_2);
   assert(qmckl_context_set_num_threads(QMCKL_NULL_CONTEXT, 1) == QMCKL_INVALID_CONTEXT);
   assert(qmckl_context_unset_num_threads(QMCKL_NULL_CONTEXT) == QMCKL_INVALID_CONTEXT);
 }
