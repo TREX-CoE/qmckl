@@ -500,7 +500,7 @@ See the [LICENSE](LICENSE) file for details.
 
 If you use QMCkl in your research, please cite:
 
-[arXiv:2512.16677v1](https://arxiv.org/abs/2512.16677v1)
+Emiel Slootman, Vijay Gopal Chilkuri, Aurelien Delval, Max Hoffer, Tommaso Gorni, François Coppens, Joris van de Nes, Ramón L. Panadés-Barrueta, Evgeny Posenitskiy, Abdallah Ammar, Edgar Josué Landinez Borda, Kevin Camus, Oto Kohulàk, Emmanuel Giner, Pablo de Oliveira Castro, Cedric Valensi, William Jalby, Claudia Filippi, Anthony Scemama, [QMCkl: A kernel library for quantum Monte Carlo applications.](https://doi.org/10.1063/5.0316155) _The Journal of Chemical Physics_ **2026**, _164_ (11), 112501.
 
 # Contributing
 
