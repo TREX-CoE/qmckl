@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 """
-Generate ctypes function signatures from qmckl.h.
+Generate ctypes function signatures and Pythonic wrappers from qmckl.h.
 
 This script parses the QMCkl C header file and generates Python code
-with ctypes function signature declarations. It is a development tool
-used to keep the Python bindings in sync with the C API.
+with ctypes function signature declarations and Pythonic wrapper
+functions. It is a development tool used to keep the Python bindings
+in sync with the C API.
 
 Usage:
     python generate_bindings.py /path/to/qmckl.h
 
 The output is printed to stdout and can be redirected to a file or
-copy-pasted into qmckl/__init__.py.
+integrated into qmckl/__init__.py via the Makefile target.
+
+Hand-written wrapper overrides in pyqmckl_wrappers.py are concatenated
+after this output and take precedence (last definition wins in Python).
 """
 
 import re
@@ -108,6 +112,34 @@ RETURN_MAP = {
     'const char*': 'ctypes.c_char_p',
 }
 
+# Map C types to numpy dtypes for array wrappers
+NUMPY_DTYPE_MAP = {
+    'double': 'np.float64',
+    'float': 'np.float32',
+    'int64_t': 'np.int64',
+    'int32_t': 'np.int32',
+    'int': 'np.int32',
+}
+
+# Map C types to ctypes POINTER types for data_as calls
+CTYPES_POINTER_MAP = {
+    'double': 'ctypes.c_double',
+    'float': 'ctypes.c_float',
+    'int64_t': 'ctypes.c_int64',
+    'int32_t': 'ctypes.c_int32',
+    'int': 'ctypes.c_int32',
+}
+
+# Map C types to ctypes scalar types for byref calls
+CTYPES_SCALAR_MAP = {
+    'double': 'ctypes.c_double',
+    'float': 'ctypes.c_float',
+    'int64_t': 'ctypes.c_int64',
+    'int32_t': 'ctypes.c_int32',
+    'int': 'ctypes.c_int32',
+    'bool': 'ctypes.c_bool',
+}
+
 
 def param_to_ctypes(param):
     """Convert a parsed parameter to its ctypes representation."""
@@ -167,6 +199,243 @@ def generate_signatures(errors, functions):
     return '\n'.join(lines)
 
 
+def _python_name(c_name):
+    """Strip 'qmckl_' prefix to make a Python function name."""
+    if c_name.startswith('qmckl_'):
+        return c_name[len('qmckl_'):]
+    return c_name
+
+
+def _make_description(py_name):
+    """Make a human-readable description from a Python function name."""
+    # Strip leading get_/set_ to avoid "Get get ..." or "Set set ..."
+    desc = py_name
+    if desc.startswith('get_'):
+        desc = desc[4:]
+    elif desc.startswith('set_'):
+        desc = desc[4:]
+    return desc.replace('_', ' ')
+
+
+def classify_function(func):
+    """Classify a function into a wrapper pattern.
+
+    Returns a tuple (pattern, info) where pattern is one of:
+      'getter_scalar'  - getter returning a single value via pointer
+      'getter_array'   - getter returning an array (with or without size_max)
+      'setter_scalar'  - setter taking scalar values
+      'setter_array'   - setter taking an array
+      'skip'           - cannot auto-generate (special cases)
+    """
+    name = func['name']
+    ret_type = func['return_type']
+    params = func['params']
+
+    # Only generate wrappers for functions returning qmckl_exit_code
+    if ret_type != 'qmckl_exit_code':
+        return 'skip', {}
+
+    # Need at least a context parameter
+    if not params or params[0]['c_type'] != 'qmckl_context':
+        return 'skip', {}
+
+    # Skip context management functions
+    if name in ('qmckl_context_destroy',):
+        return 'skip', {}
+
+    # Parameters after context
+    rest = params[1:]
+
+    if not rest:
+        return 'skip', {}
+
+    # Check for char/string parameters (transp, filenames) - skip these
+    for p in rest:
+        if p['c_type'] == 'char' and p['is_pointer']:
+            return 'skip', {}
+
+    is_getter = 'get' in name
+    is_setter = 'set' in name
+
+    if is_getter:
+        return _classify_getter(rest)
+    elif is_setter:
+        return _classify_setter(rest)
+
+    return 'skip', {}
+
+
+def _classify_getter(rest):
+    """Classify getter function parameters."""
+    if len(rest) == 1 and rest[0]['is_pointer']:
+        # getter_scalar: get_xxx(ctx, type* val)
+        c_type = rest[0]['c_type']
+        if c_type in CTYPES_SCALAR_MAP:
+            return 'getter_scalar', {'c_type': c_type, 'param': rest[0]}
+        return 'skip', {}
+
+    if len(rest) == 2:
+        ptr_param, size_param = rest[0], rest[1]
+        if (ptr_param['is_pointer'] and
+                not size_param['is_pointer'] and
+                size_param['c_type'] in ('int64_t', 'int32_t')):
+            # getter_array: get_xxx(ctx, type* arr, int64_t size_max)
+            c_type = ptr_param['c_type']
+            if c_type in NUMPY_DTYPE_MAP:
+                return 'getter_array', {
+                    'c_type': c_type,
+                    'has_size_max': True,
+                    'size_param': size_param,
+                }
+            return 'skip', {}
+
+    if len(rest) == 1 and rest[0]['is_pointer']:
+        c_type = rest[0]['c_type']
+        if c_type in NUMPY_DTYPE_MAP:
+            return 'getter_array', {
+                'c_type': c_type,
+                'has_size_max': False,
+            }
+
+    return 'skip', {}
+
+
+def _classify_setter(rest):
+    """Classify setter function parameters."""
+    # All non-pointer scalars
+    if all(not p['is_pointer'] for p in rest):
+        return 'setter_scalar', {'params': rest}
+
+    # Array setter: set_xxx(ctx, type* arr, int64_t size)
+    if len(rest) == 2:
+        arr_param, size_param = rest[0], rest[1]
+        if (arr_param['is_pointer'] and
+                not size_param['is_pointer'] and
+                size_param['c_type'] in ('int64_t', 'int32_t')):
+            c_type = arr_param['c_type']
+            if c_type in NUMPY_DTYPE_MAP:
+                return 'setter_array', {
+                    'c_type': c_type,
+                    'arr_param': arr_param,
+                }
+            return 'skip', {}
+
+    # Single scalar pointer (e.g. set_xxx(ctx, type val))
+    if len(rest) == 1 and not rest[0]['is_pointer']:
+        return 'setter_scalar', {'params': rest}
+
+    return 'skip', {}
+
+
+def generate_wrapper(func):
+    """Generate a Pythonic wrapper function for a C function.
+
+    Returns a list of lines, or None if the function cannot be wrapped.
+    """
+    pattern, info = classify_function(func)
+
+    if pattern == 'skip':
+        return None
+
+    c_name = func['name']
+    py_name = _python_name(c_name)
+    desc = _make_description(py_name)
+
+    lines = []
+
+    if pattern == 'getter_scalar':
+        c_type = info['c_type']
+        ct = CTYPES_SCALAR_MAP[c_type]
+        lines.append(f"def {py_name}(context):")
+        lines.append(f'    """Get {desc}."""')
+        lines.append(f"    _val = {ct}()")
+        lines.append(f"    rc = _lib.{c_name}(context, ctypes.byref(_val))")
+        lines.append(f"    _check_rc(rc, context)")
+        lines.append(f"    return _val.value")
+
+    elif pattern == 'getter_array':
+        c_type = info['c_type']
+        dtype = NUMPY_DTYPE_MAP[c_type]
+        ct_ptr = CTYPES_POINTER_MAP[c_type]
+        if info['has_size_max']:
+            lines.append(f"def {py_name}(context, size_max):")
+            lines.append(f'    """Get {desc} as a NumPy array."""')
+            lines.append(f"    result = np.empty(size_max, dtype={dtype})")
+            lines.append(f"    rc = _lib.{c_name}(")
+            lines.append(f"        context,")
+            lines.append(f"        result.ctypes.data_as(ctypes.POINTER({ct_ptr})),")
+            lines.append(f"        size_max")
+            lines.append(f"    )")
+            lines.append(f"    _check_rc(rc, context)")
+            lines.append(f"    return result")
+        else:
+            lines.append(f"def {py_name}(context, size_max):")
+            lines.append(f'    """Get {desc} as a NumPy array."""')
+            lines.append(f"    result = np.empty(size_max, dtype={dtype})")
+            lines.append(f"    rc = _lib.{c_name}(")
+            lines.append(f"        context,")
+            lines.append(f"        result.ctypes.data_as(ctypes.POINTER({ct_ptr}))")
+            lines.append(f"    )")
+            lines.append(f"    _check_rc(rc, context)")
+            lines.append(f"    return result")
+
+    elif pattern == 'setter_scalar':
+        param_names = [p['name'] or f'arg{i}' for i, p in enumerate(info['params'])]
+        args = ', '.join(param_names)
+        lines.append(f"def {py_name}(context, {args}):")
+        lines.append(f'    """Set {desc}."""')
+        call_args = ', '.join(['context'] + param_names)
+        lines.append(f"    rc = _lib.{c_name}({call_args})")
+        lines.append(f"    _check_rc(rc, context)")
+
+    elif pattern == 'setter_array':
+        c_type = info['c_type']
+        dtype = NUMPY_DTYPE_MAP[c_type]
+        ct_ptr = CTYPES_POINTER_MAP[c_type]
+        arr_name = info['arr_param']['name'] or 'data'
+        lines.append(f"def {py_name}(context, {arr_name}):")
+        lines.append(f'    """Set {desc}."""')
+        lines.append(f"    {arr_name} = np.asarray({arr_name}, dtype={dtype})")
+        lines.append(f"    if not {arr_name}.flags['C_CONTIGUOUS']:")
+        lines.append(f"        {arr_name} = np.ascontiguousarray({arr_name})")
+        lines.append(f"    rc = _lib.{c_name}(")
+        lines.append(f"        context,")
+        lines.append(f"        {arr_name}.ctypes.data_as(ctypes.POINTER({ct_ptr})),")
+        lines.append(f"        {arr_name}.size")
+        lines.append(f"    )")
+        lines.append(f"    _check_rc(rc, context)")
+
+    return lines
+
+
+def generate_wrappers(functions):
+    """Generate Pythonic wrapper functions for all auto-wrappable functions."""
+
+    lines = []
+    lines.append("")
+    lines.append("# ---------------------------------------------------------------------------")
+    lines.append("# Auto-generated Pythonic wrappers")
+    lines.append("# ---------------------------------------------------------------------------")
+    lines.append("")
+
+    generated = 0
+    skipped = 0
+    for func in functions:
+        wrapper = generate_wrapper(func)
+        if wrapper:
+            lines.append("")
+            lines.extend(wrapper)
+            lines.append("")
+            generated += 1
+        else:
+            skipped += 1
+
+    print(f"# Generated {generated} wrappers, skipped {skipped} functions",
+          file=sys.stderr)
+
+    return '\n'.join(lines)
+
+
 def main():
     if len(sys.argv) < 2:
         print(f"Usage: {sys.argv[0]} <path/to/qmckl.h>", file=sys.stderr)
@@ -178,6 +447,7 @@ def main():
     print(f"# Found {len(errors)} error codes and {len(functions)} functions",
           file=sys.stderr)
     print(generate_signatures(errors, functions))
+    print(generate_wrappers(functions))
 
 
 if __name__ == '__main__':
