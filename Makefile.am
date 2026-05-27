@@ -124,6 +124,7 @@ python-bindings: $(qmckl_h) $(generate_py) $(pyqmckl_header) $(pyqmckl_wrappers)
 	cat $(pyqmckl_wrappers) >> $(python_init_py)
 
 python-install: $(lib_LTLIBRARIES) $(dist_python_DATA)
+	mkdir -p python ;\
 	cd python ; \
 	[[ ! -f  pyproject.toml ]] && \
 	    cp $(abs_srcdir)/python/{pyproject.toml,requirements.txt,README.md,setup.py} . ; \
