@@ -126,9 +126,9 @@ python-bindings: $(qmckl_h) $(generate_py) $(pyqmckl_header) $(pyqmckl_wrappers)
 python-install: $(lib_LTLIBRARIES) $(dist_python_DATA)
 	mkdir -p python ;\
 	cd python ; \
-	[[ ! -f  pyproject.toml ]] && \
-	    cp $(abs_srcdir)/python/{pyproject.toml,requirements.txt,README.md,setup.py} . ; \
-	[[ ! -d  qmckl ]] && \
+	[ ! -f  pyproject.toml ] && \
+	    cp $(abs_srcdir)/python/pyproject.toml $(abs_srcdir)/python/requirements.txt $(abs_srcdir)/python/README.md $(abs_srcdir)/python/setup.py . ; \
+	[ ! -d  qmckl ] && \
 	    cp -r $(abs_srcdir)/python/qmckl . ; \
 	export QMCKL_LIBDIR="$(prefix)/lib" ; \
 	python3 -m pip install .

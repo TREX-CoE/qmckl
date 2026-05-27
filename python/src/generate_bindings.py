@@ -211,9 +211,9 @@ def _make_description(py_name):
     # Strip leading get_/set_ to avoid "Get get ..." or "Set set ..."
     desc = py_name
     if desc.startswith('get_'):
-        desc = desc[4:]
+        desc = desc[len('get_'):]
     elif desc.startswith('set_'):
-        desc = desc[4:]
+        desc = desc[len('set_'):]
     return desc.replace('_', ' ')
 
 
@@ -430,10 +430,7 @@ def generate_wrappers(functions):
         else:
             skipped += 1
 
-    print(f"# Generated {generated} wrappers, skipped {skipped} functions",
-          file=sys.stderr)
-
-    return '\n'.join(lines)
+    return '\n'.join(lines), generated, skipped
 
 
 def main():
@@ -447,7 +444,10 @@ def main():
     print(f"# Found {len(errors)} error codes and {len(functions)} functions",
           file=sys.stderr)
     print(generate_signatures(errors, functions))
-    print(generate_wrappers(functions))
+    wrappers, generated, skipped = generate_wrappers(functions)
+    print(wrappers)
+    print(f"# Generated {generated} wrappers, skipped {skipped} functions",
+          file=sys.stderr)
 
 
 if __name__ == '__main__':
