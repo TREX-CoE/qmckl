@@ -116,14 +116,14 @@ dist_python_DATA = $(setup_py) \
                    $(srcdir)/python/requirements.txt \
                    $(srcdir)/python/README.md
 
-python-bindings: $(qmckl_h) $(generate_py) $(pyqmckl_header) $(pyqmckl_wrappers)
+python_init_py: $(qmckl_h) $(generate_py) $(pyqmckl_header) $(pyqmckl_wrappers)
 	cat $(pyqmckl_header)  > $(python_init_py)
 	echo ""              >> $(python_init_py)
 	$(PYTHON) $(generate_py) $(qmckl_h) >> $(python_init_py)
 	echo ""              >> $(python_init_py)
 	cat $(pyqmckl_wrappers) >> $(python_init_py)
 
-python-install: $(lib_LTLIBRARIES) $(dist_python_DATA)
+python-install: python_init_py $(lib_LTLIBRARIES) $(dist_python_DATA)
 	mkdir -p python ;\
 	cd python ; \
 	[ ! -f  pyproject.toml ] && \
@@ -139,7 +139,7 @@ python-test: $(test_py)
 
 endif
 
-.PHONY: cppcheck python-test python-install python-bindings source binary-dist
+.PHONY: cppcheck python-test python-install python_init_py source binary-dist
 
 EXTRA_DIST +=                             \
     python/src/generate_bindings.py       \
