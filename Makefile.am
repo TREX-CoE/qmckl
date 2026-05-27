@@ -97,6 +97,10 @@ endif
 
 setup_py          =  $(srcdir)/python/setup.py
 test_py           =  $(srcdir)/python/test/test_api.py
+python_init_py    =  $(srcdir)/python/qmckl/__init__.py
+generate_py       =  $(srcdir)/python/src/generate_bindings.py
+pyqmckl_header    =  $(srcdir)/python/src/pyqmckl_header.py
+pyqmckl_wrappers  =  $(srcdir)/python/src/pyqmckl_wrappers.py
 
 binary-dist: all
 	@echo "  BINDIST  qmckl (static + shared)"
@@ -111,6 +115,13 @@ dist_python_DATA = $(setup_py) \
                    $(srcdir)/python/pyproject.toml \
                    $(srcdir)/python/requirements.txt \
                    $(srcdir)/python/README.md
+
+python-bindings: $(qmckl_h) $(generate_py) $(pyqmckl_header) $(pyqmckl_wrappers)
+	cat $(pyqmckl_header)  > $(python_init_py)
+	echo ""              >> $(python_init_py)
+	$(PYTHON) $(generate_py) $(qmckl_h) >> $(python_init_py)
+	echo ""              >> $(python_init_py)
+	cat $(pyqmckl_wrappers) >> $(python_init_py)
 
 python-install: $(lib_LTLIBRARIES) $(dist_python_DATA)
 	cd python ; \
@@ -127,7 +138,12 @@ python-test: $(test_py)
 
 endif
 
-.PHONY: cppcheck python-test python-install source binary-dist
+.PHONY: cppcheck python-test python-install python-bindings source binary-dist
+
+EXTRA_DIST +=                             \
+    python/src/generate_bindings.py       \
+    python/src/pyqmckl_header.py          \
+    python/src/pyqmckl_wrappers.py
 
 
 if QMCKL_DEVEL
