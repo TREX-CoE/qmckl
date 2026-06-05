@@ -55,12 +55,12 @@ AC_ARG_WITH([ifort],
 
 AS_IF([test "x$with_ifort" = "xyes"], [
   FC=ifort
-  FCFLAGS="-march=native -ip -O3 -ftz -finline -g -qmkl=sequential" ]
+  FCFLAGS="-march=native -ip -O3 -ftz -finline -g -qmkl=sequential"
   ax_blas_ok="yes"
   ax_lapack_ok="yes"
   BLAS_LIBS=""
   LAPACK_LIBS=""
-  ])
+])
 
 AC_ARG_WITH([ifx],
             [AS_HELP_STRING([--with-ifx],
@@ -75,7 +75,7 @@ AS_IF([test "x$with_ifx" = "xyes"], [
   ax_lapack_ok="yes"
   BLAS_LIBS=""
   LAPACK_LIBS=""
-  ])
+])
 
 
 AC_ARG_WITH([icx],
@@ -91,7 +91,7 @@ AS_IF([test "x$with_icx" = "xyes"], [
   ax_lapack_ok="yes"
   BLAS_LIBS=""
   LAPACK_LIBS=""
-  ])
+])
 
 AC_ARG_WITH([icc],
             [AS_HELP_STRING([--with-icc],
@@ -106,7 +106,8 @@ AS_IF([test "x$with_icc" = "xyes"], [
   ax_lapack_ok="yes"
   BLAS_LIBS=""
   LAPACK_LIBS=""
-  ])
+])
+
 
 # Default Automake variables
 F77=$FC
