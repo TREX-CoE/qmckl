@@ -170,7 +170,7 @@ AS_IF([test "x$with_omp" = "xyes"], [
    AX_OPENMP([],
     [AC_MSG_ERROR([Could not find OpenMP flags; configure with --without-openmp])])
    CFLAGS="${CFLAGS} ${OPENMP_CFLAGS}"
-   FCFLAGS="${FCFLAGS} ${OPENMP_CFLAGS}"
+   FCFLAGS="${FCFLAGS} ${OPENMP_FCFLAGS} ${OPENMP_CFLAGS}"
 ])
 
 # CHAMELEON
