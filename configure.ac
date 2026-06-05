@@ -165,12 +165,12 @@ AC_CHECK_LIB([pthread], [pthread_create])
 
 # OpenMP
 AC_ARG_WITH(openmp, [AS_HELP_STRING([--without-openmp],[deactivate OpenMP])], with_omp=$withval, with_omp=yes)
-AS_IF([test "x$with_omp" = xyes], [
+AS_IF([test "x$with_omp" = "xyes"], [
    AC_DEFINE([HAVE_OPENMP], [1], [Define to use OpenMP threading.])
    AX_OPENMP([],
     [AC_MSG_ERROR([Could not find OpenMP flags; configure with --without-openmp])])
    CFLAGS="${CFLAGS} ${OPENMP_CFLAGS}"
-   FCFLAGS="${CFLAGS} ${OPENMP_FCFLAGS}"
+   FCFLAGS="${FCFLAGS} ${OPENMP_FCFLAGS}"
 ])
 
 # CHAMELEON
