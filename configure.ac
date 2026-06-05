@@ -70,7 +70,7 @@ AC_ARG_WITH([ifx],
 
 AS_IF([test "x$with_ifx" = "xyes"], [
   FC=ifx
-  FCFLAGS="-march=native -O3 -ftz -g -qmkl=sequential"
+  FCFLAGS="-march=native -O3 -ftz -g -qopenmp -qmkl=sequential"
   ax_blas_ok="yes"
   ax_lapack_ok="yes"
   BLAS_LIBS=""
@@ -86,7 +86,7 @@ AC_ARG_WITH([icx],
 
 AS_IF([test "x$with_icx" = "xyes"], [
   CC=icx
-  CFLAGS="-march=native -O3 -ftz -finline -g -qmkl=sequential"
+  CFLAGS="-march=native -O3 -ftz -finline -g -qopenmp -qmkl=sequential"
   ax_blas_ok="yes"
   ax_lapack_ok="yes"
   BLAS_LIBS=""
@@ -170,7 +170,7 @@ AS_IF([test "x$with_omp" = "xyes"], [
    AX_OPENMP([],
     [AC_MSG_ERROR([Could not find OpenMP flags; configure with --without-openmp])])
    CFLAGS="${CFLAGS} ${OPENMP_CFLAGS}"
-   FCFLAGS="${FCFLAGS} ${OPENMP_FCFLAGS}"
+   FCFLAGS="${FCFLAGS} ${OPENMP_FCFLAGS} ${OPENMP_CFLAGS}"
 ])
 
 # CHAMELEON
