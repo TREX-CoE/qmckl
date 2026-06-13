@@ -96,13 +96,11 @@ doc: html text
 endif
 
 setup_py          =  $(srcdir)/python/setup.py
-process_header_py =  $(srcdir)/python/src/process_header.py
 test_py           =  $(srcdir)/python/test/test_api.py
-qmckl_i           =  $(srcdir)/python/src/qmckl.i
-numpy_i           =  $(srcdir)/python/src/numpy.i
-qmckl_wrap_c    =  python/src/qmckl_wrap.c
-qmckl_include_i =  python/src/qmckl_include.i
-qmckl_py        =  python/src/qmckl.py
+python_init_py    =  $(srcdir)/python/qmckl/__init__.py
+generate_py       =  $(srcdir)/python/src/generate_bindings.py
+pyqmckl_header    =  $(srcdir)/python/src/pyqmckl_header.py
+pyqmckl_wrappers  =  $(srcdir)/python/src/pyqmckl_wrappers.py
 
 binary-dist: all
 	@echo "  BINDIST  qmckl (static + shared)"
@@ -113,18 +111,25 @@ binary-dist: all
 	 $(srcdir)/tools/build_binary_dist.sh
 
 if HAVE_PYTHON
-dist_python_DATA = $(setup_py) $(qmckl_py) $(qmckl_wrap_c) \
+dist_python_DATA = $(setup_py) \
                    $(srcdir)/python/pyproject.toml \
                    $(srcdir)/python/requirements.txt \
                    $(srcdir)/python/README.md
 
-python-install: $(qmckl_h) $(lib_LTLIBRARIES) $(dist_python_DATA)
-	$(MKDIR_P) python/src
+python_init_py: $(qmckl_h) $(generate_py) $(pyqmckl_header) $(pyqmckl_wrappers)
+	cat $(pyqmckl_header)  > $(python_init_py)
+	echo ""              >> $(python_init_py)
+	$(PYTHON) $(generate_py) $(qmckl_h) >> $(python_init_py)
+	echo ""              >> $(python_init_py)
+	cat $(pyqmckl_wrappers) >> $(python_init_py)
+
+python-install: python_init_py $(lib_LTLIBRARIES) $(dist_python_DATA)
+	mkdir -p python ;\
 	cd python ; \
-	[[ ! -f  pyproject.toml ]] && \
-	    cp $(abs_srcdir)/python/{pyproject.toml,requirements.txt,README.md,setup.py} . ; \
-	cp src/qmckl.py . ; \
-	export QMCKL_INCLUDEDIR="$(prefix)/include" ; \
+	[ ! -f  pyproject.toml ] && \
+	    cp $(abs_srcdir)/python/pyproject.toml $(abs_srcdir)/python/requirements.txt $(abs_srcdir)/python/README.md $(abs_srcdir)/python/setup.py . ; \
+	[ ! -d  qmckl ] && \
+	    cp -r $(abs_srcdir)/python/qmckl . ; \
 	export QMCKL_LIBDIR="$(prefix)/lib" ; \
 	python3 -m pip install .
 
@@ -134,7 +139,12 @@ python-test: $(test_py)
 
 endif
 
-.PHONY: cppcheck python-test python-install source binary-dist
+.PHONY: cppcheck python-test python-install python_init_py source binary-dist
+
+EXTRA_DIST +=                             \
+    python/src/generate_bindings.py       \
+    python/src/pyqmckl_header.py          \
+    python/src/pyqmckl_wrappers.py
 
 
 if QMCKL_DEVEL
@@ -214,21 +224,6 @@ cppcheck.out: $(qmckl_h)
           --language=c --std=c99 -rp --platform=unix64  \
           -I$(srcdir)/include -I$(top_builddir)/include *.c *.h 2>../$@
 
-$(qmckl_include_i):  $(qmckl_h) $(process_header_py)
-	$(MKDIR_P) python/src
-	python3 $(process_header_py) $(qmckl_h)
-	mv qmckl_include.i $(qmckl_include_i)
-
-
-$(qmckl_py): $(qmckl_i) $(qmckl_include_i)
-	$(srcdir)/tools/missing swig -Iinclude -Ipython/src -python -py3 -builtin -o $(qmckl_wrap_c) $(qmckl_i) || :
-
-$(qmckl_wrap_c): $(qmckl_py)
-
 source: $(TANGLED_FILES) $(qmckl_h) $(qmckl_f)
-
-CLEANFILES += $(qmckl_wrap_c) \
-	      $(qmckl_include_i) \
-	      $(qmckl_py)
 
 endif

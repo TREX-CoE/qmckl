@@ -467,7 +467,7 @@ AS_IF([test "x${QMCKL_DEVEL}" != "x"], [
   AS_IF([test "x${HAS_CPPCHECK}" != "xno"], [HAS_CPPCHECK=1])
 
   AS_IF([test "x$enable_python" = "xyes"], [
-    AX_PKG_SWIG(4.0.0, [], AC_MSG_WARN([SWIG is required to build Python API.]) )
+    AM_PATH_PYTHON([3.6])
   ] )
 ])
 
