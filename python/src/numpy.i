@@ -98,7 +98,7 @@
 %#define array_clearflags(a,f)  PyArray_CLEARFLAGS((PyArrayObject*)a,f)
 %#define array_is_fortran(a)    (PyArray_IS_F_CONTIGUOUS((PyArrayObject*)a))
 %#endif
-%#define array_is_contiguous(a) (PyArray_ISCONTIGUOUS((PyArrayObject*)a))
+%#define array_is_contiguous(a) (PyArray_IS_C_CONTIGUOUS((PyArrayObject*)a))
 %#define array_is_native(a)     (PyArray_ISNOTSWAPPED((PyArrayObject*)a))
 }
 
