@@ -71,5 +71,5 @@ setup(name             = MODULE_NAME,
          "Operating System :: MacOS"
       ],
       python_requires = ">=3.0",
-      install_requires = ["numpy>=2.0"]
+      install_requires = ["numpy>=1.17.3"]
       )
