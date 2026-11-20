@@ -3228,22 +3228,30 @@ qmckl_exit_code qmckl_finalize_basis(qmckl_context context) {
 
 *** HPC-specific data structures
 
+    With ~HAVE_HPC~, the basis is rearranged by nucleus so that the radial
+    part of each shell is a dot product over the primitives of its nucleus.
+    The context stores:
 
-    For faster access, we provide extra arrays for the shell information as:
-    - $C_{psa}$ = =coef_per_nucleus[inucl][ishell][iprim]=
-    - $\gamma_{pa}$ =expo_per_nucleus[inucl][iprim]=
+    - ~prim_num_per_nucleus[inucl]~, the number of primitives of the
+      nucleus once the duplicates are removed
+    - $C_{psa}$ in ~coef_per_nucleus(iprim, ishell, inucl)~, the
+      coefficient of the primitive $p$ in the shell $s$ of nucleus $a$
+    - $\gamma_{pa}$ in ~expo_per_nucleus(iprim, inucl)~, the exponent of
+      the primitive $p$ of nucleus $a$
 
-    such that the computation of the radial parts can be vectorized.
+    The exponents of a nucleus are sorted in increasing order, so the loop
+    over primitives stops at the first one whose $\gamma_{pa} r^2$ exceeds
+    the cutoff. When two primitives of the same nucleus share an exponent,
+    they are merged and their coefficients added.
 
-    Exponents are sorted in increasing order to exit loops quickly,
-    and only unique exponents are kept. This also allows to pack the
-    exponents to enable vectorization of exponentials.
+    For a Gaussian shell the radial part is then
 
-    The computation of the radial part is made as
     \[
-      R_{sa} = \sum_p C_{psa} \gamma_{pa}
+      R_{sa}(r) = \sum_p C_{psa} \exp\left(-\gamma_{pa} r^2\right)
     \]
-    which is a matrix-vector product.
+
+    The exponentials are evaluated once per point and per nucleus, then
+    reused by all the shells of that nucleus.
 
     #+NAME:HPC_struct
     #+begin_src c :comments org :exports none
@@ -3825,9 +3833,9 @@ qmckl_get_ao_basis_ao_value_inplace (qmckl_context context,
 
    Requirements:
 
-        - ~context~ \ne 0
+        - ~context~ is not ~QMCKL_NULL_CONTEXT~
         - ~n~ > 0
-        - ~ldv~ >= 5
+        - ~ldv >= n~
         - ~A(i)~ > 0 for all ~i~
         - ~X~ is allocated with at least $3 \times 8$ bytes
         - ~R~ is allocated with at least $3 \times 8$ bytes
@@ -4021,10 +4029,14 @@ assert(0 == test_qmckl_ao_gaussian_vgl(context));
    point:
 
    \[ v_i = r^{n_i} \exp(-a_i r) \]
-   \[ \nabla_x v_i = \left(n_i \frac{X_x - R_x}{r} - a_i \frac{X_x - R_x}{r}\right) v_i \]
-   \[ \nabla_y v_i = \left(n_i \frac{X_y - R_y}{r} - a_i \frac{X_y - R_y}{r}\right) v_i \]
-   \[ \nabla_z v_i = \left(n_i \frac{X_z - R_z}{r} - a_i \frac{X_z - R_z}{r}\right) v_i \]
-   \[ \Delta v_i = \frac{1}{r^2} \left[ n_i^2 - 2 n_i a_i r + a_i r (a_i r-2) + n \right] v_i \]
+   \[ \nabla_x v_i = \left(\frac{n_i}{r} - a_i\right) \frac{X_x - R_x}{r} v_i \]
+   \[ \nabla_y v_i = \left(\frac{n_i}{r} - a_i\right) \frac{X_y - R_y}{r} v_i \]
+   \[ \nabla_z v_i = \left(\frac{n_i}{r} - a_i\right) \frac{X_z - R_z}{r} v_i \]
+   \[ \Delta v_i = \frac{1}{r^2} \left[ n_i^2 - 2 n_i a_i r + a_i r (a_i r-2) + n_i \right] v_i \]
+
+   These expressions are singular at $r=0$. For $r < 10^{-15}$ the routine
+   returns $v_i = 1$ when $n_i=1$ and $v_i = 0$ otherwise, with zero
+   gradients and Laplacian.
 
    |-----------------+-----------------------+-------------------------------------------------------|
    | Variable        | Type                  | Description                                           |
@@ -4041,9 +4053,9 @@ assert(0 == test_qmckl_ao_gaussian_vgl(context));
 
    Requirements:
 
-        - ~context~ \ne 0
+        - ~context~ is not ~QMCKL_NULL_CONTEXT~
         - ~num_slater~ > 0
-        - ~ldv~ >= 5
+        - ~ldv >= num_slater~
         - ~A(i)~ > 0 for all ~i~
         - ~N(i)~ > 0 for all ~i~
         - ~X~ is allocated with at least $3 \times 8$ bytes
@@ -6158,7 +6170,7 @@ assert(0 == test_qmckl_ao_power(context));
 
    Requirements:
 
-    - ~context~ \ne ~QMCKL_NULL_CONTEXT~
+    - ~context~ is not ~QMCKL_NULL_CONTEXT~
     - ~n~ > 0
     - ~lmax~ >= 0
     - ~ldl~ >= 3
@@ -9390,7 +9402,9 @@ assert( fabs(ao_vgl[26][4][224] - (  3.153244195820293e-08)) < 1.e-14 );
 ** AO Hessian
 
 Computes the Hessian of the AOs. For this, it needs the Hessian of the shells, as well as the Hessian of the polynomials.
-The ~ao_hessian[:][:][4][:]~ component is reserved for the derivative of the Laplacian of the AOs.
+Component 4 along the third index of ~ao_hessian~ holds the derivative of the
+Laplacian of the AOs; components 1 to 3 hold the derivatives of the three
+components of the gradient.
 
 *** Get
 
