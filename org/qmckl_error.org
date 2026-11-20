@@ -24,6 +24,7 @@
 #include <assert.h>
 #include <pthread.h>
 #include <errno.h>
+#include <stdio.h>
 
 #include "qmckl.h"
 #include "qmckl_context_private_type.h"
@@ -374,6 +375,7 @@ const char* qmckl_string_of_error(const qmckl_exit_code error) {
 
 void qmckl_string_of_error_f(const qmckl_exit_code error, char result[<<MAX_STRING_LENGTH()>>]) {
   strncpy(result, qmckl_string_of_error(error), <<MAX_STRING_LENGTH()>>-1);
+  result[<<MAX_STRING_LENGTH()>>-1] = '\0';
 }
    #+end_src
 
@@ -465,7 +467,9 @@ qmckl_set_error(qmckl_context context,
 
     ctx->error.exit_code = exit_code;
     strncpy(ctx->error.function, function_name, QMCKL_MAX_FUN_LEN-1);
+    ctx->error.function[QMCKL_MAX_FUN_LEN-1] = '\0';
     strncpy(ctx->error.message, message, QMCKL_MAX_MSG_LEN-1);
+    ctx->error.message[QMCKL_MAX_MSG_LEN-1] = '\0';
   }
   qmckl_unlock(context);
 
@@ -521,12 +525,14 @@ qmckl_get_error(qmckl_context context,
     size_t sizeCp;
 
     sizeCp = strlen(ctx->error.function);
-    sizeCp = sizeCp > QMCKL_MAX_FUN_LEN ? QMCKL_MAX_FUN_LEN : sizeCp;
+    if (sizeCp >= QMCKL_MAX_FUN_LEN) sizeCp = QMCKL_MAX_FUN_LEN - 1;
     memcpy(function_name, ctx->error.function, sizeCp);
+    function_name[sizeCp] = '\0';
 
     sizeCp = strlen(ctx->error.message);
-    sizeCp = sizeCp > QMCKL_MAX_MSG_LEN ? QMCKL_MAX_MSG_LEN : sizeCp;
+    if (sizeCp >= QMCKL_MAX_MSG_LEN) sizeCp = QMCKL_MAX_MSG_LEN - 1;
     memcpy(message, ctx->error.message, sizeCp);
+    message[sizeCp] = '\0';
 
     (*exit_code) = ctx->error.exit_code;
   }
@@ -605,21 +611,33 @@ if (x < 0) {
   # Header
    #+begin_src c :comments org :tangle (eval h_func)
 qmckl_exit_code
-qmckl_last_error(qmckl_context context, char* buffer);
+qmckl_last_error(qmckl_context context,
+                 char* buffer,
+                 const int64_t size_max);
    #+end_src
 
   # Source
   #+begin_src c :tangle (eval c) :exports none
 qmckl_exit_code
-qmckl_last_error(qmckl_context context, char* buffer) {
+qmckl_last_error(qmckl_context context, char* buffer, const int64_t size_max) {
 
   char function_name[QMCKL_MAX_FUN_LEN];
   char message[QMCKL_MAX_MSG_LEN];
 
   qmckl_exit_code rc, last_rc;
 
+  /* This function reports an error. It cannot record its own failure in the
+     context without destroying the state it is about to report. */
+  if (buffer == NULL) {
+    return QMCKL_INVALID_ARG_2;
+  }
+
+  if (size_max <= 0) {
+    return QMCKL_INVALID_ARG_3;
+  }
+
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
-    strncpy(buffer, "Null context", 13);
+    snprintf(buffer, (size_t) size_max, "Null context");
     return QMCKL_FAILURE;
   }
 
@@ -628,10 +646,11 @@ qmckl_last_error(qmckl_context context, char* buffer) {
     return rc;
   }
 
-
-  sprintf(buffer, "Error -- %s -- in %s\n%s",
-          qmckl_string_of_error(last_rc),
-          function_name, message);
+  /* The message is truncated when buffer is smaller than
+     QMCKL_MAX_FUN_LEN + QMCKL_MAX_MSG_LEN + 64 bytes. */
+  snprintf(buffer, (size_t) size_max, "Error -- %s -- in %s\n%s",
+           qmckl_string_of_error(last_rc),
+           function_name, message);
 
   return QMCKL_SUCCESS;
 }
@@ -641,12 +660,13 @@ qmckl_last_error(qmckl_context context, char* buffer) {
 
    #+begin_src f90 :tangle (eval fh_func) :exports none :noweb yes
   interface
-     subroutine qmckl_last_error (context, string) bind(C, name='qmckl_last_error')
+     subroutine qmckl_last_error (context, string, size_max) bind(C, name='qmckl_last_error')
        use, intrinsic :: iso_c_binding
        import
        implicit none
        integer (c_int64_t) , intent(in), value :: context
        character(c_char), intent(out) :: string(*)
+       integer (c_int64_t) , intent(in), value :: size_max
      end subroutine qmckl_last_error
   end interface
    #+end_src
@@ -664,8 +684,6 @@ qmckl_check(qmckl_context context, qmckl_exit_code rc);
 
   # Source
   #+begin_src c :tangle (eval c) :exports none
-#include <stdio.h>
-
 qmckl_exit_code
 qmckl_check(qmckl_context context, qmckl_exit_code rc)
 {
@@ -729,6 +747,22 @@ assert (rc == QMCKL_SUCCESS);
 
   assert (strcmp(function_name,"my_function") == 0);
   assert (strcmp(message,"Message") == 0);
+
+  /* qmckl_last_error must never write past the size it is given, and it
+     must terminate its output. */
+  {
+    char last_error[QMCKL_MAX_FUN_LEN + QMCKL_MAX_MSG_LEN + 64];
+    assert (qmckl_last_error(context, last_error, (int64_t) sizeof(last_error)) == QMCKL_SUCCESS);
+    assert (strcmp(last_error,
+                   "Error -- Invalid argument 1 -- in my_function\nMessage") == 0);
+
+    char small[16];
+    assert (qmckl_last_error(context, small, (int64_t) sizeof(small)) == QMCKL_SUCCESS);
+    assert (strlen(small) == sizeof(small) - 1);
+
+    assert (qmckl_last_error(context, NULL, (int64_t) sizeof(small)) == QMCKL_INVALID_ARG_2);
+    assert (qmckl_last_error(context, small, 0) == QMCKL_INVALID_ARG_3);
+  }
 
   exit_code = qmckl_context_destroy(context);
   assert(exit_code == QMCKL_SUCCESS);

@@ -661,15 +661,33 @@ qmckl_double_of_vector(const qmckl_context context,
                        double* const target,
                        const int64_t size_max)
 {
-  /* Always true by construction */
-  assert (qmckl_context_check(context) != QMCKL_NULL_CONTEXT);
-  assert (vector.size > (int64_t) 0);
-  assert (target != NULL);
-  assert (size_max > (int64_t) 0);
-  assert (size_max >= vector.size);
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return QMCKL_INVALID_CONTEXT;
+  }
+
+  if (vector.data == NULL || vector.size <= (int64_t) 0) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_double_of_vector",
+                           "Empty vector");
+  }
+
+  if (target == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_3,
+                           "qmckl_double_of_vector",
+                           "target is a null pointer");
+  }
+
+  if (size_max < vector.size) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_4,
+                           "qmckl_double_of_vector",
+                           "Array too small");
+  }
+
   memcpy(target, vector.data, vector.size*sizeof(double));
   return QMCKL_SUCCESS;
-
 }
     #+end_src
 
@@ -828,9 +846,13 @@ double* qmckl_alloc_double_of_vector(const qmckl_context context,
 double* qmckl_alloc_double_of_vector(const qmckl_context context,
                                      const qmckl_vector vector)
 {
-  /* Always true by construction */
-  assert (qmckl_context_check(context) != QMCKL_NULL_CONTEXT);
-  assert (vector.size > (int64_t) 0);
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return NULL;
+  }
+
+  if (vector.data == NULL || vector.size <= (int64_t) 0) {
+    return NULL;
+  }
 
   qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
   mem_info.size = vector.size * sizeof(double);
@@ -1259,15 +1281,20 @@ printf("qmckl_dgemm ok\n");
     - ~m > 0~
     - ~n > 0~
     - ~k > 0~
-    - ~lda >= m~
-    - ~ldb >= n~
-    - ~ldc >= n~
-    - ~A~ is allocated with at least $m \times k \times 8$ bytes
-    - ~B~ is allocated with at least $k \times n \times 8$ bytes
-    - ~C~ is allocated with at least $m \times n \times 8$ bytes
-    - ~size_max_A >= m * k~
-    - ~size_max_B >= k * n~
-    - ~size_max_C >= m * n~
+    - ~lda >= m~ if ~TransA == 'N'~, otherwise ~lda >= k~
+    - ~ldb >= k~ if ~TransB == 'N'~, otherwise ~ldb >= n~
+    - ~ldc >= m~
+    - ~TransA~ and ~TransB~ are ~'N'~ or ~'T'~
+    - ~A~ is allocated with at least $lena \times 8$ bytes, where $lena$ is
+      $lda \times k$ if ~TransA == 'N'~ and $lda \times m$ otherwise
+    - ~B~ is allocated with at least $lenb \times 8$ bytes, where $lenb$ is
+      $ldb \times n$ if ~TransB == 'N'~ and $ldb \times k$ otherwise
+    - ~C~ is allocated with at least $ldc \times n \times 8$ bytes
+    - ~size_max_A >= lena~
+    - ~size_max_B >= lenb~
+    - ~size_max_C >= ldc * n~
+    - ~m~, ~n~, ~k~, ~lda~, ~ldb~ and ~ldc~ are smaller than
+      ~huge(0_4)~, as they are passed to BLAS as 32-bit integers
 
     #+CALL: generate_c_header(table=qmckl_dgemm_safe_args,rettyp="qmckl_exit_code",fname="qmckl_dgemm_safe")
 
@@ -1318,6 +1345,7 @@ function qmckl_dgemm_safe(context, TransA, TransB, &
   real    (c_double ) , intent(out)         :: C(ldc,*)
 
   integer(qmckl_exit_code) :: info
+  integer(c_int64_t) :: lda_min, ldb_min, ncol_A, ncol_B
   info = QMCKL_SUCCESS
 
   if (context == QMCKL_NULL_CONTEXT) then
@@ -1325,47 +1353,105 @@ function qmckl_dgemm_safe(context, TransA, TransB, &
      return
   endif
 
-  if (m <= 0_8) then
+  ! The dimensions are passed to BLAS as 32-bit integers.
+  if (m <= 0_8 .or. m > int(huge(0_4),8)) then
      info = QMCKL_INVALID_ARG_4
      return
   endif
 
-  if (n <= 0_8) then
+  if (n <= 0_8 .or. n > int(huge(0_4),8)) then
      info = QMCKL_INVALID_ARG_5
      return
   endif
 
-  if (k <= 0_8) then
+  if (k <= 0_8 .or. k > int(huge(0_4),8)) then
      info = QMCKL_INVALID_ARG_6
      return
   endif
 
-  if (LDA <= 0) then
+  if (LDA <= 0_8 .or. LDA > int(huge(0_4),8)) then
      info = QMCKL_INVALID_ARG_10
      return
   endif
 
-  if (LDB <= 0) then
+  if (LDB <= 0_8 .or. LDB > int(huge(0_4),8)) then
      info = QMCKL_INVALID_ARG_13
      return
   endif
 
-  if (LDC <= 0) then
+  if (LDC <= 0_8 .or. LDC > int(huge(0_4),8)) then
      info = QMCKL_INVALID_ARG_17
      return
   endif
 
-  if (size_A <= 0) then
+  if (size_A <= 0_8) then
      info = QMCKL_INVALID_ARG_9
      return
   endif
 
-  if (size_B <= 0) then
+  if (size_B <= 0_8) then
      info = QMCKL_INVALID_ARG_12
      return
   endif
 
-  if (size_C <= 0) then
+  if (size_C <= 0_8) then
+     info = QMCKL_INVALID_ARG_16
+     return
+  endif
+
+  ! Leading dimension and number of stored columns of the input matrices
+  select case (TransA)
+  case ('N','n')
+     lda_min = m
+     ncol_A  = k
+  case ('T','t')
+     lda_min = k
+     ncol_A  = m
+  case default
+     info = QMCKL_INVALID_ARG_2
+     return
+  end select
+
+  if (LDA < lda_min) then
+     info = QMCKL_INVALID_ARG_10
+     return
+  endif
+
+  select case (TransB)
+  case ('N','n')
+     ldb_min = k
+     ncol_B  = n
+  case ('T','t')
+     ldb_min = n
+     ncol_B  = k
+  case default
+     info = QMCKL_INVALID_ARG_3
+     return
+  end select
+
+  if (LDB < ldb_min) then
+     info = QMCKL_INVALID_ARG_13
+     return
+  endif
+
+  if (LDC < m) then
+     info = QMCKL_INVALID_ARG_17
+     return
+  endif
+
+  ! The declared array sizes must cover the leading dimensions.
+  ! The division avoids overflows in LDA*ncol_A and friends.
+  if (LDA > size_A / ncol_A) then
+     info = QMCKL_INVALID_ARG_9
+     return
+  endif
+
+  if (LDB > size_B / ncol_B) then
+     info = QMCKL_INVALID_ARG_12
+     return
+  endif
+
+  if (LDC > size_C / n) then
      info = QMCKL_INVALID_ARG_16
      return
   endif
@@ -2581,12 +2667,14 @@ printf("qmckl_adjugate ok\n");
 
     - ~context~ is not ~QMCKL_NULL_CONTEXT~
     - ~n > 0~
-    - ~lda >= m~
-    - ~A~ is allocated with at least $m \times m \times 8$ bytes
-    - ~ldb >= m~
-    - ~B~ is allocated with at least $m \times m \times 8$ bytes
-    - ~size_max_A >= m * m~
-    - ~size_max_B >= m * m~
+    - ~lda >= n~
+    - ~A~ is allocated with at least $lda \times n \times 8$ bytes
+    - ~ldb >= n~
+    - ~B~ is allocated with at least $ldb \times n \times 8$ bytes
+    - ~size_max_A >= lda * n~
+    - ~size_max_B >= ldb * n~
+    - ~n~, ~lda~ and ~ldb~ are smaller than ~huge(0_4)~, as they are
+      passed to LAPACK as 32-bit integers
 
     #+CALL: generate_c_header(table=qmckl_adjugate_safe_args,rettyp="qmckl_exit_code",fname="qmckl_adjugate_safe")
 
@@ -2631,12 +2719,55 @@ function qmckl_adjugate_safe(context, &
 
   info = QMCKL_SUCCESS
 
-  if (size_A < na) then
+  if (context == QMCKL_NULL_CONTEXT) then
+     info = QMCKL_INVALID_CONTEXT
+     return
+  endif
+
+  ! na is passed to LAPACK as a 32-bit integer
+  if (na <= 0_8 .or. na > int(huge(0_4),8)) then
+     info = QMCKL_INVALID_ARG_2
+     return
+  endif
+
+  if (LDA <= 0_8 .or. LDA > int(huge(0_4),8)) then
+     info = QMCKL_INVALID_ARG_5
+     return
+  endif
+
+  if (LDB <= 0_8 .or. LDB > int(huge(0_4),8)) then
+     info = QMCKL_INVALID_ARG_8
+     return
+  endif
+
+  if (size_A <= 0_8) then
      info = QMCKL_INVALID_ARG_4
      return
   endif
 
   if (size_B <= 0_8) then
+     info = QMCKL_INVALID_ARG_7
+     return
+  endif
+
+  if (LDA < na) then
+     info = QMCKL_INVALID_ARG_5
+     return
+  endif
+
+  if (LDB < na) then
+     info = QMCKL_INVALID_ARG_8
+     return
+  endif
+
+  ! The declared array sizes must cover the leading dimensions.
+  ! The division avoids overflows in LDA*na.
+  if (LDA > size_A / na) then
+     info = QMCKL_INVALID_ARG_4
+     return
+  endif
+
+  if (LDB > size_B / na) then
      info = QMCKL_INVALID_ARG_7
      return
   endif
@@ -3445,6 +3576,94 @@ int mkl_serv_intel_cpu_true() {
   return 1;
 }
 
+  #+end_src
+
+* Regression tests for the size checks                              :noexport:
+
+  The ~_safe~ proxies and the ~double*~ conversions must reject the
+  calls that they cannot honour. Before, the conversions only asserted
+  their preconditions (no check in an ~NDEBUG~ build) and the ~_safe~
+  proxies ignored the ~size_max~ arguments they exist for.
+
+  #+begin_src c :comments org :tangle (eval c_test) :exports none
+{
+  qmckl_exit_code rc;
+
+  /* Copy of a vector into a buffer that is too small */
+  {
+    qmckl_vector vec = qmckl_vector_alloc(context, 4);
+    for (int64_t i=0 ; i<4 ; ++i) qmckl_vec(vec, i) = (double) i;
+
+    double dbl[4] = { 0., 0., 0., 0. };
+
+    rc = qmckl_double_of_vector(context, vec, NULL, 4);
+    assert (rc == QMCKL_INVALID_ARG_3);
+
+    rc = qmckl_double_of_vector(context, vec, dbl, 3);
+    assert (rc == QMCKL_INVALID_ARG_4);
+    for (int64_t i=0 ; i<4 ; ++i) assert (dbl[i] == 0.);
+
+    rc = qmckl_double_of_vector(context, vec, dbl, 4);
+    assert (rc == QMCKL_SUCCESS);
+    for (int64_t i=0 ; i<4 ; ++i) assert (dbl[i] == (double) i);
+
+    qmckl_vector_free(context, &vec);
+  }
+
+  /* qmckl_dgemm_safe with an undersized array */
+  {
+    double A[4] = { 1., 2., 3., 4. };
+    double B[4] = { 1., 0., 0., 1. };
+    double C[4] = { 0., 0., 0., 0. };
+
+    rc = qmckl_dgemm_safe(context, 'N', 'N', 2, 2, 2, 1.,
+                          A, 4, 2, B, 4, 2, 0., C, 4, 2);
+    assert (rc == QMCKL_SUCCESS);
+    for (int i=0 ; i<4 ; ++i) assert (C[i] == A[i]);
+
+    for (int i=0 ; i<4 ; ++i) C[i] = 0.;
+
+    /* A needs lda*k = 2*2 = 4 elements */
+    rc = qmckl_dgemm_safe(context, 'N', 'N', 2, 2, 2, 1.,
+                          A, 3, 2, B, 4, 2, 0., C, 4, 2);
+    assert (rc == QMCKL_INVALID_ARG_9);
+
+    /* C needs ldc*n = 2*2 = 4 elements */
+    rc = qmckl_dgemm_safe(context, 'N', 'N', 2, 2, 2, 1.,
+                          A, 4, 2, B, 4, 2, 0., C, 2, 2);
+    assert (rc == QMCKL_INVALID_ARG_16);
+    for (int i=0 ; i<4 ; ++i) assert (C[i] == 0.);
+
+    /* lda smaller than the number of rows of A */
+    rc = qmckl_dgemm_safe(context, 'N', 'N', 2, 2, 2, 1.,
+                          A, 4, 1, B, 4, 2, 0., C, 4, 2);
+    assert (rc == QMCKL_INVALID_ARG_10);
+
+    /* Unknown transpose character */
+    rc = qmckl_dgemm_safe(context, 'X', 'N', 2, 2, 2, 1.,
+                          A, 4, 2, B, 4, 2, 0., C, 4, 2);
+    assert (rc == QMCKL_INVALID_ARG_2);
+  }
+
+  /* qmckl_adjugate_safe with an undersized array */
+  {
+    double A[9] = { 2., 0., 0.,  0., 3., 0.,  0., 0., 4. };
+    double B[9] = { 0., 0., 0.,  0., 0., 0.,  0., 0., 0. };
+    double det = 0.;
+
+    /* A needs lda*na = 3*3 = 9 elements */
+    rc = qmckl_adjugate_safe(context, 3, A, 8, 3, B, 9, 3, &det);
+    assert (rc == QMCKL_INVALID_ARG_4);
+    assert (det == 0.);
+
+    rc = qmckl_adjugate_safe(context, 3, A, 9, 3, B, 9, 3, &det);
+    assert (rc == QMCKL_SUCCESS);
+    assert (det == 24.);
+    assert (B[0] == 12.);
+    assert (B[4] == 8.);
+    assert (B[8] == 6.);
+  }
+}
   #+end_src
 
 * End of files                                                     :noexport:
