@@ -144,14 +144,6 @@ If you are working with the org-mode source files (maintainer mode):
 - **Python 3**: For build scripts
 - **AWK**: Usually pre-installed
 
-### For Python API
-
-- **SWIG** (>= 4.0, optional): For generating Python bindings
-  ```bash
-  sudo apt-get install swig   # Ubuntu/Debian
-  sudo yum install swig       # RHEL/CentOS/Fedora
-  ```
-
 # Installation
 
 ## Quick Start for Users
@@ -290,44 +282,6 @@ cd _build_intel_fast
 make -j
 make -j check
 cd ..
-```
-
-## Python API
-
-The Python API allows you to use QMCkl from Python.
-
-### Prerequisites
-
-- **SWIG** (>= 4.0) is required
-- QMCkl shared library must be installed first
-
-### Installation
-
-1. **Install the QMCkl C library** following the instructions above
-
-2. **Install the Python package**:
-   ```bash
-   make python-install
-   ```
-
-3. **Test the installation**:
-   ```bash
-   make python-test
-   ```
-
-### Usage Example
-
-See [test_api.py](https://github.com/TREX-CoE/qmckl/blob/master/python/test/test_api.py) 
-for examples of using the Python API.
-
-**Recommendation**: Use [virtual environments](https://docs.python.org/3/tutorial/venv.html) 
-to avoid compatibility issues:
-
-```bash
-python3 -m venv qmckl_env
-source qmckl_env/bin/activate
-make python-install
-make python-test
 ```
 
 ## Linking to Your Program
@@ -475,7 +429,6 @@ Run `./configure --help` to see all available options. Common options include:
 - `--without-trexio` - Build without TREXIO support (not recommended)
 - `--with-qmckldgemm=/path` - Use custom QMCKL DGEMM library
 - `--without-openmp` - Disable OpenMP support
-- `--enable-python` - Enable Python API build
 - `--enable-vfc_ci` - Enable Verificarlo support
 - `--enable-malloc-trace` - Enable malloc/free debugging
 - `--enable-prof` - Enable profiling

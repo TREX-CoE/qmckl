@@ -12,7 +12,6 @@
   #:use-module (guix git-download)
   #:use-module (gnu packages python)
   #:use-module (gnu packages emacs)
-  #:use-module (gnu packages swig)
   #:use-module (gnu packages m4))
 
 
@@ -97,7 +96,6 @@
 	("automake", automake)
 	("libtool", libtool)
 	("pkg-config", pkg-config)
-	("swig", swig)
 	("m4", m4)
 	))
     (synopsis "QMCkl: Quantum Monte Carlo Kernel Library")

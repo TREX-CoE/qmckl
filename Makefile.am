@@ -95,15 +95,6 @@ text: $(htmlize_el) $(dist_text_DATA)
 doc: html text
 endif
 
-setup_py          =  $(srcdir)/python/setup.py
-process_header_py =  $(srcdir)/python/src/process_header.py
-test_py           =  $(srcdir)/python/test/test_api.py
-qmckl_i           =  $(srcdir)/python/src/qmckl.i
-numpy_i           =  $(srcdir)/python/src/numpy.i
-qmckl_wrap_c    =  python/src/qmckl_wrap.c
-qmckl_include_i =  python/src/qmckl_include.i
-qmckl_py        =  python/src/qmckl.py
-
 binary-dist: all
 	@echo "  BINDIST  qmckl (static + shared)"
 	@VERSION_MAJOR=$(VERSION_MAJOR) \
@@ -112,29 +103,7 @@ binary-dist: all
 	 srcdir="$(srcdir)" top_builddir="$(top_builddir)" \
 	 $(srcdir)/tools/build_binary_dist.sh
 
-if HAVE_PYTHON
-dist_python_DATA = $(setup_py) $(qmckl_py) $(qmckl_wrap_c) \
-                   $(srcdir)/python/pyproject.toml \
-                   $(srcdir)/python/requirements.txt \
-                   $(srcdir)/python/README.md
-
-python-install: $(qmckl_h) $(lib_LTLIBRARIES) $(dist_python_DATA)
-	$(MKDIR_P) python/src
-	cd python ; \
-	[[ ! -f  pyproject.toml ]] && \
-	    cp $(abs_srcdir)/python/{pyproject.toml,requirements.txt,README.md,setup.py} . ; \
-	cp src/qmckl.py . ; \
-	export QMCKL_INCLUDEDIR="$(prefix)/include" ; \
-	export QMCKL_LIBDIR="$(prefix)/lib" ; \
-	python3 -m pip install .
-
-python-test: $(test_py)
-	cd $(abs_srcdir)/python/test/ && \
-		python test_api.py
-
-endif
-
-.PHONY: cppcheck python-test python-install source binary-dist
+.PHONY: cppcheck source binary-dist
 
 
 if QMCKL_DEVEL
@@ -214,21 +183,6 @@ cppcheck.out: $(qmckl_h)
           --language=c --std=c99 -rp --platform=unix64  \
           -I$(srcdir)/include -I$(top_builddir)/include *.c *.h 2>../$@
 
-$(qmckl_include_i):  $(qmckl_h) $(process_header_py)
-	$(MKDIR_P) python/src
-	python3 $(process_header_py) $(qmckl_h)
-	mv qmckl_include.i $(qmckl_include_i)
-
-
-$(qmckl_py): $(qmckl_i) $(qmckl_include_i)
-	$(srcdir)/tools/missing swig -Iinclude -Ipython/src -python -py3 -builtin -o $(qmckl_wrap_c) $(qmckl_i) || :
-
-$(qmckl_wrap_c): $(qmckl_py)
-
 source: $(TANGLED_FILES) $(qmckl_h) $(qmckl_f)
-
-CLEANFILES += $(qmckl_wrap_c) \
-	      $(qmckl_include_i) \
-	      $(qmckl_py)
 
 endif
