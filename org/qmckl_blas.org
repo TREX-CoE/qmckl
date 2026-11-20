@@ -854,6 +854,10 @@ double* qmckl_alloc_double_of_vector(const qmckl_context context,
     return NULL;
   }
 
+  if ((uint64_t) vector.size > (uint64_t) (SIZE_MAX / sizeof(double))) {
+    return NULL;
+  }
+
   qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
   mem_info.size = vector.size * sizeof(double);
 
@@ -2970,19 +2974,37 @@ void free_csc(CSCMatrix* Acsc);
     #+end_src
 
     #+begin_src c :tangle (eval c) :comments org :exports none
+/* Return count*size when it fits in a size_t, 0 otherwise. */
+static size_t checked_size(const int64_t count, const size_t size)
+{
+  if (count < 0 || size == 0) return (size_t) 0;
+  if ((uint64_t) count > (uint64_t) (SIZE_MAX / size)) return (size_t) 0;
+  return (size_t) count * size;
+}
+
 /* Convert dense (column-major) matrix A (m x n) to CSR, dropping |x| <= eps */
 CSRMatrix* qmckl_dense_to_csr(const int64_t m, const int64_t n,
                               const double *A, const int64_t lda,
                               const double eps)
 {
-  assert(m >= 0 && n >= 0);
-  int64_t *row_ptr = malloc((m + 1) * sizeof(int64_t));
+  if (m < 0 || n < 0 || m >= INT64_MAX) return NULL;
+  if (m != 0 && n > (INT64_MAX - 1) / m) return NULL;
+
+  const size_t row_ptr_size = checked_size(m + 1, sizeof(int64_t));
+  if (row_ptr_size == 0) return NULL;
+  int64_t *row_ptr = malloc(row_ptr_size);
   if (!row_ptr) return NULL;
 
   /* worst-case nnz = m * n (add +1 to avoid zero-size malloc) */
-  int64_t nnz_est = (m * n) + 1;
-  int64_t *col_idx = malloc(nnz_est * sizeof(int64_t));
-  double  *val     = malloc(nnz_est * sizeof(double));
+  const int64_t nnz_est = (m * n) + 1;
+  const size_t nnz_idx_size = checked_size(nnz_est, sizeof(int64_t));
+  const size_t nnz_val_size = checked_size(nnz_est, sizeof(double));
+  if (nnz_idx_size == 0 || nnz_val_size == 0) {
+    free(row_ptr);
+    return NULL;
+  }
+  int64_t *col_idx = malloc(nnz_idx_size);
+  double  *val     = malloc(nnz_val_size);
   if (!col_idx || !val) {
     free(row_ptr);
     free(col_idx);
@@ -3037,14 +3059,24 @@ CSCMatrix* qmckl_dense_to_csc(const int64_t m, const int64_t n,
                               const double *A, const int64_t lda,
                               const double eps)
 {
-  assert(m >= 0 && n >= 0);
-  int64_t *col_ptr = malloc((n + 1) * sizeof(int64_t));
+  if (m < 0 || n < 0 || n >= INT64_MAX) return NULL;
+  if (n != 0 && m > (INT64_MAX - 1) / n) return NULL;
+
+  const size_t col_ptr_size = checked_size(n + 1, sizeof(int64_t));
+  if (col_ptr_size == 0) return NULL;
+  int64_t *col_ptr = malloc(col_ptr_size);
   if (!col_ptr) return NULL;
 
   /* worst-case nnz = m * n (add +1 to avoid zero-size malloc) */
-  int64_t nnz_est = (m * n) + 1;
-  int64_t *row_idx = malloc(nnz_est * sizeof(int64_t));
-  double  *val     = malloc(nnz_est * sizeof(double));
+  const int64_t nnz_est = (m * n) + 1;
+  const size_t nnz_idx_size = checked_size(nnz_est, sizeof(int64_t));
+  const size_t nnz_val_size = checked_size(nnz_est, sizeof(double));
+  if (nnz_idx_size == 0 || nnz_val_size == 0) {
+    free(col_ptr);
+    return NULL;
+  }
+  int64_t *row_idx = malloc(nnz_idx_size);
+  double  *val     = malloc(nnz_val_size);
   if (!row_idx || !val) {
     free(col_ptr);
     free(row_idx);
