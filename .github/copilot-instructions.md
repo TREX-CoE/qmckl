@@ -78,7 +78,6 @@ make -j check
 - Run tests with: `make check`
 - Tests are defined within the org-mode files
 - Test suite logs are available in `test-suite.log` after running tests
-- Python tests: `make python-test` (after installing Python API)
 
 ## Coding Conventions
 
@@ -116,17 +115,10 @@ make -j check
 - Use `iso_c_binding` for C interoperability
 - Follow the module structure defined in org files
 
-## Python API
-
-- Built with SWIG (>= 4.0)
-- Install with: `make python-install`
-- Test with: `make python-test`
-- Example usage in `python/test/test_api.py`
-
 ## Continuous Integration
 
 The project uses GitHub Actions with multiple build configurations:
-- **standard**: Standard build with Python API tests
+- **standard**: Standard build
 - **debug**: Debug mode build with additional checks
 - **hpc**: High-performance optimized build
 - **macos**: macOS compatibility testing
@@ -141,7 +133,6 @@ CI workflow is defined in `.github/workflows/test-build.yml`
 - HDF5 for data storage
 
 ### Optional
-- SWIG for Python bindings
 - Verificarlo for numerical verification
 
 ## Key Files and Directories
@@ -149,7 +140,6 @@ CI workflow is defined in `.github/workflows/test-build.yml`
 - `/org` - Literate programming source files (org-mode)
 - `/src` - Generated C source files (do not edit directly)
 - `/include` - Public headers
-- `/python` - Python API bindings
 - `/tools` - Build tools and utilities
 - `/share` - Data files and examples
 - `configure.ac` - Autoconf configuration
