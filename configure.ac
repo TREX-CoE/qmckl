@@ -355,7 +355,9 @@ AM_CONDITIONAL([VFC_CI], [test "x$vfc_ci" = "xtrue"])
 AS_IF([test "$FC" = "verificarlo-f"], [
   AC_MSG_NOTICE(verificarlo-f detected)
   # Arguments order is important here
-  FCFLAGS="-Mpreprocess $FCFLAGS"
+  # -cpp, not the classic flang -Mpreprocess: the Verificarlo images now ship
+  # LLVM flang, which only accepts the gfortran spelling.
+  FCFLAGS="-cpp $FCFLAGS"
 ])
 
 AC_ARG_ENABLE(malloc-trace, [AS_HELP_STRING([--enable-malloc-trace],[use debug malloc/free])], ok=$enableval, ok=no)
