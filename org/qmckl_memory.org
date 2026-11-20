@@ -2,33 +2,29 @@
 #+SETUPFILE: ../tools/theme.setup
 #+INCLUDE: ../tools/lib.org
 
-QMCkl provides custom memory management functions to enable fine-grained
-control over memory allocation and deallocation. This design allows optimized 
-implementations of the library to override the default allocation strategy to 
-take advantage of specialized memory allocators, aligned allocations for 
-vectorization, pinned memory for GPU transfers, or other hardware-specific 
-optimizations.
+* Introduction
 
-By centralizing memory allocation through the context, the library can:
-- Track all allocations for proper cleanup when the context is destroyed
-- Implement custom allocation strategies (e.g., memory pools, aligned allocations)
-- Provide detailed memory usage statistics for profiling
-- Ensure thread-safe memory operations when needed
+  QMCkl takes its memory through functions that receive the context, so that
+  every block it allocates is registered in the context and freed when the
+  context is destroyed. The allocation functions are private to the library:
+  the public API exchanges plain ~double*~ arrays.
 
-The memory management API is designed to be simple and consistent with
-standard C memory functions, while providing the flexibility needed for
-high-performance computing environments.
+  An implementation of the library is free to replace them, for instance to
+  return aligned memory, pinned memory, or device memory, without changing the
+  code that calls them.
 
-Example of usage:
+  As with ~malloc~, an allocation that fails returns ~NULL~.
+
+  Example of usage:
   #+begin_src c
-info_struct mem_info = qmckl_memory_info_struct_zero;
+qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
 mem_info.size = size * sizeof(double);
 data = (double*) qmckl_malloc (context, mem_info);
 if (data == NULL) {
   return QMCKL_ALLOCATION_FAILED;
 }
 // ...
-qmckl_free(data);
+qmckl_free(context, data);
   #+end_src
 
 
@@ -155,6 +151,9 @@ typedef struct qmckl_memory_struct {
   For security and deterministic behavior, the allocated memory block is
   zeroed using ~memset~ before being returned to the caller.
 
+  A request of size zero returns ~NULL~: the registry marks a free slot by a
+  zero size, so a block of size zero cannot be tracked.
+
   # Header
   #+begin_src c :tangle (eval h_private_func)
 void* qmckl_malloc(qmckl_context context,
@@ -175,11 +174,11 @@ void* qmckl_malloc(qmckl_context context,
 
   4. The function then allocates memory:
      If the ~HAVE_HPC~ and ~HAVE_POSIX_MEMALIGN~ macros are defined, the memory
-     allocation is done using the ~aligned_alloc~ function with a 64-byte alignment,
-     rounding up the requested size to the nearest multiple of 64 bytes. Else, the
-     memory allocation is done using the standard ~malloc~ function.
+     allocation is done using the ~posix_memalign~ function with an alignment
+     of 64 bytes. Else, the memory allocation is done using the standard
+     ~malloc~ function.
 
-  5  If the allocation fails, the function returns ~NULL~.
+  5. If the allocation fails, the function returns ~NULL~.
 
   6. The allocated memory block is zeroed using ~memset~.
 
@@ -418,7 +417,7 @@ assert(rc == QMCKL_SUCCESS);
 * Get the size of a memory block
 
   All the blocks allocated with ~qmckl_malloc~ keep track of how many
-  bytes were allocated. Using ~qmckl_malloc_size~ allows to get this information.
+  bytes were allocated. Using ~qmckl_get_malloc_info~ allows to get this information.
 
   # Header
   #+begin_src c :tangle (eval h_private_func) 
