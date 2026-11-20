@@ -1103,6 +1103,12 @@ qmckl_trexio_read_mo_X(qmckl_context context, trexio_t* const file)
 ** TODO ECP
 * Read everything
 
+  Reads all the data of a TREXIO file into the context. ~size_max~ is
+  the number of characters that may be read from ~file_name~, excluding
+  the terminating NUL character. It must be positive and smaller than
+  4096, the size of the buffer used internally to hold a NUL-terminated
+  copy of the file name.
+
   #+begin_src c :tangle (eval h_func)
 qmckl_exit_code
 qmckl_trexio_read(const qmckl_context context,
@@ -1128,6 +1134,10 @@ qmckl_trexio_read(const qmckl_context context,
   #+end_src
 
   #+begin_src c :tangle (eval c) :exports none
+/* PATH_MAX is 4096 on Linux and 1024 on macOS. A longer argument cannot
+   name a file this library is able to open. */
+#define QMCKL_TREXIO_MAX_FILE_NAME 4096
+
 qmckl_exit_code
 qmckl_trexio_read(const qmckl_context context, const char* file_name, const int64_t size_max)
 {
@@ -1135,15 +1145,28 @@ qmckl_trexio_read(const qmckl_context context, const char* file_name, const int6
     return QMCKL_INVALID_CONTEXT;
   }
 
+  if (file_name == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_trexio_read",
+                           "file_name is a null pointer");
+  }
+
+  if (size_max <= 0 || size_max >= QMCKL_TREXIO_MAX_FILE_NAME) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_3,
+                           "qmckl_trexio_read",
+                           "size_max out of range");
+  }
+
   qmckl_exit_code rc;
-  char file_name_new[size_max+1];
-  strncpy(file_name_new, file_name, size_max);
-  file_name_new[size_max] = '\0';
+  char file_name_new[QMCKL_TREXIO_MAX_FILE_NAME];
+  strncpy(file_name_new, file_name, (size_t) size_max);
+  file_name_new[(size_t) size_max] = '\0';
 
 #ifdef HAVE_TREXIO
   trexio_t* file = qmckl_trexio_open_X(file_name_new, &rc);
   if (file == NULL) {
-    trexio_close(file);
     return qmckl_failwith( context,
                            QMCKL_INVALID_ARG_2,
                            "qmckl_trexio_read",
@@ -1204,6 +1227,16 @@ char filename[256];
 strncpy(filename, QMCKL_TEST_DIR,255);
 strncat(filename, "/chbrclf", 255);
 printf("Test file: %s\n", filename);
+
+/* Invalid arguments are rejected before the file is opened */
+rc = qmckl_trexio_read(context, NULL, 255);
+assert (rc == QMCKL_INVALID_ARG_2);
+
+rc = qmckl_trexio_read(context, filename, 0);
+assert (rc == QMCKL_INVALID_ARG_3);
+
+rc = qmckl_trexio_read(context, filename, 4096);
+assert (rc == QMCKL_INVALID_ARG_3);
 
 rc = qmckl_trexio_read(context, filename, 255);
 
