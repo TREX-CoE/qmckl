@@ -40,6 +40,7 @@ quantities are fundamental inputs for electronic structure calculations.
 #endif
 
 #include "chbrclf.h"
+#include "qmckl_context_private_type.h"
 
 int main() {
   qmckl_context context;
@@ -408,7 +409,7 @@ if (mask != 0 && !(ctx->nucleus.uninitialized & mask)) {
 ctx->nucleus.uninitialized &= ~mask;
 ctx->nucleus.provided = (ctx->nucleus.uninitialized == 0);
 
-return QMCKL_SUCCESS;
+return qmckl_context_touch(context);
    #+end_src
 
    To set the data relative to the nuclei in the context, the
@@ -535,7 +536,14 @@ qmckl_set_nucleus_coord(qmckl_context context,
    #+end_src
 
     Sets the nuclear coordinates of all the atoms. The coordinates
-    are be given in atomic units.
+    are be given in atomic units. This function can be called several
+    times, for example during a geometry optimization: each call
+    invalidates the quantities computed from the previous geometry.
+
+    With ~transp == 'N'~ the array holds one $(x,y,z)$ triplet per
+    atom in row-major order. With ~transp == 'T'~ it holds the same
+    data in column-major (Fortran) order: all the $x$ coordinates,
+    then all the $y$, then all the $z$.
 
    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
 qmckl_exit_code
@@ -559,18 +567,18 @@ qmckl_set_nucleus_coord(qmckl_context context,
 
   const int64_t nucl_num = (int64_t) ctx->nucleus.num;
 
-  if (ctx->nucleus.coord.data != NULL) {
-    rc = qmckl_matrix_free(context, &(ctx->nucleus.coord));
-    if (rc != QMCKL_SUCCESS) return rc;
+  if (nucl_num <= 0) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_set_nucleus_coord",
+                           "nucleus_num is not set");
   }
 
-  ctx->nucleus.coord = qmckl_matrix_alloc(context, nucl_num, 3);
-
-  if (ctx->nucleus.coord.data == NULL) {
+  if (coord == NULL) {
     return qmckl_failwith( context,
-                           QMCKL_ALLOCATION_FAILED,
+                           QMCKL_INVALID_ARG_3,
                            "qmckl_set_nucleus_coord",
-                           NULL);
+                           "coord is a NULL pointer");
   }
 
   if (size_max < 3*nucl_num) {
@@ -580,16 +588,54 @@ qmckl_set_nucleus_coord(qmckl_context context,
                            "Array too small");
   }
 
-  if (transp == 'N') {
-    qmckl_matrix At;
-    At = qmckl_matrix_alloc(context, 3, nucl_num);
-    rc = qmckl_matrix_of_double(context, coord, 3*nucl_num, &At);
-    if (rc != QMCKL_SUCCESS) return rc;
-    rc = qmckl_transpose(context, At, ctx->nucleus.coord);
-  } else {
-    rc = qmckl_matrix_of_double(context, coord, nucl_num*3, &(ctx->nucleus.coord));
+  if (transp != 'N' && transp != 'T') {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_ARG_2,
+                           "qmckl_set_nucleus_coord",
+                           "transp should be 'N' or 'T'");
   }
-  if (rc != QMCKL_SUCCESS) return rc;
+
+  /* Build the new matrix before touching the context, so that any error
+     leaves the previous coordinates unchanged. */
+  qmckl_matrix new_coord = qmckl_matrix_alloc(context, nucl_num, 3);
+  if (new_coord.data == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_ALLOCATION_FAILED,
+                           "qmckl_set_nucleus_coord",
+                           NULL);
+  }
+
+  if (transp == 'N') {
+    qmckl_matrix At = qmckl_matrix_alloc(context, 3, nucl_num);
+    if (At.data == NULL) {
+      qmckl_matrix_free(context, &new_coord);
+      return qmckl_failwith( context,
+                             QMCKL_ALLOCATION_FAILED,
+                             "qmckl_set_nucleus_coord",
+                             NULL);
+    }
+    rc = qmckl_matrix_of_double(context, coord, 3*nucl_num, &At);
+    if (rc == QMCKL_SUCCESS) {
+      rc = qmckl_transpose(context, At, new_coord);
+    }
+    qmckl_matrix_free(context, &At);
+  } else {
+    rc = qmckl_matrix_of_double(context, coord, nucl_num*3, &new_coord);
+  }
+  if (rc != QMCKL_SUCCESS) {
+    qmckl_matrix_free(context, &new_coord);
+    return rc;
+  }
+
+  if (ctx->nucleus.coord.data != NULL) {
+    rc = qmckl_matrix_free(context, &(ctx->nucleus.coord));
+    if (rc != QMCKL_SUCCESS) {
+      qmckl_matrix_free(context, &new_coord);
+      return rc;
+    }
+  }
+
+  ctx->nucleus.coord = new_coord;
 
   <<post>>
 }
@@ -1098,6 +1144,78 @@ double rep;
 rc = qmckl_get_nucleus_repulsion(context, &rep);
 assert(rep - 318.2309879436158 < 1.e-10);
 
+     #+end_src
+
+** Regression tests for the coordinate setter                          :noexport:
+
+   The coordinate setter is the only repeatable setter of the nucleus
+   module. These tests check that it invalidates the cached quantities,
+   does not leak its temporary matrix, and leaves the context unchanged
+   when an argument is rejected.
+
+     #+begin_src c :tangle (eval c_test) :exports none
+{
+  qmckl_context ctx2 = qmckl_context_create();
+  assert(ctx2 != QMCKL_NULL_CONTEXT);
+
+  double charge[2] = { 1.0, 1.0 };
+  /* 'N' layout: one xyz triplet per nucleus */
+  double coord1[6] = { 0., 0., 0.,   0., 0., 5. };
+  double coord2[6] = { 0., 0., 0.5, 0., 0., 5. };
+  double coord_out[6];
+
+  /* The number of nuclei must be set before the coordinates. */
+  rc = qmckl_set_nucleus_coord(ctx2, 'N', coord1, 6);
+  assert(rc == QMCKL_NOT_PROVIDED);
+
+  rc = qmckl_set_nucleus_num(ctx2, 2);
+  assert(rc == QMCKL_SUCCESS);
+  rc = qmckl_set_nucleus_charge(ctx2, charge, 2);
+  assert(rc == QMCKL_SUCCESS);
+
+  /* A rejected size_max must not destroy the current coordinates. */
+  rc = qmckl_set_nucleus_coord(ctx2, 'N', coord1, 6);
+  assert(rc == QMCKL_SUCCESS);
+  rc = qmckl_set_nucleus_coord(ctx2, 'N', coord2, 3);
+  assert(rc == QMCKL_INVALID_ARG_4);
+  rc = qmckl_get_nucleus_coord(ctx2, 'N', coord_out, 6);
+  assert(rc == QMCKL_SUCCESS);
+  for (int64_t i=0 ; i<6 ; ++i) assert(coord_out[i] == coord1[i]);
+
+  /* The temporary matrix used when transp=='N' must be freed. */
+  size_t n0 = ((qmckl_context_struct*) ctx2)->memory.n_allocated;
+  rc = qmckl_set_nucleus_coord(ctx2, 'N', coord1, 6);
+  assert(rc == QMCKL_SUCCESS);
+  size_t n1 = ((qmckl_context_struct*) ctx2)->memory.n_allocated;
+  assert(n1 == n0);
+  rc = qmckl_set_nucleus_coord(ctx2, 'N', coord2, 6);
+  assert(rc == QMCKL_SUCCESS);
+  size_t n2 = ((qmckl_context_struct*) ctx2)->memory.n_allocated;
+  assert(n2 == n1);
+
+  /* A repeated call must invalidate the cached distances. */
+  rc = qmckl_set_electron_num(ctx2, 1, 0);
+  assert(rc == QMCKL_SUCCESS);
+  double elec_coord[3] = { 0., 0., -1.5 };
+  rc = qmckl_set_point(ctx2, 'N', 1, elec_coord, 3);
+  assert(rc == QMCKL_SUCCESS);
+
+  double distance[2];
+  rc = qmckl_get_electron_en_distance(ctx2, distance, 2);
+  assert(rc == QMCKL_SUCCESS);
+  assert(fabs(distance[0] - 2.0) < 1.e-12);
+  assert(fabs(distance[1] - 6.5) < 1.e-12);
+
+  rc = qmckl_set_nucleus_coord(ctx2, 'N', coord1, 6);
+  assert(rc == QMCKL_SUCCESS);
+  rc = qmckl_get_electron_en_distance(ctx2, distance, 2);
+  assert(rc == QMCKL_SUCCESS);
+  assert(fabs(distance[0] - 1.5) < 1.e-12);
+  assert(fabs(distance[1] - 6.5) < 1.e-12);
+
+  rc = qmckl_context_destroy(ctx2);
+  assert(rc == QMCKL_SUCCESS);
+}
      #+end_src
 
 * End of files                                                     :noexport:
