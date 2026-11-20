@@ -49,18 +49,27 @@ int main() {
 
 * Introduction
 
-   Every function of the library returns a ~qmckl_exit_code~: ~QMCKL_SUCCESS~,
-   which is zero, when the call succeeded, and a non-zero code describing the
-   error otherwise. Errors are reported through this return value; the library
-   does not abort the calling program, and does not write to a file or to the
-   standard output. The calling code decides what an error means for it.
+   Almost every function of the library returns a ~qmckl_exit_code~:
+   ~QMCKL_SUCCESS~, which is zero, when the call succeeded, and a non-zero
+   code describing the error otherwise. The exceptions are the functions that
+   return a value or nothing: the context functions, the lock, the provided
+   predicates, the numerical-precision getters, the two
+   ~qmckl_test_precision~ helpers and ~qmckl_string_of_error~. An error is
+   reported through the return value alone, and the calling code decides what
+   it means for it.
 
-   This module defines the exit codes, and the functions that record an error
-   in a context, retrieve it, and turn a code into a string.
+   A return code alone does not say which call failed on which argument. For
+   that the library records, inside the context, the code, the name of the
+   function and a message. This module defines the exit codes and the
+   functions that write, read and decode that record.
 
-** Exit codes
+   The library does not print errors. Assertions catch a misuse in a build
+   that keeps them enabled, and ~qmckl_check~, at the end of this page, is the
+   only helper that writes to ~stderr~.
 
-   All the functions in the QMCkl library return with an exit code, defined as
+* Exit codes
+
+   An exit code is a 32-bit integer:
    #+NAME: type-exit-code
    #+begin_src c :comments org :tangle (eval h_type)
 typedef int32_t qmckl_exit_code;
@@ -71,17 +80,15 @@ typedef int32_t qmckl_exit_code;
       integer  , parameter :: qmckl_exit_code = c_int32_t
   #+end_src
 
-   The exit code provides a standardized way to return the completion status 
-   of a function to the calling program. When a function call completes 
-   successfully, ~QMCKL_SUCCESS~ (value 0) is returned. If one of the functions 
-   of the library fails to complete the requested task, an appropriate error 
-   code is returned to the program.
-   
-   This approach allows calling programs to check the return value and handle 
-   errors appropriately, implementing their own error recovery strategies or 
-   logging mechanisms. The error codes are designed to be self-documenting,
-   with specific codes for common error conditions such as invalid arguments,
-   allocation failures, and context-related issues.
+   The codes fall in two blocks. Codes 1 to 20 are ~QMCKL_INVALID_ARG_1~ to
+   ~QMCKL_INVALID_ARG_20~ and name the offending argument by its position in
+   the signature, the context being the first, so a function that rejects its
+   third argument returns ~QMCKL_INVALID_ARG_3~. Codes 101 to 109 describe
+   the conditions that are not an argument: a failed allocation, a value that
+   was never provided, a set attempted twice. Four of them are defined and
+   decoded but never returned by the library at present, ~QMCKL_ERRNO~,
+   ~QMCKL_DEALLOCATION_FAILED~, ~QMCKL_OUT_OF_BOUNDS~ and
+   ~QMCKL_INVALID_EXIT_CODE~.
 
    Here is the complete list of exit codes:
 
@@ -221,10 +228,14 @@ return '\n'.join(result)
 
 * Decoding errors
 
-   The ~qmckl_string_of_error~ function converts an error code into a
-   descriptive string, which an application can print or write to a log. The
-   function takes an error code as input and returns a constant string
-   describing the error condition. Both C and Fortran interfaces are provided.
+   ~qmckl_string_of_error~ turns an exit code into a string that an
+   application can print or log. The switch covers every code of the table
+   and returns ~"Unknown error"~ for anything else, so the result is never
+   ~NULL~. Only ~QMCKL_ERRNO~ gives something else: ~strerror(errno)~, the
+   description of the last failing system call, in a buffer that the next
+   ~strerror~ call may overwrite. The Fortran interface binds to a private
+   wrapper, ~qmckl_string_of_error_f~, which copies at most 127 characters
+   into the 128-byte buffer it is given and terminates the string.
 
    #+begin_src c :comments org :tangle (eval h_func) :noweb yes
 const char*
@@ -237,9 +248,9 @@ qmckl_string_of_error_f(const qmckl_exit_code error,
                         char result[<<MAX_STRING_LENGTH()>>]);
    #+end_src
 
-   The text strings returned by this function are extracted from the error codes
-   table defined earlier. This ensures consistency between the error codes and
-   their string representations throughout the library.
+   The strings are generated from the table above by the Python block that
+   also produces the C and Fortran constants, so a code and its text cannot
+   drift apart.
 
    #+NAME:cases
    #+begin_src python :var table=table-exit-codes :exports none :noweb yes
@@ -381,15 +392,15 @@ void qmckl_string_of_error_f(const qmckl_exit_code error, char result[<<MAX_STRI
 
 * Data structure in context
 
-  The QMCkl context maintains detailed error state information through a
-  dedicated data structure. This structure stores not only the error code,
-  but also the name of the function where the error occurred and a descriptive
-  message explaining the error condition.
-  
-  The strings are declared internally with a maximum fixed size to avoid
-  dynamic memory allocation, which is important for performance and thread
-  safety. This design choice ensures that error handling itself does not
-  introduce additional failure modes or performance bottlenecks.
+  The context holds one ~qmckl_error_struct~, with the code, a
+  ~QMCKL_MAX_FUN_LEN~-byte function name and a ~QMCKL_MAX_MSG_LEN~-byte
+  message. The two strings have a fixed size, so recording an error allocates
+  nothing and cannot fail for lack of memory.
+
+  A new context is zeroed by ~qmckl_context_create~: it starts with
+  ~QMCKL_SUCCESS~ and two empty strings. ~qmckl_context_copy~ copies the
+  structure with the rest of the context, and nothing clears it afterwards,
+  so a successful call leaves the last error in place.
 
    #+begin_src c :comments org :tangle (eval h_private_type) :exports none
 #define  QMCKL_MAX_FUN_LEN   256
@@ -406,17 +417,13 @@ typedef struct qmckl_error_struct {
 
 * Updating errors in the context
 
-   The error state in the context is updated using the ~qmckl_set_error~
-   function. This function provides a centralized mechanism for recording
-   errors that occur during library operations.
-   
-   When an error is set in the context, it is mandatory to specify
-   from which function the error is triggered, and a message
-   explaining the error. The exit code can't be ~QMCKL_SUCCESS~.
-   
-   This detailed error information enables precise debugging and helps
-   users understand exactly what went wrong and where, making it easier
-   to diagnose and fix issues in code using the QMCkl library.
+   ~qmckl_set_error~ overwrites the record with a code, a function name and a
+   message, under the context lock. All three are mandatory and the code
+   cannot be ~QMCKL_SUCCESS~. The check that the context is valid is an
+   assertion, not a return value, because a record that has nowhere to go
+   cannot report anything. The function returns ~QMCKL_SUCCESS~, which says
+   that the recording succeeded, not the code it stored. A name longer than
+   255 characters and a message longer than 1023 are truncated.
 
    # Header
    #+begin_src c :comments org :tangle (eval h_func)
@@ -466,19 +473,12 @@ qmckl_set_error(qmckl_context context,
 
 * Get the error
 
-  Upon error, the calling program can retrieve detailed error information from the
-  context using ~qmckl_get_error~. This function provides access to the error 
-  code, the name of the function where the error occurred, and a descriptive 
-  message explaining the error condition.
-  
-  The error message and function name are returned in the variables provided 
-  by the caller. Therefore, passing valid pointers for the function name and 
-  message is mandatory. The caller must ensure that the provided buffers are
-  large enough to hold the error information.
-  
-  This retrieval mechanism allows applications to implement sophisticated error
-  handling strategies, such as retry logic, fallback mechanisms, or detailed
-  logging for post-mortem analysis.
+  ~qmckl_get_error~ reads the record back into three caller-provided
+  variables. It has no size arguments: the two buffers must hold
+  ~QMCKL_MAX_FUN_LEN~ and ~QMCKL_MAX_MSG_LEN~ bytes, and neither may be
+  ~NULL~. The code is written to ~exit_code~, which is ~QMCKL_SUCCESS~ when
+  nothing has failed since the context was created. Like the setter, it
+  asserts that the context is valid and returns ~QMCKL_SUCCESS~.
 
   # Header
    #+begin_src c :comments org :tangle (eval h_func)
@@ -531,14 +531,13 @@ qmckl_get_error(qmckl_context context,
 
 * Failing
 
-   To make a function fail, the ~qmckl_failwith~ function should be
-   called, such that information about the failure is stored in
-   the context. The desired exit code is given as an argument, as
-   well as the name of the function and an error message. If the
-   message is ~NULL~, then the default message obtained by
-   ~qmckl_string_of_error~ is used. The return code of the function is
-   the desired return code.
-   Upon failure, a ~QMCKL_NULL_CONTEXT~ is returned.
+   ~qmckl_failwith~ records the failure and returns the code it was given, so
+   that a kernel can write ~return qmckl_failwith(...)~. The code, the
+   function name and a message are the arguments; a ~NULL~ message is
+   replaced by the text ~qmckl_string_of_error~ gives for that code. It
+   asserts that the name and the message fit in 255 and 1023 characters. When
+   the context is not valid, nothing can be recorded and the function returns
+   ~QMCKL_INVALID_CONTEXT~.
 
    #+begin_src c :comments org :tangle (eval h_func)
 qmckl_exit_code
@@ -593,7 +592,12 @@ if (x < 0) {
 
 * Last error
 
-  Returns a string describing the last error, using ~qmckl_get_error~.
+  ~qmckl_last_error~ formats the record into a caller-provided buffer of
+  ~size_max~ bytes: ~Error -- <code> -- in <function>~ on one line, the
+  message on the next. The text is truncated to fit and is always terminated.
+  A ~NULL~ buffer and a non-positive size return ~QMCKL_INVALID_ARG_2~ and
+  ~QMCKL_INVALID_ARG_3~. With an invalid context the function cannot read the
+  record, writes ~"Null context"~ and returns ~QMCKL_FAILURE~.
 
   # Header
    #+begin_src c :comments org :tangle (eval h_func)
@@ -660,8 +664,12 @@ qmckl_last_error(qmckl_context context, char* buffer, const int64_t size_max) {
 
 * Helper functions for debugging
 
-  The following function prints to ~stderr~ an error message is the return code is
-  not ~QMCKL_SUCCESS~.
+  ~qmckl_check~ prints to ~stderr~ the code it was given and the record of the
+  context when that code is not ~QMCKL_SUCCESS~. What it returns is the code
+  it reads back from the context, not its argument: a matching context gives
+  the same value, an empty one gives ~QMCKL_SUCCESS~, and the assertion that
+  usually follows would then pass. The context must be valid; ~qmckl_get_error~
+  asserts it.
 
   # Header
    #+begin_src c :comments org :tangle (eval h_func)
