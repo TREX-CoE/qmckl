@@ -346,7 +346,8 @@ int qmckl_get_numprec_range(const qmckl_context context) {
 ** Epsilon
 
    ~qmckl_get_numprec_epsilon~ returns $\epsilon = 2^{1-n}$ where ~n~ is the precision.
-   We need to remove the sign bit from the precision.
+   For an invalid context it returns ~NAN~: an exit code such as 103 is not an
+   epsilon, and a caller could not distinguish it from one.
 
    #+begin_src c :comments org :tangle (eval h_func) 
 double qmckl_get_numprec_epsilon(const qmckl_context context);
@@ -356,10 +357,10 @@ double qmckl_get_numprec_epsilon(const qmckl_context context);
    #+begin_src c :tangle (eval c) :exports none
 double qmckl_get_numprec_epsilon(const qmckl_context context) {
   if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT)
-    return QMCKL_INVALID_CONTEXT;
+    return NAN;
   const qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
-  const int precision = ctx->numprec.precision;
-  return 1. /  (double) ( ((uint64_t) 1) << (precision-1));
+  const int precision = (int) ctx->numprec.precision;
+  return ldexp(1.0, 1 - precision);
 }
    #+end_src
 
@@ -386,26 +387,24 @@ double qmckl_get_numprec_epsilon(const qmckl_context context) {
    #+begin_src c :tangle (eval c) :exports none
 int64_t countUlpDifference_64(double a, double b) {
 
-  union int_or_float {
-    int64_t i;
-    double f;
-  } x, y;
-
-  x.f = a;
-  y.f = b;
+  int64_t xi, yi;
+  memcpy(&xi, &a, sizeof xi);
+  memcpy(&yi, &b, sizeof yi);
 
   // Handle sign bit discontinuity: if the signs are different and either value is not zero
-  if ((x.i < 0) != (y.i < 0) && (x.f != 0.0) && (y.f != 0.0)) {
+  if ((xi < 0) != (yi < 0) && (a != 0.0) && (b != 0.0)) {
     // Use the absolute values and add the distance to zero for both numbers
-    int64_t distanceToZeroForX = x.i < 0 ? INT64_MAX + x.i : INT64_MAX - x.i;
-    int64_t distanceToZeroForY = y.i < 0 ? INT64_MAX + y.i : INT64_MAX - y.i;
-    return distanceToZeroForX + distanceToZeroForY;
+    const uint64_t distanceToZeroForX = (xi < 0) ? (uint64_t) (INT64_MAX + xi) : (uint64_t) (INT64_MAX - xi);
+    const uint64_t distanceToZeroForY = (yi < 0) ? (uint64_t) (INT64_MAX + yi) : (uint64_t) (INT64_MAX - yi);
+    const uint64_t result = distanceToZeroForX + distanceToZeroForY;
+    return (result > (uint64_t) INT64_MAX) ? INT64_MAX : (int64_t) result;
   }
 
   // Calculate the difference in their binary representations
-  int64_t result = x.i - y.i;
-  result = result > 0 ? result : -result;
-  return result;
+  const uint64_t ux = (uint64_t) xi;
+  const uint64_t uy = (uint64_t) yi;
+  const uint64_t result = (ux > uy) ? ux - uy : uy - ux;
+  return (result > (uint64_t) INT64_MAX) ? INT64_MAX : (int64_t) result;
 }
    #+end_src
 
@@ -512,6 +511,29 @@ double fastExp(double x)
 
 *** Test
      #+begin_src c :comments link :tangle (eval c_test) :exports none
+/* An exit code is not an epsilon: an invalid context yields NaN. */
+{
+  const double eps = qmckl_get_numprec_epsilon(QMCKL_NULL_CONTEXT);
+  assert(eps != eps);
+}
+
+/* Opposite signs: the distance to zero of both operands is summed. The
+   sum saturates instead of overflowing a signed 64-bit integer. */
+assert(qmckl_test_precision_64(1.0, -1.0) == 0);
+assert(qmckl_test_precision_64(0.5, -0.25) == 0);
+
+/* Exponent fields far apart make the sum exceed INT64_MAX. The result
+   must saturate there, not wrap to a negative value. */
+{
+  extern int64_t countUlpDifference_64(double a, double b);
+  assert(countUlpDifference_64(4.9406564584124654e-324, -1.7976931348623157e308)
+         == INT64_MAX);
+}
+
+/* Identical and neighbouring values keep their usual precision. */
+assert(qmckl_test_precision_64(1.0, 1.0) == 53);
+assert(qmckl_test_precision_64(1.0, 0.0) < 53);
+
 return 0;
 }
      #+end_src

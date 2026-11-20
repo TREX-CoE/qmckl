@@ -12350,6 +12350,18 @@ qmckl_exit_code qmckl_compute_tmp_c_hpc (
   
   qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
   assert (ctx != NULL);
+
+  /* One zeroed row sum per walk, allocated outside the parallel region
+     so that an allocation failure can be reported. */
+  const size_t rowsum_len = (size_t) walk_num * (size_t) M;
+  double* const rowsum_all = (double*) malloc((rowsum_len ? rowsum_len : 1) * sizeof(double));
+  if (rowsum_all == NULL) {
+    return qmckl_failwith( context,
+                           QMCKL_ALLOCATION_FAILED,
+                           "qmckl_compute_tmp_c_hpc",
+                           NULL);
+  }
+
 #ifdef HAVE_OPENMP
 #pragma omp parallel for num_threads(ctx->num_threads)
 #endif
@@ -12357,7 +12369,8 @@ qmckl_exit_code qmckl_compute_tmp_c_hpc (
     // (i,0)
     { int64_t j=0 ;
       for (int64_t i=1; i<cord_num; ++i){
-        double* rowsum = calloc(M, sizeof(double));
+        double* restrict rowsum = &(rowsum_all[nw*M]);
+        memset(rowsum, 0, (size_t) M * sizeof(double));
         for (int64_t k=0 ; k<K ; ++k) {
           for (int64_t m=0 ; m<M ; ++m) {
             rowsum[m] += een_rescaled_e[m + k*LDA + af*(i+nw*(cord_num+1))];
@@ -12368,7 +12381,6 @@ qmckl_exit_code qmckl_compute_tmp_c_hpc (
             tmp_c[m + n*LDC + cf*(j+(cord_num+1)*(i+nw*cord_num))] = rowsum[m];
           }
         }
-        free(rowsum);
       }
     }
 
@@ -12389,6 +12401,8 @@ qmckl_exit_code qmckl_compute_tmp_c_hpc (
     }
   }
 
+  free(rowsum_all);
+
  double eps = qmckl_get_numprec_epsilon(context);
 
 #ifdef HAVE_OPENMP
@@ -12396,7 +12410,7 @@ qmckl_exit_code qmckl_compute_tmp_c_hpc (
 #endif
   for (int64_t nw=0; nw < walk_num; ++nw) {
 
-    CSCMatrix *eN[cord_num];
+    CSCMatrix *eN[cord_num+1];
     for (int64_t j=1; j<cord_num; ++j){
       eN[j] = qmckl_dense_to_csc(K, N, &(een_rescaled_n[bf*(j+nw*(cord_num+1))]),
                                  LDB, eps);
@@ -12673,7 +12687,7 @@ qmckl_compute_dtmp_c_hpc (const qmckl_context context,
 #endif
   for (int64_t nw=0; nw < walk_num; ++nw) {
 
-    CSCMatrix *eN[cord_num];
+    CSCMatrix *eN[cord_num+1];
     for (int64_t j=1; j<cord_num; ++j){
       eN[j] = qmckl_dense_to_csc(K, N, &(een_rescaled_n[bf*(j+nw*(cord_num+1))]),
                                  LDB, eps);
