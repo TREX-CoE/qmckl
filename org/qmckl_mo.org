@@ -54,6 +54,15 @@
 
 #include "qmckl_mo_private_type.h"
 #include "qmckl_blas_private_type.h"
+#include "qmckl_ao_private_type.h"
+
+#ifdef HAVE_HPC
+/* Minimum total MAC work (ao_num * mo_num * point_num) for the compact
+   AO contraction to pay for itself. Below it, the per-chunk dgemm
+   overhead and the compact build are not amortized and the plain kernel
+   is faster (measured: h2o-sto3g w20, ao_num 6, point_num 40). */
+#define QMCKL_MO_COMPACT_MIN_WORK 1000000
+#endif
   #+end_src
 
   #+begin_src c :tangle (eval h_private_type) :exports none
@@ -72,6 +81,7 @@
 #endif
 
 #include <stdio.h>
+#include <string.h>
 #include <math.h>
 #include "chbrclf.h"
 #include "qmckl_context_private_type.h"
@@ -1384,6 +1394,27 @@ qmckl_exit_code qmckl_provide_mo_basis_mo_value(qmckl_context context)
 
       if (ctx->mo_basis.r_cusp == NULL) {
         /* No cusp correction */
+#ifdef HAVE_HPC
+        if (ctx->numprec.precision > 26 &&
+            (int64_t) ctx->ao_basis.ao_num * ctx->mo_basis.mo_num *
+            ctx->point.num >= QMCKL_MO_COMPACT_MIN_WORK) {
+          /* Double precision and enough work: contract the compact AO
+             copy as binned dgemms over the points that share a small
+             AO union. */
+          rc = qmckl_provide_ao_basis_ao_value_compact(context);
+          if (rc == QMCKL_SUCCESS) {
+            rc = qmckl_compute_mo_basis_mo_value_compact(context,
+                                                         ctx->ao_basis.ao_num,
+                                                         ctx->mo_basis.mo_num,
+                                                         ctx->point.num,
+                                                         ctx->mo_basis.coefficient_t,
+                                                         &ctx->ao_basis.ao_value_compact,
+                                                         ctx->nucleus.num,
+                                                         ctx->nucleus.coord.data,
+                                                         ctx->mo_basis.mo_value);
+          }
+        } else
+#endif
         rc = qmckl_compute_mo_basis_mo_value(context,
                                              ctx->ao_basis.ao_num,
                                              ctx->mo_basis.mo_num,
@@ -2008,6 +2039,27 @@ qmckl_exit_code qmckl_provide_mo_basis_mo_vgl(qmckl_context context)
 
     if (ctx->mo_basis.r_cusp == NULL) {
       /* No cusp correction */
+#ifdef HAVE_HPC
+      if (ctx->numprec.precision > 26 &&
+          (int64_t) ctx->ao_basis.ao_num * ctx->mo_basis.mo_num *
+          ctx->point.num >= QMCKL_MO_COMPACT_MIN_WORK) {
+        /* Double precision and enough work: contract the compact AO
+           copy as binned dgemms over the points that share a small
+           AO union. */
+        rc = qmckl_provide_ao_basis_ao_vgl_compact(context);
+        if (rc == QMCKL_SUCCESS) {
+          rc = qmckl_compute_mo_basis_mo_vgl_compact(context,
+                                                     ctx->ao_basis.ao_num,
+                                                     ctx->mo_basis.mo_num,
+                                                     ctx->point.num,
+                                                     ctx->mo_basis.coefficient_t,
+                                                     &ctx->ao_basis.ao_vgl_compact,
+                                                     ctx->nucleus.num,
+                                                     ctx->nucleus.coord.data,
+                                                     ctx->mo_basis.mo_vgl);
+        }
+      } else
+#endif
       rc = qmckl_compute_mo_basis_mo_vgl(context,
                                          ctx->ao_basis.ao_num,
                                          ctx->mo_basis.mo_num,
@@ -2538,6 +2590,370 @@ qmckl_compute_mo_basis_mo_vgl_hpc_sp (const qmckl_context context,
 }
 #endif
      #+end_src
+
+**** Compact AO version                                                :noexport:
+
+   Contraction of the MO coefficients against the compact AO copy of
+   section [[Compact storage of the computed AO arrays]] in
+   ~qmckl_ao.org~. The points are sorted by nearest nucleus (counting
+   sort), the consecutive nucleus bins are merged into groups of at
+   least ~NMIN~ points, and each group is contracted as a ~dgemm~ over
+   the union of the AO index sets of its points, in chunks of at most
+   ~NCHUNK~ points. The ~beta = 0.0~ of the ~dgemm~ makes points whose
+   index list is empty produce exact zeros.
+
+   #+begin_src c :tangle (eval h_private_func) :comments org :exports none
+#ifdef HAVE_HPC
+qmckl_exit_code
+qmckl_compute_mo_basis_mo_value_compact (const qmckl_context context,
+                                         const int64_t ao_num,
+                                         const int64_t mo_num,
+                                         const int64_t point_num,
+                                         const double* coefficient_t,
+                                         const qmckl_ao_compact_struct* ao,
+                                         const int64_t nucl_num,
+                                         const double* nucl_coord,
+                                         double* const mo_value );
+qmckl_exit_code
+qmckl_compute_mo_basis_mo_vgl_compact (const qmckl_context context,
+                                       const int64_t ao_num,
+                                       const int64_t mo_num,
+                                       const int64_t point_num,
+                                       const double* coefficient_t,
+                                       const qmckl_ao_compact_struct* ao,
+                                       const int64_t nucl_num,
+                                       const double* nucl_coord,
+                                       double* const mo_vgl );
+#endif
+   #+end_src
+
+   #+begin_src c :tangle (eval c) :comments org :exports none
+#ifdef HAVE_HPC
+/* Minimum number of points of a nearest-nucleus group. It exists to
+   avoid depth-1..3 GEMMs when point_num << NMIN*nucl_num. */
+#define QMCKL_MO_COMPACT_NMIN   32
+/* Maximum number of points of a dgemm chunk. */
+#define QMCKL_MO_COMPACT_NCHUNK 512
+
+static int qmckl_mo_compact_cmp_int64 (const void* a, const void* b)
+{
+  const int64_t x = *(const int64_t*) a;
+  const int64_t y = *(const int64_t*) b;
+  if (x < y) return -1;
+  if (x > y) return 1;
+  return 0;
+}
+
+/*
+   Contract the MO coefficients of one group of ~npts~ points (indices in
+   ~pts~) against the compact AOs, writing the [point][ncomp][mo_num]
+   block of ~mo_out~. The union of the index sets of the points is
+   computed, the coefficient rows of the union are gathered into ~A~,
+   and ~B~ is scattered from the compact values.
+   ~row_of~, ~union_~, ~A~, ~B~ and ~C~ are per-thread scratch of the
+   caller, sized for a union of ~ao_num~ AOs and a chunk of
+   ~QMCKL_MO_COMPACT_NCHUNK~ points.
+*/
+static qmckl_exit_code
+qmckl_compute_mo_compact_group (const qmckl_context context,
+                                const int64_t ao_num,
+                                const int64_t mo_num,
+                                const int64_t npts,
+                                const int64_t* const pts,
+                                const double* restrict coefficient_t,
+                                const qmckl_ao_compact_struct* restrict ao,
+                                double* restrict const mo_out,
+                                int64_t* const row_of,
+                                int64_t* const union_,
+                                double* const A,
+                                double* const B,
+                                double* const C)
+{
+  const int64_t ncomp = ao->ncomp;
+
+  for (int64_t off=0 ; off<npts ; off += QMCKL_MO_COMPACT_NCHUNK) {
+    const int64_t nchunk = (npts - off < QMCKL_MO_COMPACT_NCHUNK) ?
+      (npts - off) : QMCKL_MO_COMPACT_NCHUNK;
+
+    int64_t K;
+
+    /* Union of the index sets of the points of the chunk */
+    for (int64_t k=0 ; k<ao_num ; ++k) {
+      row_of[k] = -1;
+    }
+    K = 0;
+    for (int64_t j=0 ; j<nchunk ; ++j) {
+      const int64_t p = pts[off + j];
+      for (int64_t i = ao->ptr[p] ; i < ao->ptr[p+1] ; ++i) {
+        const int64_t k = ao->idx[i];
+        if (row_of[k] < 0) {
+          row_of[k] = K;
+          union_[K] = k;
+          ++K;
+        }
+      }
+    }
+
+    /* Sort for determinism and locality, then rebuild row_of */
+    qsort(union_, (size_t) K, sizeof(int64_t), qmckl_mo_compact_cmp_int64);
+    for (int64_t r=0 ; r<K ; ++r) {
+      row_of[union_[r]] = r;
+    }
+
+    /* Gather the coefficient rows of the union */
+    for (int64_t r=0 ; r<K ; ++r) {
+      memcpy(A + r*mo_num, coefficient_t + union_[r]*mo_num,
+             mo_num*sizeof(double));
+    }
+
+    if (K == 0) {
+      /* Every point of the chunk has an empty index list: the MO values
+         are exactly zero, and dgemm must not be called with k = 0. */
+      for (int64_t j=0 ; j<nchunk ; ++j) {
+        const int64_t p = pts[off + j];
+        memset(mo_out + (p*ncomp)*mo_num, 0,
+               (size_t) ncomp*mo_num*sizeof(double));
+      }
+      continue;
+    }
+
+    for (int64_t c=0 ; c<ncomp ; ++c) {
+      memset(B, 0, (size_t) K*nchunk*sizeof(double));
+      for (int64_t j=0 ; j<nchunk ; ++j) {
+        const int64_t p = pts[off + j];
+        for (int64_t i = ao->ptr[p] ; i < ao->ptr[p+1] ; ++i) {
+          B[row_of[ao->idx[i]] + j*K] = ao->val[(size_t) c*ao->nnz + i];
+        }
+      }
+
+      /* C = A*B with beta = 0: no pre-clearing of C. */
+      qmckl_exit_code rc = qmckl_dgemm(context,
+                                        'N', 'N',
+                                        mo_num, nchunk, K,
+                                        1.0, A, mo_num,
+                                        B, K,
+                                        0.0, C, mo_num);
+      if (rc != QMCKL_SUCCESS) return rc;
+
+      for (int64_t j=0 ; j<nchunk ; ++j) {
+        const int64_t p = pts[off + j];
+        memcpy(mo_out + (p*ncomp + c)*mo_num, C + j*mo_num,
+               mo_num*sizeof(double));
+      }
+    }
+  }
+
+  return QMCKL_SUCCESS;
+}
+
+static qmckl_exit_code
+qmckl_compute_mo_compact (const qmckl_context context,
+                          const int64_t ao_num,
+                          const int64_t mo_num,
+                          const int64_t point_num,
+                          const double* restrict coefficient_t,
+                          const qmckl_ao_compact_struct* restrict ao,
+                          const int64_t nucl_num,
+                          const double* restrict nucl_coord,
+                          double* restrict const mo_out)
+{
+  assert (context != QMCKL_NULL_CONTEXT);
+  const qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  if (point_num == 0 || ao_num == 0 || mo_num == 0) {
+    return QMCKL_SUCCESS;
+  }
+
+  const double* const point_coord = ctx->point.coord.data;
+
+  /* Nearest nucleus per point */
+  int64_t* const nuc = (int64_t*) malloc((size_t) point_num * sizeof(int64_t));
+  if (nuc == NULL) {
+    return qmckl_failwith(context,
+                          QMCKL_ALLOCATION_FAILED,
+                          "qmckl_compute_mo_compact",
+                          "nuc");
+  }
+  for (int64_t p=0 ; p<point_num ; ++p) {
+    double best = 0.;
+    int64_t best_n = 0;
+    for (int64_t i=0 ; i<nucl_num ; ++i) {
+      const double dx = point_coord[p              ] - nucl_coord[i            ];
+      const double dy = point_coord[p +    point_num] - nucl_coord[i +  nucl_num];
+      const double dz = point_coord[p + 2*point_num] - nucl_coord[i + 2*nucl_num];
+      const double d2 = dx*dx + dy*dy + dz*dz;
+      if (i == 0 || d2 < best) {
+        best   = d2;
+        best_n = i;
+      }
+    }
+    nuc[p] = best_n;
+  }
+
+  /* Counting sort of the points by nearest nucleus */
+  int64_t* const bin_count = (int64_t*) calloc((size_t) nucl_num, sizeof(int64_t));
+  if (bin_count == NULL) {
+    free(nuc);
+    return qmckl_failwith(context,
+                          QMCKL_ALLOCATION_FAILED,
+                          "qmckl_compute_mo_compact",
+                          "bin_count");
+  }
+  for (int64_t p=0 ; p<point_num ; ++p) {
+    ++bin_count[nuc[p]];
+  }
+
+  int64_t* const bin_start = (int64_t*) malloc(((size_t) nucl_num + 1) * sizeof(int64_t));
+  int64_t* const bin_point = (int64_t*) malloc((size_t) point_num * sizeof(int64_t));
+  int64_t* const cursor    = (int64_t*) malloc((size_t) nucl_num * sizeof(int64_t));
+  if (bin_start == NULL || bin_point == NULL || cursor == NULL) {
+    free(cursor);
+    free(bin_point);
+    free(bin_start);
+    free(bin_count);
+    free(nuc);
+    return qmckl_failwith(context,
+                          QMCKL_ALLOCATION_FAILED,
+                          "qmckl_compute_mo_compact",
+                          "bin_start");
+  }
+  bin_start[0] = 0;
+  for (int64_t i=0 ; i<nucl_num ; ++i) {
+    bin_start[i+1] = bin_start[i] + bin_count[i];
+    cursor[i] = bin_start[i];
+  }
+  for (int64_t p=0 ; p<point_num ; ++p) {
+    bin_point[cursor[nuc[p]]] = p;
+    ++cursor[nuc[p]];
+  }
+  free(cursor);
+
+  /* Merge consecutive nucleus bins into groups of >= NMIN points */
+  int64_t* const group_start = (int64_t*) malloc((size_t) nucl_num * sizeof(int64_t));
+  int64_t* const group_end   = (int64_t*) malloc((size_t) nucl_num * sizeof(int64_t));
+  if (group_start == NULL || group_end == NULL) {
+    free(group_end);
+    free(group_start);
+    free(bin_point);
+    free(bin_start);
+    free(bin_count);
+    free(nuc);
+    return qmckl_failwith(context,
+                          QMCKL_ALLOCATION_FAILED,
+                          "qmckl_compute_mo_compact",
+                          "group_start");
+  }
+  int64_t ngroup = 0;
+  {
+    int64_t g = 0;
+    int64_t acc = 0;
+    for (int64_t i=0 ; i<nucl_num ; ++i) {
+      acc += bin_count[i];
+      if (acc >= QMCKL_MO_COMPACT_NMIN) {
+        group_start[ngroup] = g;
+        group_end[ngroup]   = i;
+        ++ngroup;
+        g   = i + 1;
+        acc = 0;
+      }
+    }
+    if (acc > 0) {
+      group_start[ngroup] = g;
+      group_end[ngroup]   = nucl_num - 1;
+      ++ngroup;
+    }
+  }
+  free(bin_count);
+
+  const int64_t niter = ngroup;
+  qmckl_exit_code omp_rc = QMCKL_SUCCESS;
+
+#ifdef HAVE_OPENMP
+#pragma omp parallel num_threads(ctx->num_threads)
+#endif
+  {
+    /* Per-thread scratch, allocated once: a chunk union has at most
+       ao_num AOs and a chunk has at most NCHUNK points. */
+    int64_t* const row_of = (int64_t*) malloc((size_t) ao_num * sizeof(int64_t));
+    int64_t* const union_ = (int64_t*) malloc((size_t) ao_num * sizeof(int64_t));
+    double* const A = (double*) malloc((size_t) mo_num * ao_num * sizeof(double));
+    double* const B = (double*) malloc((size_t) ao_num * QMCKL_MO_COMPACT_NCHUNK * sizeof(double));
+    double* const C = (double*) malloc((size_t) mo_num * QMCKL_MO_COMPACT_NCHUNK * sizeof(double));
+    assert (row_of != NULL);
+    assert (union_ != NULL);
+    assert (A != NULL);
+    assert (B != NULL);
+    assert (C != NULL);
+
+#ifdef HAVE_OPENMP
+#pragma omp for schedule(dynamic,1)
+#endif
+    for (int64_t g=0 ; g<niter ; ++g) {
+      const int64_t s0 = bin_start[group_start[g]];
+      const int64_t s1 = bin_start[group_end[g] + 1];
+      qmckl_exit_code rc = qmckl_compute_mo_compact_group(context,
+                                                          ao_num, mo_num, s1 - s0,
+                                                          bin_point + s0,
+                                                          coefficient_t, ao, mo_out,
+                                                          row_of, union_, A, B, C);
+      if (rc != QMCKL_SUCCESS) {
+#ifdef HAVE_OPENMP
+#pragma omp critical
+#endif
+        omp_rc = rc;
+      }
+    }
+
+    free(C);
+    free(B);
+    free(A);
+    free(union_);
+    free(row_of);
+  }
+
+  free(group_end);
+  free(group_start);
+  free(bin_point);
+  free(bin_start);
+  free(nuc);
+
+  return omp_rc;
+}
+
+qmckl_exit_code
+qmckl_compute_mo_basis_mo_value_compact (const qmckl_context context,
+                                         const int64_t ao_num,
+                                         const int64_t mo_num,
+                                         const int64_t point_num,
+                                         const double* restrict coefficient_t,
+                                         const qmckl_ao_compact_struct* restrict ao,
+                                         const int64_t nucl_num,
+                                         const double* restrict nucl_coord,
+                                         double* restrict const mo_value )
+{
+  return qmckl_compute_mo_compact (context, ao_num, mo_num, point_num,
+                                   coefficient_t, ao, nucl_num, nucl_coord,
+                                   mo_value);
+}
+
+qmckl_exit_code
+qmckl_compute_mo_basis_mo_vgl_compact (const qmckl_context context,
+                                       const int64_t ao_num,
+                                       const int64_t mo_num,
+                                       const int64_t point_num,
+                                       const double* restrict coefficient_t,
+                                       const qmckl_ao_compact_struct* restrict ao,
+                                       const int64_t nucl_num,
+                                       const double* restrict nucl_coord,
+                                       double* restrict const mo_vgl )
+{
+  return qmckl_compute_mo_compact (context, ao_num, mo_num, point_num,
+                                   coefficient_t, ao, nucl_num, nucl_coord,
+                                   mo_vgl);
+}
+#endif
+   #+end_src
 
 ** Computation of MOs: Hessian
 
@@ -4062,6 +4478,312 @@ print ( "[4][1][15][14] : %25.15e"% lf(a,x,y))
   assert(nbits > 11);
   fflush(stdout);
   rc = qmckl_set_numprec_precision(context,53);
+
+#ifdef HAVE_HPC
+  /* ============ MO contraction against the compact AO copy ============
+     The double-precision HPC path now contracts the compact (CSR-like)
+     copy of the AO arrays as binned dgemms. Check it against the naive
+     (doc) contraction, and its edge cases. */
+  {
+    const qmckl_context_struct* const cp_ctx = (qmckl_context_struct*) context;
+
+    rc = qmckl_context_touch(context);
+    assert(rc == QMCKL_SUCCESS);
+
+    double* cp_doc_value  = (double*) malloc((size_t) point_num*chbrclf_mo_num*sizeof(double));
+    double* cp_comp_value = (double*) malloc((size_t) point_num*chbrclf_mo_num*sizeof(double));
+    double* cp_doc_vgl    = (double*) malloc((size_t) 5*point_num*chbrclf_mo_num*sizeof(double));
+    double* cp_comp_vgl   = (double*) malloc((size_t) 5*point_num*chbrclf_mo_num*sizeof(double));
+    assert(cp_doc_value  != NULL);
+    assert(cp_comp_value != NULL);
+    assert(cp_doc_vgl    != NULL);
+    assert(cp_comp_vgl   != NULL);
+
+    /* Reference: the naive contraction, straight from the dense AO
+       arrays and the transposed coefficient. */
+    rc = qmckl_provide_ao_basis_ao_value(context);
+    assert(rc == QMCKL_SUCCESS);
+    rc = qmckl_provide_ao_basis_ao_vgl(context);
+    assert(rc == QMCKL_SUCCESS);
+    rc = qmckl_compute_mo_basis_mo_value_doc(context, ao_num, chbrclf_mo_num,
+                                             point_num,
+                                             cp_ctx->mo_basis.coefficient_t,
+                                             cp_ctx->ao_basis.ao_value,
+                                             cp_doc_value);
+    assert(rc == QMCKL_SUCCESS);
+    rc = qmckl_compute_mo_basis_mo_vgl_doc(context, ao_num, chbrclf_mo_num,
+                                           point_num,
+                                           cp_ctx->mo_basis.coefficient_t,
+                                           cp_ctx->ao_basis.ao_vgl,
+                                           cp_doc_vgl);
+    assert(rc == QMCKL_SUCCESS);
+
+    /* The library path, which contracts the compact AO copy */
+    rc = qmckl_get_mo_basis_mo_value(context, cp_comp_value,
+                                     point_num*chbrclf_mo_num);
+    assert(rc == QMCKL_SUCCESS);
+    rc = qmckl_get_mo_basis_mo_vgl(context, cp_comp_vgl,
+                                   5*point_num*chbrclf_mo_num);
+    assert(rc == QMCKL_SUCCESS);
+
+    {
+      double cp_max_b = 0., cp_max_d = 0.;
+      for (int64_t i=0 ; i<(int64_t) point_num*chbrclf_mo_num ; ++i) {
+        cp_max_b = fabs(cp_doc_value[i]) > cp_max_b ?
+          fabs(cp_doc_value[i]) : cp_max_b;
+        cp_max_d = fabs(cp_comp_value[i] - cp_doc_value[i]) > cp_max_d ?
+          fabs(cp_comp_value[i] - cp_doc_value[i]) : cp_max_d;
+      }
+      assert(cp_max_b > 0.);
+      assert(cp_max_d <= 1.e-12 * cp_max_b);
+
+      cp_max_b = 0.;
+      cp_max_d = 0.;
+      for (int64_t i=0 ; i<(int64_t) 5*point_num*chbrclf_mo_num ; ++i) {
+        cp_max_b = fabs(cp_doc_vgl[i]) > cp_max_b ?
+          fabs(cp_doc_vgl[i]) : cp_max_b;
+        cp_max_d = fabs(cp_comp_vgl[i] - cp_doc_vgl[i]) > cp_max_d ?
+          fabs(cp_comp_vgl[i] - cp_doc_vgl[i]) : cp_max_d;
+      }
+      assert(cp_max_b > 0.);
+      assert(cp_max_d <= 1.e-12 * cp_max_b);
+    }
+
+    /* The compact copies were actually built and used */
+    assert(cp_ctx->ao_basis.ao_value_compact.date == cp_ctx->date);
+    assert(cp_ctx->ao_basis.ao_vgl_compact.date   == cp_ctx->date);
+    assert(cp_ctx->ao_basis.ao_value_compact.nnz > 0);
+    assert(cp_ctx->ao_basis.ao_vgl_compact.nnz   > 0);
+
+    /* Determinism: two identical calls give bit-identical mo_vgl */
+    rc = qmckl_context_touch(context);
+    assert(rc == QMCKL_SUCCESS);
+    rc = qmckl_get_mo_basis_mo_vgl(context, cp_doc_vgl,
+                                   5*point_num*chbrclf_mo_num);
+    assert(rc == QMCKL_SUCCESS);
+    for (int64_t i=0 ; i<(int64_t) 5*point_num*chbrclf_mo_num ; ++i) {
+      assert(cp_doc_vgl[i] == cp_comp_vgl[i]);
+    }
+
+    /* Single precision must still take the old path: the compact copies
+       are neither rebuilt nor consumed by the MO providers. */
+    {
+      const uint64_t cp_vdate = cp_ctx->ao_basis.ao_value_compact.date;
+      const uint64_t cp_gdate = cp_ctx->ao_basis.ao_vgl_compact.date;
+      int64_t cp_bits = 0;
+      int64_t cp_nelm = 0;
+
+      rc = qmckl_set_numprec_precision(context, 23);
+      assert(rc == QMCKL_SUCCESS);
+      rc = qmckl_context_touch(context);
+      assert(rc == QMCKL_SUCCESS);
+
+      rc = qmckl_get_mo_basis_mo_value(context, cp_comp_value,
+                                       point_num*chbrclf_mo_num);
+      assert(rc == QMCKL_SUCCESS);
+      rc = qmckl_get_mo_basis_mo_vgl(context, cp_comp_vgl,
+                                     5*point_num*chbrclf_mo_num);
+      assert(rc == QMCKL_SUCCESS);
+
+      assert(cp_ctx->ao_basis.ao_value_compact.date == cp_vdate);
+      assert(cp_ctx->ao_basis.ao_vgl_compact.date   == cp_gdate);
+
+      /* The single-precision result agrees with the double-precision
+         reference on more than 12 bits, as the old kernel does. */
+      for (int64_t i=0 ; i<(int64_t) point_num*chbrclf_mo_num ; ++i) {
+        cp_bits += qmckl_test_precision_64(cp_comp_value[i], cp_doc_value[i]);
+        ++cp_nelm;
+      }
+      assert(cp_bits/cp_nelm > 12);
+
+      rc = qmckl_set_numprec_precision(context, 53);
+      assert(rc == QMCKL_SUCCESS);
+      rc = qmckl_context_touch(context);
+      assert(rc == QMCKL_SUCCESS);
+    }
+
+    /* A point whose index list is empty (far from every nucleus, all
+       AOs underflow to zero): the MO values must be exactly zero and
+       the point must not be dropped from the output. */
+    {
+      double cp_far[6];
+      cp_far[0] = 1.e6;
+      cp_far[1] = 1.e6;
+      cp_far[2] = 1.e6;
+      memcpy(&cp_far[3], &chbrclf_elec_coord[0][0][0], 3*sizeof(double));
+
+      rc = qmckl_set_point(context, 'N', 2, cp_far, 6);
+      assert(rc == QMCKL_SUCCESS);
+
+      double* cp2_comp = (double*) malloc((size_t) 2*chbrclf_mo_num*sizeof(double));
+      double* cp2_doc  = (double*) malloc((size_t) 2*chbrclf_mo_num*sizeof(double));
+      assert(cp2_comp != NULL);
+      assert(cp2_doc  != NULL);
+
+      rc = qmckl_get_mo_basis_mo_value(context, cp2_comp, 2*chbrclf_mo_num);
+      assert(rc == QMCKL_SUCCESS);
+
+      for (int64_t k=0 ; k<chbrclf_mo_num ; ++k) {
+        assert(cp2_comp[k] == 0.0);
+      }
+
+      /* The compact index set of the far point is empty. Both compact
+         structures are rebuilt by their own providers (the mo_value path
+         above may have used the plain kernel: with only two points the
+         MAC work is below QMCKL_MO_COMPACT_MIN_WORK). */
+      rc = qmckl_provide_ao_basis_ao_value_compact(context);
+      assert(rc == QMCKL_SUCCESS);
+      assert(cp_ctx->ao_basis.ao_value_compact.ptr[1] ==
+             cp_ctx->ao_basis.ao_value_compact.ptr[0]);
+      rc = qmckl_provide_ao_basis_ao_vgl_compact(context);
+      assert(rc == QMCKL_SUCCESS);
+      assert(cp_ctx->ao_basis.ao_vgl_compact.ptr[1] ==
+             cp_ctx->ao_basis.ao_vgl_compact.ptr[0]);
+
+      rc = qmckl_provide_ao_basis_ao_value(context);
+      assert(rc == QMCKL_SUCCESS);
+      rc = qmckl_compute_mo_basis_mo_value_doc(context, ao_num, chbrclf_mo_num,
+                                               2,
+                                               cp_ctx->mo_basis.coefficient_t,
+                                               cp_ctx->ao_basis.ao_value,
+                                               cp2_doc);
+      assert(rc == QMCKL_SUCCESS);
+
+      {
+        double cp2_max_b = 0., cp2_max_d = 0.;
+        for (int64_t k=0 ; k<chbrclf_mo_num ; ++k) {
+          cp2_max_b = fabs(cp2_doc[chbrclf_mo_num + k]) > cp2_max_b ?
+            fabs(cp2_doc[chbrclf_mo_num + k]) : cp2_max_b;
+          cp2_max_d = fabs(cp2_comp[chbrclf_mo_num + k] -
+                           cp2_doc[chbrclf_mo_num + k]) > cp2_max_d ?
+            fabs(cp2_comp[chbrclf_mo_num + k] - cp2_doc[chbrclf_mo_num + k]) :
+            cp2_max_d;
+        }
+        assert(cp2_max_b > 0.);
+        assert(cp2_max_d <= 1.e-12 * cp2_max_b);
+      }
+
+      free(cp2_comp);
+      free(cp2_doc);
+    }
+
+    /* A group of more than 512 points: exercises the chunking of the
+       contraction. 600 points around one nucleus. */
+    {
+      const int64_t cp600_n = 600;
+
+      double* cp600_coord = (double*) malloc((size_t) cp600_n*3*sizeof(double));
+      assert(cp600_coord != NULL);
+      for (int64_t p=0 ; p<cp600_n ; ++p) {
+        cp600_coord[3*p    ] = chbrclf_elec_coord[0][0][0] + 1.e-4*(double) p;
+        cp600_coord[3*p + 1] = chbrclf_elec_coord[0][0][1] + 1.e-5*(double) p;
+        cp600_coord[3*p + 2] = chbrclf_elec_coord[0][0][2];
+      }
+
+      rc = qmckl_set_point(context, 'N', cp600_n, cp600_coord, 3*cp600_n);
+      assert(rc == QMCKL_SUCCESS);
+
+      double* cp600_comp  = (double*) malloc((size_t) cp600_n*chbrclf_mo_num*sizeof(double));
+      double* cp600_doc   = (double*) malloc((size_t) cp600_n*chbrclf_mo_num*sizeof(double));
+      double* cp600_comp5 = (double*) malloc((size_t) 5*cp600_n*chbrclf_mo_num*sizeof(double));
+      double* cp600_doc5  = (double*) malloc((size_t) 5*cp600_n*chbrclf_mo_num*sizeof(double));
+      assert(cp600_comp  != NULL);
+      assert(cp600_doc   != NULL);
+      assert(cp600_comp5 != NULL);
+      assert(cp600_doc5  != NULL);
+
+      rc = qmckl_get_mo_basis_mo_value(context, cp600_comp,
+                                       cp600_n*chbrclf_mo_num);
+      assert(rc == QMCKL_SUCCESS);
+      rc = qmckl_get_mo_basis_mo_vgl(context, cp600_comp5,
+                                     5*cp600_n*chbrclf_mo_num);
+      assert(rc == QMCKL_SUCCESS);
+
+      rc = qmckl_provide_ao_basis_ao_value(context);
+      assert(rc == QMCKL_SUCCESS);
+      rc = qmckl_provide_ao_basis_ao_vgl(context);
+      assert(rc == QMCKL_SUCCESS);
+      rc = qmckl_compute_mo_basis_mo_value_doc(context, ao_num, chbrclf_mo_num,
+                                               cp600_n,
+                                               cp_ctx->mo_basis.coefficient_t,
+                                               cp_ctx->ao_basis.ao_value,
+                                               cp600_doc);
+      assert(rc == QMCKL_SUCCESS);
+      rc = qmckl_compute_mo_basis_mo_vgl_doc(context, ao_num, chbrclf_mo_num,
+                                             cp600_n,
+                                             cp_ctx->mo_basis.coefficient_t,
+                                             cp_ctx->ao_basis.ao_vgl,
+                                             cp600_doc5);
+      assert(rc == QMCKL_SUCCESS);
+
+      {
+        double cp600_max_b = 0., cp600_max_d = 0.;
+        for (int64_t i=0 ; i<(int64_t) cp600_n*chbrclf_mo_num ; ++i) {
+          cp600_max_b = fabs(cp600_doc[i]) > cp600_max_b ?
+            fabs(cp600_doc[i]) : cp600_max_b;
+          cp600_max_d = fabs(cp600_comp[i] - cp600_doc[i]) > cp600_max_d ?
+            fabs(cp600_comp[i] - cp600_doc[i]) : cp600_max_d;
+        }
+        assert(cp600_max_b > 0.);
+        assert(cp600_max_d <= 1.e-12 * cp600_max_b);
+
+        cp600_max_b = 0.;
+        cp600_max_d = 0.;
+        for (int64_t i=0 ; i<(int64_t) 5*cp600_n*chbrclf_mo_num ; ++i) {
+          cp600_max_b = fabs(cp600_doc5[i]) > cp600_max_b ?
+            fabs(cp600_doc5[i]) : cp600_max_b;
+          cp600_max_d = fabs(cp600_comp5[i] - cp600_doc5[i]) > cp600_max_d ?
+            fabs(cp600_comp5[i] - cp600_doc5[i]) : cp600_max_d;
+        }
+        assert(cp600_max_b > 0.);
+        assert(cp600_max_d <= 1.e-12 * cp600_max_b);
+      }
+
+      free(cp600_coord);
+      free(cp600_comp);
+      free(cp600_doc);
+      free(cp600_comp5);
+      free(cp600_doc5);
+    }
+
+    /* point_num = 0: the kernels return success and leave the output
+       untouched. */
+    {
+      double cp0_out[32];
+      for (int64_t i=0 ; i<32 ; ++i) {
+        cp0_out[i] = -1.0;
+      }
+      rc = qmckl_compute_mo_basis_mo_value_compact(context,
+                                                   ao_num, chbrclf_mo_num, 0,
+                                                   cp_ctx->mo_basis.coefficient_t,
+                                                   &cp_ctx->ao_basis.ao_value_compact,
+                                                   cp_ctx->nucleus.num,
+                                                   cp_ctx->nucleus.coord.data,
+                                                   cp0_out);
+      assert(rc == QMCKL_SUCCESS);
+      rc = qmckl_compute_mo_basis_mo_vgl_compact(context,
+                                                 ao_num, chbrclf_mo_num, 0,
+                                                 cp_ctx->mo_basis.coefficient_t,
+                                                 &cp_ctx->ao_basis.ao_vgl_compact,
+                                                 cp_ctx->nucleus.num,
+                                                 cp_ctx->nucleus.coord.data,
+                                                 cp0_out);
+      assert(rc == QMCKL_SUCCESS);
+      for (int64_t i=0 ; i<32 ; ++i) {
+        assert(cp0_out[i] == -1.0);
+      }
+    }
+
+    free(cp_doc_value);
+    free(cp_comp_value);
+    free(cp_doc_vgl);
+    free(cp_comp_vgl);
+
+    /* Restore the original point set for the tests that follow */
+    rc = qmckl_set_point(context, 'N', point_num, elec_coord, point_num*3);
+    assert(rc == QMCKL_SUCCESS);
+  }
+#endif
 
 
   /* Check selection of MOs */
