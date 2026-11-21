@@ -81,6 +81,8 @@ gradients and Laplacian of the atomic basis functions.
 
 #include "chbrclf.h"
 #include "qmckl_ao_private_func.h"
+#include "qmckl_context_private_type.h"
+#include "qmckl_memory_private_func.h"
 
 int main() {
     qmckl_context context;
@@ -2508,6 +2510,21 @@ rc = qmckl_set_ao_basis_nucleus_index (context, nucleus_index, nucl_num);
 assert(rc == QMCKL_SUCCESS);
 assert(!qmckl_ao_basis_provided(context));
 
+/* A copy taken while the basis is only partly filled owns its arrays */
+{
+  qmckl_context partial = qmckl_context_copy(context);
+  assert(partial != QMCKL_NULL_CONTEXT);
+  const qmckl_context_struct* const src_ctx = (const qmckl_context_struct*) context;
+  const qmckl_context_struct* const cpy_ctx = (const qmckl_context_struct*) partial;
+  assert(!cpy_ctx->ao_basis.provided);
+  assert(cpy_ctx->ao_basis.nucleus_index != src_ctx->ao_basis.nucleus_index);
+  assert(cpy_ctx->ao_basis.nucleus_shell_num == NULL);
+  for (int64_t i=0 ; i<nucl_num ; ++i) {
+    assert(cpy_ctx->ao_basis.nucleus_index[i] == src_ctx->ao_basis.nucleus_index[i]);
+  }
+  qmckl_context_destroy(partial);
+}
+
 rc = qmckl_set_ao_basis_nucleus_index (context, nucleus_index, nucl_num);
 assert(rc == QMCKL_ALREADY_SET);
 
@@ -2549,6 +2566,50 @@ rc = qmckl_set_ao_basis_ao_factor (context, ao_factor, ao_num);
 assert(rc == QMCKL_SUCCESS);
 
 assert(qmckl_ao_basis_provided(context));
+
+/* A copy of a filled basis owns its arrays, including the derived ones */
+{
+  qmckl_context copy = qmckl_context_copy(context);
+  assert(copy != QMCKL_NULL_CONTEXT);
+  const qmckl_context_struct* const src_ctx = (const qmckl_context_struct*) context;
+  const qmckl_context_struct* const cpy_ctx = (const qmckl_context_struct*) copy;
+  qmckl_memory_info_struct info = qmckl_memory_info_struct_zero;
+
+  assert(cpy_ctx->ao_basis.nucleus_index       != src_ctx->ao_basis.nucleus_index);
+  assert(cpy_ctx->ao_basis.nucleus_shell_num   != src_ctx->ao_basis.nucleus_shell_num);
+  assert(cpy_ctx->ao_basis.nucleus_prim_index  != src_ctx->ao_basis.nucleus_prim_index);
+  assert(cpy_ctx->ao_basis.nucleus_max_ang_mom != src_ctx->ao_basis.nucleus_max_ang_mom);
+  assert(cpy_ctx->ao_basis.nucleus_range       != src_ctx->ao_basis.nucleus_range);
+  assert(cpy_ctx->ao_basis.exponent            != src_ctx->ao_basis.exponent);
+
+  assert(qmckl_get_malloc_info(copy, cpy_ctx->ao_basis.nucleus_index, &info) == QMCKL_SUCCESS);
+  assert(info.size == (size_t) nucl_num * sizeof(int64_t));
+  assert(qmckl_get_malloc_info(copy, cpy_ctx->ao_basis.nucleus_shell_num, &info) == QMCKL_SUCCESS);
+  assert(info.size == (size_t) nucl_num * sizeof(int64_t));
+  assert(qmckl_get_malloc_info(copy, cpy_ctx->ao_basis.nucleus_prim_index, &info) == QMCKL_SUCCESS);
+  assert(info.size == (size_t) (nucl_num + 1) * sizeof(int64_t));
+  assert(qmckl_get_malloc_info(copy, cpy_ctx->ao_basis.nucleus_max_ang_mom, &info) == QMCKL_SUCCESS);
+  assert(info.size == (size_t) nucl_num * sizeof(int32_t));
+  assert(qmckl_get_malloc_info(copy, cpy_ctx->ao_basis.nucleus_range, &info) == QMCKL_SUCCESS);
+  assert(info.size == (size_t) nucl_num * sizeof(double));
+#ifdef HAVE_HPC
+  assert(qmckl_get_malloc_info(copy, cpy_ctx->ao_basis.prim_num_per_nucleus, &info) == QMCKL_SUCCESS);
+  assert(info.size == (size_t) nucl_num * sizeof(int32_t));
+#endif
+
+  for (int64_t i=0 ; i<nucl_num ; ++i) {
+    assert(cpy_ctx->ao_basis.nucleus_index[i] == src_ctx->ao_basis.nucleus_index[i]);
+    assert(cpy_ctx->ao_basis.nucleus_shell_num[i] == src_ctx->ao_basis.nucleus_shell_num[i]);
+    assert(cpy_ctx->ao_basis.nucleus_max_ang_mom[i] == src_ctx->ao_basis.nucleus_max_ang_mom[i]);
+    assert(cpy_ctx->ao_basis.nucleus_range[i] == src_ctx->ao_basis.nucleus_range[i]);
+  }
+  assert(cpy_ctx->ao_basis.nucleus_prim_index[nucl_num] == prim_num);
+  for (int64_t i=0 ; i<prim_num ; ++i) {
+    assert(cpy_ctx->ao_basis.exponent[i] == src_ctx->ao_basis.exponent[i]);
+  }
+
+  qmckl_context_destroy(copy);
+}
 
 int64_t    shell_num_test        ;
 int64_t    prim_num_test         ;
@@ -2695,30 +2756,46 @@ qmckl_exit_code qmckl_copy_ao_basis(qmckl_context context, const qmckl_ao_basis_
                           "NULL pointer");
   }
 
-  /* If source is not provided/initialized, just copy the struct */
-  if (!src->provided) {
-    *dest = *src;
-    return QMCKL_SUCCESS;
-  }
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  const int64_t nucl_num = ctx->nucleus.num;
 
   /* Use memcpy to copy all scalar fields and pointer values at once */
   memcpy(dest, src, sizeof(qmckl_ao_basis_struct));
 
-  /* Now update pointer fields with deep copies */
-  
+  /* The memcpy above aliased every pointer of src. Drop the aliases before
+     taking ownership of the arrays, so that a partly filled basis never
+     shares memory with its copy. */
+  dest->nucleus_index = NULL;
+  dest->nucleus_shell_num = NULL;
+  dest->r_power = NULL;
+  dest->shell_ang_mom = NULL;
+  dest->shell_prim_num = NULL;
+  dest->shell_prim_index = NULL;
+  dest->shell_factor = NULL;
+  dest->exponent = NULL;
+  dest->coefficient = NULL;
+  dest->prim_factor = NULL;
+  dest->ao_factor = NULL;
+  dest->ao_nucl = NULL;
+  dest->ao_ang_mom = NULL;
+  dest->nucleus_prim_index = NULL;
+  dest->coefficient_normalized = NULL;
+  dest->nucleus_max_ang_mom = NULL;
+  dest->nucleus_range = NULL;
+
   /* Deep copy nucleus_index array */
-  if (src->nucleus_index != NULL && src->shell_num > 0) {
+  if (src->nucleus_index != NULL && nucl_num > 0) {
     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-    mem_info.size = src->shell_num * sizeof(int64_t);
+    mem_info.size = nucl_num * sizeof(int64_t);
     dest->nucleus_index = (int64_t*) qmckl_malloc(context, mem_info);
     if (dest->nucleus_index == NULL) return QMCKL_ALLOCATION_FAILED;
     memcpy(dest->nucleus_index, src->nucleus_index, mem_info.size);
   }
 
   /* Deep copy nucleus_shell_num array */
-  if (src->nucleus_shell_num != NULL && src->shell_num > 0) {
+  if (src->nucleus_shell_num != NULL && nucl_num > 0) {
     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-    mem_info.size = src->shell_num * sizeof(int64_t);
+    mem_info.size = nucl_num * sizeof(int64_t);
     dest->nucleus_shell_num = (int64_t*) qmckl_malloc(context, mem_info);
     if (dest->nucleus_shell_num == NULL) return QMCKL_ALLOCATION_FAILED;
     memcpy(dest->nucleus_shell_num, src->nucleus_shell_num, mem_info.size);
@@ -2823,10 +2900,10 @@ qmckl_exit_code qmckl_copy_ao_basis(qmckl_context context, const qmckl_ao_basis_
     memcpy(dest->ao_ang_mom, src->ao_ang_mom, mem_info.size);
   }
 
-  /* Deep copy nucleus_prim_index array (derived data) */
-  if (src->nucleus_prim_index != NULL && src->shell_num > 0) {
+  /* Deep copy nucleus_prim_index array (derived data, nucl_num+1 entries) */
+  if (src->nucleus_prim_index != NULL) {
     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-    mem_info.size = src->shell_num * sizeof(int64_t);
+    mem_info.size = (nucl_num + 1) * sizeof(int64_t);
     dest->nucleus_prim_index = (int64_t*) qmckl_malloc(context, mem_info);
     if (dest->nucleus_prim_index == NULL) return QMCKL_ALLOCATION_FAILED;
     memcpy(dest->nucleus_prim_index, src->nucleus_prim_index, mem_info.size);
@@ -2842,18 +2919,18 @@ qmckl_exit_code qmckl_copy_ao_basis(qmckl_context context, const qmckl_ao_basis_
   }
 
   /* Deep copy nucleus_max_ang_mom array (derived data) */
-  if (src->nucleus_max_ang_mom != NULL && src->shell_num > 0) {
+  if (src->nucleus_max_ang_mom != NULL && nucl_num > 0) {
     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-    mem_info.size = src->shell_num * sizeof(int32_t);
+    mem_info.size = nucl_num * sizeof(int32_t);
     dest->nucleus_max_ang_mom = (int32_t*) qmckl_malloc(context, mem_info);
     if (dest->nucleus_max_ang_mom == NULL) return QMCKL_ALLOCATION_FAILED;
     memcpy(dest->nucleus_max_ang_mom, src->nucleus_max_ang_mom, mem_info.size);
   }
 
   /* Deep copy nucleus_range array (derived data) */
-  if (src->nucleus_range != NULL && src->shell_num > 0) {
+  if (src->nucleus_range != NULL && nucl_num > 0) {
     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-    mem_info.size = src->shell_num * sizeof(double);
+    mem_info.size = nucl_num * sizeof(double);
     dest->nucleus_range = (double*) qmckl_malloc(context, mem_info);
     if (dest->nucleus_range == NULL) return QMCKL_ALLOCATION_FAILED;
     memcpy(dest->nucleus_range, src->nucleus_range, mem_info.size);
@@ -2879,9 +2956,9 @@ qmckl_exit_code qmckl_copy_ao_basis(qmckl_context context, const qmckl_ao_basis_
   /* Deep copy HPC-specific data structures */
   
   /* Deep copy prim_num_per_nucleus array */
-  if (src->prim_num_per_nucleus != NULL && src->shell_num > 0) {
+  if (src->prim_num_per_nucleus != NULL && nucl_num > 0) {
     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
-    mem_info.size = src->shell_num * sizeof(int32_t);
+    mem_info.size = nucl_num * sizeof(int32_t);
     dest->prim_num_per_nucleus = (int32_t*) qmckl_malloc(context, mem_info);
     if (dest->prim_num_per_nucleus == NULL) return QMCKL_ALLOCATION_FAILED;
     memcpy(dest->prim_num_per_nucleus, src->prim_num_per_nucleus, mem_info.size);
