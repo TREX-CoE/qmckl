@@ -5542,6 +5542,13 @@ qmckl_get_forces_mo_value(qmckl_context context,
     #+end_src
 
 
+    ~qmckl_get_forces_mo_value_inplace~ computes the derivative of the MO
+    values with respect to the nuclear coordinates and stores it in
+    ~forces_mo_value~, which must have room for
+    ~point.num * 3 * mo_num * nucleus.num~ doubles. The array cached in the
+    context is left untouched; a getter called afterwards returns the cached
+    values if they are still valid and recomputes them otherwise.
+
    #+begin_src c :comments org :tangle (eval h_func) :noweb yes
 qmckl_exit_code
 qmckl_get_forces_mo_value_inplace (qmckl_context context,
@@ -5576,19 +5583,20 @@ qmckl_get_forces_mo_value_inplace (qmckl_context context,
                            "input array too small");
   }
 
-  ctx->forces.forces_mo_value_date = ctx->point.date - 1UL;
+  const uint64_t old_date = ctx->forces.forces_mo_value_date;
   double* old_array = ctx->forces.forces_mo_value;
 
+  /* Force the provider to compute into the caller's array. */
+  ctx->forces.forces_mo_value_date = 0;
   ctx->forces.forces_mo_value = forces_mo_value;
 
   rc = qmckl_provide_forces_mo_value(context);
-  if (rc != QMCKL_SUCCESS) return rc;
 
+  /* The context cache is not the caller's array: restore it as it was. */
   ctx->forces.forces_mo_value = old_array;
+  ctx->forces.forces_mo_value_date = old_date;
 
-  ctx->forces.forces_mo_value_date = ctx->point.date - 1UL;
-
-  return QMCKL_SUCCESS;
+  return rc;
 }
     #+end_src
 
@@ -5934,6 +5942,13 @@ for the AOs centered on that nucleus.
 
 *** Get
 
+    ~qmckl_get_forces_mo_g_inplace~ computes the derivative of the MO
+    gradients with respect to the nuclear coordinates and stores it in
+    ~forces_mo_g~, which must have room for
+    ~point.num * 3 * 3 * mo_num * nucleus.num~ doubles. The array cached in
+    the context is left untouched; a getter called afterwards returns the
+    cached values if they are still valid and recomputes them otherwise.
+
     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
 qmckl_exit_code
 qmckl_get_forces_mo_g(qmckl_context context,
@@ -6009,20 +6024,20 @@ qmckl_get_forces_mo_g_inplace (qmckl_context context,
                            "input array too small");
   }
 
-  ctx->forces.forces_mo_g_date = ctx->point.date - 1UL;
+  const uint64_t old_date = ctx->forces.forces_mo_g_date;
+  double* old_array = ctx->forces.forces_mo_g;
 
-  double* old_array =  ctx->forces.forces_mo_g;
-
+  /* Force the provider to compute into the caller's array. */
+  ctx->forces.forces_mo_g_date = 0;
   ctx->forces.forces_mo_g = forces_mo_g;
 
   rc = qmckl_provide_forces_mo_g(context);
-  if (rc != QMCKL_SUCCESS) return rc;
 
+  /* The context cache is not the caller's array: restore it as it was. */
   ctx->forces.forces_mo_g = old_array;
+  ctx->forces.forces_mo_g_date = old_date;
 
-  ctx->forces.forces_mo_g_date = ctx->point.date - 1UL;
-
-  return QMCKL_SUCCESS;
+  return rc;
 }
     #+end_src
 
@@ -6908,6 +6923,31 @@ printf("OK\n");
 
   #+begin_src c :tangle (eval h_private_func) :exports none
 #endif
+  #+end_src
+
+*** Regression tests for the inplace getters                         :noexport:
+
+  #+begin_src c :tangle (eval c_test) :exports none
+{
+  /* An inplace getter that fails must leave the context unchanged: the
+     context must not keep a pointer to the caller's array, which it would
+     try to free when it is finalized. */
+  qmckl_context inplace_ctx = qmckl_context_create();
+  assert(inplace_ctx != QMCKL_NULL_CONTEXT);
+
+  double inplace_buf[1] = { 0. };
+
+  rc = qmckl_get_forces_mo_value_inplace(inplace_ctx, inplace_buf, 0);
+  assert(rc != QMCKL_SUCCESS);
+  assert(((qmckl_context_struct*) inplace_ctx)->forces.forces_mo_value == NULL);
+
+  rc = qmckl_get_forces_mo_g_inplace(inplace_ctx, inplace_buf, 0);
+  assert(rc != QMCKL_SUCCESS);
+  assert(((qmckl_context_struct*) inplace_ctx)->forces.forces_mo_g == NULL);
+
+  rc = qmckl_context_destroy(inplace_ctx);
+  assert(rc == QMCKL_SUCCESS);
+}
   #+end_src
 
 ** Test

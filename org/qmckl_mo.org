@@ -1213,9 +1213,11 @@ qmckl_get_mo_basis_mo_value(qmckl_context context,
     #+end_src
 
     ~qmckl_get_mo_basis_mo_value_inplace~ computes the values directly into
+    ~qmckl_get_mo_basis_mo_value_inplace~ computes the values directly into
     ~mo_value~, which must have room for ~point.num * mo_num~ doubles. The
-    array cached in the context is left untouched and marked stale, so the
-    next getter call recomputes it.
+    array cached in the context is left untouched; a getter called afterwards
+    returns the cached values if they are still valid and recomputes them
+    otherwise.
 
     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
 qmckl_exit_code
@@ -1251,20 +1253,20 @@ qmckl_get_mo_basis_mo_value_inplace (qmckl_context context,
                            "input array too small");
   }
 
-  ctx->mo_basis.mo_value_date = ctx->point.date - 1UL;
-
+  const uint64_t old_date = ctx->mo_basis.mo_value_date;
   double* old_array = ctx->mo_basis.mo_value;
 
+  /* Force the provider to compute into the caller's array. */
+  ctx->mo_basis.mo_value_date = 0;
   ctx->mo_basis.mo_value = mo_value;
 
   rc = qmckl_provide_mo_basis_mo_value(context);
-  if (rc != QMCKL_SUCCESS) return rc;
 
+  /* The context cache is not the caller's array: restore it as it was. */
   ctx->mo_basis.mo_value = old_array;
+  ctx->mo_basis.mo_value_date = old_date;
 
-  ctx->mo_basis.mo_value_date = ctx->point.date - 1UL;
-
-  return QMCKL_SUCCESS;
+  return rc;
 }
     #+end_src
 
@@ -1852,9 +1854,11 @@ qmckl_get_mo_basis_mo_vgl(qmckl_context context,
     #+end_src
 
     ~qmckl_get_mo_basis_mo_vgl_inplace~ computes the values, gradients and
+    Laplacians directly into     ~qmckl_get_mo_basis_mo_vgl_inplace~ computes the values, gradients and
     Laplacians directly into ~mo_vgl~, which must have room for
     ~point.num * 5 * mo_num~ doubles. The array cached in the context is left
-    untouched and marked stale, so the next getter call recomputes it.
+    untouched; a getter called afterwards returns the cached values if they
+    are still valid and recomputes them otherwise.
 
     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
 qmckl_exit_code
@@ -1890,20 +1894,20 @@ qmckl_get_mo_basis_mo_vgl_inplace (qmckl_context context,
                            "input array too small");
   }
 
-  ctx->mo_basis.mo_vgl_date = ctx->point.date - 1UL;
-
+  const uint64_t old_date = ctx->mo_basis.mo_vgl_date;
   double* old_array = ctx->mo_basis.mo_vgl;
 
+  /* Force the provider to compute into the caller's array. */
+  ctx->mo_basis.mo_vgl_date = 0;
   ctx->mo_basis.mo_vgl = mo_vgl;
 
   rc = qmckl_provide_mo_basis_mo_vgl(context);
-  if (rc != QMCKL_SUCCESS) return rc;
 
+  /* The context cache is not the caller's array: restore it as it was. */
   ctx->mo_basis.mo_vgl = old_array;
+  ctx->mo_basis.mo_vgl_date = old_date;
 
-  ctx->mo_basis.mo_vgl_date = ctx->point.date - 1UL;
-
-  return QMCKL_SUCCESS;
+  return rc;
 }
     #+end_src
 
@@ -4308,6 +4312,31 @@ print ( "[4][1][15][14] : %25.15e"% lf(a,x,y))
   for (int64_t i=0 ; i<3 ; ++i) assert(coord_out[i] == elec_coord[i]);
 
   rc = qmckl_context_destroy(ctx2);
+  assert(rc == QMCKL_SUCCESS);
+}
+  #+end_src
+
+*** Regression tests for the inplace getters                         :noexport:
+
+  #+begin_src c :tangle (eval c_test) :exports none
+{
+  /* An inplace getter that fails must leave the context unchanged: the
+     context must not keep a pointer to the caller's array, which it would
+     try to free when it is finalized. */
+  qmckl_context inplace_ctx = qmckl_context_create();
+  assert(inplace_ctx != QMCKL_NULL_CONTEXT);
+
+  double inplace_buf[1] = { 0. };
+
+  rc = qmckl_get_mo_basis_mo_value_inplace(inplace_ctx, inplace_buf, 0);
+  assert(rc != QMCKL_SUCCESS);
+  assert(((qmckl_context_struct*) inplace_ctx)->mo_basis.mo_value == NULL);
+
+  rc = qmckl_get_mo_basis_mo_vgl_inplace(inplace_ctx, inplace_buf, 0);
+  assert(rc != QMCKL_SUCCESS);
+  assert(((qmckl_context_struct*) inplace_ctx)->mo_basis.mo_vgl == NULL);
+
+  rc = qmckl_context_destroy(inplace_ctx);
   assert(rc == QMCKL_SUCCESS);
 }
   #+end_src
