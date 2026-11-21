@@ -12,8 +12,15 @@
   E_{nn} = \sum_{i<j} \frac{Z_i Z_j}{r_{ij}},
   \]
 
-  and keeps both in the context. Each of the two is stamped with the date at
-  which it was computed, and is recomputed only after the coordinates change.
+  and keeps both in the context. The other modules read the geometry from the
+  same fields: the atomic basis, the electron-nucleus distances and the force
+  kernels take the coordinates, and the electron-nucleus potential and the
+  molecular-orbital cusp take the charges.
+
+  The module does not cache its two derived quantities. Both getters recompute
+  from the current inputs on every call and stamp the current context date;
+  what a coordinate change propagates to the other modules is that context
+  date, which ~qmckl_set_nucleus_coord~ increments.
 
 * Headers                                                          :noexport:
    #+begin_src elisp :noexport :results none
@@ -78,36 +85,39 @@ int main() {
 
 * Context
 
-  The nucleus module stores both input data (nuclear positions and charges)
-  and computed derived quantities (inter-nuclear distances and repulsion energy)
-  in the context. This organization allows for efficient caching: derived
-  quantities are only recomputed when the underlying input data changes.
-  
-  The following data is stored in the context:
+  The nucleus module stores the input data (nuclear positions and charges) and
+  the two quantities derived from it (inter-nuclear distances and repulsion
+  energy) in the context. The input data is what the other modules read; the
+  derived quantities are only read back here.
+
+  The input data:
 
   |-----------------+----------------+-------------------------------------------|
-  | ~uninitialized~ | ~int32_t~      | Keeps bit set for uninitialized data      |
+  | ~uninitialized~ | ~int32_t~      | Bits of the input data not set yet        |
   | ~num~           | ~int64_t~      | Total number of nuclei                    |
-  | ~provided~      | ~bool~         | If true, ~nucleus~ is valid               |
+  | ~provided~      | ~bool~         | True once all three inputs are set        |
   | ~charge~        | ~qmckl_vector~ | Nuclear charges                           |
-  | ~coord~         | ~qmckl_matrix~ | Nuclear coordinates, in transposed format |
-  | ~coord_date~    | ~int64_t~      | Nuclear coordinates, date if modified     |
+  | ~coord~         | ~qmckl_matrix~ | Nuclear coordinates, one row per nucleus  |
 
   Computed data:
-  
+
   |--------------------+----------------+-----------------------------------------------------|
   | ~nn_distance~      | ~qmckl_matrix~ | Nucleus-nucleus distances                           |
-  | ~nn_distance_date~ | ~int64_t~      | Date when Nucleus-nucleus distances were computed   |
+  | ~nn_distance_date~ | ~int64_t~      | Date of the last computation of the distances       |
   | ~repulsion~        | ~double~       | Nuclear repulsion energy                            |
-  | ~repulsion_date~   | ~int64_t~      | Date when the nuclear repulsion energy was computed |
+  | ~repulsion_date~   | ~int64_t~      | Date of the last computation of the repulsion       |
 
 ** Data structure
 
    The nucleus data structure consolidates all nuclear information in a single
-   C structure. The date fields enable automatic recomputation detection: when
-   coordinates change, the ~coord_date~ is updated, triggering recomputation
-   of dependent quantities like distances and repulsion energy when they are
-   next requested.
+   C structure. The two computed quantities carry the value of the context date
+   at the time they were last computed, but no function reads those two fields
+   back: the providers recompute unconditionally. ~coord_date~ is declared
+   beside them and is never written; the date of the coordinates is the context
+   date, which ~qmckl_context_touch~ moves.
+
+   The charge, coord and nn_distance fields own their memory, allocated with
+   ~qmckl_malloc~, and are released with the context.
 
    #+begin_src c :comments org :tangle (eval h_private_type) :exports none
 typedef struct qmckl_nucleus_struct {
@@ -128,15 +138,16 @@ typedef struct qmckl_nucleus_struct {
 ** Initialization tracking
 
    The ~uninitialized~ integer serves as a bit field where each bit represents
-   whether a specific initialization function has been called. Initially, certain
-   bits are set to one, and each initialization function clears its corresponding
-   bit. When all required initialization functions have been called, the
-   ~uninitialized~ field becomes zero, the struct is fully initialized, and
-   ~provided~ is set to ~true~.
-   
-   This mechanism ensures that the nucleus data is complete before being used
-   in calculations. Some values may be initialized by default and are not tracked
-   by this mechanism.
+   whether a specific initialization function has been called. It is set to 7
+   when the context is created, by ~qmckl_init_nucleus~, and each setter clears
+   its bit: bit 0 by ~qmckl_set_nucleus_num~, bit 1 by
+   ~qmckl_set_nucleus_charge~ and bit 2 by ~qmckl_set_nucleus_coord~. When all
+   three have been called, ~uninitialized~ is zero and ~provided~ is set to
+   ~true~.
+
+   This mechanism ensures that the nucleus data is complete before it is used in
+   calculations. The default-values block of ~qmckl_init_nucleus~ is empty, so
+   every input is tracked by a bit.
 
    #+begin_src c :comments org :tangle (eval h_private_func) :exports none
 qmckl_exit_code qmckl_init_nucleus(qmckl_context context);
@@ -162,11 +173,19 @@ qmckl_exit_code qmckl_init_nucleus(qmckl_context context) {
 
 ** Access functions
 
+   Access functions return ~QMCKL_SUCCESS~ when the data has been retrieved
+   and ~QMCKL_INVALID_CONTEXT~ when the context is not a valid one. Reading an
+   input that has not been set returns ~QMCKL_NOT_PROVIDED~.
+
    #+begin_src c :comments org :tangle (eval h_func) :exports none
 qmckl_exit_code
 qmckl_get_nucleus_num(const qmckl_context context,
                       int64_t* const num);
    #+end_src
+
+   Returns the number of nuclei stored in the context. When the input has not
+   been set, the function writes 0 into ~num~ before returning
+   ~QMCKL_NOT_PROVIDED~.
 
    #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
 qmckl_exit_code
@@ -223,6 +242,10 @@ qmckl_get_nucleus_charge(const qmckl_context context,
                          double* const charge,
                          const int64_t size_max);
    #+end_src
+
+   Copies the nuclear charges into ~charge~, which must hold at least ~num~
+   doubles; a smaller ~size_max~ returns ~QMCKL_INVALID_ARG_3~. A null
+   ~charge~ returns ~QMCKL_INVALID_ARG_2~.
 
    #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
 qmckl_exit_code
@@ -293,6 +316,13 @@ qmckl_get_nucleus_coord(const qmckl_context context,
                         double* const coord,
                         const int64_t size_max);
    #+end_src
+
+   Copies the coordinates into ~coord~, which must hold ~3 * num~ doubles; a
+   smaller ~size_max~ fails with ~QMCKL_INVALID_ARG_4~ and a null ~coord~ with
+   ~QMCKL_INVALID_ARG_3~. With ~transp == 'N'~ the array receives one
+   coordinate triplet per nucleus, in the order the nuclei were given; with
+   ~transp == 'T'~ it receives all the $x$, then all the $y$, then all the
+   $z$. Any other value of ~transp~ returns ~QMCKL_INVALID_ARG_2~.
 
    #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
 qmckl_exit_code
@@ -365,8 +395,9 @@ interface
 end interface
     #+end_src
 
-   When all the data relative to nuclei have been set, the following
-   function returns ~true~.
+   Returns ~true~ once the three inputs have been set, and ~false~ otherwise.
+   Unlike the getters it does not record an error, and it returns ~false~ for
+   an invalid context.
 
    #+begin_src c :comments org :tangle (eval h_func)
 bool qmckl_nucleus_provided (const qmckl_context context);
@@ -415,8 +446,11 @@ ctx->nucleus.provided = (ctx->nucleus.uninitialized == 0);
 return qmckl_context_touch(context);
    #+end_src
 
-   To set the data relative to the nuclei in the context, the
-   following functions need to be called.
+   The number of nuclei must be set first: the charge and coordinate setters
+   read it, and return ~QMCKL_NOT_PROVIDED~ without it. The number and charge
+   setters accept a single call each and return ~QMCKL_ALREADY_SET~ on a second
+   one; the coordinate setter can be called again whenever the geometry
+   changes.
 
    #+begin_src c :comments org :tangle (eval h_func)
 qmckl_exit_code
@@ -424,7 +458,8 @@ qmckl_set_nucleus_num(qmckl_context context,
                       const int64_t num);
    #+end_src
 
-   Sets the number of nuclei.
+   Sets the number of nuclei. A non-positive value returns
+   ~QMCKL_INVALID_ARG_2~.
 
    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
 qmckl_exit_code
@@ -469,7 +504,9 @@ qmckl_set_nucleus_charge(qmckl_context context,
                          const int64_t size_max);
    #+end_src
 
-    Sets the nuclear charges of all the atoms.
+    Sets the charges of the ~num~ nuclei. A null ~charge~ returns
+    ~QMCKL_INVALID_ARG_2~; a buffer smaller than ~num~ returns
+    ~QMCKL_INVALID_ARG_3~.
 
    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
 qmckl_exit_code
@@ -538,15 +575,19 @@ qmckl_set_nucleus_coord(qmckl_context context,
                         const int64_t size_max);
    #+end_src
 
-    Sets the nuclear coordinates of all the atoms. The coordinates
-    are be given in atomic units. This function can be called several
-    times, for example during a geometry optimization: each call
-    invalidates the quantities computed from the previous geometry.
+    Sets the nuclear coordinates of all the atoms. The coordinates are given
+    in atomic units. This function can be called several times, for example
+    during a geometry optimization: each call bumps the context date, which is
+    what the modules that cache position-dependent results compare against.
 
-    With ~transp == 'N'~ the array holds one $(x,y,z)$ triplet per
-    atom in row-major order. With ~transp == 'T'~ it holds the same
-    data in column-major (Fortran) order: all the $x$ coordinates,
-    then all the $y$, then all the $z$.
+    With ~transp == 'N'~ the array holds one $(x,y,z)$ triplet per atom in
+    row-major order. With ~transp == 'T'~ it holds the same data in column-major
+    (Fortran) order: all the $x$ coordinates, then all the $y$, then all the
+    $z$.
+
+    The new matrix is built before the stored one is released, so a call
+    rejected for a null pointer, a buffer that is too small or an unknown
+    ~transp~ leaves the previous coordinates in place.
 
    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
 qmckl_exit_code
@@ -814,17 +855,24 @@ assert(qmckl_nucleus_provided(context));
 
 * Computation
 
-  The computed data is stored in the context so that it can be reused
-  by different kernels. To ensure that the data is valid, for each
-  computed data the date of the context is stored when it is computed.
-  To know if some data needs to be recomputed, we check if the date of
-  the dependencies are more recent than the date of the data to
-  compute. If it is the case, then the data is recomputed and the
-  current date is stored.
+  The two computed quantities live in the context so that a caller can read
+  them without rebuilding them, but this module does not track their validity:
+  each getter below calls its provider, which recomputes from the current
+  coordinates and charges and stamps the current context date. Reading the same
+  quantity twice computes it twice.
+
+  Both providers first require ~provided~, and return ~QMCKL_NOT_PROVIDED~ when
+  the three inputs are not all set.
 
 ** Nucleus-nucleus distances
 
 *** Get
+
+    ~qmckl_get_nucleus_nn_distance~ copies the ~num~ × ~num~ matrix of
+    inter-nuclear distances into ~distance~, which must hold at least
+    ~num * num~ doubles; a smaller ~size_max~ returns ~QMCKL_INVALID_ARG_3~.
+    The matrix is symmetric with a zero diagonal, and the buffer receives it in
+    column-major order.
 
     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
 qmckl_exit_code
@@ -926,6 +974,9 @@ qmckl_exit_code qmckl_provide_nn_distance(qmckl_context context)
 
 *** Compute
 
+    Builds the symmetric matrix from the coordinates stored in the context,
+    each entry being the Euclidean distance between two nuclei.
+
     #+NAME: qmckl_nn_distance_args
    | ~qmckl_context~ | ~context~                         | in  | Global state                   |
    | ~int64_t~       | ~nucl_num~                        | in  | Number of nuclei               |
@@ -995,10 +1046,16 @@ assert(fabs(distance[1]-2.070304721365169) < 1.e-12);
 ** Nuclear repulsion energy
 
    \[
-   V_{NN} = \sum_{A=1}^{N-1} \sum_{B>A}^N \frac{Q_A Q_B}{R_{AB}}
+   E_{nn} = \sum_{i<j} \frac{Z_i Z_j}{r_{ij}}
    \]
 
+   Pairs closer than ~1e-5~ bohr are skipped instead of producing an infinite
+   contribution.
+
 *** Get
+
+    Writes the repulsion energy into ~energy~, which is not checked for NULL.
+    The energy is recomputed through the provider on every call.
 
     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
 qmckl_exit_code qmckl_get_nucleus_repulsion(qmckl_context context, double* const energy);
@@ -1077,6 +1134,9 @@ qmckl_exit_code qmckl_provide_nucleus_repulsion(qmckl_context context)
     #+end_src
 
 *** Compute
+
+    Sums $Z_i Z_j / r_{ij}$ over the pairs above the diagonal of the distance
+    matrix, skipping the pairs closer than ~1e-5~ bohr.
 
     #+NAME: qmckl_nucleus_repulsion_args
    | ~qmckl_context~ | ~context~                         | in  | Global state                   |
