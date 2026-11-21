@@ -13,19 +13,18 @@
   walkers: one complete set of positions per walker, with the up-spin electrons
   first and the down-spin electrons after them.
 
-  The positions of the current walker are the points the position-dependent
-  kernels evaluate on; ~qmckl_set_electron_coord~ writes them into the ~point~
-  part of the context, and the previous walker is kept so that a Monte Carlo
-  step can be accepted or rejected. Distances and potentials are computed on
-  demand, and cached with the date at which they were obtained.
+  The ~point~ part of the context holds the positions of all the walkers.
+  ~qmckl_set_electron_coord~ writes them there and keeps the previous set, so
+  that a Monte Carlo step can be accepted or rejected. Distances and potentials
+  are computed on demand and cached with the date at which they were obtained.
 
 ** Memory layout
 
-If the points are set with the ='N'= flag, the order of
-the components is =[ (x,y,z), (x,y,z), ... ]= (normal or row-major order).
-Using the ='T'= flag, it is =[ (x,x,x,...), (y,y,y,...), (z,z,z,...) ]= 
-(transposed or column-major order). The choice of memory layout can affect
-cache performance and vectorization efficiency.
+  The setters accept either layout and the context stores the transposed one.
+  With ='N'= the coordinates are read as consecutive =[ (x,y,z), (x,y,z), ... ]=
+  triplets and transposed on the way in; with ='T'= they are copied as they are,
+  =[ (x,x,x,...), (y,y,y,...), (z,z,z,...) ]=. The getters transpose only when
+  asked for ='N'=.
 
 # TODO: replace the qmckl_matrix by qmckl_point data structures.
 # TODO: in provide functions, replace the way to check that dimensions
@@ -96,11 +95,11 @@ int main() {
 
 * Context
 
-  The electron module stores both the fundamental electronic configuration
-  (number and positions of electrons) and computed quantities (distances,
-  potential energies) in the context. The walker mechanism allows multiple
-  electronic configurations to be handled simultaneously, which is essential
-  for quantum Monte Carlo calculations.
+  The electron module keeps the electronic configuration in the context,
+  together with the quantities computed from it: electron-electron and
+  electron-nucleus distances and potentials. All the points of all the walkers
+  live in one ~qmckl_point_struct~, and the computed arrays carry the walker
+  index first.
 
 ** Data stored in the context
   The following data is stored in the context:
@@ -112,8 +111,8 @@ int main() {
   | ~up_num~                  | ~int64_t~          | Number of up-spin electrons          |
   | ~down_num~                | ~int64_t~          | Number of down-spin electrons        |
   | ~provided~                | ~bool~             | If true, ~electron~ is valid         |
-  | ~walker~                  | ~qmckl_point~      | Current set of walkers               |
-  | ~walker_old~              | ~qmckl_point~      | Previous set of walkers              |
+  | ~walker~                  | ~qmckl_walker~     | Current walker state                 |
+  | ~walker_old~              | ~qmckl_walker~     | Previous walker state                |
 
   Computed data:
 
@@ -130,16 +129,14 @@ int main() {
 
 ** Data structures
 
-   The electron data is organized using two levels of structures. The ~qmckl_walker~
-   structure represents a collection of electronic configurations (walkers) being
-   sampled in the Monte Carlo process. Each walker contains multiple electrons at
-   specific positions.
-   
-   The ~qmckl_electron_struct~ contains all electron-related data, including the
-   current and previous walker states (for computing acceptance ratios), and
-   cached computed quantities like inter-particle distances and potential energies.
-   The date fields enable automatic invalidation of cached results when electron
-   positions change.
+   The electron data is organized in two structures. ~qmckl_walker~ pairs the
+   number of walkers with a ~qmckl_point_struct~ holding the ~elec_num *
+   walk_num~ points of all of them.
+
+   The ~qmckl_electron_struct~ gathers the two spin counts, the current and
+   previous walkers (the latter for accepting or rejecting a step), the cached
+   distances and potentials with the date at which each was computed, and the
+   initialization mask.
 
    #+begin_src c :comments org :tangle (eval h_private_type) :exports none
 
@@ -216,10 +213,10 @@ bool qmckl_electron_provided(const qmckl_context context) {
 
 ** Initialization functions
 
-   To set the data relative to the electrons in the context, the
-   following functions need to be called. When the data structure is
-   initialized, the internal ~coord_new~ and ~coord_old~ arrays are
-   both not allocated.
+   Two functions set the electron data: ~qmckl_set_electron_num~ for the
+   counts and ~qmckl_set_electron_coord~ for the positions.
+   ~qmckl_context_create~ zeroes the context, so no coordinate array exists and
+   ~walker.num~ is 0 until the first call.
 
    #+begin_src c :comments org :tangle (eval h_func)
 qmckl_exit_code qmckl_set_electron_num      (qmckl_context context, const int64_t up_num, const int64_t down_num);
@@ -250,8 +247,11 @@ ctx->electron.provided = (ctx->electron.uninitialized == 0);
 return QMCKL_SUCCESS;
    #+end_src
 
-   To set the number of electrons, we give the number of up-spin and
-   down-spin electrons to the context and we set the number of walkers.
+   Sets the number of up-spin and down-spin electrons and stores their sum in
+   ~num~. The number of walkers is not set here: it comes with
+   ~qmckl_set_electron_coord~. A second call returns ~QMCKL_ALREADY_SET~;
+   ~QMCKL_INVALID_ARG_2~ is returned when ~up_num~ is not positive and
+   ~QMCKL_INVALID_ARG_3~ when ~down_num~ is negative.
 
    #+begin_src c :comments org :tangle (eval c) :noweb yes  :exports none
 qmckl_exit_code
@@ -300,17 +300,23 @@ end interface
    #+end_src
 
 
-    The following function sets the electron coordinates of all the
-    walkers. When this is done, the pointers to the old and new sets
-    of coordinates are swapped, and the new coordinates are
-    overwritten. This can be done only when the data relative to
-    electrons have been set.
+    Sets the coordinates of all the walkers. ~coord~ holds ~walk_num * elec_num~
+    points and ~size_max~ must be at least ~3 * walk_num * elec_num~; ~transp~
+    selects the layout, as for the getter.
 
-    ~size_max~ should be equal equal or geater than ~elec_num *
-    walker.num * 3~, to be symmetric with ~qmckl_get_electron_coord~.
+    The function swaps ~walker~ and ~walker_old~ first, so the previous
+    coordinates survive in ~walker_old~. It then writes the new ones into
+    ~ctx->point~ and copies the result back into ~walker.point~. On the first
+    call ~walker_old.num~ is 0, so the function calls itself once more to fill
+    it.
 
-    *Important*: changing the electron coordinates increments the date
-    in the context.
+    Exit codes: ~QMCKL_INVALID_CONTEXT~, ~QMCKL_INVALID_ARG_2~ when ~transp~ is
+    neither ~'N'~ nor ~'T'~, ~QMCKL_INVALID_ARG_3~ when ~walk_num~ is not
+    positive, ~QMCKL_INVALID_ARG_4~ when ~coord~ is NULL or ~size_max~ is too
+    small, and ~QMCKL_FAILURE~ when the number of electrons has not been set.
+
+    Changing the electron coordinates increments the date of the context, which
+    invalidates the cached distances and potentials.
 
    #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
 qmckl_exit_code
@@ -404,6 +410,9 @@ end interface
    contains the requested data. Otherwise, this variable is untouched.
 
 *** Number of electrons
+
+    The three getters return the counts stored by ~qmckl_set_electron_num~, and
+    ~QMCKL_NOT_PROVIDED~ until it has been called.
 
       #+begin_src c :comments org :tangle (eval h_func)
 qmckl_exit_code qmckl_get_electron_num        (const qmckl_context context, int64_t* const num);
@@ -503,6 +512,9 @@ qmckl_get_electron_down_num (const qmckl_context context, int64_t* const down_nu
     A walker is a set of electron coordinates that are arguments of
     the wave function. ~walk_num~ is the number of walkers.
 
+    Before any coordinates are set ~walker.num~ is 0 and the getter returns it
+    with ~QMCKL_SUCCESS~: it does not check that the electron data is provided.
+
     #+begin_src c :comments org :tangle (eval h_func)
 qmckl_exit_code qmckl_get_electron_walk_num   (const qmckl_context context, int64_t* const walk_num);
     #+end_src
@@ -532,9 +544,8 @@ qmckl_get_electron_walk_num (const qmckl_context context, int64_t* const walk_nu
 
 *** Electron coordinates
 
-    Returns the current electron coordinates. The pointer is assumed
-    to point on a memory block of size ~size_max~ \ge ~3 * elec_num * walker.num~.
-    The order of the indices is:
+    Returns the coordinates of all the walkers. ~coord~ must point to at least
+    ~3 * elec_num * walker.num~ doubles, and ~transp~ selects their layout:
 
     |         | Normal                     | Transposed                 |
     |---------+----------------------------+----------------------------|
@@ -550,9 +561,15 @@ qmckl_get_electron_coord (const qmckl_context context,
                           const int64_t size_max);
       #+end_src
 
-      As the ~walker~ attribute is equal to ~points~, returning the
-      current electron coordinates is equivalent to returning the
-      current points.
+      ~ctx->electron.walker.point~ is a copy of ~ctx->point~ made by the setter.
+      The getter checks that the two agree on the number of points and on the data
+      pointer, then forwards to ~qmckl_get_point~.
+
+      Exit codes: ~QMCKL_INVALID_CONTEXT~, ~QMCKL_INVALID_ARG_2~ when ~transp~ is
+      neither ~'N'~ nor ~'T'~, ~QMCKL_INVALID_ARG_3~ when ~coord~ is NULL or
+      ~size_max~ is smaller than ~3 * elec_num * walker.num~,
+      ~QMCKL_INVALID_ARG_4~ when ~size_max~ is not positive, and
+      ~QMCKL_NOT_PROVIDED~ when the electron data has not been provided.
 
       #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
 qmckl_exit_code
@@ -763,17 +780,22 @@ for (int64_t i=0 ; i<3*elec_num*walk_num ; ++i) {
 
 * Computation
 
-  The computed data is stored in the context so that it can be reused
-  by different kernels. To ensure that the data is valid, for each
-  computed data the date of the context is stored when it is computed.
-  To know if some data needs to be recomputed, we check if the date of
-  the dependencies are more recent than the date of the data to
-  compute. If it is the case, then the data is recomputed and the
-  current date is stored.
+  The computed data is stored in the context so that it can be reused by
+  different kernels. Each array carries the context date at which it was
+  computed. The point and nucleus setters call ~qmckl_context_touch~, which
+  copies the new context date into ~ctx->point.date~, and a provider recomputes
+  its array when ~ctx->point.date~ is more recent than the stored date.
 
 ** Electron-electron distances
 
+   ~qmckl_get_electron_ee_distance~ copies the distances to ~distance~, which
+   must hold at least ~elec_num * elec_num * walker.num~ doubles. Entry
+   ~[k][i][j]~ is the distance between electrons ~i~ and ~j~ of walker ~k~.
+
 *** Get
+
+    Exit codes: ~QMCKL_INVALID_CONTEXT~, ~QMCKL_INVALID_ARG_2~ when ~distance~
+    is NULL, and ~QMCKL_INVALID_ARG_3~ when ~size_max~ is too small.
 
     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
 qmckl_exit_code
@@ -918,6 +940,12 @@ qmckl_exit_code qmckl_provide_ee_distance(qmckl_context context)
     | ~coord~       | ~double[3][walk_num][elec_num]~        | in     | Electron coordinates        |
     | ~ee_distance~ | ~double[walk_num][elec_num][elec_num]~ | out    | Electron-electron distances |
 
+    ~coord~ is the coordinate buffer of the context. It is declared
+    ~(elec_num,3,walk_num)~ but only the base address of each walker,
+    ~coord(1,k,1)~, is used, with ~elec_num*walk_num~ as the stride between the
+    x, y and z components; the buffer is laid out as the
+    ~[3][walk_num][elec_num]~ of the table.
+
     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
 function qmckl_compute_ee_distance(context, elec_num, walk_num, coord, ee_distance) &
      result(info) bind(C)
@@ -1037,7 +1065,8 @@ assert(fabs(ee_distance[elec_num*elec_num+1]-6.5517646321055665) < 1.e-12);
    \]
 
    where \(\mathcal{V}_{ee}\) is the ~ee~ potential and \(r_{ij}\) the ~ee~
-   distance.
+   distance. Pairs closer than ~1e-5~ are skipped, so coalesced electrons do
+   not produce an infinity.
 
    The destination array must hold ~walker.num~ doubles; ~size_max~ is
    its length in elements.
@@ -1238,7 +1267,16 @@ qmckl_check(context, rc);
      #+end_src
 ** Electron-nucleus distances
 
+   ~qmckl_get_electron_en_distance~ copies the distances to ~distance~, which
+   must hold at least ~elec_num * walk_num * nucl_num~ doubles. Entry
+   ~[k][i][A]~ is the distance between electron ~i~ of walker ~k~ and nucleus
+   ~A~. The nuclear data must have been provided.
+
 *** Get
+
+    Exit codes: ~QMCKL_INVALID_CONTEXT~, ~QMCKL_INVALID_ARG_2~ when ~distance~
+    is NULL, ~QMCKL_INVALID_ARG_3~ when ~size_max~ is too small, and
+    ~QMCKL_NOT_PROVIDED~ when the nuclear data is missing.
 
     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
 qmckl_exit_code
@@ -1522,7 +1560,8 @@ assert(fabs(en_distance[1][1][0] - 3.1804527583077356) < 1.e-12);
    \]
 
    where \(\mathcal{V}_{en}\) is the ~en~ potential, \(r_{iA}\) the ~en~
-   distance and \(Z_A\) is the nuclear charge.
+   distance and \(Z_A\) is the nuclear charge. Pairs closer than ~1.d-6~ are
+   skipped, as for the electron-electron potential.
 
    The destination array must hold ~walker.num~ doubles; ~size_max~ is
    its length in elements.
@@ -1662,8 +1701,8 @@ qmckl_exit_code qmckl_provide_en_potential(qmckl_context context)
     | ~nucl_num~     | ~int64_t~                              | in     | Number of nuclei                     |
     | ~walk_num~     | ~int64_t~                              | in     | Number of walkers                    |
     | ~charge~       | ~double[nucl_num]~                     | in     | charge of nucleus                    |
-    | ~en_distance~  | ~double[walk_num][elec_num][nucl_num]~ | in     | Electron-electron distances          |
-    | ~en_potential~ | ~double[walk_num]~                     | out    | Electron-electron potential          |
+    | ~en_distance~  | ~double[walk_num][elec_num][nucl_num]~ | in     | Electron-nucleus distances           |
+    | ~en_potential~ | ~double[walk_num]~                     | out    | Electron-nucleus potential           |
 
     #+begin_src f90 :comments org :tangle (eval f) :noweb yes
 function qmckl_compute_en_potential(context, elec_num, nucl_num, walk_num, &
