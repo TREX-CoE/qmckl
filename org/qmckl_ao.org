@@ -3689,7 +3689,10 @@ qmckl_get_ao_basis_ao_vgl (qmckl_context context,
   end interface
     #+end_src
 
-    Uses the given array to compute the VGL.
+    Computes the VGL into ~ao_vgl~, which must have room for
+    ~point.num * 5 * ao_num~ doubles. The array cached in the context is
+    left untouched; a getter called afterwards returns the cached values if
+    they are still valid and recomputes them otherwise.
 
     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
 qmckl_exit_code
@@ -3728,16 +3731,20 @@ qmckl_get_ao_basis_ao_vgl_inplace (qmckl_context context,
   rc = qmckl_context_touch(context);
   if (rc != QMCKL_SUCCESS) return rc;
 
+  const uint64_t old_date = ctx->ao_basis.ao_vgl_date;
   double* old_array = ctx->ao_basis.ao_vgl;
 
+  /* Force the provider to compute into the caller's array. */
+  ctx->ao_basis.ao_vgl_date = 0;
   ctx->ao_basis.ao_vgl = ao_vgl;
 
   rc = qmckl_provide_ao_basis_ao_vgl(context);
-  if (rc != QMCKL_SUCCESS) return rc;
 
+  /* The context cache is not the caller's array: restore it as it was. */
   ctx->ao_basis.ao_vgl = old_array;
+  ctx->ao_basis.ao_vgl_date = old_date;
 
-  return QMCKL_SUCCESS;
+  return rc;
 }
     #+end_src
 
@@ -3816,7 +3823,10 @@ qmckl_get_ao_basis_ao_value (qmckl_context context,
   end interface
     #+end_src
 
-    Uses the given array to compute the value.
+    Computes the values into ~ao_value~, which must have room for
+    ~point.num * ao_num~ doubles. The array cached in the context is left
+    untouched; a getter called afterwards returns the cached values if they
+    are still valid and recomputes them otherwise.
 
     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
 qmckl_exit_code
@@ -3855,16 +3865,20 @@ qmckl_get_ao_basis_ao_value_inplace (qmckl_context context,
   rc = qmckl_context_touch(context);
   if (rc != QMCKL_SUCCESS) return rc;
 
+  const uint64_t old_date = ctx->ao_basis.ao_value_date;
   double* old_array = ctx->ao_basis.ao_value;
 
+  /* Force the provider to compute into the caller's array. */
+  ctx->ao_basis.ao_value_date = 0;
   ctx->ao_basis.ao_value = ao_value;
 
   rc = qmckl_provide_ao_basis_ao_value(context);
-  if (rc != QMCKL_SUCCESS) return rc;
 
+  /* The context cache is not the caller's array: restore it as it was. */
   ctx->ao_basis.ao_value = old_array;
+  ctx->ao_basis.ao_value_date = old_date;
 
-  return QMCKL_SUCCESS;
+  return rc;
 }
     #+end_src
 
@@ -8280,10 +8294,21 @@ qmckl_exit_code qmckl_provide_ao_basis_ao_value(qmckl_context context)
 
     if (mem_info.size > ctx->ao_basis.ao_value_maxsize) {
       if (ctx->ao_basis.ao_value != NULL) {
+        /* An _inplace getter may have installed the caller's array here. It
+           was not allocated with qmckl_malloc and must not be freed. */
+        qmckl_memory_info_struct mem_info_test = qmckl_memory_info_struct_zero;
+        rc = qmckl_get_malloc_info(context, ctx->ao_basis.ao_value, &mem_info_test);
+        if (rc == QMCKL_SUCCESS) {
           rc = qmckl_free(context, ctx->ao_basis.ao_value);
-          assert (rc == QMCKL_SUCCESS);
+          if (rc != QMCKL_SUCCESS) {
+            return qmckl_failwith( context,
+                                   rc,
+                                   "qmckl_provide_ao_basis_ao_value",
+                                   "Unable to free ctx->ao_basis.ao_value");
+          }
           ctx->ao_basis.ao_value = NULL;
         }
+      }
     }
 
     /* Allocate array */
@@ -9173,10 +9198,21 @@ qmckl_exit_code qmckl_provide_ao_basis_ao_vgl(qmckl_context context)
 
     if (mem_info.size > ctx->ao_basis.ao_vgl_maxsize) {
       if (ctx->ao_basis.ao_vgl != NULL) {
+        /* An _inplace getter may have installed the caller's array here. It
+           was not allocated with qmckl_malloc and must not be freed. */
+        qmckl_memory_info_struct mem_info_test = qmckl_memory_info_struct_zero;
+        rc = qmckl_get_malloc_info(context, ctx->ao_basis.ao_vgl, &mem_info_test);
+        if (rc == QMCKL_SUCCESS) {
           rc = qmckl_free(context, ctx->ao_basis.ao_vgl);
-          assert (rc == QMCKL_SUCCESS);
+          if (rc != QMCKL_SUCCESS) {
+            return qmckl_failwith( context,
+                                   rc,
+                                   "qmckl_provide_ao_basis_ao_vgl",
+                                   "Unable to free ctx->ao_basis.ao_vgl");
+          }
           ctx->ao_basis.ao_vgl = NULL;
         }
+      }
     }
 
     /* Allocate array */
@@ -9976,6 +10012,94 @@ printf("OK\n");
 
   #+begin_src c :tangle (eval h_private_func) :exports none
 #endif
+  #+end_src
+
+*** Regression tests for the inplace getters                         :noexport:
+
+  #+begin_src c :tangle (eval c_test) :exports none
+{
+  /* An inplace getter that fails must leave the context unchanged: the
+     context must not keep a pointer to the caller's array, which it would
+     try to free when it is finalized. */
+  qmckl_context inplace_ctx = qmckl_context_create();
+  assert(inplace_ctx != QMCKL_NULL_CONTEXT);
+
+  double inplace_buf[1] = { 0. };
+
+  rc = qmckl_get_ao_basis_ao_value_inplace(inplace_ctx, inplace_buf, 0);
+  assert(rc != QMCKL_SUCCESS);
+  assert(((qmckl_context_struct*) inplace_ctx)->ao_basis.ao_value == NULL);
+
+  rc = qmckl_get_ao_basis_ao_vgl_inplace(inplace_ctx, inplace_buf, 0);
+  assert(rc != QMCKL_SUCCESS);
+  assert(((qmckl_context_struct*) inplace_ctx)->ao_basis.ao_vgl == NULL);
+
+  rc = qmckl_context_destroy(inplace_ctx);
+  assert(rc == QMCKL_SUCCESS);
+}
+  #+end_src
+
+  #+begin_src c :tangle (eval c_test) :exports none
+{
+  /* An inplace call fills the caller's array and leaves the context cache
+     as it was, so a getter called afterwards returns the values of the
+     context at those points, not the ones it held before. Growing the cache
+     must not free the caller's array, which the context does not own. */
+  qmckl_context_struct* const inplace_ctx_s = (qmckl_context_struct*) context;
+
+  /* One point more than any cached AO array can hold, so both inplace calls
+     have to grow their cache. */
+  int64_t inplace_n = inplace_ctx_s->point.num + 1;
+  const int64_t inplace_n_value =
+    inplace_ctx_s->ao_basis.ao_value_maxsize / (chbrclf_ao_num*sizeof(double)) + 1;
+  const int64_t inplace_n_vgl =
+    inplace_ctx_s->ao_basis.ao_vgl_maxsize / (5*chbrclf_ao_num*sizeof(double)) + 1;
+  if (inplace_n_value > inplace_n) inplace_n = inplace_n_value;
+  if (inplace_n_vgl   > inplace_n) inplace_n = inplace_n_vgl;
+
+  double* inplace_coord = (double*) malloc (3*inplace_n*sizeof(double));
+  assert(inplace_coord != NULL);
+  for (int64_t i=0 ; i<inplace_n ; ++i) {
+    memcpy(&(inplace_coord[3*i]), &(chbrclf_elec_coord[0][0][0]), 3*sizeof(double));
+  }
+
+  rc = qmckl_set_point(context, 'N', inplace_n, inplace_coord, 3*inplace_n);
+  assert(rc == QMCKL_SUCCESS);
+
+  double* inplace_val = (double*) malloc (chbrclf_ao_num*inplace_n*sizeof(double));
+  double* inplace_vgl = (double*) malloc (chbrclf_ao_num*5*inplace_n*sizeof(double));
+  assert(inplace_val != NULL);
+  assert(inplace_vgl != NULL);
+  rc = qmckl_get_ao_basis_ao_value_inplace(context, inplace_val,
+                                           chbrclf_ao_num*inplace_n);
+  assert(rc == QMCKL_SUCCESS);
+  rc = qmckl_get_ao_basis_ao_vgl_inplace(context, inplace_vgl,
+                                         chbrclf_ao_num*5*inplace_n);
+  assert(rc == QMCKL_SUCCESS);
+
+  /* The getters agree with the arrays the inplace calls filled. */
+  double* inplace_ref = (double*) malloc (chbrclf_ao_num*inplace_n*sizeof(double));
+  double* inplace_ref5 = (double*) malloc (chbrclf_ao_num*5*inplace_n*sizeof(double));
+  assert(inplace_ref != NULL);
+  assert(inplace_ref5 != NULL);
+  rc = qmckl_get_ao_basis_ao_value(context, inplace_ref, chbrclf_ao_num*inplace_n);
+  assert(rc == QMCKL_SUCCESS);
+  for (int64_t i=0 ; i<chbrclf_ao_num*inplace_n ; ++i) {
+    assert(inplace_ref[i] == inplace_val[i]);
+  }
+
+  rc = qmckl_get_ao_basis_ao_vgl(context, inplace_ref5, chbrclf_ao_num*5*inplace_n);
+  assert(rc == QMCKL_SUCCESS);
+  for (int64_t i=0 ; i<chbrclf_ao_num*5*inplace_n ; ++i) {
+    assert(inplace_ref5[i] == inplace_vgl[i]);
+  }
+
+  free(inplace_coord);
+  free(inplace_val);
+  free(inplace_vgl);
+  free(inplace_ref);
+  free(inplace_ref5);
+}
   #+end_src
 
 *** Test
