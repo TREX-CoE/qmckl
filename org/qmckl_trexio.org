@@ -14,7 +14,8 @@
   page documents the helpers that read one TREXIO group each.
 
   The file is tried as text first, then as HDF5. Effective core potentials are
-  not read.
+  not read. When QMCkl is built without TREXIO, ~qmckl_trexio_read~ still
+  exists but returns ~QMCKL_FAILURE~ with a message saying so.
 
 * Headers                                                          :noexport:
   #+begin_src elisp :noexport :results none
@@ -90,7 +91,8 @@ int main() {
    The file is opened once by a helper that tries the TEXT backend first and
    then the HDF5 backend, and returns a ~NULL~ pointer if both fail. The handle
    it returns is passed to the other helpers, each of which reads one group of
-   data.
+   data. ~qmckl_trexio_read~ closes it when it is done, on the error paths as
+   well as on the last one.
 
    #+begin_src c :tangle (eval c) :exports none
 #ifdef HAVE_TREXIO
@@ -114,8 +116,9 @@ trexio_t* qmckl_trexio_open_X(const char* file_name, qmckl_exit_code* rc)
 
 ** Electron
 
-   In this section we read all the data into the electron data structure.
-   We read the number of up-spin and down-spin electrons.
+   The electron group holds the number of up-spin and down-spin electrons.
+   The helper reads both and sets them together with ~qmckl_set_electron_num~;
+   no electron position is read.
 
    #+begin_src c :tangle (eval c) :exports none
 #ifdef HAVE_TREXIO
@@ -160,7 +163,9 @@ qmckl_trexio_read_electron_X(qmckl_context context, trexio_t* const file)
 
 ** Nucleus
 
-   In this section we read the number of nuclei, the molecular geometry and nuclear charges.
+   The nucleus helper reads the number of nuclei, the nuclear charges and the
+   molecular geometry, in that order: the setters for the last two need the
+   number of nuclei. It ends by asserting that ~qmckl_nucleus_provided~ holds.
 
    #+begin_src c :tangle (eval c) :exports none
 #ifdef HAVE_TREXIO
@@ -175,6 +180,9 @@ qmckl_trexio_read_nucleus_X(qmckl_context context, trexio_t* const file)
    #+end_src
 
 *** Number of nuclei
+
+   ~nucleus.num~ is read and must be positive. It is set first, because the
+   charges and the coordinates are stored per nucleus.
 
    #+begin_src c :tangle (eval c) :exports none
   int64_t nucleus_num = 0L;
@@ -195,6 +203,9 @@ qmckl_trexio_read_nucleus_X(qmckl_context context, trexio_t* const file)
    #+end_src
 
 *** Nuclear charges
+
+   The whole ~nucleus.charge~ array is read in one call and passed to
+   ~qmckl_set_nucleus_charge~.
 
    #+begin_src c :tangle (eval c) :exports none
   {
@@ -233,8 +244,9 @@ qmckl_trexio_read_nucleus_X(qmckl_context context, trexio_t* const file)
 
 *** Nuclear coordinates
 
-    Now, we read the molecular geometry. It is stored in normal format
-    in the TREXIO file (~'N'~), so it will be automatically transposed internally.
+    The geometry comes from ~nucleus.coord~, which TREXIO stores as three
+    coordinates per nucleus. The setter is called with ~'N'~, so QMCkl
+    transposes the array into its own ~[3][nucl_num]~ layout.
 
    #+begin_src c :tangle (eval c) :exports none
   {
@@ -281,7 +293,11 @@ qmckl_trexio_read_nucleus_X(qmckl_context context, trexio_t* const file)
 
 ** Basis set and AOs
 
-   In this section we read the atomic basis set and atomic orbitals.
+   In this section we read the atomic basis set and atomic orbitals. The basis
+   type and the three sizes come first, because every array that follows is
+   allocated from one of the sizes. The per-nucleus and per-shell arrays come
+   next, then the per-primitive arrays, and the AO normalization factor closes
+   the group.
 
    #+begin_src c :tangle (eval c) :exports none
 #ifdef HAVE_TREXIO
@@ -302,6 +318,11 @@ qmckl_trexio_read_ao_X(qmckl_context context, trexio_t* const file)
    #+end_src
 
 *** Basis set type
+
+   ~basis.type~ is read as a string and only its first character is used. It
+   must be ~G~ for a Gaussian basis or ~S~ for a Slater basis. Any other value
+   fails: a leading ~N~ reaches ~qmckl_set_ao_basis_type~, which rejects it,
+   and any other character is rejected here.
 
    #+begin_src c :tangle (eval c) :exports none
 #define MAX_STR_LEN 1024
@@ -333,6 +354,9 @@ qmckl_trexio_read_ao_X(qmckl_context context, trexio_t* const file)
 
 *** Number of shells
 
+   ~basis.shell_num~ is read and must be positive. It sizes every per-shell
+   array below.
+
    #+begin_src c :tangle (eval c) :exports none
   int64_t shell_num = 0L;
 
@@ -353,6 +377,9 @@ qmckl_trexio_read_ao_X(qmckl_context context, trexio_t* const file)
    #+end_src
 
 *** Number of primitives
+
+   ~basis.prim_num~ is read and must be positive. It sizes every per-primitive
+   array below.
 
    #+begin_src c :tangle (eval c) :exports none
   int64_t prim_num = 0L;
@@ -375,6 +402,9 @@ qmckl_trexio_read_ao_X(qmckl_context context, trexio_t* const file)
 
 *** Number of atomic orbitals
 
+   ~ao.num~ is read and must be positive. It sizes the ~ao_factor~ array read
+   at the end of the section.
+
    #+begin_src c :tangle (eval c) :exports none
   int64_t ao_num = 0;
 
@@ -394,7 +424,13 @@ qmckl_trexio_read_ao_X(qmckl_context context, trexio_t* const file)
 
    #+end_src
 
-*** Nucleus_index array
+*** Nucleus index array
+
+   ~basis.nucleus_index~ gives, for each shell, the nucleus it belongs to,
+   numbered from zero. QMCkl keeps the opposite table, the index of the first
+   shell of each nucleus. The helper walks the shells from the last to the
+   first, so each nucleus ends up holding its first shell, and it rejects an
+   index outside the range.
 
    #+begin_src c :tangle (eval c) :exports none
   {
@@ -472,6 +508,9 @@ qmckl_trexio_read_ao_X(qmckl_context context, trexio_t* const file)
    #+end_src
 
 *** Number of shells per nucleus
+
+   The same dataset is read a second time and counted per nucleus, which gives
+   ~nucleus_shell_num~.
 
    #+begin_src c :tangle (eval c) :exports none
   {
@@ -553,9 +592,13 @@ qmckl_trexio_read_ao_X(qmckl_context context, trexio_t* const file)
   }
    #+end_src
 
-*** r power
+*** Power of r
 
-   #+begin_src c :tangle (eval c)
+   ~basis.r_power~ gives the power of r in the radial part of a Slater basis.
+   If the dataset cannot be read, the failure is not reported: every shell is
+   given a power of zero instead.
+
+   #+begin_src c :tangle (eval c) :exports none
   {
     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
 
@@ -593,6 +636,8 @@ qmckl_trexio_read_ao_X(qmckl_context context, trexio_t* const file)
    #+end_src
 
 *** Angular momentum
+
+   ~basis.shell_ang_mom~ gives the angular momentum of each shell.
 
    #+begin_src c :tangle (eval c) :exports none
   {
@@ -635,6 +680,9 @@ qmckl_trexio_read_ao_X(qmckl_context context, trexio_t* const file)
    #+end_src
 
 *** Number of primitives per shell
+
+   ~basis.shell_index~ gives, for each primitive, the shell it belongs to.
+   Counting it per shell gives ~shell_prim_num~.
 
    #+begin_src c :tangle (eval c) :exports none
   {
@@ -719,6 +767,11 @@ qmckl_trexio_read_ao_X(qmckl_context context, trexio_t* const file)
 
 *** Indices of the primitives
 
+   ~basis.shell_index~ is read a second time and walked backward over the
+   primitives, as ~nucleus_index~ was walked backward over the shells. What
+   survives is, for each shell, the address of its first primitive in the
+   exponent array, numbered from zero.
+
    #+begin_src c :tangle (eval c) :exports none
   {
     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
@@ -796,6 +849,8 @@ qmckl_trexio_read_ao_X(qmckl_context context, trexio_t* const file)
 
 *** Normalization of the shells
 
+   ~basis.shell_factor~ gives the normalization factor of each shell.
+
    #+begin_src c :tangle (eval c) :exports none
   {
     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
@@ -837,6 +892,8 @@ qmckl_trexio_read_ao_X(qmckl_context context, trexio_t* const file)
    #+end_src
 
 *** Exponents
+
+   ~basis.exponent~ gives the exponent of each primitive, in atomic units.
 
    #+begin_src c :tangle (eval c) :exports none
   {
@@ -880,6 +937,9 @@ qmckl_trexio_read_ao_X(qmckl_context context, trexio_t* const file)
 
 *** Coefficients
 
+   ~basis.coefficient~ gives the contraction coefficient of each primitive.
+   QMCkl keeps one coefficient per primitive, so the array is read flat.
+
    #+begin_src c :tangle (eval c) :exports none
   {
     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
@@ -922,6 +982,8 @@ qmckl_trexio_read_ao_X(qmckl_context context, trexio_t* const file)
 
 *** Normalization of the primitives
 
+   ~basis.prim_factor~ gives the normalization factor of each primitive.
+
    #+begin_src c :tangle (eval c) :exports none
   {
     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
@@ -963,6 +1025,10 @@ qmckl_trexio_read_ao_X(qmckl_context context, trexio_t* const file)
    #+end_src
 
 *** AO Normalization
+
+   ~ao.normalization~ gives the normalization factor of each atomic orbital.
+   QMCkl calls it ~ao_factor~.
+
    #+begin_src c :tangle (eval c) :exports none
   {
     qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
@@ -1013,7 +1079,8 @@ qmckl_trexio_read_ao_X(qmckl_context context, trexio_t* const file)
    #+end_src
 ** Molecular orbitals
 
-   In this section we read the MO coefficients.
+   The molecular-orbital group holds the number of orbitals and the matrix of
+   coefficients.
 
    #+begin_src c :tangle (eval c) :exports none
 #ifdef HAVE_TREXIO
@@ -1035,6 +1102,10 @@ qmckl_trexio_read_mo_X(qmckl_context context, trexio_t* const file)
 
 *** Number of MOs
 
+   ~mo.num~ is read and must be positive. The coefficient array is allocated
+   from it and from the number of atomic orbitals read in the previous
+   section.
+
    #+begin_src c :tangle (eval c) :exports none
   int64_t mo_num = 0L;
 
@@ -1054,6 +1125,9 @@ qmckl_trexio_read_mo_X(qmckl_context context, trexio_t* const file)
    #+end_src
 
 *** MO coefficients
+
+   ~mo.coefficient~ is read as a flat array of ~ao_num * mo_num~ values and
+   stored as it is.
 
    #+begin_src c :tangle (eval c) :exports none
   {
@@ -1099,11 +1173,17 @@ qmckl_trexio_read_mo_X(qmckl_context context, trexio_t* const file)
 
 * Read everything
 
-  Reads all the data of a TREXIO file into the context. ~size_max~ is
-  the number of characters that may be read from ~file_name~, excluding
-  the terminating NUL character. It must be positive and smaller than
-  4096, the size of the buffer used internally to hold a NUL-terminated
-  copy of the file name.
+  Reads the electron, nucleus, atomic-basis and molecular-orbital data of a
+  TREXIO file into the context, in that order, and closes the file. A NULL
+  context is rejected with ~QMCKL_INVALID_CONTEXT~; a NULL ~file_name~ and an
+  out-of-range ~size_max~ are rejected before the file is opened, with
+  ~QMCKL_INVALID_ARG_2~ and ~QMCKL_INVALID_ARG_3~.
+
+  ~size_max~ is the number of characters that may be read from ~file_name~,
+  excluding the terminating NUL character. It must be positive and smaller
+  than 4096, the size of the buffer that holds the NUL-terminated copy of the
+  name. When the file cannot be opened with either backend, the read fails
+  with ~QMCKL_INVALID_ARG_2~.
 
   #+begin_src c :tangle (eval h_func)
 qmckl_exit_code
@@ -1210,6 +1290,13 @@ qmckl_trexio_read(const qmckl_context context, const char* file_name, const int6
 
 * Test
 
+  The test reads the CHBrClF file from ~QMCKL_TEST_DIR~. It first checks that
+  a NULL file name, a zero ~size_max~ and a ~size_max~ of 4096 are rejected,
+  then reads the file and compares the electrons, the nuclei, the shell and
+  primitive arrays and the molecular orbitals with the arrays of
+  ~chbrclf.h~. The body of the test is compiled only when TREXIO is
+  available.
+
   #+begin_src c :tangle (eval c_test) :exports none
 #ifdef HAVE_TREXIO
 
@@ -1240,7 +1327,7 @@ qmckl_check(context, rc);
 
   #+end_src
 
-*** Electrons
+** Electrons
 
   #+begin_src c :tangle (eval c_test) :exports none
 printf("Electrons\n");
@@ -1255,7 +1342,7 @@ assert (dn_num == chbrclf_elec_dn_num);
 
   #+end_src
 
-*** Nuclei
+** Nuclei
 
   #+begin_src c :tangle (eval c_test) :exports none
 printf("Nuclei\n");
@@ -1292,7 +1379,7 @@ coord = NULL;
 
   #+end_src
 
-*** Atomic basis
+** Atomic basis
 
   #+begin_src c :tangle (eval c_test) :exports none
 printf("Atomic basis\n");
@@ -1406,7 +1493,7 @@ prim_factor = NULL;
 #endif
     #+end_src
 
-*** MO Basis
+** MO basis
 
   #+begin_src c :tangle (eval c_test) :exports none
 printf("MOs\n");
