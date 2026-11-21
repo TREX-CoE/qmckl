@@ -39,7 +39,8 @@
 
   Finally, ~qmckl_mo_basis_rescale~ multiplies the coefficients by a constant,
   which brings the determinants back into the range of double precision when
-  they overflow or underflow.
+  they overflow or underflow. The cusp polynomial is linear in the
+  coefficients, so it is multiplied by the same constant.
 
 * Headers                                                          :noexport:
   #+begin_src elisp :noexport :results none
@@ -3657,7 +3658,10 @@ qmckl_compute_mo_basis_mo_vgl_cusp_hpc (const qmckl_context context,
    ~qmckl_mo_basis_rescale~ multiplies ~coefficient~ and ~coefficient_t~ by
    the scaling factor and touches the context, so the cached MO values,
    gradients, Laplacians and Hessians are recomputed from the scaled
-   coefficients. A zero factor is rejected with ~QMCKL_INVALID_ARG_2~, and a
+   coefficients. When the cusp adjustment is on, ~cusp_param~ is multiplied by
+   the same factor: the polynomial is linear in the coefficients, so the
+   corrected MO stays continuous at the radius and keeps the cusp condition at
+   the nucleus. A zero factor is rejected with ~QMCKL_INVALID_ARG_2~, and a
    basis that is not provided gives ~QMCKL_NOT_PROVIDED~.
 
     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
@@ -3705,6 +3709,21 @@ qmckl_mo_basis_rescale(qmckl_context context,
     ctx->mo_basis.coefficient[i] *= scaling_factor;
     ctx->mo_basis.coefficient_t[i] *= scaling_factor;
   }
+
+  /* The cusp polynomial is linear in the coefficients: scale it with them,
+     so that it still joins the MO at the radius and still satisfies the
+     cusp condition at the nucleus. */
+  qmckl_tensor* const cusp_param = &(ctx->mo_basis.cusp_param);
+  if (cusp_param->data != NULL) {
+    int64_t cusp_size = 1;
+    for (int32_t i=0 ; i<cusp_param->order ; ++i) {
+      cusp_size *= cusp_param->size[i];
+    }
+    for (int64_t i=0 ; i<cusp_size ; ++i) {
+      cusp_param->data[i] *= scaling_factor;
+    }
+  }
+
   rc = qmckl_context_touch(context);
 
 
@@ -4313,6 +4332,87 @@ print ( "[4][1][15][14] : %25.15e"% lf(a,x,y))
 
   rc = qmckl_context_destroy(ctx2);
   assert(rc == QMCKL_SUCCESS);
+}
+  #+end_src
+
+*** Regression test for the rescale of the cusp fit                   :noexport:
+
+  #+begin_src c :tangle (eval c_test) :exports none
+{
+  /* The cusp polynomial is linear in the MO coefficients: rescaling the
+     coefficients after the fit must rescale the polynomial too, or the
+     corrected MO is wrong inside the radius. */
+  const int64_t nucl_num_cusp = chbrclf_nucl_num;
+  double r_cusp[chbrclf_nucl_num];
+  for (int64_t i=0 ; i<nucl_num_cusp ; ++i) r_cusp[i] = 0.2;
+
+  rc = qmckl_set_mo_basis_r_cusp(context, r_cusp, nucl_num_cusp);
+  assert(rc == QMCKL_SUCCESS);
+
+  const qmckl_tensor* cusp_param = &(((qmckl_context_struct*) context)->mo_basis.cusp_param);
+  assert(cusp_param->data != NULL);
+  assert(cusp_param->order == 3);
+  assert(cusp_param->size[1] == 4);
+  assert(cusp_param->size[2] == nucl_num_cusp);
+  const int64_t cusp_size = cusp_param->size[0]*cusp_param->size[1]*cusp_param->size[2];
+
+  double* cusp_ref = (double*) malloc(cusp_size * sizeof(double));
+  assert(cusp_ref != NULL);
+  double cusp_norm = 0.;
+  for (int64_t i=0 ; i<cusp_size ; ++i) {
+    cusp_ref[i] = cusp_param->data[i];
+    if (fabs(cusp_ref[i]) > cusp_norm) cusp_norm = fabs(cusp_ref[i]);
+  }
+  assert(cusp_norm > 0.);
+
+  int64_t mo_num_cusp;
+  rc = qmckl_get_mo_basis_mo_num(context, &mo_num_cusp);
+  assert(rc == QMCKL_SUCCESS);
+
+  /* A point inside the radius of the first nucleus, where the MO value
+     contains the cusp polynomial. */
+  double coord_cusp[3] = { chbrclf_nucl_coord[0][0] + 0.05,
+                           chbrclf_nucl_coord[1][0],
+                           chbrclf_nucl_coord[2][0] };
+  rc = qmckl_set_point(context, 'N', 1, coord_cusp, 3);
+  assert(rc == QMCKL_SUCCESS);
+
+  double* mo_ref = (double*) malloc(mo_num_cusp * sizeof(double));
+  double* mo_rescaled = (double*) malloc(mo_num_cusp * sizeof(double));
+  assert(mo_ref != NULL && mo_rescaled != NULL);
+
+  rc = qmckl_get_mo_basis_mo_value(context, mo_ref, mo_num_cusp);
+  assert(rc == QMCKL_SUCCESS);
+
+  rc = qmckl_mo_basis_rescale(context, 2.);
+  assert(rc == QMCKL_SUCCESS);
+
+  for (int64_t i=0 ; i<cusp_size ; ++i) {
+    assert(fabs(cusp_param->data[i] - 2.*cusp_ref[i]) <= 1.e-12 * cusp_norm);
+  }
+
+  rc = qmckl_get_mo_basis_mo_value(context, mo_rescaled, mo_num_cusp);
+  assert(rc == QMCKL_SUCCESS);
+  for (int64_t i=0 ; i<mo_num_cusp ; ++i) {
+    assert(fabs(mo_rescaled[i] - 2.*mo_ref[i]) <= 1.e-10*fabs(mo_ref[i]) + 1.e-12);
+  }
+
+  rc = qmckl_mo_basis_rescale(context, 0.5);
+  assert(rc == QMCKL_SUCCESS);
+
+  for (int64_t i=0 ; i<cusp_size ; ++i) {
+    assert(fabs(cusp_param->data[i] - cusp_ref[i]) <= 1.e-12 * cusp_norm);
+  }
+
+  rc = qmckl_get_mo_basis_mo_value(context, mo_rescaled, mo_num_cusp);
+  assert(rc == QMCKL_SUCCESS);
+  for (int64_t i=0 ; i<mo_num_cusp ; ++i) {
+    assert(fabs(mo_rescaled[i] - mo_ref[i]) <= 1.e-10*fabs(mo_ref[i]) + 1.e-12);
+  }
+
+  free(mo_ref);
+  free(mo_rescaled);
+  free(cusp_ref);
 }
   #+end_src
 
