@@ -3,7 +3,7 @@
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head>
-<!-- 2026-11-21 Sat 08:48 -->
+<!-- 2026-11-21 Sat 08:51 -->
 <meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Memory management</title>
@@ -226,32 +226,36 @@ org_html_manager.setup();  // activate after the parameters are set
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents" role="doc-toc">
 <ul>
-<li><a href="#org91519e9">1. Introduction</a></li>
-<li><a href="#org2d15b56">2. Memory data structure for the context</a></li>
-<li><a href="#org9a604de">3. Passing info to allocation routines</a></li>
-<li><a href="#org2bf08a4">4. Allocation/deallocation functions</a>
+<li><a href="#org92ca4de">1. Introduction</a></li>
+<li><a href="#org2bcb3ba">2. Memory data structure for the context</a></li>
+<li><a href="#org61a2463">3. Passing info to allocation routines</a></li>
+<li><a href="#orgdb23e98">4. Allocation/deallocation functions</a>
 <ul>
-<li><a href="#orgc0aec9c">4.1. Memory allocation</a></li>
+<li><a href="#org39425b6">4.1. Memory allocation</a></li>
 </ul>
 </li>
-<li><a href="#orgc206eb1">5. Get the size of a memory block</a></li>
+<li><a href="#org17e24d5">5. Get the size of a memory block</a></li>
 </ul>
 </div>
 </div>
-<div id="outline-container-org91519e9" class="outline-2">
-<h2 id="org91519e9"><span class="section-number-2">1.</span> Introduction</h2>
+<div id="outline-container-org92ca4de" class="outline-2">
+<h2 id="org92ca4de"><span class="section-number-2">1.</span> Introduction</h2>
 <div class="outline-text-2" id="text-1">
 <p>
-QMCkl takes its memory through functions that receive the context, so that
-every block it allocates is registered in the context and freed when the
-context is destroyed. The allocation functions are private to the library:
-the public API exchanges plain <code>double*</code> arrays.
+QMCkl takes its long-lived memory through functions that receive the
+context, so that every block allocated this way is registered in the context
+and released when the context is destroyed. Kernels that need a scratch
+buffer take it from the C allocator and free it before returning. The
+allocation functions are private to the library: no allocation function
+appears in the public header, and arrays cross the API as plain C pointers.
 </p>
 
 <p>
-An implementation of the library is free to replace them, for instance to
-return aligned memory, pinned memory, or device memory, without changing the
-code that calls them.
+An implementation of the library is free to replace those functions, for
+instance to return aligned memory, pinned memory, or device memory, without
+changing the code that calls them. This one asks <code>posix_memalign</code> for 64-byte aligned
+blocks when <code>HAVE_HPC</code> and <code>HAVE_POSIX_MEMALIGN</code> are defined, and calls
+plain <code>malloc</code> otherwise.
 </p>
 
 <p>
@@ -274,8 +278,8 @@ data = (<span style="color: #228b22;">double</span>*) <span style="color: #0000f
 </div>
 </div>
 </div>
-<div id="outline-container-org2d15b56" class="outline-2">
-<h2 id="org2d15b56"><span class="section-number-2">2.</span> Memory data structure for the context</h2>
+<div id="outline-container-org2bcb3ba" class="outline-2">
+<h2 id="org2bcb3ba"><span class="section-number-2">2.</span> Memory data structure for the context</h2>
 <div class="outline-text-2" id="text-2">
 <p>
 The QMCkl library maintains detailed information about all memory allocations
@@ -285,11 +289,10 @@ context is destroyed and provides visibility into memory usage patterns.
 
 <p>
 Every time a new block of memory is allocated, the information
-relative to the allocation is stored in a new <code>qmckl_memory_info_struct</code>.
-A <code>qmckl_memory_info_struct</code> contains the pointer to the memory block,
-its size in bytes, and extra implementation-specific information such as
-alignment requirements, memory pinning status, whether the memory should be 
-allocated on CPU or GPU, and other hardware-specific attributes.
+relative to the allocation is stored in a free <code>qmckl_memory_info_struct</code>
+slot of the allocation table.
+A <code>qmckl_memory_info_struct</code> holds two fields: the pointer to the memory
+block and its size in bytes.
 </p>
 
 <p>
@@ -321,25 +324,24 @@ of all memory managed by the context.
 </p>
 </div>
 </div>
-<div id="outline-container-org9a604de" class="outline-2">
-<h2 id="org9a604de"><span class="section-number-2">3.</span> Passing info to allocation routines</h2>
+<div id="outline-container-org61a2463" class="outline-2">
+<h2 id="org61a2463"><span class="section-number-2">3.</span> Passing info to allocation routines</h2>
 <div class="outline-text-2" id="text-3">
 <p>
-Allocation parameters should be passed to the allocation routine using
-an instance of a <code>qmckl_memory_info_struct</code>. This structure-based approach
-allows for extensibility - new allocation parameters can be added to the
-structure in future versions without changing function signatures. It also
-makes the allocation requests more self-documenting, as the <code>qmckl_memory_info_struct</code>
-explicitly specifies all allocation requirements.
+Allocation parameters are passed to the allocation routine in an instance
+of a <code>qmckl_memory_info_struct</code>. This structure-based approach allows for
+extensibility: new allocation parameters can be added to the structure in
+future versions without changing function signatures, and the request reads
+as a description of what is allocated.
 </p>
 </div>
 </div>
-<div id="outline-container-org2bf08a4" class="outline-2">
-<h2 id="org2bf08a4"><span class="section-number-2">4.</span> Allocation/deallocation functions</h2>
+<div id="outline-container-orgdb23e98" class="outline-2">
+<h2 id="orgdb23e98"><span class="section-number-2">4.</span> Allocation/deallocation functions</h2>
 <div class="outline-text-2" id="text-4">
 </div>
-<div id="outline-container-orgc0aec9c" class="outline-3">
-<h3 id="orgc0aec9c"><span class="section-number-3">4.1.</span> Memory allocation</h3>
+<div id="outline-container-org39425b6" class="outline-3">
+<h3 id="org39425b6"><span class="section-number-3">4.1.</span> Memory allocation</h3>
 <div class="outline-text-3" id="text-4-1">
 <p>
 Memory allocation inside the library should be done with
@@ -379,7 +381,7 @@ zero size, so a block of size zero cannot be tracked.
 </div>
 
 <p>
-Here's a step-by-step explanation of <code>qmckl_malloc</code>:
+The steps of <code>qmckl_malloc</code> are:
 </p>
 
 <ol class="org-ol">
@@ -387,37 +389,37 @@ Here's a step-by-step explanation of <code>qmckl_malloc</code>:
 <code>qmckl_memory_info_struct</code> containing the desired size of the memory
 block to allocate.</li>
 
-<li>The function checks if the provided <code>qmckl_context</code> is valid, using the
-<code>qmckl_context_check</code> function.</li>
+<li>The function asserts that the provided <code>qmckl_context</code> is valid, with
+<code>qmckl_context_check</code>, and retrieves the <code>qmckl_context_struct</code> pointer
+from it. The assertion disappears when the library is compiled with
+<code>NDEBUG</code>.</li>
 
-<li>The <code>qmckl_context_struct</code> pointer is retrieved from the provided
-<code>qmckl_context</code>.</li>
+<li>A request of size zero returns <code>NULL</code> at once: the allocation table marks
+a free slot with a zero size, so such a block could not be tracked.</li>
 
-<li>The function then allocates memory:
-If the <code>HAVE_HPC</code> and <code>HAVE_POSIX_MEMALIGN</code> macros are defined, the memory
-allocation is done using the <code>posix_memalign</code> function with an alignment
-of 64 bytes. Else, the memory allocation is done using the standard
-<code>malloc</code> function.</li>
+<li>The memory is allocated with <code>posix_memalign</code> and an alignment of 64
+bytes when <code>HAVE_HPC</code> and <code>HAVE_POSIX_MEMALIGN</code> are defined, and with
+<code>malloc</code> otherwise. If the allocation fails, the function returns <code>NULL</code>.</li>
 
-<li>If the allocation fails, the function returns <code>NULL</code>.</li>
+<li>The block is zeroed with <code>memset</code>.</li>
 
-<li>The allocated memory block is zeroed using <code>memset</code>.</li>
+<li>The function takes the lock of the context.</li>
 
-<li>The function acquires a lock on the <code>qmckl_context</code> using <code>qmckl_lock</code>.</li>
+<li>If the allocation table is full, it doubles the table with <code>realloc</code>,
+zeroes the new half and updates <code>array_size</code>. If that reallocation fails,
+the lock is released, the block is freed and <code>NULL</code> is returned.</li>
 
-<li>Inside the locked section, the function checks if the
-<code>qmckl_memory_struct</code> is full. If it is, it reallocates a larger array
-by doubling its size and updating the <code>array_size</code> member of the
-<code>qmckl_memory_struct</code>.</li>
+<li>The function scans the table for the first free slot, stores the pointer
+and the size there, and increments <code>n_allocated</code>.</li>
 
-<li>The function finds the first available <code>qmckl_memory_info_struct</code> slot
-in the element array of the <code>qmckl_memory_struct</code>.</li>
+<li>The lock is released and the pointer is returned.</li>
 </ol>
 
 <p>
-When freeing the memory with <code>qmckl_free</code>, the context is passed, in
-case some important information has been stored related to memory
-allocation and needs to be updated.
+<code>qmckl_free</code> takes the context because the context holds the registry of
+allocations: the block is released and its entry in the registry is
+cleared. Freeing a pointer the context does not know is an error, not a
+silent no-op.
 </p>
 
 <div class="org-src-container">
@@ -457,9 +459,9 @@ function.</li>
 <li>If the pointer is found, the memory block is deallocated using the
 standard <code>free</code> function.</li>
 
-<li>The <code>qmckl_memory_info_struct</code> at the found position is zeroed
-using <code>memset</code>. This marks the slot as available for future
-allocations.</li>
+<li>The <code>qmckl_memory_info_struct</code> at the found position is reset to
+<code>qmckl_memory_info_struct_zero</code>. This marks the slot as available for
+future allocations.</li>
 </ol>
 
 <ol class="org-ol">
@@ -474,12 +476,13 @@ successful deallocation of the memory block.</li>
 </div>
 </div>
 </div>
-<div id="outline-container-orgc206eb1" class="outline-2">
-<h2 id="orgc206eb1"><span class="section-number-2">5.</span> Get the size of a memory block</h2>
+<div id="outline-container-org17e24d5" class="outline-2">
+<h2 id="org17e24d5"><span class="section-number-2">5.</span> Get the size of a memory block</h2>
 <div class="outline-text-2" id="text-5">
 <p>
-All the blocks allocated with <code>qmckl_malloc</code> keep track of how many
-bytes were allocated. Using <code>qmckl_get_malloc_info</code> allows to get this information.
+The context keeps the size of every block allocated with <code>qmckl_malloc</code>.
+<code>qmckl_get_malloc_info</code> returns it, and fails with <code>QMCKL_INVALID_ARG_2</code>
+when the pointer is not registered in the context.
 </p>
 
 <div class="org-src-container">
@@ -494,7 +497,7 @@ bytes were allocated. Using <code>qmckl_get_malloc_info</code> allows to get thi
 </div>
 <div id="postamble" class="status">
 <p class="author">Author: TREX CoE</p>
-<p class="date">Created: 2026-11-21 Sat 08:48</p>
+<p class="date">Created: 2026-11-21 Sat 08:51</p>
 <p class="validation"><a href="https://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>

@@ -3,7 +3,7 @@
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head>
-<!-- 2026-11-21 Sat 08:48 -->
+<!-- 2026-11-21 Sat 08:51 -->
 <meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Error handling</title>
@@ -226,70 +226,75 @@ org_html_manager.setup();  // activate after the parameters are set
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents" role="doc-toc">
 <ul>
-<li><a href="#orgd1c4d18">1. Introduction</a>
-<ul>
-<li><a href="#org010705e">1.1. Exit codes</a></li>
-</ul>
-</li>
-<li><a href="#orgd085c53">2. Decoding errors</a></li>
-<li><a href="#org8b90add">3. Data structure in context</a></li>
-<li><a href="#org7c40511">4. Updating errors in the context</a></li>
-<li><a href="#org61f2836">5. Get the error</a></li>
-<li><a href="#orgb11861c">6. Failing</a></li>
-<li><a href="#org2440100">7. Last error</a></li>
-<li><a href="#orgc07741e">8. Helper functions for debugging</a></li>
+<li><a href="#org59b5a33">1. Introduction</a></li>
+<li><a href="#orgf2329c2">2. Exit codes</a></li>
+<li><a href="#orgc98c472">3. Decoding errors</a></li>
+<li><a href="#orgc659726">4. Data structure in context</a></li>
+<li><a href="#org4034808">5. Updating errors in the context</a></li>
+<li><a href="#org238f1e7">6. Get the error</a></li>
+<li><a href="#org6493e25">7. Failing</a></li>
+<li><a href="#org0deb231">8. Last error</a></li>
+<li><a href="#org1ec3118">9. Helper functions for debugging</a></li>
 </ul>
 </div>
 </div>
-<div id="outline-container-orgd1c4d18" class="outline-2">
-<h2 id="orgd1c4d18"><span class="section-number-2">1.</span> Introduction</h2>
+<div id="outline-container-org59b5a33" class="outline-2">
+<h2 id="org59b5a33"><span class="section-number-2">1.</span> Introduction</h2>
 <div class="outline-text-2" id="text-1">
 <p>
-Every function of the library returns a <code>qmckl_exit_code</code>: <code>QMCKL_SUCCESS</code>,
-which is zero, when the call succeeded, and a non-zero code describing the
-error otherwise. Errors are reported through this return value; the library
-does not abort the calling program, and does not write to a file or to the
-standard output. The calling code decides what an error means for it.
+Almost every function of the library returns a <code>qmckl_exit_code</code>:
+<code>QMCKL_SUCCESS</code>, which is zero, when the call succeeded, and a non-zero
+code describing the error otherwise. The exceptions are the functions that
+return a value or nothing: the context functions, the lock, the provided
+predicates, the numerical-precision getters, the two
+<code>qmckl_test_precision</code> helpers and <code>qmckl_string_of_error</code>. An error is
+reported through the return value alone, and the calling code decides what
+it means for it.
 </p>
 
 <p>
-This module defines the exit codes, and the functions that record an error
-in a context, retrieve it, and turn a code into a string.
+A return code alone does not say which call failed on which argument. For
+that the library records, inside the context, the code, the name of the
+function and a message. This module defines the exit codes and the
+functions that write, read and decode that record.
+</p>
+
+<p>
+The library does not print errors. Assertions catch a misuse in a build
+that keeps them enabled, and <code>qmckl_check</code>, at the end of this page, is the
+only helper that writes to <code>stderr</code>.
 </p>
 </div>
-<div id="outline-container-org010705e" class="outline-3">
-<h3 id="org010705e"><span class="section-number-3">1.1.</span> Exit codes</h3>
-<div class="outline-text-3" id="text-1-1">
+</div>
+<div id="outline-container-orgf2329c2" class="outline-2">
+<h2 id="orgf2329c2"><span class="section-number-2">2.</span> Exit codes</h2>
+<div class="outline-text-2" id="text-2">
 <p>
-All the functions in the QMCkl library return with an exit code, defined as
+An exit code is a 32-bit integer:
 </p>
 <div class="org-src-container">
-<pre class="src src-c" id="org7c40027"><span style="color: #a020f0;">typedef</span> <span style="color: #228b22;">int32_t</span> <span style="color: #228b22;">qmckl_exit_code</span>;
+<pre class="src src-c" id="orgac23c61"><span style="color: #a020f0;">typedef</span> <span style="color: #228b22;">int32_t</span> <span style="color: #228b22;">qmckl_exit_code</span>;
 </pre>
 </div>
 
 
 <p>
-The exit code provides a standardized way to return the completion status 
-of a function to the calling program. When a function call completes 
-successfully, <code>QMCKL_SUCCESS</code> (value 0) is returned. If one of the functions 
-of the library fails to complete the requested task, an appropriate error 
-code is returned to the program.
-</p>
-
-<p>
-This approach allows calling programs to check the return value and handle 
-errors appropriately, implementing their own error recovery strategies or 
-logging mechanisms. The error codes are designed to be self-documenting,
-with specific codes for common error conditions such as invalid arguments,
-allocation failures, and context-related issues.
+The codes fall in two blocks. Codes 1 to 20 are <code>QMCKL_INVALID_ARG_1</code> to
+<code>QMCKL_INVALID_ARG_20</code> and name the offending argument by its position in
+the signature, the context being the first, so a function that rejects its
+third argument returns <code>QMCKL_INVALID_ARG_3</code>. Codes 101 to 109 describe
+the conditions that are not an argument: a failed allocation, a value that
+was never provided, a set attempted twice. Four of them are defined and
+decoded but never returned by the library at present, <code>QMCKL_ERRNO</code>,
+<code>QMCKL_DEALLOCATION_FAILED</code>, <code>QMCKL_OUT_OF_BOUNDS</code> and
+<code>QMCKL_INVALID_EXIT_CODE</code>.
 </p>
 
 <p>
 Here is the complete list of exit codes:
 </p>
 
-<table id="org6349fd6" border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+<table id="org563ee09" border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
 
 
 <colgroup>
@@ -490,15 +495,18 @@ Here is the complete list of exit codes:
 </table>
 </div>
 </div>
-</div>
-<div id="outline-container-orgd085c53" class="outline-2">
-<h2 id="orgd085c53"><span class="section-number-2">2.</span> Decoding errors</h2>
-<div class="outline-text-2" id="text-2">
+<div id="outline-container-orgc98c472" class="outline-2">
+<h2 id="orgc98c472"><span class="section-number-2">3.</span> Decoding errors</h2>
+<div class="outline-text-2" id="text-3">
 <p>
-The <code>qmckl_string_of_error</code> function converts an error code into a
-descriptive string, which an application can print or write to a log. The
-function takes an error code as input and returns a constant string
-describing the error condition. Both C and Fortran interfaces are provided.
+<code>qmckl_string_of_error</code> turns an exit code into a string that an
+application can print or log. The switch covers every code of the table
+and returns <code>"Unknown error"</code> for anything else, so the result is never
+<code>NULL</code>. Only <code>QMCKL_ERRNO</code> gives something else: <code>strerror(errno)</code>, the
+description of the last failing system call, in a buffer that the next
+<code>strerror</code> call may overwrite. The Fortran interface binds to a private
+wrapper, <code>qmckl_string_of_error_f</code>, which copies at most 127 characters
+into the 128-byte buffer it is given and terminates the string.
 </p>
 
 <div class="org-src-container">
@@ -508,49 +516,41 @@ describing the error condition. Both C and Fortran interfaces are provided.
 </div>
 
 <p>
-The text strings returned by this function are extracted from the error codes
-table defined earlier. This ensures consistency between the error codes and
-their string representations throughout the library.
+The strings are generated from the table above by the Python block that
+also produces the C and Fortran constants, so a code and its text cannot
+drift apart.
 </p>
 </div>
 </div>
-<div id="outline-container-org8b90add" class="outline-2">
-<h2 id="org8b90add"><span class="section-number-2">3.</span> Data structure in context</h2>
-<div class="outline-text-2" id="text-3">
-<p>
-The QMCkl context maintains detailed error state information through a
-dedicated data structure. This structure stores not only the error code,
-but also the name of the function where the error occurred and a descriptive
-message explaining the error condition.
-</p>
-
-<p>
-The strings are declared internally with a maximum fixed size to avoid
-dynamic memory allocation, which is important for performance and thread
-safety. This design choice ensures that error handling itself does not
-introduce additional failure modes or performance bottlenecks.
-</p>
-</div>
-</div>
-<div id="outline-container-org7c40511" class="outline-2">
-<h2 id="org7c40511"><span class="section-number-2">4.</span> Updating errors in the context</h2>
+<div id="outline-container-orgc659726" class="outline-2">
+<h2 id="orgc659726"><span class="section-number-2">4.</span> Data structure in context</h2>
 <div class="outline-text-2" id="text-4">
 <p>
-The error state in the context is updated using the <code>qmckl_set_error</code>
-function. This function provides a centralized mechanism for recording
-errors that occur during library operations.
+The context holds one <code>qmckl_error_struct</code>, with the code, a
+<code>QMCKL_MAX_FUN_LEN</code>-byte function name and a <code>QMCKL_MAX_MSG_LEN</code>-byte
+message. The two strings have a fixed size, so recording an error allocates
+nothing and cannot fail for lack of memory.
 </p>
 
 <p>
-When an error is set in the context, it is mandatory to specify
-from which function the error is triggered, and a message
-explaining the error. The exit code can't be <code>QMCKL_SUCCESS</code>.
+A new context is zeroed by <code>qmckl_context_create</code>: it starts with
+<code>QMCKL_SUCCESS</code> and two empty strings. <code>qmckl_context_copy</code> copies the
+structure with the rest of the context, and nothing clears it afterwards,
+so a successful call leaves the last error in place.
 </p>
-
+</div>
+</div>
+<div id="outline-container-org4034808" class="outline-2">
+<h2 id="org4034808"><span class="section-number-2">5.</span> Updating errors in the context</h2>
+<div class="outline-text-2" id="text-5">
 <p>
-This detailed error information enables precise debugging and helps
-users understand exactly what went wrong and where, making it easier
-to diagnose and fix issues in code using the QMCkl library.
+<code>qmckl_set_error</code> overwrites the record with a code, a function name and a
+message, under the context lock. All three are mandatory and the code
+cannot be <code>QMCKL_SUCCESS</code>. The check that the context is valid is an
+assertion, not a return value, because a record that has nowhere to go
+cannot report anything. The function returns <code>QMCKL_SUCCESS</code>, which says
+that the recording succeeded, not the code it stored. A name longer than
+255 characters and a message longer than 1023 are truncated.
 </p>
 
 <div class="org-src-container">
@@ -563,27 +563,16 @@ to diagnose and fix issues in code using the QMCkl library.
 </div>
 </div>
 </div>
-<div id="outline-container-org61f2836" class="outline-2">
-<h2 id="org61f2836"><span class="section-number-2">5.</span> Get the error</h2>
-<div class="outline-text-2" id="text-5">
+<div id="outline-container-org238f1e7" class="outline-2">
+<h2 id="org238f1e7"><span class="section-number-2">6.</span> Get the error</h2>
+<div class="outline-text-2" id="text-6">
 <p>
-Upon error, the calling program can retrieve detailed error information from the
-context using <code>qmckl_get_error</code>. This function provides access to the error 
-code, the name of the function where the error occurred, and a descriptive 
-message explaining the error condition.
-</p>
-
-<p>
-The error message and function name are returned in the variables provided 
-by the caller. Therefore, passing valid pointers for the function name and 
-message is mandatory. The caller must ensure that the provided buffers are
-large enough to hold the error information.
-</p>
-
-<p>
-This retrieval mechanism allows applications to implement sophisticated error
-handling strategies, such as retry logic, fallback mechanisms, or detailed
-logging for post-mortem analysis.
+<code>qmckl_get_error</code> reads the record back into three caller-provided
+variables. It has no size arguments: the two buffers must hold
+<code>QMCKL_MAX_FUN_LEN</code> and <code>QMCKL_MAX_MSG_LEN</code> bytes, and neither may be
+<code>NULL</code>. The code is written to <code>exit_code</code>, which is <code>QMCKL_SUCCESS</code> when
+nothing has failed since the context was created. Like the setter, it
+asserts that the context is valid and returns <code>QMCKL_SUCCESS</code>.
 </p>
 
 <div class="org-src-container">
@@ -596,18 +585,17 @@ logging for post-mortem analysis.
 </div>
 </div>
 </div>
-<div id="outline-container-orgb11861c" class="outline-2">
-<h2 id="orgb11861c"><span class="section-number-2">6.</span> Failing</h2>
-<div class="outline-text-2" id="text-6">
+<div id="outline-container-org6493e25" class="outline-2">
+<h2 id="org6493e25"><span class="section-number-2">7.</span> Failing</h2>
+<div class="outline-text-2" id="text-7">
 <p>
-To make a function fail, the <code>qmckl_failwith</code> function should be
-called, such that information about the failure is stored in
-the context. The desired exit code is given as an argument, as
-well as the name of the function and an error message. If the
-message is <code>NULL</code>, then the default message obtained by
-<code>qmckl_string_of_error</code> is used. The return code of the function is
-the desired return code.
-Upon failure, a <code>QMCKL_NULL_CONTEXT</code> is returned.
+<code>qmckl_failwith</code> records the failure and returns the code it was given, so
+that a kernel can write <code>return qmckl_failwith(...)</code>. The code, the
+function name and a message are the arguments; a <code>NULL</code> message is
+replaced by the text <code>qmckl_string_of_error</code> gives for that code. It
+asserts that the name and the message fit in 255 and 1023 characters. When
+the context is not valid, nothing can be recorded and the function returns
+<code>QMCKL_INVALID_CONTEXT</code>.
 </p>
 
 <div class="org-src-container">
@@ -633,11 +621,16 @@ For example, this function can be used as
 </div>
 </div>
 </div>
-<div id="outline-container-org2440100" class="outline-2">
-<h2 id="org2440100"><span class="section-number-2">7.</span> Last error</h2>
-<div class="outline-text-2" id="text-7">
+<div id="outline-container-org0deb231" class="outline-2">
+<h2 id="org0deb231"><span class="section-number-2">8.</span> Last error</h2>
+<div class="outline-text-2" id="text-8">
 <p>
-Returns a string describing the last error, using <code>qmckl_get_error</code>.
+<code>qmckl_last_error</code> formats the record into a caller-provided buffer of
+<code>size_max</code> bytes: <code>Error -- &lt;code&gt; -- in &lt;function&gt;</code> on one line, the
+message on the next. The text is truncated to fit and is always terminated.
+A <code>NULL</code> buffer and a non-positive size return <code>QMCKL_INVALID_ARG_2</code> and
+<code>QMCKL_INVALID_ARG_3</code>. With an invalid context the function cannot read the
+record, writes <code>"Null context"</code> and returns <code>QMCKL_FAILURE</code>.
 </p>
 
 <div class="org-src-container">
@@ -649,12 +642,16 @@ Returns a string describing the last error, using <code>qmckl_get_error</code>.
 </div>
 </div>
 </div>
-<div id="outline-container-orgc07741e" class="outline-2">
-<h2 id="orgc07741e"><span class="section-number-2">8.</span> Helper functions for debugging</h2>
-<div class="outline-text-2" id="text-8">
+<div id="outline-container-org1ec3118" class="outline-2">
+<h2 id="org1ec3118"><span class="section-number-2">9.</span> Helper functions for debugging</h2>
+<div class="outline-text-2" id="text-9">
 <p>
-The following function prints to <code>stderr</code> an error message is the return code is
-not <code>QMCKL_SUCCESS</code>.
+<code>qmckl_check</code> prints to <code>stderr</code> the code it was given and the record of the
+context when that code is not <code>QMCKL_SUCCESS</code>. What it returns is the code
+it reads back from the context, not its argument: a matching context gives
+the same value, an empty one gives <code>QMCKL_SUCCESS</code>, and the assertion that
+usually follows would then pass. The context must be valid; <code>qmckl_get_error</code>
+asserts it.
 </p>
 
 <div class="org-src-container">
@@ -679,7 +676,7 @@ It should be used as:
 </div>
 <div id="postamble" class="status">
 <p class="author">Author: TREX CoE</p>
-<p class="date">Created: 2026-11-21 Sat 08:48</p>
+<p class="date">Created: 2026-11-21 Sat 08:51</p>
 <p class="validation"><a href="https://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>
