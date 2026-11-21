@@ -5,20 +5,18 @@
 
 * Introduction
 
-Computing forces on nuclei (interatomic forces) is essential for geometry
-optimization, molecular dynamics simulations, and understanding molecular
-vibrations. In quantum Monte Carlo calculations, accurate force evaluation
-requires derivatives of the wavefunction with respect to nuclear positions.
+A force on a nucleus is minus the gradient of the energy with respect to
+the position of that nucleus. This module computes the derivatives of the
+pieces of the wavefunction that depend on the nuclei, not the forces
+themselves: the derivatives of the Jastrow factor and of the orbitals
+(values, gradients and Laplacians). They are stored in the context
+and read back with the ~qmckl_get_forces_...~ accessors; the caller
+combines them into the derivative of the local energy.
 
-To calculate interatomic forces, derivatives with respect to nuclear coordinates
-of the values, gradients, and Laplacians of both the Jastrow factor and the 
-molecular orbitals (MO) are required. These derivatives propagate through the
-local energy expression to yield the forces.
-
-Furthermore, for calculations involving nonlocal pseudopotentials, the forces
-also require derivatives of the single-electron move Jastrow values. The 
-implementation of force calculations is one of the more complex aspects of
-QMC codes, requiring careful attention to numerical accuracy and efficiency.
+Moving one electron changes the Jastrow and therefore its derivative with
+respect to the nuclei. The single-electron sections compute the difference
+between the old and the new contribution, taking the new position from
+~qmckl_set_single_point~.
 
 * Headers                                                          :noexport:
   #+begin_src elisp :noexport :results none
@@ -92,7 +90,7 @@ int main() {
 
   #+end_src
 
-* Context 
+* Context                                                          :noexport:
 
 ** Data structure
 
@@ -421,10 +419,10 @@ double coef[9] = { 1.0/280.0, -4.0/105.0, 1.0/5.0, -4.0/5.0, 0.0, 4.0/5.0, -1.0/
 
       #+end_src
 
-* Finite-difference function
+* Finite-difference function                                       :noexport:
 
-We introduce here a general function to compute the derivatives of any quantity with respect to nuclear coordinates.
-using finite-differences.
+A general function computing the derivatives of any quantity with respect
+to the nuclear coordinates with a 9-point finite-difference stencil.
 
 #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
 typedef qmckl_exit_code (*function_callback)(qmckl_context context, double* const output, const int64_t size);
@@ -546,14 +544,16 @@ qmckl_exit_code qmckl_finite_difference_deriv_n(
 
 * Forces of the Jastrow function
 
-For the forces of the Jastrow function, there is only a contribution from the electron-nucleus and electron-electron-nucleus Jastrow, since the electron-electron Jastrow does not depend on nuclear coordinates.
+Only the electron-nucleus and electron-electron-nucleus Jastrow terms depend
+on the nuclear coordinates; the electron-electron Jastrow does not, so its
+derivative vanishes.
 
 ** Electron-nucleus Jastrow
 
 *** Force of electron-nucleus Jastrow value
 
-Calculates the force of the electron-nucleus Jastrow value.
-The terms of the force of the electron-nucleus Jastrow value are identical to the gradient of this Jastrow, up to a minus sign.
+Calculates the force of the electron-nucleus Jastrow value, which is minus
+its gradient with respect to the electron coordinates.
 \[
   \partial_{\alpha,m} J_{en} = -\sum_i \left( \frac{a_1 \partial_{i,m} \widetilde{R}_{i\alpha}}{(1+a_2 \widetilde{R}_{i\alpha} )^2} + \sum_{k=2}^{N_\text{aord}} a_k k \widetilde{R}_{i\alpha}^{k-1} \partial_{i,m} \widetilde{R}_{i\alpha} \right)
 \]
@@ -721,7 +721,7 @@ qmckl_exit_code qmckl_provide_forces_jastrow_en(qmckl_context context)
      | ~nucl_num~                | ~int64_t~                                 | in     | Number of nuclei                      |
      | ~type_nucl_num~           | ~int64_t~                                 | in     | Number of unique nuclei               |
      | ~type_nucl_vector~        | ~int64_t[nucl_num]~                       | in     | IDs of unique nuclei                  |
-     | ~aord_num~                | ~int64_t~                                 | in     | Number of coefficients                |
+     | ~aord_num~                | ~int64_t~                                 | in     | Order of the a polynomial             |
      | ~a_vector~                | ~double[type_nucl_num][aord_num+1]~       | in     | List of coefficients                  |
      | ~en_distance_rescaled~    | ~double[walk_num][nucl_num][elec_num]~    | in     | Electron-nucleus distances            |
      | ~en_distance_rescaled_gl~ | ~double[walk_num][nucl_num][elec_num][4]~ | in     | Electron-nucleus distance derivatives |
@@ -932,7 +932,9 @@ printf("OK\n");
 
 *** Force of electron-nucleus Jastrow gradient
 
-To avoid having to create new arrays for the Hessian of the rescaled distances, we compute parts of it manually in this routine.
+Calculates the force of the electron-nucleus Jastrow gradient.
+The Hessian of the rescaled distances is not stored, so its elements are
+computed in this routine.
 \begin{eqnarray}
 \partial_{\alpha,m} \partial_{i,n} J_{en} & = \frac{a_1 \partial_{\alpha,m} \partial_{i,n} \widetilde{R}_{i\alpha} }{(1+a_2 \widetilde{R}_{i\alpha})^2} - 2 \frac{a_1 a_2 \partial_{\alpha,m} \widetilde{R}_{i\alpha} \partial_{i,n} \widetilde{R}_{i\alpha}}{(1+a_2 \widetilde{R}_{i\alpha})^3} + \sum_{k=2}^{N_\text{aord}} a_k k \left((k-1) \widetilde{R}_{i\alpha}^{k-2} \partial_{\alpha,m}  \widetilde{R}_{i\alpha} \partial_{i,n}  \widetilde{R}_{i\alpha} +  \widetilde{R}_{i\alpha}^{k-1} \partial_{\alpha,m}\partial_{i,n}  \widetilde{R}_{i\alpha} \right) \\
 & = -\frac{a_1 e^{-\kappa R_{i\alpha}}}{R_{i\alpha }(1+a_2 \widetilde{R}_{i\alpha})^2} + \frac{a_1 \partial_{i,m} \widetilde{R}_{i\alpha} \partial_{i,n} \widetilde{R}_{i\alpha} }{(1+a_2 \widetilde{R}_{i\alpha})^2}\left (\frac{e^{\kappa R_{i\alpha}}}{R_{i\alpha}} + \kappa e^{\kappa R_{i\alpha}} \right) + 2 \frac{a_1 a_2 \partial_{i,m} \widetilde{R}_{i\alpha} \partial_{i,n} \widetilde{R}_{i\alpha}}{(1+a_2 \widetilde{R}_{i\alpha})^3} \\
@@ -1110,7 +1112,7 @@ qmckl_exit_code qmckl_provide_forces_jastrow_en_g(qmckl_context context)
      | ~nucl_num~                | ~int64_t~                                    | in     | Number of nuclei                      |
      | ~type_nucl_num~           | ~int64_t~                                    | in     | Number of unique nuclei               |
      | ~type_nucl_vector~        | ~int64_t[nucl_num]~                          | in     | IDs of unique nuclei                  |
-     | ~aord_num~                | ~int64_t~                                    | in     | Number of coefficients                |
+     | ~aord_num~                | ~int64_t~                                    | in     | Order of the a polynomial             |
      | ~a_vector~                | ~double[type_nucl_num][aord_num+1]~          | in     | List of coefficients                  |
      | ~rescale_factor_en~       | ~double[type_nucl_num]~                      | in     | Rescale factor for electron-nucleus   |
      | ~en_distance~             | ~double[walk_num][elec_num][nucl_num]~       | in     | Electron-nucleus distances            |
@@ -1356,8 +1358,10 @@ printf("OK\n");
 
 *** Force of electron-nucleus Jastrow Laplacian
 
-Calculates the force of the electron-nucleus Jastrow Laplacian. 
-To avoid having to calculate higher order derivatives of the rescaled distances elsewhere, the neccessery terms are calcuculated on the fly.
+Calculates the force of the electron-nucleus Jastrow Laplacian.
+The nuclear derivatives of the rescaled distances are not stored, so the
+terms needed here are computed on the fly from the stored values, gradients
+and Laplacians.
 \begin{eqnarray}
 \partial_{\alpha,m} \nabla^2  J_{en} =& \sum_i \left(\partial_{\alpha,m}\frac{a_1 \nabla^2 \widetilde{R}_{i\alpha}}{(1+a_2 \widetilde{R}_{i\alpha})^2} - \partial_{\alpha,m} \frac{2a_1a_2 (\nabla\widetilde{R}_{i\alpha}\cdot \nabla \widetilde{R}_{i\alpha})}{(1+a_2\widetilde{R}_{i\alpha})^3} + \partial_{\alpha,m} \sum_{k=2}^{N_\text{aord}} a_k k \left( \widetilde{R}_{i\alpha}^{k-1} \nabla^2\widetilde{R}_{i\alpha} + (k-1)\widetilde{R}_{i\alpha}^{k-2} (\nabla \widetilde{R}_{i\alpha}\cdot \nabla \widetilde{R}_{i\alpha} ) \right) \right)\\
 =&\sum_i \left( \frac{a_1 \partial_{i,m} \widetilde{R}_{i\alpha}}{(1+a_2 \widetilde{R}_{i\alpha})^2}\left( \frac{2\kappa}{R_{i\alpha}} - \kappa^2 + \frac{2}{R^2_{i\alpha}}\right) + \frac{2a_1a_2\partial_{i,m}\widetilde{R}_{i\alpha}\nabla^2\widetilde{R}_{i\alpha}}{(1+a_2 \widetilde{R}_{i\alpha})^3} - \frac{4a_1a_2\kappa e^{-\kappa R_{i\alpha}}\partial_{i,m}\widetilde{R}_{i\alpha}}{(1+a_2 \widetilde{R}_{i\alpha})^3} - \frac{6 a_1 a_2^2 (\nabla \widetilde{R}_{i\alpha} \cdot \nabla \widetilde{R}_{i\alpha})\partial_{i,m}\widetilde{R}_{i\alpha}}{(1+a_2 \widetilde{R}_{i\alpha})^4} \right.\\
@@ -1534,7 +1538,7 @@ qmckl_exit_code qmckl_provide_forces_jastrow_en_l(qmckl_context context)
      | ~nucl_num~                | ~int64_t~                                 | in     | Number of nuclei                      |
      | ~type_nucl_num~           | ~int64_t~                                 | in     | Number of unique nuclei               |
      | ~type_nucl_vector~        | ~int64_t[nucl_num]~                       | in     | IDs of unique nuclei                  |
-     | ~aord_num~                | ~int64_t~                                 | in     | Number of coefficients                |
+     | ~aord_num~                | ~int64_t~                                 | in     | Order of the a polynomial             |
      | ~a_vector~                | ~double[type_nucl_num][aord_num+1]~       | in     | List of coefficients                  |
      | ~rescale_factor_en~       | ~double[type_nucl_num]~                   | in     | Rescale factor for electron-nucleus   |
      | ~en_distance~             | ~double[walk_num][elec_num][nucl_num]~    | in     | Electron-nucleus distances            |
@@ -1786,7 +1790,7 @@ printf("OK\n");
 
 *** Force of single electron-nucleus Jastrow value
 
-Calculate the force of the single-electron contribution ot the electron-nucleus Jastrow value.
+Calculates the force of the single-electron contribution to the electron-nucleus Jastrow value.
 \[
   \delta\partial_{\alpha,m} J_{en} =  -\left( \frac{a_1 \partial_{i,m} \widetilde{R}_{i\alpha}^{\text{new}}}{(1+a_2 \widetilde{R}_{i\alpha}^{\text{new}} )^2} + \sum_{k=2}^{N_\text{aord}} a_k k {\widetilde{R}_{i\alpha}^{\text{new}}}^{k-1} \partial_{i,m} \widetilde{R}_{i\alpha}^{\text{new}} \right) + \left( \frac{a_1 \partial_{i,m} \widetilde{R}_{i\alpha}^{\text{old}}}{(1+a_2 \widetilde{R}_{i\alpha}^{\text{old}} )^2} + \sum_{k=2}^{N_\text{aord}} a_k k {\widetilde{R}_{i\alpha}^{\text{old}}}^{k-1} \partial_{i,m} \widetilde{R}_{i\alpha}^{\text{old}} \right)
 \]
@@ -1969,7 +1973,7 @@ qmckl_exit_code qmckl_provide_forces_jastrow_single_en(qmckl_context context)
      | ~nucl_num~                 | ~int64_t~                                 | in     | Number of nuclei                                      |
      | ~type_nucl_num~            | ~int64_t~                                 | in     | Number of unique nuclei                               |
      | ~type_nucl_vector~         | ~int64_t[nucl_num]~                       | in     | IDs of unique nuclei                                  |
-     | ~aord_num~                 | ~int64_t~                                 | in     | Number of coefficients                                |
+     | ~aord_num~                 | ~int64_t~                                 | in     | Order of the a polynomial                             |
      | ~a_vector~                 | ~double[type_nucl_num][aord_num+1]~       | in     | List of coefficients                                  |
      | ~en_distance_rescaled~     | ~double[walk_num][nucl_num][elec_num]~    | in     | Electron-nucleus rescaled distances                   |
      | ~en_distance_rescaled_gl~  | ~double[walk_num][nucl_num][elec_num][4]~ | in     | Electron-nucleus rescaled distance derivatives        |
@@ -2192,11 +2196,12 @@ printf("OK\n");
       #+end_src
 
 
-** Electron-electron-nucleus Jastrow 
+** Electron-electron-nucleus Jastrow
 
 *** Force of P matrix
 
-Calculates the force of the P matrix. This is a required component to calculate the force on the 3-body Jastrow.
+Calculates the force of the P matrix, an intermediate of the
+electron-electron-nucleus Jastrow.
 \[
 \partial_{\alpha,m} P_{i,\alpha,k,l} = \sum_j \widetilde{r}_{i,j,k} \partial_{\alpha,m}\widetilde{R}_{j,\alpha,l} =  -\sum_j \widetilde{r}_{i,j,k} \partial_{j,m}\widetilde{R}_{j,\alpha,l}
 \]
@@ -2342,8 +2347,8 @@ qmckl_exit_code qmckl_provide_forces_tmp_c(qmckl_context context)
      | ~walk_num~          | ~int64_t~                                                           | in     | Number of walkers                     |
      | ~elec_num~          | ~int64_t~                                                           | in     | Number of electrons                   |
      | ~nucl_num~          | ~int64_t~                                                           | in     | Number of nuclei                      |
-     | ~cord_num~          | ~int64_t~                                                           | in     | order of polynomials                  |
-     | ~een_rescaled_e~    | ~double[walk_num][0:cord_num][elec_num][elec_num]~                  | in     | Electron-nucleus rescaled             |
+     | ~cord_num~          | ~int64_t~                                                           | in     | Order of the c polynomial             |
+     | ~een_rescaled_e~    | ~double[walk_num][0:cord_num][elec_num][elec_num]~                  | in     | Electron-electron rescaled distances  |
      | ~een_rescaled_n_gl~ | ~double[walk_num][0:cord_num][nucl_num][4][elec_num]~               | in     | Electron-nucleus rescaled derivatives |
      | ~forces_tmp_c~      | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][4][elec_num]~ | out    | Force on the P matrix                 |
      |---------------------+---------------------------------------------------------------------+--------+---------------------------------------|
@@ -2530,7 +2535,7 @@ printf("OK\n");
 
       #+end_src
 
-*** Force of derivative of the $P$ matrix
+*** Force of the derivative of the P matrix
 
 Calculates the force of the derivative of the $P$ matrix.
 \[
@@ -2678,8 +2683,8 @@ qmckl_exit_code qmckl_provide_forces_dtmp_c(qmckl_context context)
      | ~walk_num~          | ~int64_t~                                                              | in     | Number of walkers                     |
      | ~elec_num~          | ~int64_t~                                                              | in     | Number of electrons                   |
      | ~nucl_num~          | ~int64_t~                                                              | in     | Number of nuclei                      |
-     | ~cord_num~          | ~int64_t~                                                              | in     | order of polynomials                  |
-     | ~een_rescaled_e_gl~ | ~double[walk_num][0:cord_num][elec_num][4][elec_num]~                  | in     | Electron-nucleus rescaled             |
+     | ~cord_num~          | ~int64_t~                                                              | in     | Order of the c polynomial             |
+     | ~een_rescaled_e_gl~ | ~double[walk_num][0:cord_num][elec_num][4][elec_num]~                  | in     | Electron-electron rescaled distances  |
      | ~een_rescaled_n_gl~ | ~double[walk_num][0:cord_num][nucl_num][4][elec_num]~                  | in     | Electron-nucleus rescaled derivatives |
      | ~forces_dtmp_c~     | ~double[walk_num][0:cord_num-1][0:cord_num][4][nucl_num][4][elec_num]~ | out    | Force of derivative of the P matrix   |
      |---------------------+------------------------------------------------------------------------+--------+---------------------------------------|
@@ -2971,7 +2976,7 @@ printf("OK\n");
 
 *** Force of electron-electron-nucleus Jastrow value
 
-Calculates the force of the eleectron-electorn-nucleus Jastrow value.
+Calculates the force of the electron-electron-nucleus Jastrow value.
 \[
 \partial_{\alpha,m}J_{een} = \sum_{p=2}^{N_\text{nord}} \sum_{k=0}^{p-1} \sum_{l=0}^{p-k-2\delta_{k,0}} c_{l,k,p,\alpha} \sum_{i=1}^{N_\text{elec}} \left(\widetilde{R}_{i\alpha}^{(p-k+l)/2} \partial_{\alpha,m}P_{i\alpha,k,(p-k-l)/2} + \partial_{\alpha,m}\widetilde{R}_{i\alpha}^{(p-k+l)/2} P_{i\alpha,k,(p-k-l)/2}\right)
 \]
@@ -3153,11 +3158,11 @@ qmckl_exit_code qmckl_provide_forces_jastrow_een(qmckl_context context)
      | ~walk_num~            | ~int64_t~                                                           | in     | Number of walkers                                |
      | ~elec_num~            | ~int64_t~                                                           | in     | Number of electrons                              |
      | ~nucl_num~            | ~int64_t~                                                           | in     | Number of nuclei                                 |
-     | ~cord_num~            | ~int64_t~                                                           | in     | order of polynomials                             |
-     | ~dim_c_vector~        | ~int64_t~                                                           | in     | dimension of full coefficient vector             |
-     | ~c_vector_full~       | ~double[dim_c_vector][nucl_num]~                                    | in     | full coefficient vector                          |
-     | ~lkpm_combined_index~ | ~int64_t[4][dim_c_vector]~                                          | in     | combined indices                                 |
-     | ~een_rescaled_n~      | ~double[walk_num][0:cord_num][nucl_num][elec_num]~                  | in     | Electron-nucleus rescaled                        |
+     | ~cord_num~            | ~int64_t~                                                           | in     | Order of the c polynomial                        |
+     | ~dim_c_vector~        | ~int64_t~                                                           | in     | Dimension of the full coefficient vector         |
+     | ~c_vector_full~       | ~double[dim_c_vector][nucl_num]~                                    | in     | Full coefficient vector                          |
+     | ~lkpm_combined_index~ | ~int64_t[4][dim_c_vector]~                                          | in     | Combined indices                                 |
+     | ~een_rescaled_n~      | ~double[walk_num][0:cord_num][nucl_num][elec_num]~                  | in     | Electron-nucleus rescaled distances              |
      | ~een_rescaled_n_gl~   | ~double[walk_num][0:cord_num][nucl_num][4][elec_num]~               | in     | Electron-nucleus rescaled derivatives            |
      | ~tmp_c~               | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][elec_num]~    | in     | P matrix                                         |
      | ~forces_tmp_c~        | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][4][elec_num]~ | in     | Force of P matrix                                |
@@ -3426,7 +3431,7 @@ qmckl_exit_code qmckl_provide_forces_een_rescaled_n_gl(qmckl_context context)
      | ~context~           | ~qmckl_context~                                          | in     | Global state                                             |
      | ~walk_num~          | ~int64_t~                                                | in     | Number of walkers                                        |
      | ~elec_num~          | ~int64_t~                                                | in     | Number of electrons                                      |
-     | ~nucl_num~          | ~int64_t~                                                | in     | Number of atoms                                          |
+     | ~nucl_num~          | ~int64_t~                                                | in     | Number of nuclei                                         |
      | ~type_nucl_num~     | ~int64_t~                                                | in     | Number of atom types                                     |
      | ~type_nucl_vector~  | ~int64_t[nucl_num]~                                      | in     | Types of atoms                                           |
      | ~cord_num~          | ~int64_t~                                                | in     | Order of polynomials                                     |
@@ -3700,7 +3705,7 @@ printf("OK\n");
 
 *** Force of electron-electron-nucleus Jastrow gradient
 
-Calculates the force of the electron-electron-nucleus Jastrow gradient (and not the Laplacian).
+Calculates the force of the electron-electron-nucleus Jastrow gradient.
 \begin{eqnarray}
 \partial_{\alpha,m} \partial_{i,n}J_{een} =& \partial_{\alpha,m} \sum_{p=2}^{N_\text{nord}} \sum_{k=0}^{p-1} \sum_{l=0}^{p-k-2\delta_{k,0}} c_{l,k,p,\alpha}  \left(\partial_{i,n}\widetilde{R}_{i\alpha}^{(p-k+l)/2} P_{i\alpha,k,(p-k-l)/2} + \partial_{i,n}\widetilde{R}_{i\alpha}^{(p-k-l)/2} P_{i\alpha,k,(p-k+l)/2} + \widetilde{R}_{i\alpha}^{(p-k+l)/2} \partial_{i,n} P_{i\alpha,k,(p-k-l)/2} + \widetilde{R}_{i\alpha}^{(p-k-l)/2} \partial_{i,n} P_{i\alpha,k,(p-k+l)/2} \right)\\
 =& \sum_{p=2}^{N_\text{nord}} \sum_{k=0}^{p-1} \sum_{l=0}^{p-k-2\delta_{k,0}} c_{l,k,p,\alpha}  \left(\partial_{\alpha,m}\partial_{i,n}\widetilde{R}_{i\alpha}^{(p-k+l)/2} P_{i\alpha,k,(p-k-l)/2} + \partial_{\alpha,m}\partial_{i,n}\widetilde{R}_{i\alpha}^{(p-k-l)/2} P_{i\alpha,k,(p-k+l)/2} + \partial_{\alpha,m}\widetilde{R}_{i\alpha}^{(p-k+l)/2} \partial_{i,n} P_{i\alpha,k,(p-k-l)/2} + \partial_{\alpha,m}\widetilde{R}_{i\alpha}^{(p-k-l)/2} \partial_{i,n} P_{i\alpha,k,(p-k+l)/2} \right.\\
@@ -3899,10 +3904,10 @@ qmckl_exit_code qmckl_provide_forces_jastrow_een_g(qmckl_context context)
      | ~walk_num~             | ~int64_t~                                                              | in     | Number of walkers                                        |
      | ~elec_num~             | ~int64_t~                                                              | in     | Number of electrons                                      |
      | ~nucl_num~             | ~int64_t~                                                              | in     | Number of nuclei                                         |
-     | ~cord_num~             | ~int64_t~                                                              | in     | order of polynomials                                     |
-     | ~dim_c_vector~         | ~int64_t~                                                              | in     | dimension of full coefficient vector                     |
-     | ~c_vector_full~        | ~double[dim_c_vector][nucl_num]~                                       | in     | full coefficient vector                                  |
-     | ~lkpm_combined_index~  | ~int64_t[4][dim_c_vector]~                                             | in     | combined indices                                         |
+     | ~cord_num~             | ~int64_t~                                                              | in     | Order of the c polynomial                                |
+     | ~dim_c_vector~         | ~int64_t~                                                              | in     | Dimension of the full coefficient vector                 |
+     | ~c_vector_full~        | ~double[dim_c_vector][nucl_num]~                                       | in     | Full coefficient vector                                  |
+     | ~lkpm_combined_index~  | ~int64_t[4][dim_c_vector]~                                             | in     | Combined indices                                         |
      | ~en_distance~          | ~double[elec_num][nucl_num]~                                           | in     | Electron-nucleus distance                                |
      | ~tmp_c~                | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][elec_num]~       | in     | P matrix                                                 |
      | ~dtmp_c~               | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][4][elec_num]~    | in     | Derivative of P matrix                                   |
@@ -4263,10 +4268,10 @@ qmckl_exit_code qmckl_provide_forces_jastrow_een_l(qmckl_context context)
      | ~walk_num~             | ~int64_t~                                                              | in     | Number of walkers                                       |
      | ~elec_num~             | ~int64_t~                                                              | in     | Number of electrons                                     |
      | ~nucl_num~             | ~int64_t~                                                              | in     | Number of nuclei                                        |
-     | ~cord_num~             | ~int64_t~                                                              | in     | order of polynomials                                    |
-     | ~dim_c_vector~         | ~int64_t~                                                              | in     | dimension of full coefficient vector                    |
-     | ~c_vector_full~        | ~double[dim_c_vector][nucl_num]~                                       | in     | full coefficient vector                                 |
-     | ~lkpm_combined_index~  | ~int64_t[4][dim_c_vector]~                                             | in     | combined indices                                        |
+     | ~cord_num~             | ~int64_t~                                                              | in     | Order of the c polynomial                               |
+     | ~dim_c_vector~         | ~int64_t~                                                              | in     | Dimension of the full coefficient vector                |
+     | ~c_vector_full~        | ~double[dim_c_vector][nucl_num]~                                       | in     | Full coefficient vector                                 |
+     | ~lkpm_combined_index~  | ~int64_t[4][dim_c_vector]~                                             | in     | Combined indices                                        |
      | ~en_distance~          | ~double[elec_num][nucl_num]~                                           | in     | Electron-nucleus distance                               |
      | ~tmp_c~                | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][elec_num]~       | in     | P matrix                                                |
      | ~dtmp_c~               | ~double[walk_num][0:cord_num-1][0:cord_num][nucl_num][4][elec_num]~    | in     | Derivative of P matrix                                  |
@@ -4440,7 +4445,7 @@ printf("OK\n");
 
 *** Force of single electron-electron-nucleus Jastrow value
 
-Computes the single-electron contribution to the electron-electron-nucleus Jastrow value force.
+Computes the single-electron contribution to the force of the electron-electron-nucleus Jastrow value.
 
 \begin{eqnarray*}
 \partial_{\alpha,m} \delta J_{een} &=& \partial_{\alpha,m} \sum_{p=2}^{N_\text{nord}} \sum_{k=0}^{p-1} \sum_{l=0}^{p-k-2\delta_{k,0}} c_{l,k,p,\alpha} \left(
@@ -4651,10 +4656,10 @@ qmckl_exit_code qmckl_provide_forces_jastrow_single_een(qmckl_context context)
      | ~walk_num~                  | ~int64_t~                                                           | in     | Number of walkers                                      |
      | ~elec_num~                  | ~int64_t~                                                           | in     | Number of electrons                                    |
      | ~nucl_num~                  | ~int64_t~                                                           | in     | Number of nuclei                                       |
-     | ~cord_num~                  | ~int64_t~                                                           | in     | order of polynomials                                   |
-     | ~dim_c_vector~              | ~int64_t~                                                           | in     | dimension of full coefficient vector                   |
-     | ~c_vector_full~             | ~double[dim_c_vector][nucl_num]~                                    | in     | full coefficient vector                                |
-     | ~lkpm_combined_index~       | ~int64_t[4][dim_c_vector]~                                          | in     | combined indices                                       |
+     | ~cord_num~                  | ~int64_t~                                                           | in     | Order of the c polynomial                              |
+     | ~dim_c_vector~              | ~int64_t~                                                           | in     | Dimension of the full coefficient vector               |
+     | ~c_vector_full~             | ~double[dim_c_vector][nucl_num]~                                    | in     | Full coefficient vector                                |
+     | ~lkpm_combined_index~       | ~int64_t[4][dim_c_vector]~                                          | in     | Combined indices                                       |
      | ~een_rescaled_n~            | ~double[walk_num][0:cord_num][nucl_num][elec_num]~                  | in     | Electron-nucleus rescaled distances                    |
      | ~een_rescaled_single_n~     | ~double[walk_num][0:cord_num][nucl_num]~                            | in     | Electron-nucleus single rescaled distances             |
      | ~een_rescaled_n_gl~         | ~double[walk_num][0:cord_num][nucl_num][4][elec_num]~               | in     | Electron-nucleus rescaled distances derivatives        |
@@ -4868,6 +4873,13 @@ printf("OK\n");
       #+end_src
 
 * Forces of the orbitals
+
+The molecular orbitals are linear combinations of the atomic orbitals, so
+the derivative of an MO quantity with respect to a nuclear coordinate is a
+contraction of the transposed MO coefficients with the derivative of the
+corresponding AO quantity, restricted to the AOs centered on that nucleus.
+The routines below compute those derivatives for the AO values, and for the
+MO values, gradients and Laplacians.
 
 ** Reset test for orbitals :noexport:
 
@@ -5121,7 +5133,10 @@ printf("OK\n");
 
 ** Force of AO value
 
-Computes the forces on the values of the atomic orbitals (AO). These are equal to the gradients of the AOs multiplied with a minus sign, and summed over different indices.
+Computes the derivative of the AO values with respect to the nuclear
+coordinates. For each nucleus, the entries of the AOs centered on it are set
+to minus their gradient, since moving the nucleus by $\delta$ is moving the
+electron by $-\delta$.
 
 *** Get
      #+begin_src c :comments org :tangle (eval h_func) :noweb yes
@@ -5466,7 +5481,9 @@ printf("OK\n");
 
 ** Force of MO value
 
-Calculates the force on the molecular orbitals (MO) values. These are calculated by taking a linear combination of AOs.
+Calculates the derivative of the MO values with respect to the nuclear
+coordinates, by contracting the transposed MO coefficients with the
+gradients of the AOs centered on that nucleus.
 
 *** Get
 
@@ -5696,7 +5713,7 @@ qmckl_exit_code qmckl_provide_forces_mo_value(qmckl_context context)
     | Variable            | Type                                     | In/Out | Description                                     |
     |---------------------+------------------------------------------+--------+-------------------------------------------------|
     | ~context~           | ~qmckl_context~                          | in     | Global state                                    |
-    | ~nucl_num~          | ~int64_t~                                | in     | Number of AOs                                   |
+    | ~nucl_num~          | ~int64_t~                                | in     | Number of nuclei                                |
     | ~ao_num~            | ~int64_t~                                | in     | Number of AOs                                   |
     | ~mo_num~            | ~int64_t~                                | in     | Number of MOs                                   |
     | ~point_num~         | ~int64_t~                                | in     | Number of points                                |
@@ -5704,7 +5721,7 @@ qmckl_exit_code qmckl_provide_forces_mo_value(qmckl_context context)
     | ~nucleus_index~     | ~int64_t[nucl_num]~                      | in     | Index of the 1st shell of each nucleus          |
     | ~nucleus_shell_num~ | ~int64_t[nucl_num]~                      | in     | Number of shells per nucleus                    |
     | ~shell_ang_mom~     | ~int32_t[shell_num]~                     | in     | Angular momentum of each shell                  |
-    | ~coefficient_t~     | ~double[mo_num][ao_num]~                 | in     | Transpose of the AO to MO transformation matrix |
+    | ~coefficient_t~     | ~double[ao_num][mo_num]~                 | in     | Transpose of the AO to MO transformation matrix |
     | ~ao_vgl~            | ~double[point_num][3][ao_num]~           | in     | AO values, gradient and Laplacian               |
     | ~forces_mo_value~   | ~double[nucl_num][point_num][3][mo_num]~ | out    | Forces of MOs                                   |
     |---------------------+------------------------------------------+--------+-------------------------------------------------|
@@ -5910,7 +5927,10 @@ printf("OK\n");
 
 ** Force of MO gradient
 
-Calculates the forces of the gradients of the MOs. These are calculated by taking a linear combination of the required components of the Hessian of the AOs.
+Calculates the derivative of the MO gradients with respect to the nuclear
+coordinates, by contracting the transposed MO coefficients with the
+components of the AO Hessian that hold the derivatives of the AO gradients,
+for the AOs centered on that nucleus.
 
 *** Get
 
@@ -6148,7 +6168,7 @@ qmckl_exit_code qmckl_provide_forces_mo_g(qmckl_context context)
     | ~nucleus_index~     | ~int64_t[nucl_num]~                         | in     | Index of the 1st shell of each nucleus          |
     | ~nucleus_shell_num~ | ~int64_t[nucl_num]~                         | in     | Number of shells per nucleus                    |
     | ~shell_ang_mom~     | ~int32_t[shell_num]~                        | in     | Angular momentum of each shell                  |
-    | ~coefficient_t~     | ~double[mo_num][ao_num]~                    | in     | Transpose of the AO to MO transformation matrix |
+    | ~coefficient_t~     | ~double[ao_num][mo_num]~                    | in     | Transpose of the AO to MO transformation matrix |
     | ~ao_hessian~        | ~double[3][point_num][4][ao_num]~           | in     | Hessian of AOs                                  |
     | ~forces_mo_g~       | ~double[nucl_num][3][point_num][3][mo_num]~ | out    | Forces on gradients of MOs                      |
     |---------------------+---------------------------------------------+--------+-------------------------------------------------|
@@ -6490,7 +6510,10 @@ printf("OK\n");
 
 ** Force of MO Laplacian
 
-Computes the forces on the Laplacian of the MOs. They are calculated by taking a linear combination of the ~ao_hessian[:,:,:,3,:]~ components of the AO Hessian. These store the derivatives of the Laplacian of the AO.
+Computes the derivative of the MO Laplacians with respect to the nuclear
+coordinates, by contracting the transposed MO coefficients with the
+component of the AO Hessian that holds the derivative of the AO Laplacian,
+for the AOs centered on that nucleus.
 
 *** Get
 
@@ -6664,7 +6687,7 @@ qmckl_exit_code qmckl_provide_forces_mo_l(qmckl_context context)
     | ~nucleus_index~     | ~int64_t[nucl_num]~                         | in     | Index of the 1st shell of each nucleus          |
     | ~nucleus_shell_num~ | ~int64_t[nucl_num]~                         | in     | Number of shells per nucleus                    |
     | ~shell_ang_mom~     | ~int32_t[shell_num]~                        | in     | Angular momentum of each shell                  |
-    | ~coefficient_t~     | ~double[mo_num][ao_num]~                    | in     | Transpose of the AO to MO transformation matrix |
+    | ~coefficient_t~     | ~double[ao_num][mo_num]~                    | in     | Transpose of the AO to MO transformation matrix |
     | ~ao_hessian~        | ~double[3][point_num][4][ao_num]~           | in     | Hessian of AOs                                  |
     | ~forces_mo_l~       | ~double[nucl_num][3][point_num][mo_num]~    | out    | Forces on MO Laplacian                          |
     |---------------------+---------------------------------------------+--------+-------------------------------------------------|

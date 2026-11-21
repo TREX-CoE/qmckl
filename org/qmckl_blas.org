@@ -68,9 +68,11 @@ int main() {
 
 This module defines the vector, matrix and tensor types used inside QMCkl,
 the functions that allocate, reshape and copy them, and the matrix operations
-the kernels are built on: ~qmckl_dgemm~, ~qmckl_dgemv~, ~qmckl_dger~ and
-~qmckl_adjugate~, with ~_safe~ variants for the calls that write into a
-buffer.
+the kernels are built on: ~qmckl_dgemm~, ~qmckl_dgemv~ and ~qmckl_dger~,
+which wrap BLAS, ~qmckl_adjugate~, which uses LAPACK for the general case,
+and the helpers ~qmckl_matmul~ and ~qmckl_transpose~. ~qmckl_dgemm~ and
+~qmckl_adjugate~ also have a ~_safe~ form, which takes the declared sizes of
+the arrays and checks them.
 
 Matrices and tensors are stored in Fortran order: two elements that differ by
 one in the first dimension are contiguous in memory. The structures hold their
@@ -81,6 +83,11 @@ The types are private. They are tangle'd into the headers used to compile the
 library, but not into the public ~qmckl.h~: the arrays that cross the API
 boundary are plain ~double*~ buffers, which leaves an implementation free to
 store its own data differently.
+
+Most of the functions are private too, and are declared in
+~qmckl_blas_private_func.h~. Only six of them appear in the public ~qmckl.h~:
+~qmckl_dgemm~, ~qmckl_dgemm_safe~, ~qmckl_dgemv~, ~qmckl_dger~,
+~qmckl_adjugate~ and ~qmckl_adjugate_safe~.
 
 * Data types
 
@@ -527,7 +534,7 @@ qmckl_matrix_of_tensor(const qmckl_tensor tensor,
                        const int64_t size2);
     #+end_src
 
-    Reshapes a tensor into a vector.
+    Reshapes a tensor into a matrix.
 
     #+begin_src c :comments org :tangle (eval c) :exports none
 qmckl_matrix
@@ -577,8 +584,6 @@ double qmckl_ten6(qmckl_tensor t, int64_t i, int64_t j, int64_t k, int64_t l, in
 #define qmckl_ten5(t, i, j, k, l, m) t.data[(i) + t.size[0]*((j) + t.size[1]*((k) + t.size[2]*((l) + t.size[3]*(m))))]
 #define qmckl_ten6(t, i, j, k, l, m, n) t.data[(i) + t.size[0]*((j) + t.size[1]*((k) + t.size[2]*((l) + t.size[3]*((m) + t.size[4]*(n)))))]
     #+end_src
-
-    For example:
 
 ** Set all elements
 
@@ -638,7 +643,7 @@ qmckl_tensor_set(qmckl_tensor tensor, double value)
 }
     #+end_src
 
-** Copy to/from to ~double*~
+** Copy to and from ~double*~
 
     #+begin_src c :comments org :tangle (eval h_private_func) 
 qmckl_exit_code
@@ -970,22 +975,22 @@ double* qmckl_alloc_double_of_tensor(const qmckl_context context,
 #  TODO: Add description about the external library dependence.
 
    #+NAME: qmckl_dgemm_args
-   | Variable  | Type            | In/Out | Description                           |
-   |-----------+-----------------+--------+---------------------------------------|
-   | ~context~ | ~qmckl_context~ | in     | Global state                          |
-   | ~TransA~  | ~char~          | in     | 'T' is transposed                     |
-   | ~TransB~  | ~char~          | in     | 'T' is transposed                     |
-   | ~m~       | ~int64_t~       | in     | Number of rows of the input matrix    |
-   | ~n~       | ~int64_t~       | in     | Number of columns of the input matrix |
-   | ~k~       | ~int64_t~       | in     | Number of columns of the input matrix |
-   | ~alpha~   | ~double~        | in     | \alpha                                |
-   | ~A~       | ~double[][lda]~ | in     | Array containing the matrix $A$       |
-   | ~lda~     | ~int64_t~       | in     | Leading dimension of array ~A~        |
-   | ~B~       | ~double[][ldb]~ | in     | Array containing the matrix $B$       |
-   | ~ldb~     | ~int64_t~       | in     | Leading dimension of array ~B~        |
-   | ~beta~    | ~double~        | in     | \beta                                 |
-   | ~C~       | ~double[][ldc]~ | out    | Array containing the matrix $C$       |
-   | ~ldc~     | ~int64_t~       | in     | Leading dimension of array ~C~        |
+   | Variable  | Type            | In/Out | Description                      |
+   |-----------+-----------------+--------+----------------------------------|
+   | ~context~ | ~qmckl_context~ | in     | Global state                     |
+   | ~TransA~  | ~char~          | in     | 'T' or 't' transposes ~A~        |
+   | ~TransB~  | ~char~          | in     | 'T' or 't' transposes ~B~        |
+   | ~m~       | ~int64_t~       | in     | Number of rows of the product    |
+   | ~n~       | ~int64_t~       | in     | Number of columns of the product |
+   | ~k~       | ~int64_t~       | in     | Inner dimension of the product   |
+   | ~alpha~   | ~double~        | in     | Scaling factor of the product    |
+   | ~A~       | ~double[][lda]~ | in     | Array containing the matrix ~A~  |
+   | ~lda~     | ~int64_t~       | in     | Leading dimension of array ~A~   |
+   | ~B~       | ~double[][ldb]~ | in     | Array containing the matrix ~B~  |
+   | ~ldb~     | ~int64_t~       | in     | Leading dimension of array ~B~   |
+   | ~beta~    | ~double~        | in     | Scaling factor of the input ~C~  |
+   | ~C~       | ~double[][ldc]~ | out    | Array containing the matrix ~C~  |
+   | ~ldc~     | ~int64_t~       | in     | Leading dimension of array ~C~   |
 
    Requirements:
 
@@ -993,12 +998,21 @@ double* qmckl_alloc_double_of_tensor(const qmckl_context context,
     - ~m > 0~
     - ~n > 0~
     - ~k > 0~
-    - ~lda >= m~
-    - ~ldb >= n~
-    - ~ldc >= n~
-    - ~A~ is allocated with at least $m \times k \times 8$ bytes
-    - ~B~ is allocated with at least $k \times n \times 8$ bytes
-    - ~C~ is allocated with at least $m \times n \times 8$ bytes
+    - ~lda >= m~ if ~TransA == 'N'~, otherwise ~lda >= k~
+    - ~ldb >= k~ if ~TransB == 'N'~, otherwise ~ldb >= n~
+    - ~ldc >= m~
+    - ~A~ is allocated with at least ~lda*k~ elements if ~TransA == 'N'~,
+      and ~lda*m~ elements otherwise
+    - ~B~ is allocated with at least ~ldb*n~ elements if ~TransB == 'N'~,
+      and ~ldb*k~ elements otherwise
+    - ~C~ is allocated with at least ~ldc*n~ elements
+    - ~m~, ~n~, ~k~, ~lda~, ~ldb~ and ~ldc~ are smaller than
+      ~huge(0_4)~, as they are passed to BLAS as 32-bit integers
+
+   The function checks the context and that ~m~, ~n~, ~k~, ~lda~, ~ldb~ and
+   ~ldc~ are positive. The rest of the list is the caller's responsibility;
+   ~qmckl_dgemm_safe~ checks the same conditions against the buffer sizes it
+   is given.
 
     #+CALL: generate_c_header(table=qmckl_dgemm_args,rettyp="qmckl_exit_code",fname="qmckl_dgemm")
 
@@ -1255,25 +1269,25 @@ printf("qmckl_dgemm ok\n");
    are checked instead of being inferred from the leading dimensions.
 
    #+NAME: qmckl_dgemm_safe_args
-   | Variable     | Type            | In/Out | Description                           |
-   |--------------+-----------------+--------+---------------------------------------|
-   | ~context~    | ~qmckl_context~ | in     | Global state                          |
-   | ~TransA~     | ~char~          | in     | 'T' is transposed                     |
-   | ~TransB~     | ~char~          | in     | 'T' is transposed                     |
-   | ~m~          | ~int64_t~       | in     | Number of rows of the input matrix    |
-   | ~n~          | ~int64_t~       | in     | Number of columns of the input matrix |
-   | ~k~          | ~int64_t~       | in     | Number of columns of the input matrix |
-   | ~alpha~      | ~double~        | in     | \alpha                                |
-   | ~A~          | ~double[][lda]~ | in     | Array containing the matrix $A$       |
-   | ~size_max_A~ | ~int64_t~       | in     | Size of the matrix $A$                |
-   | ~lda~        | ~int64_t~       | in     | Leading dimension of array ~A~        |
-   | ~B~          | ~double[][ldb]~ | in     | Array containing the matrix $B$       |
-   | ~size_max_B~ | ~int64_t~       | in     | Size of the matrix $B$                |
-   | ~ldb~        | ~int64_t~       | in     | Leading dimension of array ~B~        |
-   | ~beta~       | ~double~        | in     | \beta                                 |
-   | ~C~          | ~double[][ldc]~ | out    | Array containing the matrix $C$       |
-   | ~size_max_C~ | ~int64_t~       | in     | Size of the matrix $C$                |
-   | ~ldc~        | ~int64_t~       | in     | Leading dimension of array ~C~        |
+   | Variable     | Type            | In/Out | Description                      |
+   |--------------+-----------------+--------+----------------------------------|
+   | ~context~    | ~qmckl_context~ | in     | Global state                     |
+   | ~TransA~     | ~char~          | in     | 'T' or 't' transposes ~A~        |
+   | ~TransB~     | ~char~          | in     | 'T' or 't' transposes ~B~        |
+   | ~m~          | ~int64_t~       | in     | Number of rows of the product    |
+   | ~n~          | ~int64_t~       | in     | Number of columns of the product |
+   | ~k~          | ~int64_t~       | in     | Inner dimension of the product   |
+   | ~alpha~      | ~double~        | in     | Scaling factor of the product    |
+   | ~A~          | ~double[][lda]~ | in     | Array containing the matrix ~A~  |
+   | ~size_max_A~ | ~int64_t~       | in     | Size of the matrix ~A~           |
+   | ~lda~        | ~int64_t~       | in     | Leading dimension of array ~A~   |
+   | ~B~          | ~double[][ldb]~ | in     | Array containing the matrix ~B~  |
+   | ~size_max_B~ | ~int64_t~       | in     | Size of the matrix ~B~           |
+   | ~ldb~        | ~int64_t~       | in     | Leading dimension of array ~B~   |
+   | ~beta~       | ~double~        | in     | Scaling factor of the input ~C~  |
+   | ~C~          | ~double[][ldc]~ | out    | Array containing the matrix ~C~  |
+   | ~size_max_C~ | ~int64_t~       | in     | Size of the matrix ~C~           |
+   | ~ldc~        | ~int64_t~       | in     | Leading dimension of array ~C~   |
 
    Requirements:
 
@@ -1284,12 +1298,12 @@ printf("qmckl_dgemm ok\n");
     - ~lda >= m~ if ~TransA == 'N'~, otherwise ~lda >= k~
     - ~ldb >= k~ if ~TransB == 'N'~, otherwise ~ldb >= n~
     - ~ldc >= m~
-    - ~TransA~ and ~TransB~ are ~'N'~ or ~'T'~
-    - ~A~ is allocated with at least $lena \times 8$ bytes, where $lena$ is
-      $lda \times k$ if ~TransA == 'N'~ and $lda \times m$ otherwise
-    - ~B~ is allocated with at least $lenb \times 8$ bytes, where $lenb$ is
-      $ldb \times n$ if ~TransB == 'N'~ and $ldb \times k$ otherwise
-    - ~C~ is allocated with at least $ldc \times n \times 8$ bytes
+    - ~TransA~ and ~TransB~ are ~'N'~, ~'n'~, ~'T'~ or ~'t'~
+    - ~A~ is allocated with at least ~lena~ elements, where ~lena~ is
+      ~lda*k~ if ~TransA == 'N'~ and ~lda*m~ otherwise
+    - ~B~ is allocated with at least ~lenb~ elements, where ~lenb~ is
+      ~ldb*n~ if ~TransB == 'N'~ and ~ldb*k~ otherwise
+    - ~C~ is allocated with at least ~ldc*n~ elements
     - ~size_max_A >= lena~
     - ~size_max_B >= lenb~
     - ~size_max_C >= ldc * n~
@@ -1500,7 +1514,7 @@ end function qmckl_dgemm_safe
 
 ** ~qmckl_matmul~
 
-   Matrix multiplication using the =qmckl_matrix= data type:
+   Matrix multiplication using the ~qmckl_matrix~ data type:
 
    \[
    C_{ij} = \beta C_{ij} + \alpha \sum_{k} A_{ik} \cdot B_{kj}
@@ -1509,16 +1523,26 @@ end function qmckl_dgemm_safe
 #  TODO: Add description about the external library dependence.
 
    #+NAME: qmckl_matmul_args
-   | Variable  | Type            | In/Out | Description       |
-   |-----------+-----------------+--------+-------------------|
-   | ~context~ | ~qmckl_context~ | in     | Global state      |
-   | ~TransA~  | ~char~          | in     | 'T' is transposed |
-   | ~TransB~  | ~char~          | in     | 'T' is transposed |
-   | ~alpha~   | ~double~        | in     | \alpha            |
-   | ~A~       | ~qmckl_matrix~  | in     | Matrix $A$        |
-   | ~B~       | ~qmckl_matrix~  | in     | Matrix $B$        |
-   | ~beta~    | ~double~        | in     | \beta             |
-   | ~C~       | ~qmckl_matrix~  | out    | Matrix $C$        |
+   | Variable  | Type            | In/Out | Description                     |
+   |-----------+-----------------+--------+---------------------------------|
+   | ~context~ | ~qmckl_context~ | in     | Global state                    |
+   | ~TransA~  | ~char~          | in     | 'T' transposes ~A~              |
+   | ~TransB~  | ~char~          | in     | 'T' transposes ~B~              |
+   | ~alpha~   | ~double~        | in     | Scaling factor of the product   |
+   | ~A~       | ~qmckl_matrix~  | in     | Matrix ~A~                      |
+   | ~B~       | ~qmckl_matrix~  | in     | Matrix ~B~                      |
+   | ~beta~    | ~double~        | in     | Scaling factor of the input ~C~ |
+   | ~C~       | ~qmckl_matrix~  | out    | Matrix ~C~                      |
+
+   The dimensions of ~C~ are set by ~qmckl_matmul~; its data buffer must
+   already be large enough for the result.
+
+   Requirements:
+
+    - ~context~ is not ~QMCKL_NULL_CONTEXT~
+    - ~TransA~ and ~TransB~ are ~'N'~ or ~'T'~
+    - ~A~ and ~B~ have compatible dimensions for the requested transpositions
+    - ~C~ is not ~NULL~ and ~C->data~ is allocated with room for the result
 
    #+CALL: generate_c_header(table=qmckl_matmul_args,rettyp="qmckl_exit_code",fname="qmckl_matmul")
 
@@ -1760,12 +1784,11 @@ print(C.T)
     #+end_src
 ** ~qmckl_adjugate~
 
-   Given a matrix $\mathbf{A}$, the adjugate matrix
-   $\text{adj}(\mathbf{A})$ is the transpose of the cofactors matrix
-   of $\mathbf{A}$.
+   Given a square matrix ~A~, its adjugate is the transpose of its matrix
+   of cofactors.
 
    \[
-   \mathbf{B} = \text{adj}(\mathbf{A}) = \text{det}(\mathbf{A}) \, \mathbf{A}^{-1}
+   B = \text{adj}(A) = \det(A) \, A^{-1}
    \]
 
    See also: https://en.wikipedia.org/wiki/Adjugate_matrix
@@ -1775,20 +1798,20 @@ print(C.T)
    |-----------+-----------------+--------+------------------------------------------------|
    | ~context~ | ~qmckl_context~ | in     | Global state                                   |
    | ~n~       | ~int64_t~       | in     | Number of rows and columns of the input matrix |
-   | ~A~       | ~double[][lda]~ | in     | Array containing the $n \times n$ matrix $A$   |
+   | ~A~       | ~double[][lda]~ | in     | Array containing the ~n*n~ matrix ~A~          |
    | ~lda~     | ~int64_t~       | in     | Leading dimension of array ~A~                 |
-   | ~B~       | ~double[][ldb]~ | out    | Adjugate of $A$                                |
+   | ~B~       | ~double[][ldb]~ | out    | Adjugate of ~A~                                |
    | ~ldb~     | ~int64_t~       | in     | Leading dimension of array ~B~                 |
-   | ~det_l~   | ~double~        | inout  | determinant of $A$                             |
+   | ~det_l~   | ~double~        | inout  | Determinant of ~A~                             |
 
    Requirements:
 
     - ~context~ is not ~QMCKL_NULL_CONTEXT~
     - ~n > 0~
-    - ~lda >= m~
-    - ~A~ is allocated with at least $m \times m \times 8$ bytes
-    - ~ldb >= m~
-    - ~B~ is allocated with at least $m \times m \times 8$ bytes
+    - ~lda >= n~
+    - ~A~ is allocated with at least ~lda*n~ elements
+    - ~ldb >= n~
+    - ~B~ is allocated with at least ~ldb*n~ elements
 
     #+CALL: generate_c_header(table=qmckl_adjugate_args,rettyp="qmckl_exit_code",fname="qmckl_adjugate")
 
@@ -1804,9 +1827,9 @@ print(C.T)
           double* det_l );
     #+end_src
 
-   For small matrices (\le 5\times 5), we use specialized routines
-   for performance motivations. For larger sizes, we rely on the
-   LAPACK library.
+   For matrices of size 5 or less, the adjugate is computed by a
+   specialized routine. For larger sizes, we rely on the LAPACK
+   library.
 
     #+begin_src f90 :tangle (eval f) :exports none
 function qmckl_adjugate(context, n, A, LDA, B, ldb, det_l) &
@@ -2308,16 +2331,16 @@ subroutine adjugate_general(context, na, A, LDA, B, LDB, det_l)
   B(1:na,1:na) = A(1:na,1:na)
     #+end_src
 
-    Then, we compute the LU factorization $LU=A$
-    using the ~dgetrf~ routine.
+    Then, we compute the LU factorization ~A = LU~ using the ~dgetrf~
+    routine.
 
     #+begin_src f90 :tangle (eval f)
   call dgetrf(na, na, B, LDB, ipiv, inf )
     #+end_src
 
-    By convention, the determinant of $L$ is equal to one, so the
-    determinant of $A$ is equal to the determinant of $U$, which is
-    simply computed as the product of its diagonal elements.
+    By convention, the determinant of ~L~ is one, so the determinant of
+    ~A~ is the product of the diagonal elements of ~U~, up to the sign
+    introduced by the row interchanges.
 
     #+begin_src f90 :tangle (eval f)
   det_l = 1.d0
@@ -2328,9 +2351,8 @@ subroutine adjugate_general(context, na, A, LDA, B, LDB, det_l)
   enddo
     #+end_src
 
-    As ~dgetrf~ returns $PLU=A$ where $P$ is a permutation matrix, the
-    sign of the determinant is computed as $-1^m$ where $m$ is the
-    number of permutations.
+    As ~dgetrf~ returns ~PLU = A~, where ~P~ is a permutation matrix,
+    that sign is ~(-1)^p~, where ~p~ is the number of row interchanges.
 
     #+begin_src f90 :tangle (eval f)
   if (iand(j,1_8) /= 0_8)  then
@@ -2338,7 +2360,7 @@ subroutine adjugate_general(context, na, A, LDA, B, LDB, det_l)
   endif
     #+end_src
 
-    Then, the inverse of $A$ is computed using ~dgetri~:
+    Then, the inverse of ~A~ is computed using ~dgetri~:
 
     #+begin_src f90 :tangle (eval f)
   lwork = SIZE(work)
@@ -2655,22 +2677,22 @@ printf("qmckl_adjugate ok\n");
    |--------------+-----------------+--------+------------------------------------------------|
    | ~context~    | ~qmckl_context~ | in     | Global state                                   |
    | ~n~          | ~int64_t~       | in     | Number of rows and columns of the input matrix |
-   | ~A~          | ~double[][lda]~ | in     | Array containing the $n \times n$ matrix $A$   |
-   | ~size_max_A~ | ~int64_t~       | in     | Size of the matrix $A$                         |
+   | ~A~          | ~double[][lda]~ | in     | Array containing the ~n*n~ matrix ~A~          |
+   | ~size_max_A~ | ~int64_t~       | in     | Size of the matrix ~A~                         |
    | ~lda~        | ~int64_t~       | in     | Leading dimension of array ~A~                 |
-   | ~B~          | ~double[][ldb]~ | out    | Adjugate of $A$                                |
-   | ~size_max_B~ | ~int64_t~       | in     | Size of the matrix $B$                         |
+   | ~B~          | ~double[][ldb]~ | out    | Adjugate of ~A~                                |
+   | ~size_max_B~ | ~int64_t~       | in     | Size of the matrix ~B~                         |
    | ~ldb~        | ~int64_t~       | in     | Leading dimension of array ~B~                 |
-   | ~det_l~      | ~double~        | inout  | determinant of $A$                             |
+   | ~det_l~      | ~double~        | inout  | Determinant of ~A~                             |
 
    Requirements:
 
     - ~context~ is not ~QMCKL_NULL_CONTEXT~
     - ~n > 0~
     - ~lda >= n~
-    - ~A~ is allocated with at least $lda \times n \times 8$ bytes
+    - ~A~ is allocated with at least ~lda*n~ elements
     - ~ldb >= n~
-    - ~B~ is allocated with at least $ldb \times n \times 8$ bytes
+    - ~B~ is allocated with at least ~ldb*n~ elements
     - ~size_max_A >= lda * n~
     - ~size_max_B >= ldb * n~
     - ~n~, ~lda~ and ~ldb~ are smaller than ~huge(0_4)~, as they are
@@ -2692,9 +2714,9 @@ printf("qmckl_adjugate ok\n");
 	  double* det_l );
     #+END_src
 
-   For small matrices (\le 5\times 5), we use specialized routines
-   for performance motivations. For larger sizes, we rely on the
-   LAPACK library.
+   For matrices of size 5 or less, the adjugate is computed by a
+   specialized routine. For larger sizes, we rely on the LAPACK
+   library.
 
     #+begin_src f90 :tangle (eval f) :exports none
 function qmckl_adjugate_safe(context, &
@@ -2787,7 +2809,7 @@ function qmckl_adjugate_safe(context, &
 end function qmckl_adjugate_safe
     #+end_src
 
-*** C interface
+*** C interface                                                    :noexport:
 
     #+CALL: generate_f_interface(table=qmckl_adjugate_safe_args,rettyp="qmckl_exit_code",fname="qmckl_adjugate_safe")
 
@@ -2817,13 +2839,24 @@ end function qmckl_adjugate_safe
 
 ** ~qmckl_transpose~
 
-   Transposes a matrix: $A^\dagger_{ji} = A_{ij}$.
+   Computes the transpose of a real matrix: the element of ~At~ at row
+   ~i~ and column ~j~ is the element of ~A~ at row ~j~ and column ~i~.
 
    | Variable  | Type            | In/Out | Description       |
    |-----------+-----------------+--------+-------------------|
    | ~context~ | ~qmckl_context~ | in     | Global state      |
    | ~A~       | ~qmckl_matrix~  | in     | Input matrix      |
    | ~At~      | ~qmckl_matrix~  | out    | Transposed matrix |
+
+   ~At~ is allocated by the caller with the transposed dimensions;
+   ~qmckl_transpose~ only writes into its data.
+
+   Requirements:
+
+    - ~context~ is not ~QMCKL_NULL_CONTEXT~
+    - ~A.size[0] >= 1~
+    - ~At.data~ is not ~NULL~
+    - ~At.size[0] == A.size[1]~ and ~At.size[1] == A.size[0]~
 
     #+begin_src c :tangle (eval h_private_func) :comments org :exports none
 qmckl_exit_code
@@ -2908,23 +2941,24 @@ printf("qmckl_transpose ok\n");
    C_{ij} = \beta C_{ij} + \alpha \sum_{k} A_{ik} \cdot B_{kj}
    \]
 
-   This function performs matrix multiplication where both $A$ and $B$ are stored in
-   CSR (Compressed Sparse Row) format. The function automatically switches between
-   sparse and dense BLAS implementations based on the matrix density threshold.
+   This function performs matrix multiplication where both ~A~ and ~B~ are stored
+   in CSR (Compressed Sparse Row) format. When the density of ~A~ or of ~B~ is
+   below ~0.20~, the nonzeros are multiplied directly; otherwise ~qmckl_dgemm~
+   is called.
 
    #+NAME: qmckl_dgemm_sparse_nn_args
-   | Variable  | Type            | In/Out | Description                                    |
-   |-----------+-----------------+--------+------------------------------------------------|
-   | ~context~ | ~qmckl_context~ | in     | Global state                                   |
-   | ~m~       | ~int64_t~       | in     | Number of rows of matrix $A$ and $C$           |
-   | ~n~       | ~int64_t~       | in     | Number of columns of matrix $B$ and $C$        |
-   | ~k~       | ~int64_t~       | in     | Number of columns of $A$ and rows of $B$       |
-   | ~alpha~   | ~double~        | in     | Scalar $\alpha$                                |
-   | ~A~       | ~CSRMatrix*~    | in     | CSR format sparse matrix $A$ ($m \times k$)    |
-   | ~B~       | ~CSRMatrix*~    | in     | CSR format sparse matrix $B$ ($k \times n$)    |
-   | ~beta~    | ~double~        | in     | Scalar $\beta$                                 |
-   | ~C~       | ~double*~       | out    | Dense output matrix $C$ ($m \times n$)         |
-   | ~ldc~     | ~int64_t~       | in     | Leading dimension of array ~C~                 |
+   | Variable  | Type            | In/Out | Description                              |
+   |-----------+-----------------+--------+------------------------------------------|
+   | ~context~ | ~qmckl_context~ | in     | Global state                             |
+   | ~m~       | ~int64_t~       | in     | Number of rows of matrix ~A~ and ~C~     |
+   | ~n~       | ~int64_t~       | in     | Number of columns of matrix ~B~ and ~C~  |
+   | ~k~       | ~int64_t~       | in     | Number of columns of ~A~ and rows of ~B~ |
+   | ~alpha~   | ~double~        | in     | Scaling factor of the product            |
+   | ~A~       | ~CSRMatrix*~    | in     | CSR format sparse matrix ~A~ (~m*k~)     |
+   | ~B~       | ~CSRMatrix*~    | in     | CSR format sparse matrix ~B~ (~k*n~)     |
+   | ~beta~    | ~double~        | in     | Scaling factor of the input ~C~          |
+   | ~C~       | ~double*~       | out    | Dense output matrix ~C~ (~m*n~)          |
+   | ~ldc~     | ~int64_t~       | in     | Leading dimension of array ~C~           |
 
    Requirements:
 
@@ -2934,7 +2968,7 @@ printf("qmckl_transpose ok\n");
     - ~k > 0~
     - ~A~ is not ~NULL~ and properly initialized as CSR matrix
     - ~B~ is not ~NULL~ and properly initialized as CSR matrix
-    - ~C~ is allocated with at least $m \times n$ elements
+    - ~C~ is allocated with at least ~ldc*n~ elements
     - ~ldc >= m~
 
     #+begin_src c :tangle (eval h_private_type) :comments org :exports none
@@ -3204,30 +3238,31 @@ qmckl_dgemm_sparse_nn(const qmckl_context context,
 
 ** ~qmckl_dgemm_sparse_b_nn~
 
-   Sparse matrix multiplication where $A$ is dense and $B$ is in CSC (Compressed Sparse Column) format:
+   Sparse matrix multiplication where ~A~ is dense and ~B~ is in CSC (Compressed Sparse Column) format:
 
    \[
    C_{ij} = \beta C_{ij} + \alpha \sum_{k} A_{ik} \cdot B_{kj}
    \]
 
-   This function performs matrix multiplication where $A$ is a dense matrix and $B$ is stored
-   in CSC (Compressed Sparse Column) format. The function automatically switches between
-   sparse and dense BLAS implementations based on the matrix $B$ density threshold.
+   This function performs matrix multiplication where ~A~ is a dense matrix and ~B~
+   is stored in CSC (Compressed Sparse Column) format. When the density of ~B~ is
+   below ~0.25~, the nonzeros are multiplied directly; otherwise ~qmckl_dgemm~
+   is called.
 
    #+NAME: qmckl_dgemm_sparse_b_nn_args
-   | Variable  | Type             | In/Out | Description                                    |
-   |-----------+------------------+--------+------------------------------------------------|
-   | ~context~ | ~qmckl_context~  | in     | Global state                                   |
-   | ~m~       | ~int64_t~        | in     | Number of rows of matrix $A$ and $C$           |
-   | ~n~       | ~int64_t~        | in     | Number of columns of matrix $B$ and $C$        |
-   | ~k~       | ~int64_t~        | in     | Number of columns of $A$ and rows of $B$       |
-   | ~alpha~   | ~double~         | in     | Scalar $\alpha$                                |
-   | ~A~       | ~double*~        | in     | Dense matrix $A$ ($m \times k$)                |
-   | ~LDA~     | ~int64_t~        | in     | Leading dimension of array ~A~                 |
-   | ~B~       | ~CSCMatrix*~     | in     | CSC format sparse matrix $B$ ($k \times n$)    |
-   | ~beta~    | ~double~         | in     | Scalar $\beta$                                 |
-   | ~C~       | ~double*~        | out    | Dense output matrix $C$ ($m \times n$)         |
-   | ~ldc~     | ~int64_t~        | in     | Leading dimension of array ~C~                 |
+   | Variable  | Type            | In/Out | Description                              |
+   |-----------+-----------------+--------+------------------------------------------|
+   | ~context~ | ~qmckl_context~ | in     | Global state                             |
+   | ~m~       | ~int64_t~       | in     | Number of rows of matrix ~A~ and ~C~     |
+   | ~n~       | ~int64_t~       | in     | Number of columns of matrix ~B~ and ~C~  |
+   | ~k~       | ~int64_t~       | in     | Number of columns of ~A~ and rows of ~B~ |
+   | ~alpha~   | ~double~        | in     | Scaling factor of the product            |
+   | ~A~       | ~double*~       | in     | Dense matrix ~A~ (~m*k~)                 |
+   | ~LDA~     | ~int64_t~       | in     | Leading dimension of array ~A~           |
+   | ~B~       | ~CSCMatrix*~    | in     | CSC format sparse matrix ~B~ (~k*n~)     |
+   | ~beta~    | ~double~        | in     | Scaling factor of the input ~C~          |
+   | ~C~       | ~double*~       | out    | Dense output matrix ~C~ (~m*n~)          |
+   | ~ldc~     | ~int64_t~       | in     | Leading dimension of array ~C~           |
 
    Requirements:
 
@@ -3235,10 +3270,10 @@ qmckl_dgemm_sparse_nn(const qmckl_context context,
     - ~m > 0~
     - ~n > 0~
     - ~k > 0~
-    - ~A~ is not ~NULL~ and allocated with at least $m \times k$ elements
+    - ~A~ is not ~NULL~ and allocated with at least ~LDA*k~ elements
     - ~LDA >= m~
     - ~B~ is not ~NULL~ and properly initialized as CSC matrix
-    - ~C~ is allocated with at least $m \times n$ elements
+    - ~C~ is allocated with at least ~ldc*n~ elements
     - ~ldc >= m~
 
     #+begin_src c :tangle (eval h_private_func) :comments org :exports none
@@ -3352,17 +3387,38 @@ qmckl_dgemm_sparse_b_nn(const qmckl_context context,
    | Variable  | Type            | In/Out | Description                           |
    |-----------+-----------------+--------+---------------------------------------|
    | ~context~ | ~qmckl_context~ | in     | Global state                          |
-   | ~Trans~   | ~char~          | in     | 'T' is transposed                     |
+   | ~Trans~   | ~char~          | in     | 'T' or 't' transposes the matrix      |
    | ~m~       | ~int64_t~       | in     | Number of rows of the input matrix    |
    | ~n~       | ~int64_t~       | in     | Number of columns of the input matrix |
-   | ~alpha~   | ~double~        | in     | $\alpha$                              |
-   | ~A~       | ~double[][lda]~ | in     | Array containing the matrix $A$       |
+   | ~alpha~   | ~double~        | in     | Scaling factor of the product         |
+   | ~A~       | ~double[][lda]~ | in     | Array containing the matrix ~A~       |
    | ~lda~     | ~int64_t~       | in     | Leading dimension of array ~A~        |
-   | ~X~       | ~double[]~      | in     | Array containing the vector $x$       |
-   | ~incx~    | ~int64_t~       | in     | Increment of the elements of ~x~      |
-   | ~beta~    | ~double~        | in     | $\beta$                               |
-   | ~y~       | ~double[]~      | in     | Array containing the vector $y$       |
-   | ~incy~    | ~int64_t~       | in     | Increment of the elements of ~y~      |
+   | ~X~       | ~double[]~      | in     | Array containing the vector ~X~       |
+   | ~incx~    | ~int64_t~       | in     | Increment of the elements of ~X~      |
+   | ~beta~    | ~double~        | in     | Scaling factor of the input ~Y~       |
+   | ~Y~       | ~double[]~      | out    | Array containing the vector ~Y~       |
+   | ~incy~    | ~int64_t~       | in     | Increment of the elements of ~Y~      |
+
+   Requirements:
+
+    - ~context~ is not ~QMCKL_NULL_CONTEXT~
+    - ~m > 0~
+    - ~n > 0~
+    - ~lda >= m~ if ~Trans == 'N'~, otherwise ~lda >= n~
+    - ~incx > 0~ and ~incy > 0~
+    - ~A~ is allocated with at least ~lda*n~ elements if ~Trans == 'N'~,
+      and ~lda*m~ elements otherwise
+    - ~X~ is allocated with at least ~1+(n-1)*incx~ elements if ~Trans == 'N'~,
+      and ~1+(m-1)*incx~ elements otherwise
+    - ~Y~ is allocated with at least ~1+(m-1)*incy~ elements if ~Trans == 'N'~,
+      and ~1+(n-1)*incy~ elements otherwise
+    - ~m~, ~n~, ~lda~, ~incx~ and ~incy~ are smaller than ~huge(0_4)~, as
+      they are passed to BLAS as 32-bit integers
+
+   The function checks the context and that ~m~, ~n~, ~lda~, ~incx~ and
+   ~incy~ are positive. The rest of the list, the lower bound on ~lda~
+   included, is the caller's responsibility.
+
     #+CALL: generate_c_header(table=qmckl_dgemv_args,rettyp="qmckl_exit_code",fname="qmckl_dgemv")
 
     #+RESULTS:
@@ -3477,7 +3533,7 @@ end function qmckl_dgemv
    Rank-1 update
 
    \[
-   A = \alpha x y^{\dagger} + A
+   A_{ij} = \alpha X_{i} Y_{j} + A_{ij}
    \]
 
    #+NAME: qmckl_dger_args
@@ -3486,13 +3542,30 @@ end function qmckl_dgemv
    | ~context~ | ~qmckl_context~ | in     | Global state                          |
    | ~m~       | ~int64_t~       | in     | Number of rows of the input matrix    |
    | ~n~       | ~int64_t~       | in     | Number of columns of the input matrix |
-   | ~alpha~   | ~double~        | in     | $\alpha$                              |
-   | ~X~       | ~double[]~      | in     | Array containing the vector $x$       |
-   | ~incx~    | ~int64_t~       | in     | Increment of the elements of ~x~      |
-   | ~y~       | ~double[]~      | in     | Array containing the vector $y$       |
-   | ~incy~    | ~int64_t~       | in     | Increment of the elements of ~y~      |
-   | ~A~       | ~double[][lda]~ | inout  | Array containing the matrix $A$       |
+   | ~alpha~   | ~double~        | in     | Scaling factor of the rank-1 update   |
+   | ~X~       | ~double[]~      | in     | Array containing the vector ~X~       |
+   | ~incx~    | ~int64_t~       | in     | Increment of the elements of ~X~      |
+   | ~Y~       | ~double[]~      | in     | Array containing the vector ~Y~       |
+   | ~incy~    | ~int64_t~       | in     | Increment of the elements of ~Y~      |
+   | ~A~       | ~double[][lda]~ | inout  | Array containing the matrix ~A~       |
    | ~lda~     | ~int64_t~       | in     | Leading dimension of array ~A~        |
+
+   Requirements:
+
+    - ~context~ is not ~QMCKL_NULL_CONTEXT~
+    - ~m > 0~
+    - ~n > 0~
+    - ~lda >= m~
+    - ~incx > 0~ and ~incy > 0~
+    - ~X~ is allocated with at least ~1+(m-1)*incx~ elements
+    - ~Y~ is allocated with at least ~1+(n-1)*incy~ elements
+    - ~A~ is allocated with at least ~lda*n~ elements
+    - ~m~, ~n~, ~lda~, ~incx~ and ~incy~ are smaller than ~huge(0_4)~, as
+      they are passed to BLAS as 32-bit integers
+
+   The function checks the context and that ~m~, ~n~, ~lda~, ~incx~ and
+   ~incy~ are positive. The rest of the list, ~lda >= m~ included, is the
+   caller's responsibility.
 
     #+CALL: generate_c_header(table=qmckl_dger_args,rettyp="qmckl_exit_code",fname="qmckl_dger")
     #+RESULTS:

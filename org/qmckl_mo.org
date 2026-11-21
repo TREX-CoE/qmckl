@@ -10,10 +10,10 @@
   \phi_i(\mathbf{r}) = \sum_{\mu} C_{\mu i} \chi_{\mu}(\mathbf{r}),
   \]
 
-  where $i$ labels an MO, $\mu$ an AO, and $C_{\mu i}$ is the coefficient of
-  AO $\mu$ in MO $i$. This module stores the coefficient matrix and evaluates
-  the MOs on the points of the context: their values, their gradients and
-  Laplacians (the ~vgl~ arrays), and their Hessians.
+  where the sum runs over the atomic orbitals. Their coefficients are stored
+  in the context in the matrix ~coefficient~. This module evaluates the MOs
+  on the points of the context: their values, their gradients and Laplacians
+  (the ~vgl~ arrays), and their Hessians.
 
   Orbitals that do not contribute to the wave function, the virtuals of a
   single-determinant calculation for instance, can be dropped from the
@@ -23,8 +23,8 @@
   diverges there and cancels the divergence of the potential, leaving a finite
   local energy. To reproduce it, each MO can be replaced close to a nucleus by
   a polynomial that satisfies the cusp condition exactly and joins the MO
-  continuously, in value and gradient, at a radius $r_{\text{cusp}\,A}$ given
-  for each nucleus $A$. The correction stays off until
+  continuously, in value, gradient and Laplacian, at a radius chosen for each
+  nucleus and stored in ~r_cusp~. The correction stays off until
   ~qmckl_set_mo_basis_r_cusp~ provides a radius for each nucleus. Inside a
   radius,
 
@@ -32,9 +32,10 @@
   \phi_{\text{cusp}\, i}(\mathbf{r}) = \phi_i(\mathbf{r}) - \phi_{s_A i}(\mathbf{r}) + \sum_{k=0}^{3} f_k\, |\mathbf{r}-\mathbf{R}_A|^k ,
   \]
 
-  where $\phi_{s_A i}$ is the contribution of the $s$ AOs centered at $A$ to
-  MO $i$, and the four coefficients $f_k$ are chosen so that the value and the
-  gradient are continuous at $r_{\text{cusp}\,A}$ and the cusp is exact.
+  where the subtracted term is the contribution to the MO of the ~s~ AOs
+  centered on the same nucleus, and the four coefficients are chosen so that
+  the polynomial matches that contribution in value, gradient and Laplacian
+  at the cusp radius, and so that the cusp condition holds at the nucleus.
 
   Finally, ~qmckl_mo_basis_rescale~ multiplies the coefficients by a constant,
   which brings the determinants back into the range of double precision when
@@ -124,11 +125,12 @@ int main() {
 
   Computed data:
 
-  |--------------+--------------------------+-----------------------------------------------------------|
-  | ~cusp_param~ | ~[nucl_num][4][mo_num]~  | Parameters of the functions for Cusp adjustments          |
-  | ~mo_value~   | ~[point_num][mo_num]~    | Value of the MOs at point positions                       |
-  | ~mo_vgl~     | ~[point_num][5][mo_num]~ | Value, gradients, Laplacian of the MOs at point positions |
-  |--------------+--------------------------+-----------------------------------------------------------|
+  |--------------+-----------------------------+-----------------------------------------------------------|
+  | ~cusp_param~ | ~[nucl_num][4][mo_num]~     | Parameters of the functions for Cusp adjustments          |
+  | ~mo_value~   | ~[point_num][mo_num]~       | Value of the MOs at point positions                       |
+  | ~mo_vgl~     | ~[point_num][5][mo_num]~    | Value, gradients, Laplacian of the MOs at point positions |
+  | ~mo_hessian~ | ~[3][point_num][3][mo_num]~ | Hessian of the MOs at point positions                     |
+  |--------------+-----------------------------+-----------------------------------------------------------|
 
 ** Data structure
 
@@ -184,8 +186,9 @@ qmckl_exit_code qmckl_init_mo_basis(qmckl_context context) {
 
 ** Initialization functions
 
-   To set the basis set, all the following functions need to be
-   called.
+   The MO basis is provided once ~qmckl_set_mo_basis_mo_num~ and
+   ~qmckl_set_mo_basis_coefficient~ have both been called;
+   ~qmckl_set_mo_basis_r_cusp~ is optional and turns the cusp adjustment on.
 
    #+begin_src c :comments org :tangle (eval h_func)
 qmckl_exit_code  qmckl_set_mo_basis_mo_num           (qmckl_context context, const int64_t   mo_num);
@@ -309,10 +312,16 @@ interface
 end interface
 
    #+end_src
- When the basis set is completely entered, other data structures are
- computed to accelerate the calculations.
- The function ~qmckl_set_mo_basis_coefficients~ can be called multiple times to override the current coefficients in the context, 
- but the function ~qmckl_set_mo_basis_mo_num~ can only be called once in a context.
+
+   The setters share the ~uninitialized~ bit mask of the context: bit 0 is
+   cleared by ~qmckl_set_mo_basis_mo_num~ and bit 1 by
+   ~qmckl_set_mo_basis_coefficient~. When both bits are cleared the basis is
+   provided, and ~qmckl_finalize_mo_basis~ builds the transposed
+   ~coefficient_t~ matrix, releases the cached MO values and gradients, and
+   touches the context so that every cached array is recomputed. A second
+   call to ~qmckl_set_mo_basis_mo_num~ returns
+   ~QMCKL_ALREADY_SET~, while ~qmckl_set_mo_basis_coefficient~ can be called
+   again: it frees the previous array and copies the new coefficients.
 
    #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
 qmckl_exit_code qmckl_finalize_mo_basis(qmckl_context context);
@@ -483,18 +492,31 @@ qmckl_exit_code qmckl_copy_mo_basis(qmckl_context context, const qmckl_mo_basis_
 
 ** Cusp adjustment functions
 
-   To activate the cusp adjustment, the user must enter the radius of
-   the fitting function for each atom.
+   ~qmckl_set_mo_basis_r_cusp~ turns the cusp adjustment on. It takes one
+   radius per nucleus, and inside that radius the contribution of the ~s~ AOs
+   centered on the nucleus is replaced by the cubic polynomial of the
+   Introduction. The polynomial satisfies the cusp condition at the nucleus,
 
-   This function requires the computation of the value and gradients
-   of the $s$ AOs at the distance equal to the radius, and the values
-   of the non-$s$ AOs at the center.
+   \[
+   f_1 + Z\,(f_0 + \eta) = 0 ,
+   \]
 
-   A radius for which the fit is singular (in particular $R=3/Z$, and
-   $R=0$) is rejected with ~QMCKL_INVALID_ARG_2~ before the context is
-   modified.  If any other step fails, the context is left without a
-   cusp adjustment rather than with a half-computed one, and the point
-   module is restored to the points it held before the call.
+   where Z is the nuclear charge and eta the value of the MO at the nucleus.
+   The polynomial matches the removed contribution in value, gradient and
+   Laplacian at the radius, so the corrected MO stays continuous there.
+
+   Setting the radii requires the MO basis and the nuclear charges, and
+   returns ~QMCKL_NOT_PROVIDED~ without them. The function needs the MO values
+   at the nuclei and the value, gradient and Laplacian of the ~s~ AOs at the
+   radius; it moves the points of the context to those positions, evaluates
+   them, and puts back the points it found on entry, also when it fails.
+   Nuclei with a charge below 0.1, dummy atoms, are left without a correction.
+
+   The fit divides by quantities that vanish at a radius of zero and at
+   3/Z, so such a radius, within ~1.d-6~, is rejected with
+   ~QMCKL_INVALID_ARG_2~ before the context is modified. If any other step
+   fails, the context is left without a cusp adjustment rather than with a
+   half-computed one. The function can be called again to replace the radii.
 
    #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
 qmckl_exit_code
@@ -816,6 +838,11 @@ cleanup:
 
 ** Access functions
 
+   ~qmckl_mo_basis_provided~ returns ~true~ once ~mo_num~ and the coefficients
+   have been provided, and ~false~ when the context is null. The MO values,
+   gradients, Laplacians and Hessians are obtained with the getters of the
+   computation sections below.
+
    #+begin_src c :comments org :tangle (eval h_func) :exports none
 qmckl_exit_code
 qmckl_get_mo_basis_mo_num (const qmckl_context context,
@@ -907,9 +934,6 @@ qmckl_get_mo_basis_coefficient (const qmckl_context context,
 }
    #+end_src
 
-   When all the data for the AOs have been provided, the following
-   function returns ~true~.
-
    #+begin_src c :comments org :tangle (eval h_func)
 bool qmckl_mo_basis_provided (const qmckl_context context);
    #+end_src
@@ -978,10 +1002,13 @@ end interface
    can be removed as they do not participate in the ground state
    configuration.
 
-   To select a subset of MOs that will be kept, an array of integers of
-   size ~mo_num~ can be created. If the integer corresponding to an MO is
-   zero, that MO is dropped and will not be included in the
-   calculation. If the integer is non-zero, the MO will be kept.
+   To select a subset of MOs that will be kept, an array of ~int32_t~ of size
+   ~mo_num~ is passed in ~keep~, and ~size_max~ must be at least ~mo_num~. An
+   entry equal to zero drops the MO, a non-zero entry keeps it. The kept MOs
+   are copied in order into a new coefficient matrix, ~mo_num~ is updated and
+   the basis is finalized again; if cusp radii were set, the cusp parameters
+   are recomputed for the reduced basis. A null ~keep~ array, or an array
+   that keeps no MO at all, is rejected with ~QMCKL_INVALID_ARG_2~.
 
 
    #+begin_src c :comments org :tangle (eval h_func)
@@ -1116,7 +1143,17 @@ end interface
 
 * Computation
 
-** Parameters of the cusp-correction functions
+  The computed data is stored in the context so that it can be reused by
+  different kernels. Each array carries the context date at which it was
+  computed. The point and nucleus setters call ~qmckl_context_touch~, which
+  copies the new context date into ~ctx->point.date~, and a provider recomputes
+  its array when ~ctx->point.date~ is more recent than the stored date.
+
+  The value provider avoids one contraction of the AOs: when the values,
+  gradients and Laplacians have already been computed at the current point
+  date, it copies the values out of the ~vgl~ array. When ~r_cusp~ is set,
+  the providers call the cusp-corrected kernels instead of the plain ones.
+
 ** Computation of MOs: values only
 
 *** Get
@@ -1175,7 +1212,10 @@ qmckl_get_mo_basis_mo_value(qmckl_context context,
   end interface
     #+end_src
 
-    Uses the given array to compute the values.
+    ~qmckl_get_mo_basis_mo_value_inplace~ computes the values directly into
+    ~mo_value~, which must have room for ~point.num * mo_num~ doubles. The
+    array cached in the context is left untouched and marked stale, so the
+    next getter call recomputes it.
 
     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
 qmckl_exit_code
@@ -1405,7 +1445,7 @@ qmckl_exit_code qmckl_provide_mo_basis_mo_value(qmckl_context context)
     | ~ao_num~        | ~int64_t~                   | in     | Number of AOs                                   |
     | ~mo_num~        | ~int64_t~                   | in     | Number of MOs                                   |
     | ~point_num~     | ~int64_t~                   | in     | Number of points                                |
-    | ~coefficient_t~ | ~double[mo_num][ao_num]~    | in     | Transpose of the AO to MO transformation matrix |
+    | ~coefficient_t~ | ~double[ao_num][mo_num]~    | in     | Transpose of the AO to MO transformation matrix |
     | ~ao_value~      | ~double[point_num][ao_num]~ | in     | Value of the AOs                                |
     | ~mo_value~      | ~double[point_num][mo_num]~ | out    | Value of the MOs                                |
 
@@ -1811,7 +1851,10 @@ qmckl_get_mo_basis_mo_vgl(qmckl_context context,
   end interface
     #+end_src
 
-    Uses the given array to compute the VGL.
+    ~qmckl_get_mo_basis_mo_vgl_inplace~ computes the values, gradients and
+    Laplacians directly into ~mo_vgl~, which must have room for
+    ~point.num * 5 * mo_num~ doubles. The array cached in the context is left
+    untouched and marked stale, so the next getter call recomputes it.
 
     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
 qmckl_exit_code
@@ -2680,7 +2723,7 @@ qmckl_exit_code qmckl_provide_mo_basis_mo_hessian(qmckl_context context)
     | ~ao_num~            | ~int64_t~                         | in     | Number of AOs                                   |
     | ~mo_num~            | ~int64_t~                         | in     | Number of MOs                                   |
     | ~point_num~         | ~int64_t~                         | in     | Number of points                                |
-    | ~coefficient_t~     | ~double[mo_num][ao_num]~          | in     | Transpose of the AO to MO transformation matrix |
+    | ~coefficient_t~     | ~double[ao_num][mo_num]~          | in     | Transpose of the AO to MO transformation matrix |
     | ~ao_hessian~        | ~double[3][point_num][4][ao_num]~ | in     | Hessian of the AOs                              |
     | ~mo_hessian~        | ~double[3][point_num][3][mo_num]~ | out    | Hessian of the MOs                              |
 
@@ -2751,7 +2794,7 @@ end function qmckl_compute_mo_basis_mo_hessian_doc_f
     | ~point_coord~   | ~double[3][point_num]~            | in     | Electron coordinates                            |
     | ~r_cusp~        | ~double[nucl_num]~                | in     | Cusp-adjustment radius                          |
     | ~cusp_param~    | ~double[nucl_num][4][mo_num]~     | in     | Cusp-adjustment parameters                      |
-    | ~coefficient_t~ | ~double[mo_num][ao_num]~          | in     | Transpose of the AO to MO transformation matrix |
+    | ~coefficient_t~ | ~double[ao_num][mo_num]~          | in     | Transpose of the AO to MO transformation matrix |
     | ~ao_hessian~    | ~double[3][point_num][4][ao_num]~ | in     | Hessian of the AOs                              |
     | ~mo_hessian~    | ~double[3][point_num][3][mo_num]~ | out    | Hessian of the MOs                              |
 
@@ -3603,10 +3646,15 @@ qmckl_compute_mo_basis_mo_vgl_cusp_hpc (const qmckl_context context,
 
 ** Rescaling of MO coefficients
 
-   When evaluating Slater determinants, the value of the determinants
-   may get out of the range of double precision. A simple fix is to
-   rescale the MO coefficients to put back the determinants in the
-   correct range.
+   When evaluating Slater determinants, the value of the determinants may get
+   out of the range of double precision. A simple fix is to rescale the MO
+   coefficients to put the determinants back in the correct range.
+
+   ~qmckl_mo_basis_rescale~ multiplies ~coefficient~ and ~coefficient_t~ by
+   the scaling factor and touches the context, so the cached MO values,
+   gradients, Laplacians and Hessians are recomputed from the scaled
+   coefficients. A zero factor is rejected with ~QMCKL_INVALID_ARG_2~, and a
+   basis that is not provided gives ~QMCKL_NOT_PROVIDED~.
 
     #+begin_src c :comments org :tangle (eval h_func) :noweb yes
 qmckl_exit_code

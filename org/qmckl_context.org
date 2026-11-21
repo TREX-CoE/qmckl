@@ -6,12 +6,15 @@
 
   A context holds the state of a calculation: the molecular system, the
   numerical precision, the points at which the kernels evaluate, the values
-  they computed, the error of the last call that failed, and the memory the
-  context owns. Almost every function of the library takes a context as its
-  first argument.
+  they computed, the error of the last call that failed, the memory the
+  context owns, and the number of OpenMP threads to use. All but four public
+  functions take a context as their first argument; the exceptions are
+  ~qmckl_context_create~, ~qmckl_string_of_error~ and the two
+  ~qmckl_test_precision~ helpers.
 
-  This page describes the handle that designates a context, how its validity is
-  checked, and its lifetime: creation, copy, locking and destruction.
+  This page describes the handle that designates a context, how its validity
+  is checked, what the context contains, the OpenMP thread count it carries,
+  and its lifetime: creation, locking, copy and destruction.
 
   #+begin_src c :tangle (eval c_test) :noweb yes :exports none
 #include "qmckl.h"
@@ -92,21 +95,22 @@ int main() {
 
 * Context handling
 
-  The context is the central data structure in QMCkl, serving as a handle
-  for the complete state of the library. All QMCkl functions require a context
-  as their first argument, and all computed data is stored within the context.
+  The context is the central data structure of QMCkl: it holds the state of
+  the calculation and caches the values the library computes. A getter copies
+  such a cached array into the buffer the caller provides; the linear-algebra
+  kernels, ~qmckl_dgemm~, ~qmckl_dgemv~ and ~qmckl_dger~, take the context only
+  to report an argument error, and write straight into the caller's arrays.
+
+  The handle is the address of a private structure, cast to an integer: the
+  caller never sees the structure itself, so its layout can change without
+  breaking a program.
   
-  The context variable is a handle for the state of the library, and is stored 
-  in a data structure which can't be seen outside of the library. This 
-  encapsulation provides a clean API boundary and allows internal implementation 
-  details to change without affecting user code.
-  
-  To simplify compatibility with other languages (particularly Fortran), the
-  pointer to the internal data structure is converted into a 64-bit
-  signed integer, defined in the ~qmckl_context~ type. This approach avoids
-  issues with language interoperability related to opaque pointer types.
-  A value of ~QMCKL_NULL_CONTEXT~ for the context is equivalent to a
-  ~NULL~ pointer and represents an invalid or uninitialized context.
+  To simplify compatibility with other languages, Fortran in particular, the
+  pointer to the internal data structure is reinterpreted as a 64-bit signed
+  integer, and that integer is the ~qmckl_context~ type; a Fortran caller
+  declares it ~integer(qmckl_context)~. ~QMCKL_NULL_CONTEXT~, zero, is the
+  null handle and designates no context. Most entry points test it and return
+  ~QMCKL_INVALID_CONTEXT~; ~qmckl_lock~ and ~qmckl_unlock~ ignore it.
 
   #+NAME: qmckl_context
   #+begin_src c :comments org :tangle (eval h_type)
@@ -121,30 +125,36 @@ typedef int64_t qmckl_context ;
 
 ** Design considerations
 
-  An immutable context would have been ideal from a functional programming
-  perspective and would have required implementation of a garbage
-  collector for proper memory management. However, to keep the library simple 
-  and avoid the complexity of automatic memory management, we have chosen to 
-  implement the context as a mutable data structure. This means it has to be 
-  handled with care: users must ensure proper initialization, avoid concurrent
-  modifications without synchronization, and explicitly destroy contexts when
-  they are no longer needed.
-  
-  The mutable design also provides better performance characteristics, as it
-  avoids the overhead of copying large data structures and allows for in-place
-  updates of computational results.
+  An immutable context would have been simpler to reason about, but every
+  update would have to return a new one, and freeing what the caller no longer
+  uses would need reference counting or a garbage collector. The context is
+  mutable instead. It has to be handled with care: initialize it before use,
+  synchronize concurrent modifications, and destroy it when it is no longer
+  needed.
+
+  Mutable state also avoids copying large arrays on every update: a computed
+  quantity is written into the context in place, and the date of the write is
+  recorded next to it.
 
   By convention, in this file ~context~ is a ~qmckl_context~ variable
   and ~ctx~ is a ~qmckl_context_struct*~ pointer.
 
 ** Data structure
 
-   The context data structure contains all the state information needed by the
-   library, organized into logical sections. This includes the molecular system
-   description (nuclei, electrons, basis sets), computational parameters
-   (numerical precision), computed quantities (atomic orbitals, molecular
-   orbitals, Jastrow factors, etc.), and internal state management (error
-   handling, memory allocation tracking, thread synchronization).
+   The structure holds the state of the library: one sub-structure per model
+   (nucleus, electron, atomic orbitals, molecular orbitals, Jastrow factor,
+   forces), the points at which the kernels evaluate, the numerical precision,
+   the date, the error record, the registry of the memory blocks the context
+   owns, the lock, the OpenMP thread count, and a pointer reserved for
+   alternative implementations. It is defined in
+   ~qmckl_context_private_type.h~, a private header that the installation does
+   not ship, so the layout is not part of the API.
+
+   A pointer field added to the context is handled in three places. It is
+   zeroed by ~qmckl_context_create~, freed by ~qmckl_context_destroy~, which
+   only frees what the memory registry holds and therefore requires the block
+   to be allocated with ~qmckl_malloc~, and copied by ~qmckl_context_copy~
+   through a ~qmckl_copy_*~ function.
 
    #+begin_src c :comments org :tangle (eval h_private_type) :noweb yes :exports none
 typedef struct qmckl_context_struct {
@@ -198,34 +208,35 @@ typedef struct qmckl_context_struct {
 
 ** Extension mechanism
     
-   The ~qmckl_extra~ pointer provides an extension mechanism that allows 
-   alternative implementations of the library to add implementation-specific 
-   data to the context. For example, a GPU implementation of QMCkl could store 
-   the device ID, CUDA streams, or device memory pointers in a custom data 
-   structure, and point to it from ~qmckl_extra~. This design allows the core 
-   library API to remain stable while supporting diverse implementation 
-   strategies.
+   ~qmckl_extra~ is reserved for a variant of the library that needs to hang
+   its own data off the context: a GPU implementation could store its device
+   identifier, its streams and its device buffers in such a structure. The
+   library itself never reads or writes the pointer and offers no accessor, so
+   only code that includes the private header can use it. ~qmckl_context_copy~
+   copies the pointer without what it points to, and ~qmckl_context_destroy~
+   does not free it.
    
 ** Validity checking
 
-   A tag is used internally to check if the memory domain pointed to
-   by a pointer is a valid context. This provides a sanity check that allows
-   verification that even if the pointer associated with a context is non-null, 
-   it actually points to the expected data structure and not to arbitrary memory.
-   This is particularly important for catching user errors like passing an
-   uninitialized context or a context that has already been destroyed.
+   A tag is written at the head of the structure when the context is created,
+   and replaced by another value when it is destroyed, so that a handle to a
+   context that no longer exists can be recognized. The check is cheap and
+   catches the common mistakes only: the tag is read through the handle, so a
+   handle that points nowhere crashes the program instead of returning an
+   error, and reading the tag of a destroyed context reads freed memory, which
+   usually still holds the invalid tag but may hold anything if the block has
+   been reused.
 
    #+begin_src c :comments org :tangle (eval h_private_type) :noweb yes :exports none
 #define VALID_TAG   0xBEEFFACE
 #define INVALID_TAG 0xDEADBEEF
    #+end_src
 
-   The ~qmckl_context_check~ function checks if the domain pointed to by
-   the pointer is a valid context by verifying the magic tag value. It returns 
-   the input ~qmckl_context~ if the context is valid (tag matches ~VALID_TAG~), 
-   or ~QMCKL_NULL_CONTEXT~ if the context is invalid. This function should be 
-   called at the beginning of every public API function to ensure the context
-   parameter is valid before attempting to use it.
+   ~qmckl_context_check~ performs that check and gives the handle back
+   unchanged when the tag is ~VALID_TAG~, or ~QMCKL_NULL_CONTEXT~ otherwise.
+   Most entry points call it before they use the handle, and return
+   ~QMCKL_INVALID_CONTEXT~ when it fails. ~qmckl_lock~ and ~qmckl_unlock~ are
+   the exception: they only compare the handle with ~QMCKL_NULL_CONTEXT~.
 
    #+begin_src c :comments org :tangle (eval h_func) 
 qmckl_context
@@ -249,12 +260,19 @@ qmckl_context qmckl_context_check(const qmckl_context context) {
 }
    #+end_src
 
-   The context keeps a /date/ that allows to check which data needs
-   to be recomputed. The date is incremented when the context is touched.
+** Cache invalidation
 
-   When a new element is added to the context, the functions
-   [[Creation][=qmckl_context_create=]] [[Destroy][=qmckl_context_destroy=]] and [[Copy][=qmckl_context_copy=]]
-   should be updated in order to make deep copies.
+   The context keeps a date, a ~uint64_t~ that starts at zero and only grows.
+   Every cached array is stored with the date of its computation, and a
+   provider recomputes it when the clock it watches is more recent than that
+   date: ~ctx->date~ for the arrays that depend on the parameters,
+   ~ctx->point.date~ for the ones that depend on the coordinates, and
+   ~ctx->single_point.date~ on the single-point path.
+
+   ~qmckl_context_touch~ increments ~ctx->date~ and copies it into
+   ~ctx->point.date~ and ~ctx->electron.walker.point.date~, so everything
+   computed before the touch is stale. ~qmckl_set_point~ ends with a touch,
+   since moving the points is what makes the cached distances wrong.
 
    When the electron coordinates have changed, the context is touched
    using the following function.
@@ -264,7 +282,8 @@ qmckl_exit_code
 qmckl_context_touch (const qmckl_context context);
    #+end_src
 
-   This has the effect to increment the date of the context.
+   It does not take the lock, and it recomputes nothing: the values are
+   recomputed lazily, in the providers.
 
    #+begin_src c :tangle (eval c) :exports none
 qmckl_exit_code
@@ -302,10 +321,17 @@ qmckl_context_touch(const qmckl_context context)
 
 ** Creation
 
-   To create a new context, ~qmckl_context_create()~ should be used.
-   - Upon success, it returns a pointer to a new context with the ~qmckl_context~ type
-   - It returns ~QMCKL_NULL_CONTEXT~ upon failure to allocate the internal data structure
-   - A new context always has all its members initialized with a NULL value
+   To create a new context, ~qmckl_context_create()~ is used.
+   - It returns a handle, or ~QMCKL_NULL_CONTEXT~ when one of the two
+     allocations fails: the structure itself, and the initial registry of 128
+     memory blocks.
+   - The structure is zeroed first, then given its tag and its lock (recursive
+     where ~PTHREAD_MUTEX_RECURSIVE~ exists), the default precision of 53 bits
+     with range 11, and the thread count.
+   - Each subsystem is then reset by its ~qmckl_init_*~ function: the point,
+     the electron, the nucleus, the atomic basis, the molecular basis and the
+     Jastrow factor. Creation leaves the atomic basis cartesian and the
+     Jastrow parameters at -1 until the user sets them.
 
    # Header
    #+begin_src c :comments org :tangle (eval h_func)
@@ -428,10 +454,12 @@ assert( qmckl_context_check(context) ==  context );
 
 ** Locking
 
-   For thread safety, the context may be locked/unlocked. The lock is
-   initialized with the ~PTHREAD_MUTEX_RECURSIVE~ attribute, and the
-   number of times the thread has locked it is saved in the
-   ~lock_count~ attribute.
+   For thread safety, a context can be locked and unlocked. Each context has
+   one mutex, initialized as recursive where ~PTHREAD_MUTEX_RECURSIVE~ is
+   available, and ~lock_count~ counts the lock calls not yet matched by an
+   unlock. Both functions return ~void~: they ignore a ~QMCKL_NULL_CONTEXT~
+   handle, print to ~stderr~ and assert if pthread reports an error, and skip
+   the tag check, so a stale handle is not rejected here.
 
    # Header
    #+begin_src c :comments org :tangle (eval h_func)
@@ -471,8 +499,14 @@ void qmckl_unlock(const qmckl_context context) {
 
 ** Copy
 
-   ~qmckl_context_copy~ makes a deep copy of a context. It returns
-   ~QMCKL_NULL_CONTEXT~ upon failure.
+   ~qmckl_context_copy~ makes a deep copy of a context. The new context has
+   its own mutex and its own memory registry, the scalar fields are copied by
+   value (~date~, the numerical precision, the error record, the thread
+   count), each subsystem is copied by its ~qmckl_copy_*~ function, and
+   ~qmckl_extra~ is copied as a pointer. The source stays locked for the whole
+   copy. The function returns ~QMCKL_NULL_CONTEXT~ when the source is invalid
+   or when a sub-copy fails, in which case it destroys the context it had
+   begun to build.
 
    # Header
    #+begin_src c :comments org :tangle (eval h_func)
@@ -609,12 +643,15 @@ qmckl_context_destroy(new_context);
 
 ** OpenMP thread count
 
-   The ~num_threads~ variable controls how many threads are used in 
-   OpenMP parallel sections. By default, it is initialized with 
-   ~omp_get_max_threads()~ when OpenMP is available, or 1 otherwise.
-   
-   ~qmckl_context_get_num_threads~ returns the number of OpenMP threads
-   stored in the context via a pointer argument.
+   The ~num_threads~ field is the thread count the parallel regions use: the
+   kernels that use it spell ~num_threads(ctx->num_threads)~ on their pragma,
+   inside ~#ifdef HAVE_OPENMP~. In a build without OpenMP the field is read and
+   written but never used. It starts at ~omp_get_max_threads()~, or at 1 when
+   OpenMP is unavailable.
+
+   ~qmckl_context_get_num_threads~ copies the field into a variable of the
+   caller. A ~NULL~ variable gives ~QMCKL_INVALID_ARG_2~, and an invalid
+   context gives ~QMCKL_INVALID_CONTEXT~.
    
    # Header
    #+begin_src c :comments org :tangle (eval h_func)
@@ -652,8 +689,8 @@ qmckl_exit_code qmckl_context_get_num_threads(const qmckl_context context, int32
    end interface
    #+end_src
 
-   ~qmckl_context_set_num_threads~ sets the number of OpenMP threads in the context.
-   The value must be a positive integer.
+   ~qmckl_context_set_num_threads~ writes the field under the lock. A value
+   that is not positive gives ~QMCKL_INVALID_ARG_2~.
 
    # Header
    #+begin_src c :comments org :tangle (eval h_func)
@@ -698,8 +735,10 @@ qmckl_exit_code qmckl_context_set_num_threads(const qmckl_context context, const
    end interface
    #+end_src
 
-   ~qmckl_context_unset_num_threads~ resets the number of threads to the
-   default value: ~omp_get_max_threads()~ when OpenMP is available, or 1 otherwise.
+   ~qmckl_context_unset_num_threads~ restores the default, under the lock: 1
+   without OpenMP, and ~omp_get_max_threads()~ with it. Of the three functions,
+   only the unsetter calls the OpenMP runtime; the other two read or write the
+   field, and the next parallel region picks the value up.
 
    # Header
    #+begin_src c :comments org :tangle (eval h_func)
@@ -773,9 +812,12 @@ qmckl_exit_code qmckl_context_unset_num_threads(const qmckl_context context) {
 
 ** Destroy
 
-   The context is destroyed with ~qmckl_context_destroy~, which frees every
-   memory block still registered in the context, then the context itself. The
-   handle is not valid afterwards.
+   ~qmckl_context_destroy~ frees every block still registered in the context,
+   then the registry array, then marks the tag invalid, destroys the mutex and
+   frees the structure. It returns ~QMCKL_INVALID_CONTEXT~ for a handle that is
+   not a valid context, and ~QMCKL_SUCCESS~ otherwise. The handle is not valid
+   afterwards. A block that was not allocated through ~qmckl_malloc~ is not in
+   the registry, and nothing frees it here.
 
    # Header
    #+begin_src c :comments org :tangle (eval h_func)

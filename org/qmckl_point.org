@@ -10,12 +10,14 @@
 
   Kernels that cache results depending on the positions compare their own date
   with the date of the points, and recompute only when the coordinates have
-  moved. The electron module stores its current walker as such a set of points,
-  so setting electron coordinates also moves the points.
+  moved. The electron module embeds such a set in each walker: setting the
+  electron coordinates fills it with all the walkers' electrons, and copies
+  the current walker's points into the context point.
 
   The set is not tied to the electrons: a caller can place points on any grid,
-  the integration grid of a DFT code for instance, and ask for the orbitals or
-  the Jastrow factor there.
+  the integration grid of a DFT code for instance, and ask for the orbitals
+  there. The Jastrow factor does not read them: it reads the points that the
+  walkers carry.
 
 * Headers                                                          :noexport:
   #+begin_src elisp :noexport :results none
@@ -88,7 +90,7 @@ int main() {
 
 ** Data structure
 
-  The following data stored in the context:
+  The following data is stored in the context:
 
   | Variable     | Type           | Description                               |
   |--------------+----------------+-------------------------------------------|
@@ -133,10 +135,9 @@ qmckl_exit_code qmckl_init_point(qmckl_context context) {
 ** Access functions
 
    Access functions return ~QMCKL_SUCCESS~ when the data has been
-   successfully retrieved. They return ~QMCKL_INVALID_CONTEXT~ when
-   the context is not a valid context. If the function returns
-   successfully, the variable pointed by the pointer given in argument
-   contains the requested data. Otherwise, this variable is untouched.
+   retrieved, and ~QMCKL_INVALID_CONTEXT~ when the context is not a valid
+   context. On success the variable the caller points to holds the requested
+   data; on failure it is left untouched.
 
 *** Number of points
 
@@ -192,9 +193,12 @@ qmckl_exit_code qmckl_get_point(const qmckl_context context,
                                 const int64_t size_max);
   #+end_src
 
-    Returns the point coordinates as sequences of (x,y,z).
-    The pointer is assumed to point on a memory block of size
-    ~size_max~ \ge ~3 * point_num~.
+    Returns the point coordinates into ~coord~, which must be able to hold
+    ~size_max~ doubles; the call fails when ~size_max~ is smaller than
+    ~3 * point_num~. With ~transp == 'N'~ the coordinates come as consecutive
+    $(x,y,z)$ triplets; any other value of ~transp~ returns the layout the
+    context stores, with all the $x$ first. When no point has been set, the
+    call returns ~QMCKL_NOT_PROVIDED~.
 
   #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
 qmckl_exit_code
@@ -266,12 +270,14 @@ end interface
 
 ** Initialization functions
 
-   When the data is set in the context, if the arrays are large
-   enough, we overwrite the data contained in them.
+   The context owns the matrix of coordinates: it is allocated the first
+   time points are set, or reallocated when their number changes, and
+   overwritten in place otherwise.
 
-   To set the data relative to the points in the context, the
-   following function need to be called. Here, ~num~ is the number of
-   points to set.
+   Points are set with ~qmckl_set_point~, which also updates the date of the
+   points. The call fails when ~num~ is not positive, when ~size_max~ is
+   smaller than ~3*num~, when ~transp~ is neither ~'N'~ nor ~'T'~, and when
+   ~coord~ is a null pointer. Here, ~num~ is the number of points to set.
 
    #+begin_src c :comments org :tangle (eval h_func)
 qmckl_exit_code qmckl_set_point (qmckl_context context,

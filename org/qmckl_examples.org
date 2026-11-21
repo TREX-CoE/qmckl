@@ -4,74 +4,48 @@
 
 * Introduction
 
-  This page collects worked examples: complete programs that set up a context,
-  place points, and call the kernels, in C and in Fortran. The first one reads
-  a wave function from a [[https://github.com/TREX-CoE/trexio][TREXIO]] file and computes an overlap matrix in the
-  MO basis by evaluating the orbitals on a regular grid.
+  This page collects worked examples: programs that create a context, put
+  points in it and call the kernels. The first two read a wave function
+  from a [[https://github.com/TREX-CoE/trexio][TREXIO]] file, evaluate the orbitals on a regular grid and build the
+  overlap matrix in the MO basis, once in C and once in Fortran. A third
+  program evaluates a single atomic orbital on a grid, and the error-handling
+  subroutine it uses is given as well.
 
 * Overlap matrix in the MO basis
 
-The focal point of this example is the numerical evaluation of the overlap
-matrix in the MO basis. Utilizing QMCkl, we approximate the MOs at
-discrete grid points to compute the overlap matrix \( S_{ij} \) as follows:
+The example computes the overlap matrix in the MO basis on a regular grid:
+
 \[
 S_{ij} = \int \phi_i(\mathbf{r})\, \phi_j(\mathbf{r}) \text{d}\mathbf{r} \approx
          \sum_k \phi_i(\mathbf{r}_k)\, \phi_j(\mathbf{r}_k) \delta\mathbf{r}
 \]
 
+The program reads a wave function from a TREXIO file with
+~qmckl_trexio_read~, which fills the context with the electrons, the nuclei,
+the AOs and the MOs. It then takes the number of nuclei, their coordinates
+and the number of MOs from the context, and builds a regular mesh of
+120 x 120 x 120 points around the molecule, 1728000 points in all. The mesh
+is handed to the context with ~qmckl_set_point~.
 
-The code starts by reading a wave function from a TREXIO file. This is
-accomplished using the ~qmckl_trexio_read~ function, which populates a
-~qmckl_context~ with the necessary wave function parameters. The context
-serves as the primary interface for interacting with the QMCkl library,
-encapsulating the state and configurations of the system.
-Subsequently, the code retrieves various attributes such as the number of
-nuclei ~nucl_num~ and coordinates ~nucl_coord~.
-These attributes are essential for setting up the integration grid.
-
-The core of the example lies in the numerical computation of the overlap
-matrix. To achieve this, the code employs a regular grid in three-dimensional
-space, and the grid points are then populated into the ~qmckl_context~ using
-the ~qmckl_set_point~ function.
-
-The MO values at these grid points are computed using the
-~qmckl_get_mo_basis_mo_value~ function. These values are then used to
-calculate the overlap matrix through a matrix multiplication operation
-facilitated by the ~qmckl_dgemm~ function.
-
-The code is also instrumented to measure the execution time for the MO
-value computation, providing an empirical assessment of the computational
-efficiency. Error handling is robustly implemented at each stage to ensure the
-reliability of the simulation.
-
-In summary, this example serves as a holistic guide for leveraging the QMCkl
-library, demonstrating its ease of use. It provides a concrete starting point
-for researchers and developers interested in integrating QMCkl into their QMC
-code.
+The MO values at those points come from ~qmckl_get_mo_basis_mo_value~, which
+the program times. They form a matrix ~M~ whose element ~M_ki~ is the value
+of MO ~i~ at point ~k~, and one call to ~qmckl_dgemm~ forms the product
+~M M^T~, scaled by the volume element ~dr~ of the mesh. The program prints
+the resulting matrix.
 
 ** C
-   In this example, electron-nucleus cusp fitting is added.
-
    :PROPERTIES:
    :header-args: :tangle mo_ortho.c
    :END:
 
-   In this example, we will compute numerically the overlap
-   between the molecular orbitals:
+   This version adds the electron-nucleus cusp fit. The listing is split
+   into blocks and tangled into ~mo_ortho.c~.
 
-   \[
-      S_{ij} = \int \phi_i(\mathbf{r}) \phi_j(\mathbf{r})
-   \text{d}\mathbf{r} \sim \sum_{k=1}^{N} \phi_i(\mathbf{r}_k)
-   \phi_j(\mathbf{r}_k) \delta \mathbf{r}
-   \]
-   \[
-      S_{ij} = \langle \phi_i | \phi_j \rangle
-   \sim \sum_{k=1}^{N} \langle \phi_i | \mathbf{r}_k \rangle
-   \langle \mathbf{r}_k | \phi_j \rangle
-   \]
-
-   We apply the cusp fitting procedure, so the MOs might deviate
-   slightly from orthonormality.
+   The program fetches the nuclear charges, gives a cusp radius to each
+   element, and passes the radii to ~qmckl_set_mo_basis_r_cusp~, so the MO
+   values come from the cusp-corrected kernels described on
+   [[./qmckl_mo.html][the MO page]]. The fit perturbs the orbitals: the overlap matrix is no
+   longer exactly the identity.
 
    #+begin_src c :exports code
 #include <qmckl.h>
@@ -85,9 +59,11 @@ int main(int argc, char** argv)
   qmckl_exit_code rc = QMCKL_SUCCESS;
    #+end_src
 
-   First, we create a context for the QMCkl calculation, and load the
-   wave function stored in =h2o_5z.h5= inside it. It is a Hartree-Fock
-   determinant for the water molecule in the cc-pV5Z basis set.
+   The program creates a context and reads into it a TREXIO file for the
+   water molecule. The file name is hard-coded,
+   =..//share/qmckl/test_data/h2o_5z.h5=, and the file does not ship with
+   QMCkl; the Fortran version below takes the name on the command line
+   instead.
 
    #+begin_src c :exports code
   qmckl_context context = qmckl_context_create();
@@ -157,9 +133,8 @@ int main(int argc, char** argv)
    #+end_src
 
 
-   We now define the grid points $\mathbf{r}_k$ as a regular grid around the
-   molecule.
-   We fetch the nuclear coordinates from the context,
+   The grid points ~r_k~ form a regular mesh around the molecule. It is
+   built from the nuclear coordinates, which come from the context:
 
    #+begin_src c :exports code
   double nucl_coord[nucl_num][3];
@@ -186,7 +161,8 @@ int main(int argc, char** argv)
 1  +1.430429 +0.000000 -1.107157
    #+end_example
 
-   and compute the coordinates of the grid points:
+   The coordinates of the grid points are computed next, from the extent of
+   the molecule:
 
    #+begin_src c :exports code
   size_t nx[3] = { 120, 120, 120 };
@@ -229,9 +205,8 @@ int main(int argc, char** argv)
   double dr = step[0] * step[1] * step[2];
    #+end_src
 
-   Now the grid is ready, we can create the list of grid points
-   $\mathbf{r}_k$ on which the MOs $\phi_i$ will be evaluated, and
-   transfer them to the QMCkl context:
+   The list of grid points on which the MOs are evaluated follows the mesh
+   and is handed to the QMCkl context:
 
    #+begin_src c :exports code
   double* point = (double*) calloc(sizeof(double), 3*point_num);
@@ -270,9 +245,10 @@ int main(int argc, char** argv)
    #+RESULTS:
    : None
 
-   Then, we evaluate all the MOs at the grid points (and time the execution),
-   and thus obtain the matrix $M_{ki} = \langle \mathbf{r}_k | \phi_i
-   \rangle = \phi_i(\mathbf{r}_k)$.
+   The MOs are evaluated at every grid point and the call is timed. The
+   values are stored as a flat array of ~point_num*mo_num~ doubles, with the
+   MO index running fastest: its element ~k*mo_num+i~ is the value of MO ~i~
+   at point ~k~.
 
    #+begin_src c :exports code
 
@@ -312,8 +288,8 @@ Number of grid points:  1728000
 Execution time :  5.608000 seconds
    #+end_example
 
-   and finally we compute the overlap between all the MOs as
-   $M.M^\dagger$.
+   The overlap matrix follows from one matrix product, ~M M^T~, with the
+   volume element ~dr~ as prefactor:
 
    #+begin_src c :exports code
   double* overlap = (double*) malloc (mo_num*mo_num*sizeof(double));
@@ -352,7 +328,11 @@ Execution time :  5.608000 seconds
 
    
 ** Fortran
-   Here is the same piece of code translated in Fortran
+
+   The same calculation in Fortran. This version takes the TREXIO file name
+   on the command line, uses the ~qmckl~ module of the generated interface
+   ~qmckl_f.F90~, and leaves the cusp fit out.
+
    #+begin_src f90
 #include <qmckl_f.F90>
 
@@ -520,12 +500,13 @@ program main
 
 end program main
    #+end_src
-* Fortran
-** Checking errors
+* Checking errors
 
-   All QMCkl functions return an error code. A convenient way to handle
-   errors is to write an error-checking function that displays the
-   error in text format and exits the program.
+   Every QMCkl function returns an exit code, ~QMCKL_SUCCESS~ when the call
+   worked. ~qmckl_check_error~ stops the program on any other code: it prints
+   the message it is given, prints the text of the code with
+   ~qmckl_string_of_error~, whose buffer holds 128 characters, and exits with
+   the code. The program below calls it after each QMCkl call.
 
    #+NAME: qmckl_check_error
    #+begin_src f90
@@ -544,19 +525,20 @@ subroutine qmckl_check_error(rc, message)
 end subroutine qmckl_check_error
    #+end_src
 
-** Computing an atomic orbital on a grid
+* Computing an atomic orbital on a grid
    :PROPERTIES:
    :header-args: :tangle ao_grid.f90
    :END:
 
-   The following program, in Fortran, computes the values of an atomic
-   orbital on a regular 3-dimensional grid. The 100^3 grid points are
-   automatically defined, such that the molecule fits in a box with 5
-   atomic units in the borders.
+   The Fortran program ~ao_grid~ evaluates one atomic orbital on a regular
+   grid. The grid has ~point_num_x~ points along each direction, so it holds
+   ~point_num~ points in all, and its box extends five atomic units beyond
+   the molecule. The points are stored as ~(point_num,3)~, whose Fortran
+   layout already has all the ~x~ coordinates first, so they reach
+   ~qmckl_set_point~ with ~transp='T'~.
 
-   This program uses the ~qmckl_check_error~ function defined above.
-
-   To use this program, run
+   The program uses the ~qmckl_check_error~ subroutine defined above. Run it
+   with
 
    #+begin_src bash :tangle no :exports code
 $ ao_grid <trexio_file> <AO_id> <point_num>
@@ -618,8 +600,7 @@ program ao_grid
   call qmckl_check_error(rc, 'Read TREXIO')
    #+end_src
 
-   We need to check that ~ao_id~ is in the range, so we get the total
-   number of AOs from QMCkl:
+   The number of AOs comes from the context, and is used to check ~ao_id~:
 
    #+begin_src f90
   rc = qmckl_get_ao_basis_ao_num(qmckl_ctx, ao_num)
@@ -631,8 +612,8 @@ program ao_grid
   end if
    #+end_src
 
-   Now we will compute the limits of the box in which the molecule fits.
-   For that, we first need to ask QMCkl the coordinates of nuclei.
+   The limits of the box need the nuclear coordinates, which are in the
+   context:
 
    #+begin_src f90
   rc = qmckl_get_nucleus_num(qmckl_ctx, nucl_num)
@@ -643,8 +624,7 @@ program ao_grid
   call qmckl_check_error(rc, 'Get nucleus coord')
    #+end_src
 
-   We now compute the coordinates of opposite points of the box, and
-   the distance between points along the 3 directions:
+   The corners of the box and the step along each direction:
 
    #+begin_src f90
   rmin(1) = minval( nucl_coord(1,:) ) - 5.d0
@@ -658,8 +638,7 @@ program ao_grid
   dr(1:3) = (rmax(1:3) - rmin(1:3)) / dble(point_num_x-1)
    #+end_src
 
-   We now produce the list of point coordinates where the AO will be
-   evaluated:
+   The list of points follows the mesh, with ~x~ varying fastest:
 
    #+begin_src f90
   point_num = point_num_x**3
@@ -690,9 +669,8 @@ program ao_grid
   call qmckl_check_error(rc, 'Setting points')
    #+end_src
 
-   We allocate the space required to retrieve the values, gradients and
-   Laplacian of all AOs, and ask to retrieve the values of the
-   AOs computed at the point positions.
+   The values, gradients and Laplacians of all the AOs are retrieved in one
+   array of shape ~(ao_num,5,point_num)~:
 
    #+begin_src f90
   allocate( ao_vgl(ao_num, 5, point_num) )
@@ -700,7 +678,8 @@ program ao_grid
   call qmckl_check_error(rc, 'Setting points')
    #+end_src
 
-   We finally print the value and Laplacian of the AO:
+   The value (component 1) and the Laplacian (component 5) of the chosen AO
+   are printed for every point:
 
    #+begin_src f90
   do ipoint=1, point_num
