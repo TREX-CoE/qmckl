@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Code examples — QMCkl</title>
+<meta name="description" content="This page collects worked examples: programs that create a context, put points in it and call the kernels. The first two read a wave function from a…">
+<meta name="author" content="TREX CoE">
+<link rel="stylesheet" href="../css/theme.css">
+</head>
+<body>
+<div class="layout">
+<aside class="sidebar">
+  <p class="side-brand"><a href="../index.html">QMCkl</a></p>
+  <nav class="side-nav" aria-label="Documentation">
+    <ul><li><a href="qmckl.html">Introduction</a></li><li><a href="qmckl_context.html">Context</a></li><li><a href="qmckl_error.html">Error handling</a></li><li><a href="qmckl_blas.html">BLAS functions</a></li><li><a href="qmckl_memory.html">Memory management</a></li><li><a href="qmckl_numprec.html">Numerical precision</a></li><li><a href="qmckl_point.html">Point</a></li><li><a href="qmckl_nucleus.html">Nucleus</a></li><li><a href="qmckl_electron.html">Electrons</a></li><li><a href="qmckl_distance.html">Inter-particle distances</a></li><li><a href="qmckl_ao.html">Atomic Orbitals</a></li><li><a href="qmckl_mo.html">Molecular Orbitals</a></li><li><a href="qmckl_jastrow_champ.html">CHAMP Jastrow Factor</a></li><li><a href="qmckl_jastrow_champ_single.html">CHAMP Jastrow Factor Single</a></li><li><a href="qmckl_forces.html">Forces</a></li><li><a href="qmckl_trexio.html">TREXIO I/O library</a></li><li><a href="qmckl_tests.html">Data for Tests</a></li><li><a href="qmckl_verificarlo.html">Verificarlo CI</a></li><li><a href="qmckl_examples.html" aria-current="page">Code examples</a></li></ul>
+  </nav>
+  <nav class="side-toc" aria-label="On this page">
+<h2 class="side-toc-title">On this page</h2>
+
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org94d9c30">1. Introduction</a></li>
+<li><a href="#org41ff481">2. Overlap matrix in the MO basis</a>
+<ul>
+<li><a href="#orge4ea6a5">2.1. C</a></li>
+<li><a href="#orgfe6da48">2.2. Fortran</a></li>
+</ul>
+</li>
+<li><a href="#org274525b">3. Checking errors</a></li>
+<li><a href="#org64b5f35">4. Computing an atomic orbital on a grid</a></li>
+</ul>
+</div>
+
+  </nav>
+</aside>
+
+<main id="content">
+<header class="doc-head"><h1 class="title">Code examples</h1></header>
+
+<div id="outline-container-org94d9c30" class="outline-2">
+<h2 id="org94d9c30"><span class="section-number-2">1.</span> Introduction</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+This page collects worked examples: programs that create a context, put
+points in it and call the kernels. The first two read a wave function
+from a <a href="https://github.com/TREX-CoE/trexio">TREXIO</a> file, evaluate the orbitals on a regular grid and build the
+overlap matrix in the MO basis, once in C and once in Fortran. A third
+program evaluates a single atomic orbital on a grid, and the error-handling
+subroutine it uses is given as well.
+</p>
+</div>
+</div>
+<div id="outline-container-org41ff481" class="outline-2">
+<h2 id="org41ff481"><span class="section-number-2">2.</span> Overlap matrix in the MO basis</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+The example computes the overlap matrix in the MO basis on a regular grid:
+</p>
+
+<p>
+<div class="math-display" data-tex="
+S_{ij} = \int \phi_i(\mathbf{r})\, \phi_j(\mathbf{r}) \text{d}\mathbf{r} \approx
+         \sum_k \phi_i(\mathbf{r}_k)\, \phi_j(\mathbf{r}_k) \delta\mathbf{r}
+"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>S</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>&#x0003D;</mo><mo>&#x0222B;</mo><msub><mi>&#x003D5;</mi><mi>i</mi></msub><mo stretchy="false">&#x00028;</mo><mi>&#x1D42B;</mi><mo stretchy="false">&#x00029;</mo><mspace width="0.167em" /><msub><mi>&#x003D5;</mi><mi>j</mi></msub><mo stretchy="false">&#x00028;</mo><mi>&#x1D42B;</mi><mo stretchy="false">&#x00029;</mo><mtext>d</mtext><mi>&#x1D42B;</mi><mo>&#x02248;</mo><msub><mo>&#x02211;</mo><mi>k</mi></msub><msub><mi>&#x003D5;</mi><mi>i</mi></msub><mo stretchy="false">&#x00028;</mo><msub><mi>&#x1D42B;</mi><mi>k</mi></msub><mo stretchy="false">&#x00029;</mo><mspace width="0.167em" /><msub><mi>&#x003D5;</mi><mi>j</mi></msub><mo stretchy="false">&#x00028;</mo><msub><mi>&#x1D42B;</mi><mi>k</mi></msub><mo stretchy="false">&#x00029;</mo><mi>&#x003B4;</mi><mi>&#x1D42B;</mi></mrow></math></div>
+</p>
+
+<p>
+The program reads a wave function from a TREXIO file with
+<code>qmckl_trexio_read</code>, which fills the context with the electrons, the nuclei,
+the AOs and the MOs. It then takes the number of nuclei, their coordinates
+and the number of MOs from the context, and builds a regular mesh of
+120 x 120 x 120 points around the molecule, 1728000 points in all. The mesh
+is handed to the context with <code>qmckl_set_point</code>.
+</p>
+
+<p>
+The MO values at those points come from <code>qmckl_get_mo_basis_mo_value</code>, which
+the program times. They form a matrix <code>M</code> whose element <code>M_ki</code> is the value
+of MO <code>i</code> at point <code>k</code>, and one call to <code>qmckl_dgemm</code> forms the product
+<code>M M^T</code>, scaled by the volume element <code>dr</code> of the mesh. The program prints
+the resulting matrix.
+</p>
+</div>
+<div id="outline-container-orge4ea6a5" class="outline-3">
+<h3 id="orge4ea6a5"><span class="section-number-3">2.1.</span> C</h3>
+<div class="outline-text-3" id="text-2-1">
+<p>
+This version adds the electron-nucleus cusp fit. The listing is split
+into blocks and tangled into <code>mo_ortho.c</code>.
+</p>
+
+<p>
+The program fetches the nuclear charges, gives a cusp radius to each
+element, and passes the radii to <code>qmckl_set_mo_basis_r_cusp</code>, so the MO
+values come from the cusp-corrected kernels described on
+<a href="./qmckl_mo.html">the MO page</a>. The fit perturbs the orbitals: the overlap matrix is no
+longer exactly the identity.
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">C <a class="code-file" href="../code/mo_ortho.c" title="Download mo_ortho.c">mo_ortho.c</a></figcaption><pre class="src-c"><code><span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;qmckl.h&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;stdio.h&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;string.h&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;sys/time.h&gt;</span>
+
+<span class="kt">int</span><span class="w"> </span><span class="nf">main</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">argc</span><span class="p">,</span><span class="w"> </span><span class="kt">char</span><span class="o">**</span><span class="w"> </span><span class="n">argv</span><span class="p">)</span>
+<span class="p">{</span>
+<span class="w">  </span><span class="k">const</span><span class="w"> </span><span class="kt">char</span><span class="o">*</span><span class="w"> </span><span class="n">trexio_filename</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"..//share/qmckl/test_data/h2o_5z.h5"</span><span class="p">;</span>
+<span class="w">  </span><span class="n">qmckl_exit_code</span><span class="w"> </span><span class="n">rc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">QMCKL_SUCCESS</span><span class="p">;</span>
+</code></pre></figure>
+</div>
+
+<p>
+The program creates a context and reads into it a TREXIO file for the
+water molecule. The file name is hard-coded,
+<code>..//share/qmckl/test_data/h2o_5z.h5</code>, and the file does not ship with
+QMCkl; the Fortran version below takes the name on the command line
+instead.
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">C <a class="code-file" href="../code/mo_ortho.c" title="Download mo_ortho.c">mo_ortho.c</a></figcaption><pre class="src-c"><code><span class="n">qmckl_context</span><span class="w"> </span><span class="n">context</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">qmckl_context_create</span><span class="p">();</span>
+
+<span class="n">rc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">qmckl_trexio_read</span><span class="p">(</span><span class="n">context</span><span class="p">,</span><span class="w"> </span><span class="n">trexio_filename</span><span class="p">,</span><span class="w"> </span><span class="n">strlen</span><span class="p">(</span><span class="n">trexio_filename</span><span class="p">));</span>
+
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">rc</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="n">QMCKL_SUCCESS</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">fprintf</span><span class="p">(</span><span class="n">stderr</span><span class="p">,</span><span class="w"> </span><span class="s">"Error reading TREXIO file:</span><span class="se">\n</span><span class="s">%s</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span><span class="w"> </span><span class="n">qmckl_string_of_error</span><span class="p">(</span><span class="n">rc</span><span class="p">));</span>
+<span class="w">  </span><span class="n">exit</span><span class="p">(</span><span class="mi">1</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></figure>
+</div>
+
+<p>
+We impose the electron-nucleus cusp fitting to occur when the
+electrons are close to the nuclei. The critical distance
+is 0.5 atomic units for hydrogens and 0.1 for the oxygen.
+To identify which atom is an oxygen and which are hydrogens, we
+fetch the nuclear charges from the context.
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">C <a class="code-file" href="../code/mo_ortho.c" title="Download mo_ortho.c">mo_ortho.c</a></figcaption><pre class="src-c"><code><span class="kt">int64_t</span><span class="w"> </span><span class="n">nucl_num</span><span class="p">;</span>
+
+<span class="n">rc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">qmckl_get_nucleus_num</span><span class="p">(</span><span class="n">context</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">nucl_num</span><span class="p">);</span>
+
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">rc</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="n">QMCKL_SUCCESS</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">fprintf</span><span class="p">(</span><span class="n">stderr</span><span class="p">,</span><span class="w"> </span><span class="s">"Error getting nucl_num:</span><span class="se">\n</span><span class="s">%s</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span><span class="w"> </span><span class="n">qmckl_string_of_error</span><span class="p">(</span><span class="n">rc</span><span class="p">));</span>
+<span class="w">  </span><span class="n">exit</span><span class="p">(</span><span class="mi">1</span><span class="p">);</span>
+<span class="p">}</span>
+
+
+<span class="kt">double</span><span class="w"> </span><span class="n">nucl_charge</span><span class="p">[</span><span class="n">nucl_num</span><span class="p">];</span>
+
+<span class="n">rc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">qmckl_get_nucleus_charge</span><span class="p">(</span><span class="n">context</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="p">(</span><span class="n">nucl_charge</span><span class="p">[</span><span class="mi">0</span><span class="p">]),</span><span class="w"> </span><span class="n">nucl_num</span><span class="p">);</span>
+
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">rc</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="n">QMCKL_SUCCESS</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">fprintf</span><span class="p">(</span><span class="n">stderr</span><span class="p">,</span><span class="w"> </span><span class="s">"Error getting nucl_charge:</span><span class="se">\n</span><span class="s">%s</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span><span class="w"> </span><span class="n">qmckl_string_of_error</span><span class="p">(</span><span class="n">rc</span><span class="p">));</span>
+<span class="w">  </span><span class="n">exit</span><span class="p">(</span><span class="mi">1</span><span class="p">);</span>
+<span class="p">}</span>
+
+
+<span class="kt">double</span><span class="w"> </span><span class="n">r_cusp</span><span class="p">[</span><span class="n">nucl_num</span><span class="p">];</span>
+
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">i</span><span class="o">=</span><span class="mi">0</span><span class="w"> </span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="o">&lt;</span><span class="n">nucl_num</span><span class="w"> </span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+
+<span class="w">  </span><span class="k">switch</span><span class="w"> </span><span class="p">((</span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="n">nucl_charge</span><span class="p">[</span><span class="n">i</span><span class="p">])</span><span class="w"> </span><span class="p">{</span>
+
+<span class="w">  </span><span class="k">case</span><span class="w"> </span><span class="mi">1</span><span class="p">:</span>
+<span class="w">    </span><span class="n">r_cusp</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.5</span><span class="p">;</span>
+<span class="w">    </span><span class="k">break</span><span class="p">;</span>
+
+<span class="w">  </span><span class="k">case</span><span class="w"> </span><span class="mi">8</span><span class="p">:</span>
+<span class="w">    </span><span class="n">r_cusp</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.1</span><span class="p">;</span>
+<span class="w">    </span><span class="k">break</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="p">}</span>
+
+
+<span class="n">rc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">qmckl_set_mo_basis_r_cusp</span><span class="p">(</span><span class="n">context</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="p">(</span><span class="n">r_cusp</span><span class="p">[</span><span class="mi">0</span><span class="p">]),</span><span class="w"> </span><span class="n">nucl_num</span><span class="p">);</span>
+
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">rc</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="n">QMCKL_SUCCESS</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">fprintf</span><span class="p">(</span><span class="n">stderr</span><span class="p">,</span><span class="w"> </span><span class="s">"Error setting r_cusp:</span><span class="se">\n</span><span class="s">%s</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span><span class="w"> </span><span class="n">qmckl_string_of_error</span><span class="p">(</span><span class="n">rc</span><span class="p">));</span>
+<span class="w">  </span><span class="n">exit</span><span class="p">(</span><span class="mi">1</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></figure>
+</div>
+
+
+<p>
+The grid points <code>r_k</code> form a regular mesh around the molecule. It is
+built from the nuclear coordinates, which come from the context:
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">C <a class="code-file" href="../code/mo_ortho.c" title="Download mo_ortho.c">mo_ortho.c</a></figcaption><pre class="src-c"><code><span class="kt">double</span><span class="w"> </span><span class="n">nucl_coord</span><span class="p">[</span><span class="n">nucl_num</span><span class="p">][</span><span class="mi">3</span><span class="p">];</span>
+
+<span class="n">rc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">qmckl_get_nucleus_coord</span><span class="p">(</span><span class="n">context</span><span class="p">,</span><span class="w"> </span><span class="sc">'N'</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="p">(</span><span class="n">nucl_coord</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="mi">0</span><span class="p">]),</span><span class="w"> </span><span class="n">nucl_num</span><span class="o">*</span><span class="mi">3</span><span class="p">);</span>
+
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">rc</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="n">QMCKL_SUCCESS</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">fprintf</span><span class="p">(</span><span class="n">stderr</span><span class="p">,</span><span class="w"> </span><span class="s">"Error getting nucl_coord:</span><span class="se">\n</span><span class="s">%s</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span><span class="w"> </span><span class="n">qmckl_string_of_error</span><span class="p">(</span><span class="n">rc</span><span class="p">));</span>
+<span class="w">  </span><span class="n">exit</span><span class="p">(</span><span class="mi">1</span><span class="p">);</span>
+<span class="p">}</span>
+
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">i</span><span class="o">=</span><span class="mi">0</span><span class="w"> </span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="o">&lt;</span><span class="n">nucl_num</span><span class="w"> </span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">printf</span><span class="p">(</span><span class="s">"%d  %+f %+f %+f</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span>
+<span class="w">         </span><span class="p">(</span><span class="kt">int32_t</span><span class="p">)</span><span class="w"> </span><span class="n">nucl_charge</span><span class="p">[</span><span class="n">i</span><span class="p">],</span>
+<span class="w">         </span><span class="n">nucl_coord</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="mi">0</span><span class="p">],</span>
+<span class="w">         </span><span class="n">nucl_coord</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="mi">1</span><span class="p">],</span>
+<span class="w">         </span><span class="n">nucl_coord</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="mi">2</span><span class="p">]);</span>
+<span class="p">}</span>
+</code></pre></figure>
+</div>
+
+
+
+<p>
+The coordinates of the grid points are computed next, from the extent of
+the molecule:
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">C <a class="code-file" href="../code/mo_ortho.c" title="Download mo_ortho.c">mo_ortho.c</a></figcaption><pre class="src-c"><code><span class="kt">size_t</span><span class="w"> </span><span class="n">nx</span><span class="p">[</span><span class="mi">3</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="mi">120</span><span class="p">,</span><span class="w"> </span><span class="mi">120</span><span class="p">,</span><span class="w"> </span><span class="mi">120</span><span class="w"> </span><span class="p">};</span>
+<span class="kt">double</span><span class="w"> </span><span class="n">shift</span><span class="p">[</span><span class="mi">3</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="mf">5.</span><span class="p">,</span><span class="mf">5.</span><span class="p">,</span><span class="mf">5.</span><span class="p">};</span>
+<span class="kt">int64_t</span><span class="w"> </span><span class="n">point_num</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">nx</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">nx</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">nx</span><span class="p">[</span><span class="mi">2</span><span class="p">];</span>
+
+<span class="kt">double</span><span class="w"> </span><span class="n">rmin</span><span class="p">[</span><span class="mi">3</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">nucl_coord</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="mi">0</span><span class="p">],</span><span class="w"> </span><span class="n">nucl_coord</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="mi">1</span><span class="p">],</span><span class="w"> </span><span class="n">nucl_coord</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="mi">2</span><span class="p">]</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">;</span>
+<span class="kt">double</span><span class="w"> </span><span class="n">rmax</span><span class="p">[</span><span class="mi">3</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">nucl_coord</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="mi">0</span><span class="p">],</span><span class="w"> </span><span class="n">nucl_coord</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="mi">1</span><span class="p">],</span><span class="w"> </span><span class="n">nucl_coord</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="mi">2</span><span class="p">]</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">;</span>
+
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">i</span><span class="o">=</span><span class="mi">0</span><span class="w"> </span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="o">&lt;</span><span class="n">nucl_num</span><span class="w"> </span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">j</span><span class="o">=</span><span class="mi">0</span><span class="w"> </span><span class="p">;</span><span class="w"> </span><span class="n">j</span><span class="o">&lt;</span><span class="mi">3</span><span class="w"> </span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">j</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">rmin</span><span class="p">[</span><span class="n">j</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">nucl_coord</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">j</span><span class="p">]</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">rmin</span><span class="p">[</span><span class="n">j</span><span class="p">]</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">nucl_coord</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">j</span><span class="p">]</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">rmin</span><span class="p">[</span><span class="n">j</span><span class="p">];</span>
+<span class="w">    </span><span class="n">rmax</span><span class="p">[</span><span class="n">j</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">nucl_coord</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">j</span><span class="p">]</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="n">rmax</span><span class="p">[</span><span class="n">j</span><span class="p">]</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">nucl_coord</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">j</span><span class="p">]</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">rmax</span><span class="p">[</span><span class="n">j</span><span class="p">];</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+
+<span class="n">rmin</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="o">-=</span><span class="w"> </span><span class="n">shift</span><span class="p">[</span><span class="mi">0</span><span class="p">];</span><span class="w"> </span><span class="n">rmin</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="w"> </span><span class="o">-=</span><span class="w"> </span><span class="n">shift</span><span class="p">[</span><span class="mi">1</span><span class="p">];</span><span class="w"> </span><span class="n">rmin</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="w"> </span><span class="o">-=</span><span class="w"> </span><span class="n">shift</span><span class="p">[</span><span class="mi">2</span><span class="p">];</span>
+<span class="n">rmax</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">shift</span><span class="p">[</span><span class="mi">0</span><span class="p">];</span><span class="w"> </span><span class="n">rmax</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">shift</span><span class="p">[</span><span class="mi">1</span><span class="p">];</span><span class="w"> </span><span class="n">rmax</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">shift</span><span class="p">[</span><span class="mi">2</span><span class="p">];</span>
+
+<span class="kt">double</span><span class="w"> </span><span class="n">step</span><span class="p">[</span><span class="mi">3</span><span class="p">];</span>
+
+<span class="kt">double</span><span class="o">*</span><span class="w"> </span><span class="n">linspace</span><span class="p">[</span><span class="mi">3</span><span class="p">];</span>
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="o">=</span><span class="mi">0</span><span class="w"> </span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="o">&lt;</span><span class="mi">3</span><span class="w"> </span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+
+<span class="w">  </span><span class="n">linspace</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="kt">double</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="n">calloc</span><span class="p">(</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="kt">double</span><span class="p">),</span><span class="w"> </span><span class="n">nx</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="p">);</span>
+
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">linspace</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nb">NULL</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">fprintf</span><span class="p">(</span><span class="n">stderr</span><span class="p">,</span><span class="w"> </span><span class="s">"Allocation failed (linspace)</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+<span class="w">    </span><span class="n">exit</span><span class="p">(</span><span class="mi">1</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="n">step</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">rmax</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">rmin</span><span class="p">[</span><span class="n">i</span><span class="p">])</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="p">((</span><span class="kt">double</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="n">nx</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="mi">-1</span><span class="p">));</span>
+
+<span class="w">  </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">j</span><span class="o">=</span><span class="mi">0</span><span class="w"> </span><span class="p">;</span><span class="w"> </span><span class="n">j</span><span class="o">&lt;</span><span class="n">nx</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">j</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">linspace</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="n">j</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">rmin</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">j</span><span class="o">*</span><span class="n">step</span><span class="p">[</span><span class="n">i</span><span class="p">];</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="p">}</span>
+
+<span class="kt">double</span><span class="w"> </span><span class="n">dr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">step</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">step</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">step</span><span class="p">[</span><span class="mi">2</span><span class="p">];</span>
+</code></pre></figure>
+</div>
+
+<p>
+The list of grid points on which the MOs are evaluated follows the mesh
+and is handed to the QMCkl context:
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">C <a class="code-file" href="../code/mo_ortho.c" title="Download mo_ortho.c">mo_ortho.c</a></figcaption><pre class="src-c"><code><span class="kt">double</span><span class="o">*</span><span class="w"> </span><span class="n">point</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="kt">double</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="n">calloc</span><span class="p">(</span><span class="k">sizeof</span><span class="p">(</span><span class="kt">double</span><span class="p">),</span><span class="w"> </span><span class="mi">3</span><span class="o">*</span><span class="n">point_num</span><span class="p">);</span>
+
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">point</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nb">NULL</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">fprintf</span><span class="p">(</span><span class="n">stderr</span><span class="p">,</span><span class="w"> </span><span class="s">"Allocation failed (point)</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+<span class="w">  </span><span class="n">exit</span><span class="p">(</span><span class="mi">1</span><span class="p">);</span>
+<span class="p">}</span>
+
+<span class="kt">size_t</span><span class="w"> </span><span class="n">m</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">i</span><span class="o">=</span><span class="mi">0</span><span class="w"> </span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="o">&lt;</span><span class="n">nx</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">j</span><span class="o">=</span><span class="mi">0</span><span class="w"> </span><span class="p">;</span><span class="w"> </span><span class="n">j</span><span class="o">&lt;</span><span class="n">nx</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="w"> </span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">j</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">k</span><span class="o">=</span><span class="mi">0</span><span class="w"> </span><span class="p">;</span><span class="w"> </span><span class="n">k</span><span class="o">&lt;</span><span class="n">nx</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="w"> </span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">k</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+
+<span class="w">      </span><span class="n">point</span><span class="p">[</span><span class="n">m</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">linspace</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="n">i</span><span class="p">];</span>
+<span class="w">      </span><span class="n">m</span><span class="o">++</span><span class="p">;</span>
+
+<span class="w">      </span><span class="n">point</span><span class="p">[</span><span class="n">m</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">linspace</span><span class="p">[</span><span class="mi">1</span><span class="p">][</span><span class="n">j</span><span class="p">];</span>
+<span class="w">      </span><span class="n">m</span><span class="o">++</span><span class="p">;</span>
+
+<span class="w">      </span><span class="n">point</span><span class="p">[</span><span class="n">m</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">linspace</span><span class="p">[</span><span class="mi">2</span><span class="p">][</span><span class="n">k</span><span class="p">];</span>
+<span class="w">      </span><span class="n">m</span><span class="o">++</span><span class="p">;</span>
+
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+
+<span class="n">rc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">qmckl_set_point</span><span class="p">(</span><span class="n">context</span><span class="p">,</span><span class="w"> </span><span class="sc">'N'</span><span class="p">,</span><span class="w"> </span><span class="n">point_num</span><span class="p">,</span><span class="w"> </span><span class="n">point</span><span class="p">,</span><span class="w"> </span><span class="p">(</span><span class="n">point_num</span><span class="o">*</span><span class="mi">3</span><span class="p">));</span>
+
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">rc</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="n">QMCKL_SUCCESS</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">fprintf</span><span class="p">(</span><span class="n">stderr</span><span class="p">,</span><span class="w"> </span><span class="s">"Error setting points:</span><span class="se">\n</span><span class="s">%s</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span><span class="w"> </span><span class="n">qmckl_string_of_error</span><span class="p">(</span><span class="n">rc</span><span class="p">));</span>
+<span class="w">  </span><span class="n">exit</span><span class="p">(</span><span class="mi">1</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></figure>
+</div>
+
+<p>
+The MOs are evaluated at every grid point and the call is timed. The
+values are stored as a flat array of <code>point_num*mo_num</code> doubles, with the
+MO index running fastest: its element <code>k*mo_num+i</code> is the value of MO <code>i</code>
+at point <code>k</code>.
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">C <a class="code-file" href="../code/mo_ortho.c" title="Download mo_ortho.c">mo_ortho.c</a></figcaption><pre class="src-c"><code><span class="kt">int64_t</span><span class="w"> </span><span class="n">mo_num</span><span class="p">;</span>
+<span class="n">rc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">qmckl_get_mo_basis_mo_num</span><span class="p">(</span><span class="n">context</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">mo_num</span><span class="p">);</span>
+
+<span class="kt">long</span><span class="w"> </span><span class="n">before</span><span class="p">,</span><span class="w"> </span><span class="n">after</span><span class="p">;</span>
+<span class="k">struct</span><span class="w"> </span><span class="nc">timeval</span><span class="w"> </span><span class="n">timecheck</span><span class="p">;</span>
+
+<span class="kt">double</span><span class="o">*</span><span class="w"> </span><span class="n">mo_value</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="kt">double</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="n">calloc</span><span class="p">(</span><span class="k">sizeof</span><span class="p">(</span><span class="kt">double</span><span class="p">),</span><span class="w"> </span><span class="n">point_num</span><span class="o">*</span><span class="n">mo_num</span><span class="p">);</span>
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">mo_value</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nb">NULL</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">fprintf</span><span class="p">(</span><span class="n">stderr</span><span class="p">,</span><span class="w"> </span><span class="s">"Allocation failed (mo_value)</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+<span class="w">  </span><span class="n">exit</span><span class="p">(</span><span class="mi">1</span><span class="p">);</span>
+<span class="p">}</span>
+
+<span class="n">gettimeofday</span><span class="p">(</span><span class="o">&amp;</span><span class="n">timecheck</span><span class="p">,</span><span class="w"> </span><span class="nb">NULL</span><span class="p">);</span>
+<span class="n">before</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="kt">long</span><span class="p">)</span><span class="n">timecheck</span><span class="p">.</span><span class="n">tv_sec</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">1000</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="p">(</span><span class="kt">long</span><span class="p">)</span><span class="n">timecheck</span><span class="p">.</span><span class="n">tv_usec</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">1000</span><span class="p">;</span>
+
+<span class="n">rc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">qmckl_get_mo_basis_mo_value</span><span class="p">(</span><span class="n">context</span><span class="p">,</span><span class="w"> </span><span class="n">mo_value</span><span class="p">,</span><span class="w"> </span><span class="n">point_num</span><span class="o">*</span><span class="n">mo_num</span><span class="p">);</span>
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">rc</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="n">QMCKL_SUCCESS</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">fprintf</span><span class="p">(</span><span class="n">stderr</span><span class="p">,</span><span class="w"> </span><span class="s">"Error getting mo_value)</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+<span class="w">  </span><span class="n">exit</span><span class="p">(</span><span class="mi">1</span><span class="p">);</span>
+<span class="p">}</span>
+
+<span class="n">gettimeofday</span><span class="p">(</span><span class="o">&amp;</span><span class="n">timecheck</span><span class="p">,</span><span class="w"> </span><span class="nb">NULL</span><span class="p">);</span>
+<span class="n">after</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="kt">long</span><span class="p">)</span><span class="n">timecheck</span><span class="p">.</span><span class="n">tv_sec</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">1000</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="p">(</span><span class="kt">long</span><span class="p">)</span><span class="n">timecheck</span><span class="p">.</span><span class="n">tv_usec</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">1000</span><span class="p">;</span>
+
+<span class="n">printf</span><span class="p">(</span><span class="s">"Number of MOs: %ld</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span><span class="w"> </span><span class="p">(</span><span class="kt">long</span><span class="p">)</span><span class="w"> </span><span class="n">mo_num</span><span class="p">);</span>
+<span class="n">printf</span><span class="p">(</span><span class="s">"Number of grid points: %ld</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span><span class="w"> </span><span class="p">(</span><span class="kt">long</span><span class="p">)</span><span class="w"> </span><span class="n">point_num</span><span class="p">);</span>
+<span class="n">printf</span><span class="p">(</span><span class="s">"Execution time : %f seconds</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span><span class="w"> </span><span class="p">(</span><span class="n">after</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">before</span><span class="p">)</span><span class="o">*</span><span class="mf">1.</span><span class="n">e</span><span class="mi">-3</span><span class="p">);</span>
+</code></pre></figure>
+</div>
+
+
+
+<p>
+The overlap matrix follows from one matrix product, <code>M M^T</code>, with the
+volume element <code>dr</code> as prefactor:
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">C <a class="code-file" href="../code/mo_ortho.c" title="Download mo_ortho.c">mo_ortho.c</a></figcaption><pre class="src-c"><code><span class="w">  </span><span class="kt">double</span><span class="o">*</span><span class="w"> </span><span class="n">overlap</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="kt">double</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="n">malloc</span><span class="w"> </span><span class="p">(</span><span class="n">mo_num</span><span class="o">*</span><span class="n">mo_num</span><span class="o">*</span><span class="k">sizeof</span><span class="p">(</span><span class="kt">double</span><span class="p">));</span>
+
+<span class="w">  </span><span class="n">rc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">qmckl_dgemm</span><span class="p">(</span><span class="n">context</span><span class="p">,</span><span class="w"> </span><span class="sc">'N'</span><span class="p">,</span><span class="w"> </span><span class="sc">'T'</span><span class="p">,</span><span class="w"> </span><span class="n">mo_num</span><span class="p">,</span><span class="w"> </span><span class="n">mo_num</span><span class="p">,</span><span class="w"> </span><span class="n">point_num</span><span class="p">,</span><span class="w"> </span><span class="n">dr</span><span class="p">,</span>
+<span class="w">                   </span><span class="n">mo_value</span><span class="p">,</span><span class="w"> </span><span class="n">mo_num</span><span class="p">,</span><span class="w"> </span><span class="n">mo_value</span><span class="p">,</span><span class="w"> </span><span class="n">mo_num</span><span class="p">,</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span>
+<span class="w">                   </span><span class="n">overlap</span><span class="p">,</span><span class="w"> </span><span class="n">mo_num</span><span class="p">);</span>
+
+<span class="w">  </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">i</span><span class="o">=</span><span class="mi">0</span><span class="w"> </span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="o">&lt;</span><span class="n">mo_num</span><span class="w"> </span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">"%4ld"</span><span class="p">,</span><span class="w"> </span><span class="n">i</span><span class="p">);</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">j</span><span class="o">=</span><span class="mi">0</span><span class="w"> </span><span class="p">;</span><span class="w"> </span><span class="n">j</span><span class="o">&lt;</span><span class="n">mo_num</span><span class="w"> </span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">j</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="n">printf</span><span class="p">(</span><span class="s">" %f"</span><span class="p">,</span><span class="w"> </span><span class="n">overlap</span><span class="p">[</span><span class="n">i</span><span class="o">*</span><span class="n">mo_num</span><span class="o">+</span><span class="n">j</span><span class="p">]);</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">"</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="c1">// Clean-up and exit</span>
+<span class="w">  </span><span class="n">free</span><span class="p">(</span><span class="n">mo_value</span><span class="p">);</span>
+<span class="w">  </span><span class="n">free</span><span class="p">(</span><span class="n">overlap</span><span class="p">);</span>
+
+<span class="w">  </span><span class="n">rc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">qmckl_context_destroy</span><span class="p">(</span><span class="n">context</span><span class="p">);</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">rc</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="n">QMCKL_SUCCESS</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">fprintf</span><span class="p">(</span><span class="n">stderr</span><span class="p">,</span><span class="w"> </span><span class="s">"Error destroying context)</span><span class="se">\n</span><span class="s">"</span><span class="p">);</span>
+<span class="w">    </span><span class="n">exit</span><span class="p">(</span><span class="mi">1</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></figure>
+</div>
+
+
+</div>
+</div>
+<div id="outline-container-orgfe6da48" class="outline-3">
+<h3 id="orgfe6da48"><span class="section-number-3">2.2.</span> Fortran</h3>
+<div class="outline-text-3" id="text-2-2">
+<p>
+The same calculation in Fortran. This version takes the TREXIO file name
+on the command line, uses the <code>qmckl</code> module of the generated interface
+<code>qmckl_f.F90</code>, and leaves the cusp fit out.
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">Fortran <a class="code-file" href="../code/mo_ortho_f.f90" title="Download mo_ortho_f.f90">mo_ortho_f.f90</a></figcaption><pre class="src-f90"><code><span class="cp">#include &lt;qmckl_f.F90&gt;</span>
+
+<span class="k">program </span><span class="n">main</span>
+<span class="w">  </span><span class="k">use </span><span class="nb">iso_c_binding</span>
+<span class="nb">  </span><span class="k">use </span><span class="n">qmckl</span>
+<span class="w">  </span><span class="k">implicit none</span>
+
+<span class="w">  </span><span class="c">! Declare variables</span>
+<span class="w">  </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">argc</span>
+<span class="w">  </span><span class="kt">character</span><span class="p">(</span><span class="mi">128</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">trexio_filename</span><span class="p">,</span><span class="w"> </span><span class="n">err_msg</span>
+<span class="w">  </span><span class="kt">integer</span><span class="p">(</span><span class="n">qmckl_exit_code</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">rc</span>
+<span class="w">  </span><span class="kt">integer</span><span class="p">(</span><span class="n">qmckl_context</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">context</span>
+<span class="w">  </span><span class="kt">integer</span><span class="o">*</span><span class="mi">8</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">nucl_num</span><span class="p">,</span><span class="w"> </span><span class="n">mo_num</span><span class="p">,</span><span class="w"> </span><span class="n">point_num</span>
+<span class="w">  </span><span class="kt">double precision</span><span class="p">,</span><span class="w"> </span><span class="k">allocatable</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">nucl_coord</span><span class="p">(:,:)</span>
+<span class="w">  </span><span class="kt">integer</span><span class="o">*</span><span class="mi">8</span><span class="w">  </span><span class="kd">::</span><span class="w"> </span><span class="n">nx</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">double precision</span><span class="p">,</span><span class="w"> </span><span class="k">dimension</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">shift</span><span class="p">,</span><span class="w"> </span><span class="n">step</span><span class="p">,</span><span class="w"> </span><span class="n">rmin</span><span class="p">,</span><span class="w"> </span><span class="n">rmax</span>
+<span class="w">  </span><span class="kt">double precision</span><span class="p">,</span><span class="w"> </span><span class="k">allocatable</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">mo_value</span><span class="p">(:,:),</span><span class="w"> </span><span class="n">overlap</span><span class="p">(:,:),</span><span class="w"> </span><span class="n">point</span><span class="p">(:),</span><span class="w"> </span><span class="n">linspace</span><span class="p">(:,:)</span>
+<span class="w">  </span><span class="kt">double precision</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">before</span><span class="p">,</span><span class="w"> </span><span class="n">after</span><span class="p">,</span><span class="w"> </span><span class="n">dr</span>
+<span class="w">  </span><span class="kt">integer</span><span class="o">*</span><span class="mi">8</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">,</span><span class="n">k</span><span class="p">,</span><span class="n">m</span>
+
+<span class="w">  </span><span class="c">! Initialize variables</span>
+<span class="w">  </span><span class="n">err_msg</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">' '</span><span class="w"> </span>
+<span class="w">  </span><span class="n">argc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">command_argument_count</span><span class="p">()</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">argc</span><span class="w"> </span><span class="o">/=</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="k">then</span>
+<span class="k">    print</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="s2">"Usage: ./program &lt;TREXIO filename&gt;"</span>
+<span class="w">    </span><span class="k">stop</span><span class="w"> </span><span class="o">-</span><span class="mi">1</span>
+<span class="w">  </span><span class="k">end if</span>
+<span class="k">  call </span><span class="nb">get_command_argument</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">trexio_filename</span><span class="p">)</span>
+<span class="w">  </span><span class="n">rc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">QMCKL_SUCCESS</span>
+
+<span class="w">  </span><span class="c">! Create a QMCkl context</span>
+<span class="w">  </span><span class="n">context</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">qmckl_context_create</span><span class="p">()</span>
+
+<span class="w">  </span><span class="c">! Read the TREXIO file into the context</span>
+<span class="w">  </span><span class="n">rc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">qmckl_trexio_read</span><span class="p">(</span><span class="n">context</span><span class="p">,</span><span class="w"> </span><span class="nb">trim</span><span class="p">(</span><span class="n">trexio_filename</span><span class="p">),</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="n">trexio_filename</span><span class="p">)</span><span class="o">*</span><span class="mi">1_8</span><span class="p">)</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">rc</span><span class="w"> </span><span class="o">/=</span><span class="w"> </span><span class="n">QMCKL_SUCCESS</span><span class="p">)</span><span class="w"> </span><span class="k">then</span>
+<span class="k">    call </span><span class="n">qmckl_string_of_error</span><span class="p">(</span><span class="n">rc</span><span class="p">,</span><span class="w"> </span><span class="n">err_msg</span><span class="p">)</span>
+<span class="w">    </span><span class="k">write</span><span class="p">(</span><span class="o">*</span><span class="p">,</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="s2">"Error reading TREXIO file:"</span><span class="p">,</span><span class="w"> </span><span class="n">err_msg</span>
+<span class="w">    </span><span class="k">stop</span><span class="w"> </span><span class="o">-</span><span class="mi">1</span>
+<span class="w">  </span><span class="k">end if</span>
+
+<span class="w">  </span><span class="c">! Retrieve the number of nuclei</span>
+<span class="w">  </span><span class="n">rc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">qmckl_get_nucleus_num</span><span class="p">(</span><span class="n">context</span><span class="p">,</span><span class="w"> </span><span class="n">nucl_num</span><span class="p">)</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">rc</span><span class="w"> </span><span class="o">/=</span><span class="w"> </span><span class="n">QMCKL_SUCCESS</span><span class="p">)</span><span class="w"> </span><span class="k">then</span>
+<span class="k">    call </span><span class="n">qmckl_string_of_error</span><span class="p">(</span><span class="n">rc</span><span class="p">,</span><span class="w"> </span><span class="n">err_msg</span><span class="p">)</span>
+<span class="w">    </span><span class="k">write</span><span class="p">(</span><span class="o">*</span><span class="p">,</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="s2">"Error getting nucl_num:"</span><span class="p">,</span><span class="w"> </span><span class="n">err_msg</span>
+<span class="w">    </span><span class="k">stop</span><span class="w"> </span><span class="o">-</span><span class="mi">1</span>
+<span class="w">  </span><span class="k">end if</span>
+
+<span class="w">  </span><span class="c">! Retrieve the nuclear coordinates</span>
+<span class="w">  </span><span class="k">allocate</span><span class="p">(</span><span class="n">nucl_coord</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="n">nucl_num</span><span class="p">))</span>
+<span class="w">  </span><span class="n">rc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">qmckl_get_nucleus_coord</span><span class="p">(</span><span class="n">context</span><span class="p">,</span><span class="w"> </span><span class="s1">'N'</span><span class="p">,</span><span class="w"> </span><span class="n">nucl_coord</span><span class="p">,</span><span class="w"> </span><span class="n">nucl_num</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">3_8</span><span class="p">)</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">rc</span><span class="w"> </span><span class="o">/=</span><span class="w"> </span><span class="n">QMCKL_SUCCESS</span><span class="p">)</span><span class="w"> </span><span class="k">then</span>
+<span class="k">    call </span><span class="n">qmckl_string_of_error</span><span class="p">(</span><span class="n">rc</span><span class="p">,</span><span class="w"> </span><span class="n">err_msg</span><span class="p">)</span>
+<span class="w">    </span><span class="k">write</span><span class="p">(</span><span class="o">*</span><span class="p">,</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="s2">"Error getting nucl_coord:"</span><span class="p">,</span><span class="w"> </span><span class="n">err_msg</span>
+<span class="w">    </span><span class="k">stop</span><span class="w"> </span><span class="o">-</span><span class="mi">1</span>
+<span class="w">  </span><span class="k">end if</span>
+
+<span class="w">  </span><span class="c">! Retrieve the number of MOs</span>
+<span class="w">  </span><span class="n">rc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">qmckl_get_mo_basis_mo_num</span><span class="p">(</span><span class="n">context</span><span class="p">,</span><span class="w"> </span><span class="n">mo_num</span><span class="p">)</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">rc</span><span class="w"> </span><span class="o">/=</span><span class="w"> </span><span class="n">QMCKL_SUCCESS</span><span class="p">)</span><span class="w"> </span><span class="k">then</span>
+<span class="k">    call </span><span class="n">qmckl_string_of_error</span><span class="p">(</span><span class="n">rc</span><span class="p">,</span><span class="w"> </span><span class="n">err_msg</span><span class="p">)</span>
+<span class="w">    </span><span class="k">write</span><span class="p">(</span><span class="o">*</span><span class="p">,</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="s2">"Error getting mo_num:"</span><span class="p">,</span><span class="w"> </span><span class="n">err_msg</span>
+<span class="w">    </span><span class="k">stop</span><span class="w"> </span><span class="o">-</span><span class="mi">1</span>
+<span class="w">  </span><span class="k">end if</span>
+
+<span class="w">  </span><span class="c">! Initialize grid points for the calculation</span>
+<span class="w">  </span><span class="n">nx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="o">/</span><span class="w"> </span><span class="mi">120</span><span class="p">,</span><span class="w"> </span><span class="mi">120</span><span class="p">,</span><span class="w"> </span><span class="mi">120</span><span class="w"> </span><span class="o">/</span><span class="p">)</span>
+<span class="w">  </span><span class="n">shift</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="o">/</span><span class="w"> </span><span class="mf">5.d0</span><span class="p">,</span><span class="w"> </span><span class="mf">5.d0</span><span class="p">,</span><span class="w"> </span><span class="mf">5.d0</span><span class="w"> </span><span class="o">/</span><span class="p">)</span>
+<span class="w">  </span><span class="n">point_num</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">nx</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">nx</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">nx</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+
+<span class="w">  </span><span class="c">! Initialize rmin and rmax</span>
+<span class="w">  </span><span class="n">rmin</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">nucl_coord</span><span class="p">(:,</span><span class="mi">1</span><span class="p">)</span>
+<span class="w">  </span><span class="n">rmax</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">nucl_coord</span><span class="p">(:,</span><span class="mi">1</span><span class="p">)</span>
+
+<span class="w">  </span><span class="c">! Update rmin and rmax based on nucl_coord</span>
+<span class="w">  </span><span class="k">do </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span>
+<span class="w">    </span><span class="k">do </span><span class="n">j</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">nucl_num</span>
+<span class="w">      </span><span class="n">rmin</span><span class="p">(</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">min</span><span class="p">(</span><span class="n">nucl_coord</span><span class="p">(</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">),</span><span class="w"> </span><span class="n">rmin</span><span class="p">(</span><span class="n">i</span><span class="p">))</span>
+<span class="w">      </span><span class="n">rmax</span><span class="p">(</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">max</span><span class="p">(</span><span class="n">nucl_coord</span><span class="p">(</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">),</span><span class="w"> </span><span class="n">rmax</span><span class="p">(</span><span class="n">i</span><span class="p">))</span>
+<span class="w">    </span><span class="k">end do</span>
+<span class="k">  end do</span>
+
+<span class="w">  </span><span class="c">! Apply shift</span>
+<span class="w">  </span><span class="n">rmin</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">rmin</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">shift</span>
+<span class="w">  </span><span class="n">rmax</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">rmax</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">shift</span>
+
+<span class="w">  </span><span class="c">! Initialize linspace and step</span>
+<span class="w">  </span><span class="k">allocate</span><span class="p">(</span><span class="n">linspace</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="nb">maxval</span><span class="p">(</span><span class="n">nx</span><span class="p">)))</span>
+
+<span class="w">  </span><span class="k">do </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span>
+<span class="w">    </span><span class="n">step</span><span class="p">(</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">rmax</span><span class="p">(</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">rmin</span><span class="p">(</span><span class="n">i</span><span class="p">))</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="kt">real</span><span class="p">(</span><span class="n">nx</span><span class="p">(</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">8</span><span class="p">)</span>
+<span class="w">    </span><span class="k">do </span><span class="n">j</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">nx</span><span class="p">(</span><span class="n">i</span><span class="p">)</span>
+<span class="w">      </span><span class="n">linspace</span><span class="p">(</span><span class="n">i</span><span class="p">,</span><span class="w"> </span><span class="n">j</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">rmin</span><span class="p">(</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="p">(</span><span class="n">j</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">step</span><span class="p">(</span><span class="n">i</span><span class="p">)</span>
+<span class="w">    </span><span class="k">end do</span>
+<span class="k">  end do</span>
+
+<span class="w">  </span><span class="c">! Initialize point array</span>
+<span class="w">  </span><span class="k">allocate</span><span class="p">(</span><span class="n">point</span><span class="p">(</span><span class="mi">3</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">point_num</span><span class="p">))</span>
+<span class="w">  </span><span class="n">m</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span>
+<span class="w">  </span><span class="k">do </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">nx</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+<span class="w">    </span><span class="k">do </span><span class="n">j</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">nx</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+<span class="w">      </span><span class="k">do </span><span class="n">k</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">nx</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+<span class="w">        </span><span class="n">point</span><span class="p">(</span><span class="n">m</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">linspace</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">i</span><span class="p">);</span><span class="w"> </span><span class="n">m</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">m</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span>
+<span class="w">        </span><span class="n">point</span><span class="p">(</span><span class="n">m</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">linspace</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="n">j</span><span class="p">);</span><span class="w"> </span><span class="n">m</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">m</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span>
+<span class="w">        </span><span class="n">point</span><span class="p">(</span><span class="n">m</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">linspace</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="n">k</span><span class="p">);</span><span class="w"> </span><span class="n">m</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">m</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span>
+<span class="w">      </span><span class="k">end do</span>
+<span class="k">    end do</span>
+<span class="k">  end do</span>
+
+<span class="k">  deallocate</span><span class="p">(</span><span class="n">linspace</span><span class="p">)</span>
+
+
+<span class="w">  </span><span class="c">! Set points in QMCKL context</span>
+<span class="w">  </span><span class="n">rc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">qmckl_set_point</span><span class="p">(</span><span class="n">context</span><span class="p">,</span><span class="w"> </span><span class="s1">'N'</span><span class="p">,</span><span class="w"> </span><span class="n">point_num</span><span class="p">,</span><span class="w"> </span><span class="n">point</span><span class="p">,</span><span class="w"> </span><span class="n">point_num</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">3</span><span class="p">)</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">rc</span><span class="w"> </span><span class="o">/=</span><span class="w"> </span><span class="n">QMCKL_SUCCESS</span><span class="p">)</span><span class="w"> </span><span class="k">then</span>
+<span class="k">    call </span><span class="n">qmckl_string_of_error</span><span class="p">(</span><span class="n">rc</span><span class="p">,</span><span class="w"> </span><span class="n">err_msg</span><span class="p">)</span>
+<span class="w">    </span><span class="k">write</span><span class="p">(</span><span class="o">*</span><span class="p">,</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="s2">"Error setting point:"</span><span class="p">,</span><span class="w"> </span><span class="n">err_msg</span>
+<span class="w">    </span><span class="k">stop</span><span class="w"> </span><span class="o">-</span><span class="mi">1</span>
+<span class="w">  </span><span class="k">end if</span>
+
+
+
+
+<span class="w">  </span><span class="c">! Perform the actual calculation and measure the time taken</span>
+<span class="w">  </span><span class="k">call </span><span class="nb">cpu_time</span><span class="p">(</span><span class="n">before</span><span class="p">)</span>
+<span class="w">  </span><span class="k">allocate</span><span class="p">(</span><span class="n">mo_value</span><span class="p">(</span><span class="n">point_num</span><span class="p">,</span><span class="w"> </span><span class="n">mo_num</span><span class="p">))</span>
+<span class="w">  </span><span class="n">rc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">qmckl_get_mo_basis_mo_value</span><span class="p">(</span><span class="n">context</span><span class="p">,</span><span class="w"> </span><span class="n">mo_value</span><span class="p">,</span><span class="w"> </span><span class="n">point_num</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">mo_num</span><span class="p">)</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">rc</span><span class="w"> </span><span class="o">/=</span><span class="w"> </span><span class="n">QMCKL_SUCCESS</span><span class="p">)</span><span class="w"> </span><span class="k">then</span>
+<span class="k">    call </span><span class="n">qmckl_string_of_error</span><span class="p">(</span><span class="n">rc</span><span class="p">,</span><span class="w"> </span><span class="n">err_msg</span><span class="p">)</span>
+<span class="w">    </span><span class="k">write</span><span class="p">(</span><span class="o">*</span><span class="p">,</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="s2">"Error getting mo_value:"</span><span class="p">,</span><span class="w"> </span><span class="n">err_msg</span>
+<span class="w">    </span><span class="k">stop</span>
+<span class="k">  end if</span>
+<span class="k">  call </span><span class="nb">cpu_time</span><span class="p">(</span><span class="n">after</span><span class="p">)</span>
+
+<span class="w">  </span><span class="k">write</span><span class="p">(</span><span class="o">*</span><span class="p">,</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="s2">"Number of MOs:"</span><span class="p">,</span><span class="w"> </span><span class="n">mo_num</span>
+<span class="w">  </span><span class="k">write</span><span class="p">(</span><span class="o">*</span><span class="p">,</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="s2">"Number of grid points:"</span><span class="p">,</span><span class="w"> </span><span class="n">point_num</span>
+<span class="w">  </span><span class="k">write</span><span class="p">(</span><span class="o">*</span><span class="p">,</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="s2">"Execution time:"</span><span class="p">,</span><span class="w"> </span><span class="p">(</span><span class="n">after</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">before</span><span class="p">),</span><span class="w"> </span><span class="s2">"seconds"</span>
+
+<span class="w">  </span><span class="c">! Compute the overlap matrix</span>
+<span class="w">  </span><span class="n">dr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">step</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">step</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">step</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+
+<span class="w">  </span><span class="k">allocate</span><span class="p">(</span><span class="n">overlap</span><span class="p">(</span><span class="n">mo_num</span><span class="p">,</span><span class="w"> </span><span class="n">mo_num</span><span class="p">))</span>
+<span class="w">  </span><span class="n">rc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">qmckl_dgemm</span><span class="p">(</span><span class="n">context</span><span class="p">,</span><span class="w"> </span><span class="s1">'N'</span><span class="p">,</span><span class="w"> </span><span class="s1">'T'</span><span class="p">,</span><span class="w"> </span><span class="n">mo_num</span><span class="p">,</span><span class="w"> </span><span class="n">mo_num</span><span class="p">,</span><span class="w"> </span><span class="n">point_num</span><span class="p">,</span><span class="w"> </span><span class="n">dr</span><span class="p">,</span><span class="w"> </span><span class="p">&amp;</span>
+<span class="w">                   </span><span class="n">mo_value</span><span class="p">,</span><span class="w"> </span><span class="n">mo_num</span><span class="p">,</span><span class="w"> </span><span class="n">mo_value</span><span class="p">,</span><span class="w"> </span><span class="n">mo_num</span><span class="p">,</span><span class="w"> </span><span class="mf">0.d0</span><span class="p">,</span><span class="w"> </span><span class="n">overlap</span><span class="p">,</span><span class="w"> </span><span class="n">mo_num</span><span class="p">)</span>
+
+<span class="w">  </span><span class="c">! Print the overlap matrix</span>
+<span class="w">  </span><span class="k">do </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">mo_num</span>
+<span class="w">    </span><span class="k">write</span><span class="p">(</span><span class="o">*</span><span class="p">,</span><span class="s1">'(i4)'</span><span class="p">,</span><span class="w"> </span><span class="n">advance</span><span class="o">=</span><span class="s1">'no'</span><span class="p">)</span><span class="w"> </span><span class="n">i</span>
+<span class="w">    </span><span class="k">do </span><span class="n">j</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">mo_num</span>
+<span class="w">      </span><span class="k">write</span><span class="p">(</span><span class="o">*</span><span class="p">,</span><span class="s1">'(f8.4)'</span><span class="p">,</span><span class="w"> </span><span class="n">advance</span><span class="o">=</span><span class="s1">'no'</span><span class="p">)</span><span class="w"> </span><span class="n">overlap</span><span class="p">(</span><span class="n">i</span><span class="p">,</span><span class="w"> </span><span class="n">j</span><span class="p">)</span>
+<span class="w">    </span><span class="k">end do</span>
+<span class="k">    write</span><span class="p">(</span><span class="o">*</span><span class="p">,</span><span class="o">*</span><span class="p">)</span>
+<span class="w">  </span><span class="k">end do</span>
+
+<span class="w">  </span><span class="c">! Clean-up and exit</span>
+<span class="w">  </span><span class="k">deallocate</span><span class="p">(</span><span class="n">mo_value</span><span class="p">,</span><span class="w"> </span><span class="n">overlap</span><span class="p">)</span>
+<span class="w">  </span><span class="n">rc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">qmckl_context_destroy</span><span class="p">(</span><span class="n">context</span><span class="p">)</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">rc</span><span class="w"> </span><span class="o">/=</span><span class="w"> </span><span class="n">QMCKL_SUCCESS</span><span class="p">)</span><span class="w"> </span><span class="k">then</span>
+<span class="k">    call </span><span class="n">qmckl_string_of_error</span><span class="p">(</span><span class="n">rc</span><span class="p">,</span><span class="w"> </span><span class="n">err_msg</span><span class="p">)</span>
+<span class="w">    </span><span class="k">write</span><span class="p">(</span><span class="o">*</span><span class="p">,</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="s2">"Error destroying context:"</span><span class="p">,</span><span class="w"> </span><span class="n">err_msg</span>
+<span class="w">    </span><span class="k">stop</span><span class="w"> </span><span class="o">-</span><span class="mi">1</span>
+<span class="w">  </span><span class="k">end if</span>
+
+<span class="k">end program </span><span class="n">main</span>
+</code></pre></figure>
+</div>
+</div>
+</div>
+</div>
+<div id="outline-container-org274525b" class="outline-2">
+<h2 id="org274525b"><span class="section-number-2">3.</span> Checking errors</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+Every QMCkl function returns an exit code, <code>QMCKL_SUCCESS</code> when the call
+worked. <code>qmckl_check_error</code> stops the program on any other code: it prints
+the message it is given, prints the text of the code with
+<code>qmckl_string_of_error</code>, whose buffer holds 128 characters, and exits with
+the code. The program below calls it after each QMCkl call.
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">Fortran <a class="code-file" href="../code/qmckl_check_error.f90" title="Download qmckl_check_error.f90">qmckl_check_error.f90</a></figcaption><pre class="src-f90"><code><span class="k">subroutine </span><span class="n">qmckl_check_error</span><span class="p">(</span><span class="n">rc</span><span class="p">,</span><span class="w"> </span><span class="n">message</span><span class="p">)</span>
+<span class="w">  </span><span class="k">use </span><span class="n">qmckl</span>
+<span class="w">  </span><span class="k">implicit none</span>
+<span class="k">  </span><span class="kt">integer</span><span class="p">(</span><span class="n">qmckl_exit_code</span><span class="p">),</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">in</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">rc</span>
+<span class="w">  </span><span class="kt">character</span><span class="p">(</span><span class="nb">len</span><span class="o">=*</span><span class="p">)</span><span class="w">        </span><span class="p">,</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">in</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">message</span>
+<span class="w">  </span><span class="kt">character</span><span class="p">(</span><span class="nb">len</span><span class="o">=</span><span class="mi">128</span><span class="p">)</span><span class="w">                   </span><span class="kd">::</span><span class="w"> </span><span class="n">str_buffer</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">rc</span><span class="w"> </span><span class="o">/=</span><span class="w"> </span><span class="n">QMCKL_SUCCESS</span><span class="p">)</span><span class="w"> </span><span class="k">then</span>
+<span class="k">     print</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="n">message</span>
+<span class="w">     </span><span class="k">call </span><span class="n">qmckl_string_of_error</span><span class="p">(</span><span class="n">rc</span><span class="p">,</span><span class="w"> </span><span class="n">str_buffer</span><span class="p">)</span>
+<span class="w">     </span><span class="k">print</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="n">str_buffer</span>
+<span class="w">     </span><span class="k">call exit</span><span class="p">(</span><span class="n">rc</span><span class="p">)</span>
+<span class="w">  </span><span class="k">end if</span>
+<span class="k">end subroutine </span><span class="n">qmckl_check_error</span>
+</code></pre></figure>
+</div>
+</div>
+</div>
+<div id="outline-container-org64b5f35" class="outline-2">
+<h2 id="org64b5f35"><span class="section-number-2">4.</span> Computing an atomic orbital on a grid</h2>
+<div class="outline-text-2" id="text-4">
+<p>
+The Fortran program <code>ao_grid</code> evaluates one atomic orbital on a regular
+grid. The grid has <code>point_num_x</code> points along each direction, so it holds
+<code>point_num</code> points in all, and its box extends five atomic units beyond
+the molecule. The points are stored as <code>(point_num,3)</code>, whose Fortran
+layout already has all the <code>x</code> coordinates first, so they reach
+<code>qmckl_set_point</code> with <code>transp='T'</code>.
+</p>
+
+<p>
+The program uses the <code>qmckl_check_error</code> subroutine defined above. Run it
+with
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">Shell <a class="code-file" href="../code/ao_grid.f90" title="Download ao_grid.f90">ao_grid.f90</a></figcaption><pre class="src-bash"><code>$<span class="w"> </span>ao_grid<span class="w"> </span>&lt;trexio_file&gt;<span class="w"> </span>&lt;AO_id&gt;<span class="w"> </span>&lt;point_num&gt;
+</code></pre></figure>
+</div>
+
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">Fortran <a class="code-file" href="../code/ao_grid.f90" title="Download ao_grid.f90">ao_grid.f90</a></figcaption><pre class="src-f90"><code><span class="k">subroutine </span><span class="n">qmckl_check_error</span><span class="p">(</span><span class="n">rc</span><span class="p">,</span><span class="w"> </span><span class="n">message</span><span class="p">)</span>
+<span class="w">  </span><span class="k">use </span><span class="n">qmckl</span>
+<span class="w">  </span><span class="k">implicit none</span>
+<span class="k">  </span><span class="kt">integer</span><span class="p">(</span><span class="n">qmckl_exit_code</span><span class="p">),</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">in</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">rc</span>
+<span class="w">  </span><span class="kt">character</span><span class="p">(</span><span class="nb">len</span><span class="o">=*</span><span class="p">)</span><span class="w">        </span><span class="p">,</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">in</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">message</span>
+<span class="w">  </span><span class="kt">character</span><span class="p">(</span><span class="nb">len</span><span class="o">=</span><span class="mi">128</span><span class="p">)</span><span class="w">                   </span><span class="kd">::</span><span class="w"> </span><span class="n">str_buffer</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">rc</span><span class="w"> </span><span class="o">/=</span><span class="w"> </span><span class="n">QMCKL_SUCCESS</span><span class="p">)</span><span class="w"> </span><span class="k">then</span>
+<span class="k">     print</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="n">message</span>
+<span class="w">     </span><span class="k">call </span><span class="n">qmckl_string_of_error</span><span class="p">(</span><span class="n">rc</span><span class="p">,</span><span class="w"> </span><span class="n">str_buffer</span><span class="p">)</span>
+<span class="w">     </span><span class="k">print</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="n">str_buffer</span>
+<span class="w">     </span><span class="k">call exit</span><span class="p">(</span><span class="n">rc</span><span class="p">)</span>
+<span class="w">  </span><span class="k">end if</span>
+<span class="k">end subroutine </span><span class="n">qmckl_check_error</span>
+
+<span class="k">program </span><span class="n">ao_grid</span>
+<span class="w">  </span><span class="k">use </span><span class="n">qmckl</span>
+<span class="w">  </span><span class="k">implicit none</span>
+
+<span class="k">  </span><span class="kt">integer</span><span class="p">(</span><span class="n">qmckl_context</span><span class="p">)</span><span class="w">    </span><span class="kd">::</span><span class="w"> </span><span class="n">qmckl_ctx</span><span class="w">  </span><span class="c">! QMCkl context</span>
+<span class="w">  </span><span class="kt">integer</span><span class="p">(</span><span class="n">qmckl_exit_code</span><span class="p">)</span><span class="w">  </span><span class="kd">::</span><span class="w"> </span><span class="n">rc</span><span class="w">         </span><span class="c">! Exit code of QMCkl functions</span>
+
+<span class="w">  </span><span class="kt">character</span><span class="p">(</span><span class="nb">len</span><span class="o">=</span><span class="mi">128</span><span class="p">)</span><span class="w">            </span><span class="kd">::</span><span class="w"> </span><span class="n">trexio_filename</span>
+<span class="w">  </span><span class="kt">character</span><span class="p">(</span><span class="nb">len</span><span class="o">=</span><span class="mi">128</span><span class="p">)</span><span class="w">            </span><span class="kd">::</span><span class="w"> </span><span class="n">str_buffer</span>
+<span class="w">  </span><span class="kt">integer</span><span class="w">                       </span><span class="kd">::</span><span class="w"> </span><span class="n">ao_id</span>
+<span class="w">  </span><span class="kt">integer</span><span class="w">                       </span><span class="kd">::</span><span class="w"> </span><span class="n">point_num_x</span>
+
+<span class="w">  </span><span class="kt">integer</span><span class="p">(</span><span class="kt">c_int64_t</span><span class="p">)</span><span class="w">            </span><span class="kd">::</span><span class="w"> </span><span class="n">nucl_num</span>
+<span class="w">  </span><span class="kt">double precision</span><span class="p">,</span><span class="w"> </span><span class="k">allocatable</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">nucl_coord</span><span class="p">(:,:)</span>
+
+<span class="w">  </span><span class="kt">integer</span><span class="p">(</span><span class="kt">c_int64_t</span><span class="p">)</span><span class="w">            </span><span class="kd">::</span><span class="w"> </span><span class="n">point_num</span>
+<span class="w">  </span><span class="kt">integer</span><span class="p">(</span><span class="kt">c_int64_t</span><span class="p">)</span><span class="w">            </span><span class="kd">::</span><span class="w"> </span><span class="n">ao_num</span>
+<span class="w">  </span><span class="kt">integer</span><span class="p">(</span><span class="kt">c_int64_t</span><span class="p">)</span><span class="w">            </span><span class="kd">::</span><span class="w"> </span><span class="n">ipoint</span><span class="p">,</span><span class="w"> </span><span class="n">i</span><span class="p">,</span><span class="w"> </span><span class="n">j</span><span class="p">,</span><span class="w"> </span><span class="n">k</span>
+<span class="w">  </span><span class="kt">double precision</span><span class="w">              </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">y</span><span class="p">,</span><span class="w"> </span><span class="n">z</span><span class="p">,</span><span class="w"> </span><span class="n">dr</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">double precision</span><span class="w">              </span><span class="kd">::</span><span class="w"> </span><span class="n">rmin</span><span class="p">(</span><span class="mi">3</span><span class="p">),</span><span class="w"> </span><span class="n">rmax</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">double precision</span><span class="p">,</span><span class="w"> </span><span class="k">allocatable</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">points</span><span class="p">(:,:)</span>
+<span class="w">  </span><span class="kt">double precision</span><span class="p">,</span><span class="w"> </span><span class="k">allocatable</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">ao_vgl</span><span class="p">(:,:,:)</span>
+</code></pre></figure>
+</div>
+
+<p>
+Start by fetching the command-line arguments:
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">Fortran <a class="code-file" href="../code/ao_grid.f90" title="Download ao_grid.f90">ao_grid.f90</a></figcaption><pre class="src-f90"><code><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="nb">iargc</span><span class="p">()</span><span class="w"> </span><span class="o">/=</span><span class="w"> </span><span class="mi">3</span><span class="p">)</span><span class="w"> </span><span class="k">then</span>
+<span class="k">   print</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="s1">'Syntax: ao_grid &lt;trexio_file&gt; &lt;AO_id&gt; &lt;point_num&gt;'</span>
+<span class="w">   </span><span class="k">call exit</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+<span class="k">end if</span>
+<span class="k">call </span><span class="nb">getarg</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">trexio_filename</span><span class="p">)</span>
+<span class="k">call </span><span class="nb">getarg</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="n">str_buffer</span><span class="p">)</span>
+<span class="k">read</span><span class="p">(</span><span class="n">str_buffer</span><span class="p">,</span><span class="w"> </span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="n">ao_id</span>
+<span class="k">call </span><span class="nb">getarg</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="n">str_buffer</span><span class="p">)</span>
+<span class="k">read</span><span class="p">(</span><span class="n">str_buffer</span><span class="p">,</span><span class="w"> </span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="n">point_num_x</span>
+
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">point_num_x</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="p">.</span><span class="nb">or</span><span class="p">.</span><span class="w"> </span><span class="n">point_num_x</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">300</span><span class="p">)</span><span class="w"> </span><span class="k">then</span>
+<span class="k">   print</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="s1">'Error: 0 &lt; point_num &lt; 300'</span>
+<span class="w">   </span><span class="k">call exit</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+<span class="k">end if</span>
+</code></pre></figure>
+</div>
+
+<p>
+Create the QMCkl context and initialize it with the wave function
+present in the TREXIO file:
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">Fortran <a class="code-file" href="../code/ao_grid.f90" title="Download ao_grid.f90">ao_grid.f90</a></figcaption><pre class="src-f90"><code><span class="n">qmckl_ctx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">qmckl_context_create</span><span class="p">()</span>
+<span class="n">rc</span><span class="w">  </span><span class="o">=</span><span class="w"> </span><span class="n">qmckl_trexio_read</span><span class="p">(</span><span class="n">qmckl_ctx</span><span class="p">,</span><span class="w"> </span><span class="n">trexio_filename</span><span class="p">,</span><span class="w"> </span><span class="mi">1_8</span><span class="o">*</span><span class="nb">len</span><span class="p">(</span><span class="nb">trim</span><span class="p">(</span><span class="n">trexio_filename</span><span class="p">)))</span>
+<span class="k">call </span><span class="n">qmckl_check_error</span><span class="p">(</span><span class="n">rc</span><span class="p">,</span><span class="w"> </span><span class="s1">'Read TREXIO'</span><span class="p">)</span>
+</code></pre></figure>
+</div>
+
+<p>
+The number of AOs comes from the context, and is used to check <code>ao_id</code>.
+It indexes the Fortran array of AO values, so it runs from 1 to
+<code>ao_num</code>:
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">Fortran <a class="code-file" href="../code/ao_grid.f90" title="Download ao_grid.f90">ao_grid.f90</a></figcaption><pre class="src-f90"><code><span class="n">rc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">qmckl_get_ao_basis_ao_num</span><span class="p">(</span><span class="n">qmckl_ctx</span><span class="p">,</span><span class="w"> </span><span class="n">ao_num</span><span class="p">)</span>
+<span class="k">call </span><span class="n">qmckl_check_error</span><span class="p">(</span><span class="n">rc</span><span class="p">,</span><span class="w"> </span><span class="s1">'Getting ao_num'</span><span class="p">)</span>
+
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">ao_id</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="p">.</span><span class="nb">or</span><span class="p">.</span><span class="w"> </span><span class="n">ao_id</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="n">ao_num</span><span class="p">)</span><span class="w"> </span><span class="k">then</span>
+<span class="k">   print</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="s1">'Error: 1 &lt;= ao_id &lt;= '</span><span class="p">,</span><span class="w"> </span><span class="n">ao_num</span>
+<span class="w">   </span><span class="k">call exit</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+<span class="k">end if</span>
+</code></pre></figure>
+</div>
+
+<p>
+The limits of the box need the nuclear coordinates, which are in the
+context:
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">Fortran <a class="code-file" href="../code/ao_grid.f90" title="Download ao_grid.f90">ao_grid.f90</a></figcaption><pre class="src-f90"><code><span class="n">rc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">qmckl_get_nucleus_num</span><span class="p">(</span><span class="n">qmckl_ctx</span><span class="p">,</span><span class="w"> </span><span class="n">nucl_num</span><span class="p">)</span>
+<span class="k">call </span><span class="n">qmckl_check_error</span><span class="p">(</span><span class="n">rc</span><span class="p">,</span><span class="w"> </span><span class="s1">'Get nucleus num'</span><span class="p">)</span>
+
+<span class="k">allocate</span><span class="p">(</span><span class="w"> </span><span class="n">nucl_coord</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="n">nucl_num</span><span class="p">)</span><span class="w"> </span><span class="p">)</span>
+<span class="n">rc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">qmckl_get_nucleus_coord</span><span class="p">(</span><span class="n">qmckl_ctx</span><span class="p">,</span><span class="w"> </span><span class="s1">'N'</span><span class="p">,</span><span class="w"> </span><span class="n">nucl_coord</span><span class="p">,</span><span class="w"> </span><span class="mi">3_8</span><span class="o">*</span><span class="n">nucl_num</span><span class="p">)</span>
+<span class="k">call </span><span class="n">qmckl_check_error</span><span class="p">(</span><span class="n">rc</span><span class="p">,</span><span class="w"> </span><span class="s1">'Get nucleus coord'</span><span class="p">)</span>
+</code></pre></figure>
+</div>
+
+<p>
+The corners of the box and the step along each direction:
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">Fortran <a class="code-file" href="../code/ao_grid.f90" title="Download ao_grid.f90">ao_grid.f90</a></figcaption><pre class="src-f90"><code><span class="n">rmin</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">minval</span><span class="p">(</span><span class="w"> </span><span class="n">nucl_coord</span><span class="p">(</span><span class="mi">1</span><span class="p">,:)</span><span class="w"> </span><span class="p">)</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mf">5.d0</span>
+<span class="n">rmin</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">minval</span><span class="p">(</span><span class="w"> </span><span class="n">nucl_coord</span><span class="p">(</span><span class="mi">2</span><span class="p">,:)</span><span class="w"> </span><span class="p">)</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mf">5.d0</span>
+<span class="n">rmin</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">minval</span><span class="p">(</span><span class="w"> </span><span class="n">nucl_coord</span><span class="p">(</span><span class="mi">3</span><span class="p">,:)</span><span class="w"> </span><span class="p">)</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mf">5.d0</span>
+
+<span class="n">rmax</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">maxval</span><span class="p">(</span><span class="w"> </span><span class="n">nucl_coord</span><span class="p">(</span><span class="mi">1</span><span class="p">,:)</span><span class="w"> </span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mf">5.d0</span>
+<span class="n">rmax</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">maxval</span><span class="p">(</span><span class="w"> </span><span class="n">nucl_coord</span><span class="p">(</span><span class="mi">2</span><span class="p">,:)</span><span class="w"> </span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mf">5.d0</span>
+<span class="n">rmax</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">maxval</span><span class="p">(</span><span class="w"> </span><span class="n">nucl_coord</span><span class="p">(</span><span class="mi">3</span><span class="p">,:)</span><span class="w"> </span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mf">5.d0</span>
+
+<span class="n">dr</span><span class="p">(</span><span class="mi">1</span><span class="p">:</span><span class="mi">3</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">rmax</span><span class="p">(</span><span class="mi">1</span><span class="p">:</span><span class="mi">3</span><span class="p">)</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">rmin</span><span class="p">(</span><span class="mi">1</span><span class="p">:</span><span class="mi">3</span><span class="p">))</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="nb">dble</span><span class="p">(</span><span class="n">point_num_x</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+</code></pre></figure>
+</div>
+
+<p>
+The list of points follows the mesh, with <code>x</code> varying fastest:
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">Fortran <a class="code-file" href="../code/ao_grid.f90" title="Download ao_grid.f90">ao_grid.f90</a></figcaption><pre class="src-f90"><code><span class="n">point_num</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">point_num_x</span><span class="o">**</span><span class="mi">3</span>
+<span class="k">allocate</span><span class="p">(</span><span class="w"> </span><span class="n">points</span><span class="p">(</span><span class="n">point_num</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">)</span><span class="w"> </span><span class="p">)</span>
+<span class="n">ipoint</span><span class="o">=</span><span class="mi">0</span>
+<span class="n">z</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">rmin</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+<span class="k">do </span><span class="n">k</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span><span class="n">point_num_x</span>
+<span class="w">   </span><span class="n">y</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">rmin</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+<span class="w">   </span><span class="k">do </span><span class="n">j</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span><span class="n">point_num_x</span>
+<span class="w">      </span><span class="n">x</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">rmin</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+<span class="w">      </span><span class="k">do </span><span class="n">i</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span><span class="n">point_num_x</span>
+<span class="w">         </span><span class="n">ipoint</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ipoint</span><span class="o">+</span><span class="mi">1</span>
+<span class="w">         </span><span class="n">points</span><span class="p">(</span><span class="n">ipoint</span><span class="p">,</span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">x</span>
+<span class="w">         </span><span class="n">points</span><span class="p">(</span><span class="n">ipoint</span><span class="p">,</span><span class="mi">2</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">y</span>
+<span class="w">         </span><span class="n">points</span><span class="p">(</span><span class="n">ipoint</span><span class="p">,</span><span class="mi">3</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">z</span>
+<span class="w">         </span><span class="n">x</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">dr</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+<span class="w">      </span><span class="k">end do</span>
+<span class="k">      </span><span class="n">y</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">y</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">dr</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+<span class="w">   </span><span class="k">end do</span>
+<span class="k">   </span><span class="n">z</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">z</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">dr</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+<span class="k">end do</span>
+</code></pre></figure>
+</div>
+
+<p>
+We give the points to QMCkl:
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">Fortran <a class="code-file" href="../code/ao_grid.f90" title="Download ao_grid.f90">ao_grid.f90</a></figcaption><pre class="src-f90"><code><span class="n">rc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">qmckl_set_point</span><span class="p">(</span><span class="n">qmckl_ctx</span><span class="p">,</span><span class="w"> </span><span class="s1">'T'</span><span class="p">,</span><span class="w"> </span><span class="n">point_num</span><span class="p">,</span><span class="w"> </span><span class="n">points</span><span class="p">,</span><span class="w"> </span><span class="n">size</span><span class="p">(</span><span class="n">points</span><span class="p">)</span><span class="o">*</span><span class="mi">1_8</span><span class="w"> </span><span class="p">)</span>
+<span class="k">call </span><span class="n">qmckl_check_error</span><span class="p">(</span><span class="n">rc</span><span class="p">,</span><span class="w"> </span><span class="s1">'Setting points'</span><span class="p">)</span>
+</code></pre></figure>
+</div>
+
+<p>
+The values, gradients and Laplacians of all the AOs are retrieved in one
+array of shape <code>(ao_num,5,point_num)</code>:
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">Fortran <a class="code-file" href="../code/ao_grid.f90" title="Download ao_grid.f90">ao_grid.f90</a></figcaption><pre class="src-f90"><code><span class="k">allocate</span><span class="p">(</span><span class="w"> </span><span class="n">ao_vgl</span><span class="p">(</span><span class="n">ao_num</span><span class="p">,</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span><span class="w"> </span><span class="n">point_num</span><span class="p">)</span><span class="w"> </span><span class="p">)</span>
+<span class="n">rc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">qmckl_get_ao_basis_ao_vgl</span><span class="p">(</span><span class="n">qmckl_ctx</span><span class="p">,</span><span class="w"> </span><span class="n">ao_vgl</span><span class="p">,</span><span class="w"> </span><span class="n">ao_num</span><span class="o">*</span><span class="mi">5_8</span><span class="o">*</span><span class="n">point_num</span><span class="p">)</span>
+<span class="k">call </span><span class="n">qmckl_check_error</span><span class="p">(</span><span class="n">rc</span><span class="p">,</span><span class="w"> </span><span class="s1">'Getting ao_vgl'</span><span class="p">)</span>
+</code></pre></figure>
+</div>
+
+<p>
+The value (component 1) and the Laplacian (component 5) of the chosen AO
+are printed for every point:
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">Fortran <a class="code-file" href="../code/ao_grid.f90" title="Download ao_grid.f90">ao_grid.f90</a></figcaption><pre class="src-f90"><code><span class="k">do </span><span class="n">ipoint</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">point_num</span>
+<span class="w">   </span><span class="k">print</span><span class="w"> </span><span class="s1">'(3(F10.6,X),2(E20.10,X))'</span><span class="p">,</span><span class="w"> </span><span class="n">points</span><span class="p">(</span><span class="n">ipoint</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">:</span><span class="mi">3</span><span class="p">),</span><span class="w"> </span><span class="n">ao_vgl</span><span class="p">(</span><span class="n">ao_id</span><span class="p">,</span><span class="mi">1</span><span class="p">,</span><span class="n">ipoint</span><span class="p">),</span><span class="w"> </span><span class="n">ao_vgl</span><span class="p">(</span><span class="n">ao_id</span><span class="p">,</span><span class="mi">5</span><span class="p">,</span><span class="n">ipoint</span><span class="p">)</span>
+<span class="k">end do</span>
+</code></pre></figure>
+</div>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">Fortran <a class="code-file" href="../code/ao_grid.f90" title="Download ao_grid.f90">ao_grid.f90</a></figcaption><pre class="src-f90"><code><span class="w">  </span><span class="k">deallocate</span><span class="p">(</span><span class="w"> </span><span class="n">nucl_coord</span><span class="p">,</span><span class="w"> </span><span class="n">points</span><span class="p">,</span><span class="w"> </span><span class="n">ao_vgl</span><span class="w"> </span><span class="p">)</span>
+<span class="k">end program </span><span class="n">ao_grid</span>
+</code></pre></figure>
+</div>
+</div>
+</div>
+
+</main>
+</div>
+</body>
+</html>

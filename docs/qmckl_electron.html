@@ -1,0 +1,1075 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Electrons — QMCkl</title>
+<meta name="description" content="The electron module holds how many electrons the system has, split into up-spin and down-spin, and where they are.">
+<meta name="author" content="TREX CoE">
+<link rel="stylesheet" href="../css/theme.css">
+</head>
+<body>
+<div class="layout">
+<aside class="sidebar">
+  <p class="side-brand"><a href="../index.html">QMCkl</a></p>
+  <nav class="side-nav" aria-label="Documentation">
+    <ul><li><a href="qmckl.html">Introduction</a></li><li><a href="qmckl_context.html">Context</a></li><li><a href="qmckl_error.html">Error handling</a></li><li><a href="qmckl_blas.html">BLAS functions</a></li><li><a href="qmckl_memory.html">Memory management</a></li><li><a href="qmckl_numprec.html">Numerical precision</a></li><li><a href="qmckl_point.html">Point</a></li><li><a href="qmckl_nucleus.html">Nucleus</a></li><li><a href="qmckl_electron.html" aria-current="page">Electrons</a></li><li><a href="qmckl_distance.html">Inter-particle distances</a></li><li><a href="qmckl_ao.html">Atomic Orbitals</a></li><li><a href="qmckl_mo.html">Molecular Orbitals</a></li><li><a href="qmckl_jastrow_champ.html">CHAMP Jastrow Factor</a></li><li><a href="qmckl_jastrow_champ_single.html">CHAMP Jastrow Factor Single</a></li><li><a href="qmckl_forces.html">Forces</a></li><li><a href="qmckl_trexio.html">TREXIO I/O library</a></li><li><a href="qmckl_tests.html">Data for Tests</a></li><li><a href="qmckl_verificarlo.html">Verificarlo CI</a></li><li><a href="qmckl_examples.html">Code examples</a></li></ul>
+  </nav>
+  <nav class="side-toc" aria-label="On this page">
+<h2 class="side-toc-title">On this page</h2>
+
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org8987606">1. Introduction</a>
+<ul>
+<li><a href="#orgbbfec1d">1.1. Memory layout</a></li>
+</ul>
+</li>
+<li><a href="#orgece8b48">2. Context</a>
+<ul>
+<li><a href="#org0d6e1ce">2.1. Data stored in the context</a></li>
+<li><a href="#org0623fc6">2.2. Data structures</a></li>
+<li><a href="#org66c4847">2.3. Initialization functions</a></li>
+<li><a href="#orgf393f19">2.4. Access functions</a>
+<ul>
+<li><a href="#org93a3fb3">2.4.1. Number of electrons</a></li>
+<li><a href="#orgba3db31">2.4.2. Number of walkers</a></li>
+<li><a href="#org23883d9">2.4.3. Electron coordinates</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><a href="#org0a74f7d">3. Computation</a>
+<ul>
+<li><a href="#org816b711">3.1. Electron-electron distances</a>
+<ul>
+<li><a href="#org4d10390">3.1.1. Get</a></li>
+<li><a href="#org36d680b">3.1.2. Compute</a></li>
+</ul>
+</li>
+<li><a href="#org91c1bf6">3.2. Electron-electron potential</a>
+<ul>
+<li><a href="#org38e4df5">3.2.1. Get</a></li>
+<li><a href="#orga15670c">3.2.2. Compute</a></li>
+</ul>
+</li>
+<li><a href="#orgd3a19a9">3.3. Electron-nucleus distances</a>
+<ul>
+<li><a href="#org0d5dd7c">3.3.1. Get</a></li>
+<li><a href="#org69292ba">3.3.2. Compute</a></li>
+</ul>
+</li>
+<li><a href="#orgd5aceb5">3.4. Electron-nucleus potential</a>
+<ul>
+<li><a href="#org90188b4">3.4.1. Get</a></li>
+<li><a href="#orgf9b0e58">3.4.2. Compute</a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</div>
+
+  </nav>
+</aside>
+
+<main id="content">
+<header class="doc-head"><h1 class="title">Electrons</h1></header>
+
+<div id="outline-container-org8987606" class="outline-2">
+<h2 id="org8987606"><span class="section-number-2">1.</span> Introduction</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+The electron module holds how many electrons the system has, split into
+up-spin and down-spin, and where they are.
+</p>
+
+<p>
+In a QMC calculation electrons of opposite spin are distinguishable: only
+electrons of the same spin are antisymmetric under exchange. The module keeps
+the two counts separately for that reason, and stores the positions as
+walkers: one complete set of positions per walker, with the up-spin electrons
+first and the down-spin electrons after them.
+</p>
+
+<p>
+The <code>point</code> part of the context holds the positions of all the walkers.
+<code>qmckl_set_electron_coord</code> writes them there and keeps the previous set, so
+that a Monte Carlo step can be accepted or rejected. Distances and potentials
+are computed on demand and cached with the date at which they were obtained.
+</p>
+</div>
+<div id="outline-container-orgbbfec1d" class="outline-3">
+<h3 id="orgbbfec1d"><span class="section-number-3">1.1.</span> Memory layout</h3>
+<div class="outline-text-3" id="text-1-1">
+<p>
+The setters accept either layout and the context stores the transposed one.
+With <code>'N'</code> the coordinates are read as consecutive <code>[ (x,y,z), (x,y,z), ... ]</code>
+triplets and transposed on the way in; with <code>'T'</code> they are copied as they are,
+<code>[ (x,x,x,...), (y,y,y,...), (z,z,z,...) ]</code>. The getters transpose only when
+asked for <code>'N'</code>.
+</p>
+</div>
+</div>
+</div>
+<div id="outline-container-orgece8b48" class="outline-2">
+<h2 id="orgece8b48"><span class="section-number-2">2.</span> Context</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+The electron module keeps the electronic configuration in the context,
+together with the quantities computed from it: electron-electron and
+electron-nucleus distances and potentials. All the points of all the walkers
+live in one <code>qmckl_point_struct</code>, and the computed arrays carry the walker
+index first.
+</p>
+</div>
+<div id="outline-container-org0d6e1ce" class="outline-3">
+<h3 id="org0d6e1ce"><span class="section-number-3">2.1.</span> Data stored in the context</h3>
+<div class="outline-text-3" id="text-2-1">
+<p>
+The following data is stored in the context:
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">Variable</th>
+<th scope="col" class="org-left">Type</th>
+<th scope="col" class="org-left">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>uninitialized</code></td>
+<td class="org-left"><code>int32_t</code></td>
+<td class="org-left">Keeps bit set for uninitialized data</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>num</code></td>
+<td class="org-left"><code>int64_t</code></td>
+<td class="org-left">Total number of electrons</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>up_num</code></td>
+<td class="org-left"><code>int64_t</code></td>
+<td class="org-left">Number of up-spin electrons</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>down_num</code></td>
+<td class="org-left"><code>int64_t</code></td>
+<td class="org-left">Number of down-spin electrons</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>provided</code></td>
+<td class="org-left"><code>bool</code></td>
+<td class="org-left">If true, <code>electron</code> is valid</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>walker</code></td>
+<td class="org-left"><code>qmckl_walker</code></td>
+<td class="org-left">Current walker state</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>walker_old</code></td>
+<td class="org-left"><code>qmckl_walker</code></td>
+<td class="org-left">Previous walker state</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Computed data:
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">Variable</th>
+<th scope="col" class="org-left">Type</th>
+<th scope="col" class="org-left">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>ee_distance</code></td>
+<td class="org-left"><code>double[walker.num][num][num]</code></td>
+<td class="org-left">Electron-electron distances</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>ee_distance_date</code></td>
+<td class="org-left"><code>uint64_t</code></td>
+<td class="org-left">Last modification date of the electron-electron distances</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>en_distance</code></td>
+<td class="org-left"><code>double[walker.num][num][nucl_num]</code></td>
+<td class="org-left">Electron-nucleus distances</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>en_distance_date</code></td>
+<td class="org-left"><code>uint64_t</code></td>
+<td class="org-left">Last modification date of the electron-nucleus distances</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>ee_potential</code></td>
+<td class="org-left"><code>double[walker.num]</code></td>
+<td class="org-left">Electron-electron potential energy</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>ee_potential_date</code></td>
+<td class="org-left"><code>uint64_t</code></td>
+<td class="org-left">Last modification date of the electron-electron potential</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>en_potential</code></td>
+<td class="org-left"><code>double[walker.num]</code></td>
+<td class="org-left">Electron-nucleus potential energy</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>en_potential_date</code></td>
+<td class="org-left"><code>uint64_t</code></td>
+<td class="org-left">Last modification date of the electron-nucleus potential</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div id="outline-container-org0623fc6" class="outline-3">
+<h3 id="org0623fc6"><span class="section-number-3">2.2.</span> Data structures</h3>
+<div class="outline-text-3" id="text-2-2">
+<p>
+The electron data is organized in two structures. <code>qmckl_walker</code> pairs the
+number of walkers with a <code>qmckl_point_struct</code> holding the <code>elec_num *
+   walk_num</code> points of all of them.
+</p>
+
+<p>
+The <code>qmckl_electron_struct</code> gathers the two spin counts, the current and
+previous walkers (the latter for accepting or rejecting a step), the cached
+distances and potentials with the date at which each was computed, and the
+initialization mask.
+</p>
+
+<p>
+The <code>uninitialized</code> integer contains one bit set to one for each
+initialization function which has not been called. It becomes equal
+to zero after all initialization functions have been called. The
+struct is then initialized and <code>provided == true</code>.
+Some values are initialized by default, and are not concerned by
+this mechanism.
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">C</figcaption><pre class="src-c"><code><span class="kt">bool</span><span class="w"> </span><span class="nf">qmckl_electron_provided</span><span class="w"> </span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">qmckl_context</span><span class="w"> </span><span class="n">context</span><span class="p">);</span>
+</code></pre></figure>
+</div>
+</div>
+</div>
+<div id="outline-container-org66c4847" class="outline-3">
+<h3 id="org66c4847"><span class="section-number-3">2.3.</span> Initialization functions</h3>
+<div class="outline-text-3" id="text-2-3">
+<p>
+Two functions set the electron data: <code>qmckl_set_electron_num</code> for the
+counts and <code>qmckl_set_electron_coord</code> for the positions.
+<code>qmckl_context_create</code> zeroes the context, so no coordinate array exists and
+<code>walker.num</code> is 0 until the first call.
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">C</figcaption><pre class="src-c"><code><span class="n">qmckl_exit_code</span><span class="w"> </span><span class="nf">qmckl_set_electron_num</span><span class="w">      </span><span class="p">(</span><span class="n">qmckl_context</span><span class="w"> </span><span class="n">context</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">up_num</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">down_num</span><span class="p">);</span>
+<span class="n">qmckl_exit_code</span><span class="w"> </span><span class="nf">qmckl_set_electron_coord</span><span class="w">    </span><span class="p">(</span><span class="n">qmckl_context</span><span class="w"> </span><span class="n">context</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="n">transp</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">walk_num</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">double</span><span class="o">*</span><span class="w"> </span><span class="n">coord</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">size_max</span><span class="p">);</span>
+</code></pre></figure>
+</div>
+
+<p>
+Sets the number of up-spin and down-spin electrons and stores their sum in
+<code>num</code>. The number of walkers is not set here: it comes with
+<code>qmckl_set_electron_coord</code>. A second call returns <code>QMCKL_ALREADY_SET</code>;
+<code>QMCKL_INVALID_ARG_2</code> is returned when <code>up_num</code> is not positive and
+<code>QMCKL_INVALID_ARG_3</code> when <code>down_num</code> is negative.
+</p>
+
+<p>
+Sets the coordinates of all the walkers. <code>coord</code> holds <code>walk_num * elec_num</code>
+points and <code>size_max</code> must be at least <code>3 * walk_num * elec_num</code>; <code>transp</code>
+selects the layout, as for the getter.
+</p>
+
+<p>
+The function swaps <code>walker</code> and <code>walker_old</code> first, so the previous
+coordinates survive in <code>walker_old</code>. It then writes the new ones into
+<code>ctx-&gt;point</code> and copies the result back into <code>walker.point</code>. On the first
+call <code>walker_old.num</code> is 0, so the function calls itself once more to fill
+it.
+</p>
+
+<p>
+Exit codes: <code>QMCKL_INVALID_CONTEXT</code>, <code>QMCKL_INVALID_ARG_2</code> when <code>transp</code> is
+neither <code>'N'</code> nor <code>'T'</code>, <code>QMCKL_INVALID_ARG_3</code> when <code>walk_num</code> is not
+positive, <code>QMCKL_INVALID_ARG_4</code> when <code>coord</code> is NULL or <code>size_max</code> is too
+small, and <code>QMCKL_FAILURE</code> when the number of electrons has not been set.
+</p>
+
+<p>
+Changing the electron coordinates increments the date of the context, which
+invalidates the cached distances and potentials.
+</p>
+</div>
+</div>
+<div id="outline-container-orgf393f19" class="outline-3">
+<h3 id="orgf393f19"><span class="section-number-3">2.4.</span> Access functions</h3>
+<div class="outline-text-3" id="text-2-4">
+<p>
+Access functions return <code>QMCKL_SUCCESS</code> when the data has been
+successfully retrieved. It returnes <code>QMCKL_INVALID_CONTEXT</code> when
+the context is not a valid context, and <code>QMCKL_NOT_PROVIDED</code> when
+the data has not been provided. If the function returns
+successfully, the variable pointed by the pointer given in argument
+contains the requested data. Otherwise, this variable is untouched.
+</p>
+</div>
+<div id="outline-container-org93a3fb3" class="outline-4">
+<h4 id="org93a3fb3"><span class="section-number-4">2.4.1.</span> Number of electrons</h4>
+<div class="outline-text-4" id="text-2-4-1">
+<p>
+The three getters return the counts stored by <code>qmckl_set_electron_num</code>, and
+<code>QMCKL_NOT_PROVIDED</code> until it has been called.
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">C</figcaption><pre class="src-c"><code><span class="n">qmckl_exit_code</span><span class="w"> </span><span class="nf">qmckl_get_electron_num</span><span class="w">        </span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">qmckl_context</span><span class="w"> </span><span class="n">context</span><span class="p">,</span><span class="w"> </span><span class="kt">int64_t</span><span class="o">*</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">num</span><span class="p">);</span>
+<span class="n">qmckl_exit_code</span><span class="w"> </span><span class="nf">qmckl_get_electron_up_num</span><span class="w">     </span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">qmckl_context</span><span class="w"> </span><span class="n">context</span><span class="p">,</span><span class="w"> </span><span class="kt">int64_t</span><span class="o">*</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">up_num</span><span class="p">);</span>
+<span class="n">qmckl_exit_code</span><span class="w"> </span><span class="nf">qmckl_get_electron_down_num</span><span class="w">   </span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">qmckl_context</span><span class="w"> </span><span class="n">context</span><span class="p">,</span><span class="w"> </span><span class="kt">int64_t</span><span class="o">*</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">down_num</span><span class="p">);</span>
+</code></pre></figure>
+</div>
+</div>
+</div>
+<div id="outline-container-orgba3db31" class="outline-4">
+<h4 id="orgba3db31"><span class="section-number-4">2.4.2.</span> Number of walkers</h4>
+<div class="outline-text-4" id="text-2-4-2">
+<p>
+A walker is a set of electron coordinates that are arguments of
+the wave function. <code>walk_num</code> is the number of walkers.
+</p>
+
+<p>
+Before any coordinates are set <code>walker.num</code> is 0 and the getter returns it
+with <code>QMCKL_SUCCESS</code>: it does not check that the electron data is provided.
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">C</figcaption><pre class="src-c"><code><span class="n">qmckl_exit_code</span><span class="w"> </span><span class="nf">qmckl_get_electron_walk_num</span><span class="w">   </span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">qmckl_context</span><span class="w"> </span><span class="n">context</span><span class="p">,</span><span class="w"> </span><span class="kt">int64_t</span><span class="o">*</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">walk_num</span><span class="p">);</span>
+</code></pre></figure>
+</div>
+</div>
+</div>
+<div id="outline-container-org23883d9" class="outline-4">
+<h4 id="org23883d9"><span class="section-number-4">2.4.3.</span> Electron coordinates</h4>
+<div class="outline-text-4" id="text-2-4-3">
+<p>
+Returns the coordinates of all the walkers. <code>coord</code> must point to at least
+<code>3 * elec_num * walker.num</code> doubles, and <code>transp</code> selects their layout:
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">&#xa0;</th>
+<th scope="col" class="org-left">Normal</th>
+<th scope="col" class="org-left">Transposed</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">C</td>
+<td class="org-left"><code>[walker.num*elec_num][3]</code></td>
+<td class="org-left"><code>[3][walker.num*elec_num]</code></td>
+</tr>
+
+<tr>
+<td class="org-left">Fortran</td>
+<td class="org-left"><code>(3,walker.num*elec_num)</code></td>
+<td class="org-left"><code>(walker.num*elec_num, 3)</code></td>
+</tr>
+</tbody>
+</table>
+
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">C</figcaption><pre class="src-c"><code><span class="n">qmckl_exit_code</span>
+<span class="nf">qmckl_get_electron_coord</span><span class="w"> </span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">qmckl_context</span><span class="w"> </span><span class="n">context</span><span class="p">,</span>
+<span class="w">                          </span><span class="k">const</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="n">transp</span><span class="p">,</span>
+<span class="w">                          </span><span class="kt">double</span><span class="o">*</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">coord</span><span class="p">,</span>
+<span class="w">                          </span><span class="k">const</span><span class="w"> </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">size_max</span><span class="p">);</span>
+</code></pre></figure>
+</div>
+
+<p>
+<code>ctx-&gt;electron.walker.point</code> is a copy of <code>ctx-&gt;point</code> made by the setter.
+The getter checks that the two agree on the number of points and on the data
+pointer, then forwards to <code>qmckl_get_point</code>.
+</p>
+
+<p>
+Exit codes: <code>QMCKL_INVALID_CONTEXT</code>, <code>QMCKL_INVALID_ARG_2</code> when <code>transp</code> is
+neither <code>'N'</code> nor <code>'T'</code>, <code>QMCKL_INVALID_ARG_3</code> when <code>coord</code> is NULL or
+<code>size_max</code> is smaller than <code>3 * elec_num * walker.num</code>,
+<code>QMCKL_INVALID_ARG_4</code> when <code>size_max</code> is not positive, and
+<code>QMCKL_NOT_PROVIDED</code> when the electron data has not been provided.
+</p>
+</div>
+</div>
+</div>
+</div>
+<div id="outline-container-org0a74f7d" class="outline-2">
+<h2 id="org0a74f7d"><span class="section-number-2">3.</span> Computation</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+The computed data is stored in the context so that it can be reused by
+different kernels. Each array carries the context date at which it was
+computed. The point and nucleus setters call <code>qmckl_context_touch</code>, which
+copies the new context date into <code>ctx-&gt;point.date</code>, and a provider recomputes
+its array when <code>ctx-&gt;point.date</code> is more recent than the stored date.
+</p>
+</div>
+<div id="outline-container-org816b711" class="outline-3">
+<h3 id="org816b711"><span class="section-number-3">3.1.</span> Electron-electron distances</h3>
+<div class="outline-text-3" id="text-3-1">
+<p>
+<code>qmckl_get_electron_ee_distance</code> copies the distances to <code>distance</code>, which
+must hold at least <code>elec_num * elec_num * walker.num</code> doubles. Entry
+<code>[k][i][j]</code> is the distance between electrons <code>i</code> and <code>j</code> of walker <code>k</code>.
+</p>
+</div>
+<div id="outline-container-org4d10390" class="outline-4">
+<h4 id="org4d10390"><span class="section-number-4">3.1.1.</span> Get</h4>
+<div class="outline-text-4" id="text-3-1-1">
+<p>
+Exit codes: <code>QMCKL_INVALID_CONTEXT</code>, <code>QMCKL_INVALID_ARG_2</code> when <code>distance</code>
+is NULL, and <code>QMCKL_INVALID_ARG_3</code> when <code>size_max</code> is too small.
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">C</figcaption><pre class="src-c"><code><span class="n">qmckl_exit_code</span>
+<span class="nf">qmckl_get_electron_ee_distance</span><span class="p">(</span><span class="n">qmckl_context</span><span class="w"> </span><span class="n">context</span><span class="p">,</span>
+<span class="w">                               </span><span class="kt">double</span><span class="o">*</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">distance</span><span class="p">,</span>
+<span class="w">                               </span><span class="k">const</span><span class="w"> </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">size_max</span><span class="p">);</span>
+</code></pre></figure>
+</div>
+</div>
+</div>
+<div id="outline-container-org36d680b" class="outline-4">
+<h4 id="org36d680b"><span class="section-number-4">3.1.2.</span> Compute</h4>
+<div class="outline-text-4" id="text-3-1-2">
+<table id="org3098d18" border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">Variable</th>
+<th scope="col" class="org-left">Type</th>
+<th scope="col" class="org-left">In/Out</th>
+<th scope="col" class="org-left">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>context</code></td>
+<td class="org-left"><code>qmckl_context</code></td>
+<td class="org-left">in</td>
+<td class="org-left">Global state</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>elec_num</code></td>
+<td class="org-left"><code>int64_t</code></td>
+<td class="org-left">in</td>
+<td class="org-left">Number of electrons</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>walk_num</code></td>
+<td class="org-left"><code>int64_t</code></td>
+<td class="org-left">in</td>
+<td class="org-left">Number of walkers</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>coord</code></td>
+<td class="org-left"><code>double[3][walk_num][elec_num]</code></td>
+<td class="org-left">in</td>
+<td class="org-left">Electron coordinates</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>ee_distance</code></td>
+<td class="org-left"><code>double[walk_num][elec_num][elec_num]</code></td>
+<td class="org-left">out</td>
+<td class="org-left">Electron-electron distances</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+<code>coord</code> is the coordinate buffer of the context. It is declared
+<code>(elec_num,3,walk_num)</code> but only the base address of each walker,
+<code>coord(1,k,1)</code>, is used, with <code>elec_num*walk_num</code> as the stride between the
+x, y and z components; the buffer is laid out as the
+<code>[3][walk_num][elec_num]</code> of the table.
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">Fortran</figcaption><pre class="src-f90"><code><span class="k">function </span><span class="n">qmckl_compute_ee_distance</span><span class="p">(</span><span class="n">context</span><span class="p">,</span><span class="w"> </span><span class="n">elec_num</span><span class="p">,</span><span class="w"> </span><span class="n">walk_num</span><span class="p">,</span><span class="w"> </span><span class="n">coord</span><span class="p">,</span><span class="w"> </span><span class="n">ee_distance</span><span class="p">)</span><span class="w"> </span><span class="p">&amp;</span>
+<span class="w">     </span><span class="k">result</span><span class="p">(</span><span class="n">info</span><span class="p">)</span><span class="w"> </span><span class="k">bind</span><span class="p">(</span><span class="n">C</span><span class="p">)</span>
+<span class="w">  </span><span class="k">use </span><span class="n">qmckl_constants</span>
+<span class="w">  </span><span class="k">use </span><span class="n">qmckl</span><span class="p">,</span><span class="w"> </span><span class="k">only</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="n">qmckl_distance</span>
+<span class="w">  </span><span class="k">implicit none</span>
+<span class="k">  </span><span class="kt">integer</span><span class="w"> </span><span class="p">(</span><span class="n">qmckl_context</span><span class="p">)</span><span class="w"> </span><span class="p">,</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">in</span><span class="p">)</span><span class="w">  </span><span class="p">,</span><span class="w"> </span><span class="k">value</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">context</span>
+<span class="w">  </span><span class="kt">integer</span><span class="w"> </span><span class="p">(</span><span class="kt">c_int64_t</span><span class="p">)</span><span class="w"> </span><span class="p">,</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">in</span><span class="p">)</span><span class="w">  </span><span class="p">,</span><span class="w"> </span><span class="k">value</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">elec_num</span>
+<span class="w">  </span><span class="kt">integer</span><span class="w"> </span><span class="p">(</span><span class="kt">c_int64_t</span><span class="p">)</span><span class="w"> </span><span class="p">,</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">in</span><span class="p">)</span><span class="w">  </span><span class="p">,</span><span class="w"> </span><span class="k">value</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">walk_num</span>
+<span class="w">  </span><span class="kt">real</span><span class="w">    </span><span class="p">(</span><span class="kt">c_double</span><span class="w"> </span><span class="p">)</span><span class="w"> </span><span class="p">,</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">in</span><span class="p">)</span><span class="w">          </span><span class="kd">::</span><span class="w"> </span><span class="n">coord</span><span class="p">(</span><span class="n">elec_num</span><span class="p">,</span><span class="mi">3</span><span class="p">,</span><span class="n">walk_num</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">real</span><span class="w">    </span><span class="p">(</span><span class="kt">c_double</span><span class="w"> </span><span class="p">)</span><span class="w"> </span><span class="p">,</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">out</span><span class="p">)</span><span class="w">         </span><span class="kd">::</span><span class="w"> </span><span class="n">ee_distance</span><span class="p">(</span><span class="n">elec_num</span><span class="p">,</span><span class="n">elec_num</span><span class="p">,</span><span class="n">walk_num</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">integer</span><span class="w"> </span><span class="p">(</span><span class="n">qmckl_exit_code</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">info</span>
+
+<span class="w">  </span><span class="kt">integer</span><span class="o">*</span><span class="mi">8</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">k</span><span class="p">,</span><span class="w"> </span><span class="n">i</span><span class="p">,</span><span class="w"> </span><span class="n">j</span>
+<span class="w">  </span><span class="kt">double precision</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">y</span><span class="p">,</span><span class="w"> </span><span class="n">z</span>
+
+<span class="w">  </span><span class="n">info</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">QMCKL_SUCCESS</span>
+
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">context</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">QMCKL_NULL_CONTEXT</span><span class="p">)</span><span class="w"> </span><span class="k">then</span>
+<span class="k">     </span><span class="n">info</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">QMCKL_INVALID_CONTEXT</span>
+<span class="w">     </span><span class="k">return</span>
+<span class="k">  endif</span>
+
+<span class="k">  if</span><span class="w"> </span><span class="p">(</span><span class="n">elec_num</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="k">then</span>
+<span class="k">     </span><span class="n">info</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">QMCKL_INVALID_ARG_2</span>
+<span class="w">     </span><span class="k">return</span>
+<span class="k">  endif</span>
+
+<span class="k">  if</span><span class="w"> </span><span class="p">(</span><span class="n">walk_num</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="k">then</span>
+<span class="k">     </span><span class="n">info</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">QMCKL_INVALID_ARG_3</span>
+<span class="w">     </span><span class="k">return</span>
+<span class="k">  endif</span>
+
+<span class="k">  do </span><span class="n">k</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span><span class="n">walk_num</span>
+<span class="w">     </span><span class="n">info</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">qmckl_distance</span><span class="p">(</span><span class="n">context</span><span class="p">,</span><span class="w"> </span><span class="s1">'T'</span><span class="p">,</span><span class="w"> </span><span class="s1">'T'</span><span class="p">,</span><span class="w"> </span><span class="n">elec_num</span><span class="p">,</span><span class="w"> </span><span class="n">elec_num</span><span class="p">,</span><span class="w"> </span><span class="p">&amp;</span>
+<span class="w">          </span><span class="n">coord</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="n">k</span><span class="p">,</span><span class="mi">1</span><span class="p">),</span><span class="w"> </span><span class="n">elec_num</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">walk_num</span><span class="p">,</span><span class="w"> </span><span class="p">&amp;</span>
+<span class="w">          </span><span class="n">coord</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="n">k</span><span class="p">,</span><span class="mi">1</span><span class="p">),</span><span class="w"> </span><span class="n">elec_num</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">walk_num</span><span class="p">,</span><span class="w"> </span><span class="p">&amp;</span>
+<span class="w">          </span><span class="n">ee_distance</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="mi">1</span><span class="p">,</span><span class="n">k</span><span class="p">),</span><span class="w"> </span><span class="n">elec_num</span><span class="p">)</span>
+<span class="w">     </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">info</span><span class="w"> </span><span class="o">/=</span><span class="w"> </span><span class="n">QMCKL_SUCCESS</span><span class="p">)</span><span class="w"> </span><span class="k">then</span>
+<span class="k">        exit</span>
+<span class="k">     endif</span>
+<span class="k">  end do</span>
+
+<span class="k">end function </span><span class="n">qmckl_compute_ee_distance</span>
+</code></pre></figure>
+</div>
+</div>
+</div>
+</div>
+<div id="outline-container-org91c1bf6" class="outline-3">
+<h3 id="org91c1bf6"><span class="section-number-3">3.2.</span> Electron-electron potential</h3>
+<div class="outline-text-3" id="text-3-2">
+<p>
+<code>ee_potential</code> is given by
+</p>
+
+<p>
+<div class="math-display" data-tex="
+   \mathcal{V}_{ee} = \sum_{i=1}^{N_e}\sum_{j&gt;i}^{N_e}\frac{1}{r_{ij}}
+   "><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>&#x1D4B1;</mi><mrow><mi>e</mi><mi>e</mi></mrow></msub><mo>&#x0003D;</mo><msubsup><mo>&#x02211;</mo><mrow><mi>i</mi><mo>&#x0003D;</mo><mn>1</mn></mrow><mrow><msub><mi>N</mi><mi>e</mi></msub></mrow></msubsup><msubsup><mo>&#x02211;</mo><mrow><mi>j</mi><mo>&#x0003E;</mo><mi>i</mi></mrow><mrow><msub><mi>N</mi><mi>e</mi></msub></mrow></msubsup><mfrac><mrow><mn>1</mn></mrow><mrow><msub><mi>r</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub></mrow></mfrac></mrow></math></div>
+</p>
+
+<p>
+where <span class="math-inline" data-tex="\mathcal{V}_{ee}"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x1D4B1;</mi><mrow><mi>e</mi><mi>e</mi></mrow></msub></mrow></math></span> is the <code>ee</code> potential and <span class="math-inline" data-tex="r_{ij}"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>r</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub></mrow></math></span> the <code>ee</code>
+distance. Pairs closer than <code>1e-5</code> are skipped, so coalesced electrons do
+not produce an infinity.
+</p>
+
+<p>
+The destination array must hold <code>walker.num</code> doubles; <code>size_max</code> is
+its length in elements.
+</p>
+</div>
+<div id="outline-container-org38e4df5" class="outline-4">
+<h4 id="org38e4df5"><span class="section-number-4">3.2.1.</span> Get</h4>
+<div class="outline-text-4" id="text-3-2-1">
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">C</figcaption><pre class="src-c"><code><span class="n">qmckl_exit_code</span>
+<span class="nf">qmckl_get_electron_ee_potential</span><span class="p">(</span><span class="n">qmckl_context</span><span class="w"> </span><span class="n">context</span><span class="p">,</span>
+<span class="w">                                </span><span class="kt">double</span><span class="o">*</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">ee_potential</span><span class="p">,</span>
+<span class="w">                                </span><span class="k">const</span><span class="w"> </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">size_max</span><span class="p">);</span>
+</code></pre></figure>
+</div>
+</div>
+</div>
+<div id="outline-container-orga15670c" class="outline-4">
+<h4 id="orga15670c"><span class="section-number-4">3.2.2.</span> Compute</h4>
+<div class="outline-text-4" id="text-3-2-2">
+<table id="org4b59ffa" border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">Variable</th>
+<th scope="col" class="org-left">Type</th>
+<th scope="col" class="org-left">In/Out</th>
+<th scope="col" class="org-left">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>context</code></td>
+<td class="org-left"><code>qmckl_context</code></td>
+<td class="org-left">in</td>
+<td class="org-left">Global state</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>elec_num</code></td>
+<td class="org-left"><code>int64_t</code></td>
+<td class="org-left">in</td>
+<td class="org-left">Number of electrons</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>walk_num</code></td>
+<td class="org-left"><code>int64_t</code></td>
+<td class="org-left">in</td>
+<td class="org-left">Number of walkers</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>ee_distance</code></td>
+<td class="org-left"><code>double[walk_num][elec_num][elec_num]</code></td>
+<td class="org-left">in</td>
+<td class="org-left">Electron-electron distances</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>ee_potential</code></td>
+<td class="org-left"><code>double[walk_num]</code></td>
+<td class="org-left">out</td>
+<td class="org-left">Electron-electron potential</td>
+</tr>
+</tbody>
+</table>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">Fortran</figcaption><pre class="src-f90"><code><span class="k">function </span><span class="n">qmckl_compute_ee_potential</span><span class="p">(</span><span class="n">context</span><span class="p">,</span><span class="w"> </span><span class="n">elec_num</span><span class="p">,</span><span class="w"> </span><span class="n">walk_num</span><span class="p">,</span><span class="w"> </span><span class="p">&amp;</span>
+<span class="w">     </span><span class="n">ee_distance</span><span class="p">,</span><span class="w"> </span><span class="n">ee_potential</span><span class="p">)</span><span class="w"> </span><span class="k">result</span><span class="p">(</span><span class="n">info</span><span class="p">)</span><span class="w"> </span><span class="k">bind</span><span class="p">(</span><span class="n">C</span><span class="p">)</span>
+<span class="w">  </span><span class="k">use </span><span class="n">qmckl_constants</span>
+<span class="w">  </span><span class="k">implicit none</span>
+<span class="k">  </span><span class="kt">integer</span><span class="p">(</span><span class="n">qmckl_context</span><span class="p">),</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">in</span><span class="p">),</span><span class="w"> </span><span class="k">value</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">context</span>
+<span class="w">  </span><span class="kt">integer</span><span class="w"> </span><span class="p">(</span><span class="kt">c_int64_t</span><span class="p">)</span><span class="w"> </span><span class="p">,</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">in</span><span class="p">)</span><span class="w">  </span><span class="p">,</span><span class="w"> </span><span class="k">value</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">elec_num</span>
+<span class="w">  </span><span class="kt">integer</span><span class="w"> </span><span class="p">(</span><span class="kt">c_int64_t</span><span class="p">)</span><span class="w"> </span><span class="p">,</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">in</span><span class="p">)</span><span class="w">  </span><span class="p">,</span><span class="w"> </span><span class="k">value</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">walk_num</span>
+<span class="w">  </span><span class="kt">real</span><span class="w">    </span><span class="p">(</span><span class="kt">c_double</span><span class="w"> </span><span class="p">)</span><span class="w"> </span><span class="p">,</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">in</span><span class="p">)</span><span class="w">          </span><span class="kd">::</span><span class="w"> </span><span class="n">ee_distance</span><span class="p">(</span><span class="n">elec_num</span><span class="p">,</span><span class="n">elec_num</span><span class="p">,</span><span class="n">walk_num</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">real</span><span class="w">    </span><span class="p">(</span><span class="kt">c_double</span><span class="w"> </span><span class="p">)</span><span class="w"> </span><span class="p">,</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">out</span><span class="p">)</span><span class="w">         </span><span class="kd">::</span><span class="w"> </span><span class="n">ee_potential</span><span class="p">(</span><span class="n">walk_num</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">integer</span><span class="w"> </span><span class="p">(</span><span class="n">qmckl_exit_code</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">info</span>
+
+<span class="w">  </span><span class="kt">integer</span><span class="o">*</span><span class="mi">8</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">nw</span><span class="p">,</span><span class="w"> </span><span class="n">i</span><span class="p">,</span><span class="w"> </span><span class="n">j</span>
+
+<span class="w">  </span><span class="n">info</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">QMCKL_SUCCESS</span>
+
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">context</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">QMCKL_NULL_CONTEXT</span><span class="p">)</span><span class="w"> </span><span class="k">then</span>
+<span class="k">     </span><span class="n">info</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">QMCKL_INVALID_CONTEXT</span>
+<span class="w">     </span><span class="k">return</span>
+<span class="k">  endif</span>
+
+<span class="k">  if</span><span class="w"> </span><span class="p">(</span><span class="n">elec_num</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="k">then</span>
+<span class="k">     </span><span class="n">info</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">QMCKL_INVALID_ARG_2</span>
+<span class="w">     </span><span class="k">return</span>
+<span class="k">  endif</span>
+
+<span class="k">  if</span><span class="w"> </span><span class="p">(</span><span class="n">walk_num</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="k">then</span>
+<span class="k">     </span><span class="n">info</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">QMCKL_INVALID_ARG_3</span>
+<span class="w">     </span><span class="k">return</span>
+<span class="k">  endif</span>
+
+<span class="k">  </span><span class="n">ee_potential</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.0d0</span>
+<span class="w">  </span><span class="k">do </span><span class="n">nw</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span><span class="n">walk_num</span>
+<span class="w">    </span><span class="k">do </span><span class="n">j</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span><span class="n">elec_num</span>
+<span class="w">      </span><span class="k">do </span><span class="n">i</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="nb">dabs</span><span class="p">(</span><span class="n">ee_distance</span><span class="p">(</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">,</span><span class="n">nw</span><span class="p">))</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mf">1e-5</span><span class="p">)</span><span class="w"> </span><span class="k">then</span>
+<span class="k">          </span><span class="n">ee_potential</span><span class="p">(</span><span class="n">nw</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ee_potential</span><span class="p">(</span><span class="n">nw</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mf">1.0d0</span><span class="o">/</span><span class="p">(</span><span class="n">ee_distance</span><span class="p">(</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">,</span><span class="n">nw</span><span class="p">))</span>
+<span class="w">        </span><span class="k">endif</span>
+<span class="k">      end do</span>
+<span class="k">    end do</span>
+<span class="k">  end do</span>
+
+<span class="k">end function </span><span class="n">qmckl_compute_ee_potential</span>
+</code></pre></figure>
+</div>
+</div>
+</div>
+</div>
+<div id="outline-container-orgd3a19a9" class="outline-3">
+<h3 id="orgd3a19a9"><span class="section-number-3">3.3.</span> Electron-nucleus distances</h3>
+<div class="outline-text-3" id="text-3-3">
+<p>
+<code>qmckl_get_electron_en_distance</code> copies the distances to <code>distance</code>, which
+must hold at least <code>elec_num * walk_num * nucl_num</code> doubles. Entry
+<code>[k][i][A]</code> is the distance between electron <code>i</code> of walker <code>k</code> and nucleus
+<code>A</code>. The nuclear data must have been provided.
+</p>
+</div>
+<div id="outline-container-org0d5dd7c" class="outline-4">
+<h4 id="org0d5dd7c"><span class="section-number-4">3.3.1.</span> Get</h4>
+<div class="outline-text-4" id="text-3-3-1">
+<p>
+Exit codes: <code>QMCKL_INVALID_CONTEXT</code>, <code>QMCKL_INVALID_ARG_2</code> when <code>distance</code>
+is NULL, <code>QMCKL_INVALID_ARG_3</code> when <code>size_max</code> is too small, and
+<code>QMCKL_NOT_PROVIDED</code> when the nuclear data is missing.
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">C</figcaption><pre class="src-c"><code><span class="n">qmckl_exit_code</span>
+<span class="nf">qmckl_get_electron_en_distance</span><span class="p">(</span><span class="n">qmckl_context</span><span class="w"> </span><span class="n">context</span><span class="p">,</span>
+<span class="w">                               </span><span class="kt">double</span><span class="o">*</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">distance</span><span class="p">,</span>
+<span class="w">                               </span><span class="k">const</span><span class="w"> </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">size_max</span><span class="p">);</span>
+</code></pre></figure>
+</div>
+</div>
+</div>
+<div id="outline-container-org69292ba" class="outline-4">
+<h4 id="org69292ba"><span class="section-number-4">3.3.2.</span> Compute</h4>
+<div class="outline-text-4" id="text-3-3-2">
+<table id="org0a9ab18" border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">Variable</th>
+<th scope="col" class="org-left">Type</th>
+<th scope="col" class="org-left">In/Out</th>
+<th scope="col" class="org-left">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>context</code></td>
+<td class="org-left"><code>qmckl_context</code></td>
+<td class="org-left">in</td>
+<td class="org-left">Global state</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>point_num</code></td>
+<td class="org-left"><code>int64_t</code></td>
+<td class="org-left">in</td>
+<td class="org-left">Number of points</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>nucl_num</code></td>
+<td class="org-left"><code>int64_t</code></td>
+<td class="org-left">in</td>
+<td class="org-left">Number of nuclei</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>elec_coord</code></td>
+<td class="org-left"><code>double[3][point_num]</code></td>
+<td class="org-left">in</td>
+<td class="org-left">Electron coordinates</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>nucl_coord</code></td>
+<td class="org-left"><code>double[3][nucl_num]</code></td>
+<td class="org-left">in</td>
+<td class="org-left">Nuclear coordinates</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>en_distance</code></td>
+<td class="org-left"><code>double[point_num][nucl_num]</code></td>
+<td class="org-left">out</td>
+<td class="org-left">Electron-nucleus distances</td>
+</tr>
+</tbody>
+</table>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">Fortran</figcaption><pre class="src-f90"><code><span class="k">function </span><span class="n">qmckl_compute_en_distance</span><span class="p">(</span><span class="n">context</span><span class="p">,</span><span class="w"> </span><span class="p">&amp;</span>
+<span class="w">     </span><span class="n">point_num</span><span class="p">,</span><span class="w"> </span><span class="n">nucl_num</span><span class="p">,</span><span class="w"> </span><span class="n">elec_coord</span><span class="p">,</span><span class="w"> </span><span class="n">nucl_coord</span><span class="p">,</span><span class="w"> </span><span class="n">en_distance</span><span class="p">)</span><span class="w"> </span><span class="p">&amp;</span>
+<span class="w">     </span><span class="k">result</span><span class="p">(</span><span class="n">info</span><span class="p">)</span><span class="w"> </span><span class="k">bind</span><span class="p">(</span><span class="n">C</span><span class="p">)</span>
+<span class="w">  </span><span class="k">use </span><span class="n">qmckl_constants</span>
+<span class="w">  </span><span class="k">use </span><span class="n">qmckl</span><span class="p">,</span><span class="w"> </span><span class="k">only</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="n">qmckl_distance</span>
+<span class="w">  </span><span class="k">implicit none</span>
+<span class="k">  </span><span class="kt">integer</span><span class="w"> </span><span class="p">(</span><span class="n">qmckl_context</span><span class="p">),</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">in</span><span class="p">),</span><span class="w"> </span><span class="k">value</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">context</span>
+<span class="w">  </span><span class="kt">integer</span><span class="w"> </span><span class="p">(</span><span class="kt">c_int64_t</span><span class="p">)</span><span class="w">    </span><span class="p">,</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">in</span><span class="p">),</span><span class="w"> </span><span class="k">value</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">point_num</span>
+<span class="w">  </span><span class="kt">integer</span><span class="w"> </span><span class="p">(</span><span class="kt">c_int64_t</span><span class="p">)</span><span class="w">    </span><span class="p">,</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">in</span><span class="p">),</span><span class="w"> </span><span class="k">value</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">nucl_num</span>
+<span class="w">  </span><span class="kt">real</span><span class="w">    </span><span class="p">(</span><span class="kt">c_double</span><span class="w"> </span><span class="p">)</span><span class="w">    </span><span class="p">,</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">in</span><span class="p">)</span><span class="w">        </span><span class="kd">::</span><span class="w"> </span><span class="n">elec_coord</span><span class="p">(</span><span class="n">point_num</span><span class="p">,</span><span class="mi">3</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">real</span><span class="w">    </span><span class="p">(</span><span class="kt">c_double</span><span class="w"> </span><span class="p">)</span><span class="w">    </span><span class="p">,</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">in</span><span class="p">)</span><span class="w">        </span><span class="kd">::</span><span class="w"> </span><span class="n">nucl_coord</span><span class="p">(</span><span class="n">nucl_num</span><span class="p">,</span><span class="mi">3</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">real</span><span class="w">    </span><span class="p">(</span><span class="kt">c_double</span><span class="w"> </span><span class="p">)</span><span class="w">    </span><span class="p">,</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">out</span><span class="p">)</span><span class="w">       </span><span class="kd">::</span><span class="w"> </span><span class="n">en_distance</span><span class="p">(</span><span class="n">nucl_num</span><span class="p">,</span><span class="n">point_num</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">integer</span><span class="p">(</span><span class="n">qmckl_exit_code</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">info</span>
+
+<span class="w">  </span><span class="n">info</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">QMCKL_SUCCESS</span>
+
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">context</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">QMCKL_NULL_CONTEXT</span><span class="p">)</span><span class="w"> </span><span class="k">then</span>
+<span class="k">     </span><span class="n">info</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">QMCKL_INVALID_CONTEXT</span>
+<span class="w">     </span><span class="k">return</span>
+<span class="k">  endif</span>
+
+<span class="k">  if</span><span class="w"> </span><span class="p">(</span><span class="n">point_num</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="k">then</span>
+<span class="k">     </span><span class="n">info</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">QMCKL_INVALID_ARG_2</span>
+<span class="w">     </span><span class="k">return</span>
+<span class="k">  endif</span>
+
+<span class="k">  if</span><span class="w"> </span><span class="p">(</span><span class="n">nucl_num</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="k">then</span>
+<span class="k">     </span><span class="n">info</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">QMCKL_INVALID_ARG_3</span>
+<span class="w">     </span><span class="k">return</span>
+<span class="k">  endif</span>
+
+<span class="k">  </span><span class="n">info</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">qmckl_distance</span><span class="p">(</span><span class="n">context</span><span class="p">,</span><span class="w"> </span><span class="s1">'T'</span><span class="p">,</span><span class="w"> </span><span class="s1">'T'</span><span class="p">,</span><span class="w"> </span><span class="n">nucl_num</span><span class="p">,</span><span class="w"> </span><span class="n">point_num</span><span class="p">,</span><span class="w"> </span><span class="p">&amp;</span>
+<span class="w">          </span><span class="n">nucl_coord</span><span class="p">,</span><span class="w"> </span><span class="n">nucl_num</span><span class="p">,</span><span class="w"> </span><span class="p">&amp;</span>
+<span class="w">          </span><span class="n">elec_coord</span><span class="p">,</span><span class="w"> </span><span class="n">point_num</span><span class="p">,</span><span class="w"> </span><span class="p">&amp;</span>
+<span class="w">          </span><span class="n">en_distance</span><span class="p">,</span><span class="w"> </span><span class="n">nucl_num</span><span class="p">)</span>
+
+<span class="k">end function </span><span class="n">qmckl_compute_en_distance</span>
+</code></pre></figure>
+</div>
+</div>
+</div>
+</div>
+<div id="outline-container-orgd5aceb5" class="outline-3">
+<h3 id="orgd5aceb5"><span class="section-number-3">3.4.</span> Electron-nucleus potential</h3>
+<div class="outline-text-3" id="text-3-4">
+<p>
+<code>en_potential</code> computes the <code>en</code> potential energy
+</p>
+
+<p>
+<div class="math-display" data-tex="
+   \mathcal{V}_{en} = -\sum_{i=1}^{N_e}\sum_{A=1}^{N_n}\frac{Z_A}{r_{iA}}
+   "><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>&#x1D4B1;</mi><mrow><mi>e</mi><mi>n</mi></mrow></msub><mo>&#x0003D;</mo><mo>&#x02212;</mo><msubsup><mo>&#x02211;</mo><mrow><mi>i</mi><mo>&#x0003D;</mo><mn>1</mn></mrow><mrow><msub><mi>N</mi><mi>e</mi></msub></mrow></msubsup><msubsup><mo>&#x02211;</mo><mrow><mi>A</mi><mo>&#x0003D;</mo><mn>1</mn></mrow><mrow><msub><mi>N</mi><mi>n</mi></msub></mrow></msubsup><mfrac><mrow><msub><mi>Z</mi><mi>A</mi></msub></mrow><mrow><msub><mi>r</mi><mrow><mi>i</mi><mi>A</mi></mrow></msub></mrow></mfrac></mrow></math></div>
+</p>
+
+<p>
+where <span class="math-inline" data-tex="\mathcal{V}_{en}"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x1D4B1;</mi><mrow><mi>e</mi><mi>n</mi></mrow></msub></mrow></math></span> is the <code>en</code> potential, <span class="math-inline" data-tex="r_{iA}"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>r</mi><mrow><mi>i</mi><mi>A</mi></mrow></msub></mrow></math></span> the <code>en</code>
+distance and <span class="math-inline" data-tex="Z_A"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>Z</mi><mi>A</mi></msub></mrow></math></span> is the nuclear charge. Pairs closer than <code>1.d-6</code> are
+skipped, as for the electron-electron potential.
+</p>
+
+<p>
+The destination array must hold <code>walker.num</code> doubles; <code>size_max</code> is
+its length in elements.
+</p>
+</div>
+<div id="outline-container-org90188b4" class="outline-4">
+<h4 id="org90188b4"><span class="section-number-4">3.4.1.</span> Get</h4>
+<div class="outline-text-4" id="text-3-4-1">
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">C</figcaption><pre class="src-c"><code><span class="n">qmckl_exit_code</span>
+<span class="nf">qmckl_get_electron_en_potential</span><span class="p">(</span><span class="n">qmckl_context</span><span class="w"> </span><span class="n">context</span><span class="p">,</span>
+<span class="w">                                </span><span class="kt">double</span><span class="o">*</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">en_potential</span><span class="p">,</span>
+<span class="w">                                </span><span class="k">const</span><span class="w"> </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">size_max</span><span class="p">);</span>
+</code></pre></figure>
+</div>
+</div>
+</div>
+<div id="outline-container-orgf9b0e58" class="outline-4">
+<h4 id="orgf9b0e58"><span class="section-number-4">3.4.2.</span> Compute</h4>
+<div class="outline-text-4" id="text-3-4-2">
+<table id="org163851c" border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">Variable</th>
+<th scope="col" class="org-left">Type</th>
+<th scope="col" class="org-left">In/Out</th>
+<th scope="col" class="org-left">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>context</code></td>
+<td class="org-left"><code>qmckl_context</code></td>
+<td class="org-left">in</td>
+<td class="org-left">Global state</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>elec_num</code></td>
+<td class="org-left"><code>int64_t</code></td>
+<td class="org-left">in</td>
+<td class="org-left">Number of electrons</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>nucl_num</code></td>
+<td class="org-left"><code>int64_t</code></td>
+<td class="org-left">in</td>
+<td class="org-left">Number of nuclei</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>walk_num</code></td>
+<td class="org-left"><code>int64_t</code></td>
+<td class="org-left">in</td>
+<td class="org-left">Number of walkers</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>charge</code></td>
+<td class="org-left"><code>double[nucl_num]</code></td>
+<td class="org-left">in</td>
+<td class="org-left">charge of nucleus</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>en_distance</code></td>
+<td class="org-left"><code>double[walk_num][elec_num][nucl_num]</code></td>
+<td class="org-left">in</td>
+<td class="org-left">Electron-nucleus distances</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>en_potential</code></td>
+<td class="org-left"><code>double[walk_num]</code></td>
+<td class="org-left">out</td>
+<td class="org-left">Electron-nucleus potential</td>
+</tr>
+</tbody>
+</table>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">Fortran</figcaption><pre class="src-f90"><code><span class="k">function </span><span class="n">qmckl_compute_en_potential</span><span class="p">(</span><span class="n">context</span><span class="p">,</span><span class="w"> </span><span class="n">elec_num</span><span class="p">,</span><span class="w"> </span><span class="n">nucl_num</span><span class="p">,</span><span class="w"> </span><span class="n">walk_num</span><span class="p">,</span><span class="w"> </span><span class="p">&amp;</span>
+<span class="w">     </span><span class="n">charge</span><span class="p">,</span><span class="w"> </span><span class="n">en_distance</span><span class="p">,</span><span class="w"> </span><span class="n">en_potential</span><span class="p">)</span><span class="w"> </span><span class="p">&amp;</span>
+<span class="w">     </span><span class="k">result</span><span class="p">(</span><span class="n">info</span><span class="p">)</span><span class="w"> </span><span class="k">bind</span><span class="p">(</span><span class="n">C</span><span class="p">)</span>
+<span class="w">  </span><span class="k">use </span><span class="n">qmckl</span>
+<span class="w">  </span><span class="k">implicit none</span>
+<span class="k">  </span><span class="kt">integer</span><span class="w"> </span><span class="p">(</span><span class="n">qmckl_context</span><span class="p">),</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">in</span><span class="p">),</span><span class="w"> </span><span class="k">value</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">context</span>
+<span class="w">  </span><span class="kt">integer</span><span class="w"> </span><span class="p">(</span><span class="kt">c_int64_t</span><span class="p">)</span><span class="w"> </span><span class="p">,</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">in</span><span class="p">)</span><span class="w">   </span><span class="p">,</span><span class="w"> </span><span class="k">value</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">elec_num</span>
+<span class="w">  </span><span class="kt">integer</span><span class="w"> </span><span class="p">(</span><span class="kt">c_int64_t</span><span class="p">)</span><span class="w"> </span><span class="p">,</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">in</span><span class="p">)</span><span class="w">   </span><span class="p">,</span><span class="w"> </span><span class="k">value</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">nucl_num</span>
+<span class="w">  </span><span class="kt">integer</span><span class="w"> </span><span class="p">(</span><span class="kt">c_int64_t</span><span class="p">)</span><span class="w"> </span><span class="p">,</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">in</span><span class="p">)</span><span class="w">   </span><span class="p">,</span><span class="w"> </span><span class="k">value</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">walk_num</span>
+<span class="w">  </span><span class="kt">real</span><span class="w">    </span><span class="p">(</span><span class="kt">c_double</span><span class="w"> </span><span class="p">)</span><span class="w"> </span><span class="p">,</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">in</span><span class="p">)</span><span class="w">           </span><span class="kd">::</span><span class="w"> </span><span class="n">charge</span><span class="p">(</span><span class="n">nucl_num</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">real</span><span class="w">    </span><span class="p">(</span><span class="kt">c_double</span><span class="w"> </span><span class="p">)</span><span class="w"> </span><span class="p">,</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">in</span><span class="p">)</span><span class="w">           </span><span class="kd">::</span><span class="w"> </span><span class="n">en_distance</span><span class="p">(</span><span class="n">nucl_num</span><span class="p">,</span><span class="n">elec_num</span><span class="p">,</span><span class="n">walk_num</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">real</span><span class="w">    </span><span class="p">(</span><span class="kt">c_double</span><span class="w"> </span><span class="p">)</span><span class="w"> </span><span class="p">,</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">out</span><span class="p">)</span><span class="w">          </span><span class="kd">::</span><span class="w"> </span><span class="n">en_potential</span><span class="p">(</span><span class="n">walk_num</span><span class="p">)</span>
+
+<span class="w">  </span><span class="kt">integer</span><span class="p">(</span><span class="n">qmckl_exit_code</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">info</span>
+<span class="w">  </span><span class="kt">integer</span><span class="o">*</span><span class="mi">8</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">nw</span><span class="p">,</span><span class="w"> </span><span class="n">i</span><span class="p">,</span><span class="w"> </span><span class="n">j</span>
+
+<span class="w">  </span><span class="n">info</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">QMCKL_SUCCESS</span>
+
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">context</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">QMCKL_NULL_CONTEXT</span><span class="p">)</span><span class="w"> </span><span class="k">then</span>
+<span class="k">     </span><span class="n">info</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">QMCKL_INVALID_CONTEXT</span>
+<span class="w">     </span><span class="k">return</span>
+<span class="k">  endif</span>
+
+<span class="k">  if</span><span class="w"> </span><span class="p">(</span><span class="n">elec_num</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="k">then</span>
+<span class="k">     </span><span class="n">info</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">QMCKL_INVALID_ARG_2</span>
+<span class="w">     </span><span class="k">return</span>
+<span class="k">  endif</span>
+
+<span class="k">  if</span><span class="w"> </span><span class="p">(</span><span class="n">walk_num</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="k">then</span>
+<span class="k">     </span><span class="n">info</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">QMCKL_INVALID_ARG_3</span>
+<span class="w">     </span><span class="k">return</span>
+<span class="k">  endif</span>
+
+<span class="k">  </span><span class="n">en_potential</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.0d0</span>
+<span class="w">  </span><span class="k">do </span><span class="n">nw</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span><span class="n">walk_num</span>
+<span class="w">    </span><span class="k">do </span><span class="n">i</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span><span class="n">elec_num</span>
+<span class="w">      </span><span class="k">do </span><span class="n">j</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span><span class="n">nucl_num</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="nb">dabs</span><span class="p">(</span><span class="n">en_distance</span><span class="p">(</span><span class="n">j</span><span class="p">,</span><span class="n">i</span><span class="p">,</span><span class="n">nw</span><span class="p">))</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mf">1.d-6</span><span class="p">)</span><span class="w"> </span><span class="k">then</span>
+<span class="k">          </span><span class="n">en_potential</span><span class="p">(</span><span class="n">nw</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">en_potential</span><span class="p">(</span><span class="n">nw</span><span class="p">)</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">charge</span><span class="p">(</span><span class="n">j</span><span class="p">)</span><span class="o">/</span><span class="p">(</span><span class="n">en_distance</span><span class="p">(</span><span class="n">j</span><span class="p">,</span><span class="n">i</span><span class="p">,</span><span class="n">nw</span><span class="p">))</span>
+<span class="w">        </span><span class="k">endif</span>
+<span class="k">      end do</span>
+<span class="k">    end do</span>
+<span class="k">  end do</span>
+
+<span class="k">end function </span><span class="n">qmckl_compute_en_potential</span>
+</code></pre></figure>
+</div>
+
+
+<div class="org-src-container">
+
+</div>
+</div>
+</div>
+</div>
+</div>
+
+</main>
+</div>
+</body>
+</html>

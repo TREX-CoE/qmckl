@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nucleus — QMCkl</title>
+<meta name="description" content="The nucleus module holds the geometry of the molecule: how many nuclei there are, their charges and their coordinates. From these it computes the…">
+<meta name="author" content="TREX CoE">
+<link rel="stylesheet" href="../css/theme.css">
+</head>
+<body>
+<div class="layout">
+<aside class="sidebar">
+  <p class="side-brand"><a href="../index.html">QMCkl</a></p>
+  <nav class="side-nav" aria-label="Documentation">
+    <ul><li><a href="qmckl.html">Introduction</a></li><li><a href="qmckl_context.html">Context</a></li><li><a href="qmckl_error.html">Error handling</a></li><li><a href="qmckl_blas.html">BLAS functions</a></li><li><a href="qmckl_memory.html">Memory management</a></li><li><a href="qmckl_numprec.html">Numerical precision</a></li><li><a href="qmckl_point.html">Point</a></li><li><a href="qmckl_nucleus.html" aria-current="page">Nucleus</a></li><li><a href="qmckl_electron.html">Electrons</a></li><li><a href="qmckl_distance.html">Inter-particle distances</a></li><li><a href="qmckl_ao.html">Atomic Orbitals</a></li><li><a href="qmckl_mo.html">Molecular Orbitals</a></li><li><a href="qmckl_jastrow_champ.html">CHAMP Jastrow Factor</a></li><li><a href="qmckl_jastrow_champ_single.html">CHAMP Jastrow Factor Single</a></li><li><a href="qmckl_forces.html">Forces</a></li><li><a href="qmckl_trexio.html">TREXIO I/O library</a></li><li><a href="qmckl_tests.html">Data for Tests</a></li><li><a href="qmckl_verificarlo.html">Verificarlo CI</a></li><li><a href="qmckl_examples.html">Code examples</a></li></ul>
+  </nav>
+  <nav class="side-toc" aria-label="On this page">
+<h2 class="side-toc-title">On this page</h2>
+
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgd9c28d3">1. Introduction</a></li>
+<li><a href="#org0046925">2. Context</a>
+<ul>
+<li><a href="#org1de5dc0">2.1. Data structure</a></li>
+<li><a href="#orgba66756">2.2. Initialization tracking</a></li>
+<li><a href="#org2442e04">2.3. Access functions</a></li>
+<li><a href="#org55da720">2.4. Initialization functions</a></li>
+</ul>
+</li>
+<li><a href="#orgfb179d7">3. Computation</a>
+<ul>
+<li><a href="#org42bc7f7">3.1. Nucleus-nucleus distances</a>
+<ul>
+<li><a href="#org27174a7">3.1.1. Get</a></li>
+<li><a href="#orge069181">3.1.2. Compute</a></li>
+</ul>
+</li>
+<li><a href="#org71f0d11">3.2. Nuclear repulsion energy</a>
+<ul>
+<li><a href="#orgccda9fa">3.2.1. Get</a></li>
+<li><a href="#orgc857e67">3.2.2. Compute</a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</div>
+
+  </nav>
+</aside>
+
+<main id="content">
+<header class="doc-head"><h1 class="title">Nucleus</h1></header>
+
+<div id="outline-container-orgd9c28d3" class="outline-2">
+<h2 id="orgd9c28d3"><span class="section-number-2">1.</span> Introduction</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+The nucleus module holds the geometry of the molecule: how many nuclei there
+are, their charges and their coordinates. From these it computes the
+inter-nuclear distance matrix and the nuclear repulsion energy
+</p>
+
+<p>
+<div class="math-display" data-tex="
+  E_{nn} = \sum_{i&lt;j} \frac{Z_i Z_j}{r_{ij}},
+  "><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>E</mi><mrow><mi>n</mi><mi>n</mi></mrow></msub><mo>&#x0003D;</mo><msub><mo>&#x02211;</mo><mrow><mi>i</mi><mo>&#x0003C;</mo><mi>j</mi></mrow></msub><mfrac><mrow><msub><mi>Z</mi><mi>i</mi></msub><msub><mi>Z</mi><mi>j</mi></msub></mrow><mrow><msub><mi>r</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub></mrow></mfrac><mo>&#x0002C;</mo></mrow></math></div>
+</p>
+
+<p>
+and keeps both in the context. The other modules read the geometry from the
+same fields: the atomic basis, the electron-nucleus distances and the force
+kernels take the coordinates, and the electron-nucleus potential and the
+molecular-orbital cusp take the charges.
+</p>
+
+<p>
+The module does not cache its two derived quantities. Both getters recompute
+from the current inputs on every call and stamp the current context date;
+what a coordinate change propagates to the other modules is that context
+date, which <code>qmckl_set_nucleus_coord</code> increments.
+</p>
+</div>
+</div>
+<div id="outline-container-org0046925" class="outline-2">
+<h2 id="org0046925"><span class="section-number-2">2.</span> Context</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+The nucleus module stores the input data (nuclear positions and charges) and
+the two quantities derived from it (inter-nuclear distances and repulsion
+energy) in the context. The input data is what the other modules read; the
+derived quantities are only read back here.
+</p>
+
+<p>
+The input data:
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<tbody>
+<tr>
+<th scope="row"><code>uninitialized</code></td>
+<td class="org-left"><code>int32_t</code></td>
+<td class="org-left">Bits of the input data not set yet</td>
+</tr>
+
+<tr>
+<th scope="row"><code>num</code></td>
+<td class="org-left"><code>int64_t</code></td>
+<td class="org-left">Total number of nuclei</td>
+</tr>
+
+<tr>
+<th scope="row"><code>provided</code></td>
+<td class="org-left"><code>bool</code></td>
+<td class="org-left">True once all three inputs are set</td>
+</tr>
+
+<tr>
+<th scope="row"><code>charge</code></td>
+<td class="org-left"><code>qmckl_vector</code></td>
+<td class="org-left">Nuclear charges</td>
+</tr>
+
+<tr>
+<th scope="row"><code>coord</code></td>
+<td class="org-left"><code>qmckl_matrix</code></td>
+<td class="org-left">Nuclear coordinates, one row per nucleus</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Computed data:
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<tbody>
+<tr>
+<th scope="row"><code>nn_distance</code></td>
+<td class="org-left"><code>qmckl_matrix</code></td>
+<td class="org-left">Nucleus-nucleus distances</td>
+</tr>
+
+<tr>
+<th scope="row"><code>nn_distance_date</code></td>
+<td class="org-left"><code>int64_t</code></td>
+<td class="org-left">Date of the last computation of the distances</td>
+</tr>
+
+<tr>
+<th scope="row"><code>repulsion</code></td>
+<td class="org-left"><code>double</code></td>
+<td class="org-left">Nuclear repulsion energy</td>
+</tr>
+
+<tr>
+<th scope="row"><code>repulsion_date</code></td>
+<td class="org-left"><code>int64_t</code></td>
+<td class="org-left">Date of the last computation of the repulsion</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div id="outline-container-org1de5dc0" class="outline-3">
+<h3 id="org1de5dc0"><span class="section-number-3">2.1.</span> Data structure</h3>
+<div class="outline-text-3" id="text-2-1">
+<p>
+The nucleus data structure consolidates all nuclear information in a single
+C structure. The two computed quantities carry the value of the context date
+at the time they were last computed, but no function reads those two fields
+back: the providers recompute unconditionally. <code>coord_date</code> is declared
+beside them and is never written; the date of the coordinates is the context
+date, which <code>qmckl_context_touch</code> moves.
+</p>
+
+<p>
+The charge, coord and nn<sub>distance</sub> fields own their memory, allocated with
+<code>qmckl_malloc</code>, and are released with the context.
+</p>
+</div>
+</div>
+<div id="outline-container-orgba66756" class="outline-3">
+<h3 id="orgba66756"><span class="section-number-3">2.2.</span> Initialization tracking</h3>
+<div class="outline-text-3" id="text-2-2">
+<p>
+The <code>uninitialized</code> integer serves as a bit field where each bit represents
+whether a specific initialization function has been called. It is set to 7
+when the context is created, by <code>qmckl_init_nucleus</code>, and each setter clears
+its bit: bit 0 by <code>qmckl_set_nucleus_num</code>, bit 1 by
+<code>qmckl_set_nucleus_charge</code> and bit 2 by <code>qmckl_set_nucleus_coord</code>. When all
+three have been called, <code>uninitialized</code> is zero and <code>provided</code> is set to
+<code>true</code>.
+</p>
+
+<p>
+This mechanism ensures that the nucleus data is complete before it is used in
+calculations. The default-values block of <code>qmckl_init_nucleus</code> is empty, so
+every input is tracked by a bit.
+</p>
+</div>
+</div>
+<div id="outline-container-org2442e04" class="outline-3">
+<h3 id="org2442e04"><span class="section-number-3">2.3.</span> Access functions</h3>
+<div class="outline-text-3" id="text-2-3">
+<p>
+Access functions return <code>QMCKL_SUCCESS</code> when the data has been retrieved
+and <code>QMCKL_INVALID_CONTEXT</code> when the context is not a valid one. Reading an
+input that has not been set returns <code>QMCKL_NOT_PROVIDED</code>.
+</p>
+
+<p>
+Returns the number of nuclei stored in the context. When the input has not
+been set, the function writes 0 into <code>num</code> before returning
+<code>QMCKL_NOT_PROVIDED</code>.
+</p>
+
+<p>
+Copies the nuclear charges into <code>charge</code>, which must hold at least <code>num</code>
+doubles; a smaller <code>size_max</code> returns <code>QMCKL_INVALID_ARG_3</code>. A null
+<code>charge</code> returns <code>QMCKL_INVALID_ARG_2</code>.
+</p>
+
+<p>
+Copies the coordinates into <code>coord</code>, which must hold <code>3 * num</code> doubles; a
+smaller <code>size_max</code> fails with <code>QMCKL_INVALID_ARG_4</code> and a null <code>coord</code> with
+<code>QMCKL_INVALID_ARG_3</code>. With <code>transp == 'N'</code> the array receives one
+coordinate triplet per nucleus, in the order the nuclei were given; with
+<code>transp == 'T'</code> it receives all the <span class="math-inline" data-tex="x"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>x</mi></mrow></math></span>, then all the <span class="math-inline" data-tex="y"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>y</mi></mrow></math></span>, then all the
+<span class="math-inline" data-tex="z"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>z</mi></mrow></math></span>. Any other value of <code>transp</code> returns <code>QMCKL_INVALID_ARG_2</code>.
+</p>
+
+<p>
+Returns <code>true</code> once the three inputs have been set, and <code>false</code> otherwise.
+Unlike the getters it does not record an error, and it returns <code>false</code> for
+an invalid context.
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">C</figcaption><pre class="src-c"><code><span class="kt">bool</span><span class="w"> </span><span class="nf">qmckl_nucleus_provided</span><span class="w"> </span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">qmckl_context</span><span class="w"> </span><span class="n">context</span><span class="p">);</span>
+</code></pre></figure>
+</div>
+</div>
+</div>
+<div id="outline-container-org55da720" class="outline-3">
+<h3 id="org55da720"><span class="section-number-3">2.4.</span> Initialization functions</h3>
+<div class="outline-text-3" id="text-2-4">
+<p>
+The number of nuclei must be set first: the charge and coordinate setters
+read it, and return <code>QMCKL_NOT_PROVIDED</code> without it. The number and charge
+setters accept a single call each and return <code>QMCKL_ALREADY_SET</code> on a second
+one; the coordinate setter can be called again whenever the geometry
+changes.
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">C</figcaption><pre class="src-c"><code><span class="n">qmckl_exit_code</span>
+<span class="nf">qmckl_set_nucleus_num</span><span class="p">(</span><span class="n">qmckl_context</span><span class="w"> </span><span class="n">context</span><span class="p">,</span>
+<span class="w">                      </span><span class="k">const</span><span class="w"> </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">num</span><span class="p">);</span>
+</code></pre></figure>
+</div>
+
+<p>
+Sets the number of nuclei. A non-positive value returns
+<code>QMCKL_INVALID_ARG_2</code>.
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">C</figcaption><pre class="src-c"><code><span class="n">qmckl_exit_code</span>
+<span class="nf">qmckl_set_nucleus_charge</span><span class="p">(</span><span class="n">qmckl_context</span><span class="w"> </span><span class="n">context</span><span class="p">,</span>
+<span class="w">                         </span><span class="k">const</span><span class="w"> </span><span class="kt">double</span><span class="o">*</span><span class="w"> </span><span class="n">charge</span><span class="p">,</span>
+<span class="w">                         </span><span class="k">const</span><span class="w"> </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">size_max</span><span class="p">);</span>
+</code></pre></figure>
+</div>
+
+<p>
+Sets the charges of the <code>num</code> nuclei. A null <code>charge</code> returns
+<code>QMCKL_INVALID_ARG_2</code>; a buffer smaller than <code>num</code> returns
+<code>QMCKL_INVALID_ARG_3</code>.
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">C</figcaption><pre class="src-c"><code><span class="n">qmckl_exit_code</span>
+<span class="nf">qmckl_set_nucleus_coord</span><span class="p">(</span><span class="n">qmckl_context</span><span class="w"> </span><span class="n">context</span><span class="p">,</span>
+<span class="w">                        </span><span class="k">const</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="n">transp</span><span class="p">,</span>
+<span class="w">                        </span><span class="k">const</span><span class="w"> </span><span class="kt">double</span><span class="o">*</span><span class="w"> </span><span class="n">coord</span><span class="p">,</span>
+<span class="w">                        </span><span class="k">const</span><span class="w"> </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">size_max</span><span class="p">);</span>
+</code></pre></figure>
+</div>
+
+<p>
+Sets the nuclear coordinates of all the atoms. The coordinates are given
+in atomic units. This function can be called several times, for example
+during a geometry optimization: each call bumps the context date, which is
+what the modules that cache position-dependent results compare against.
+</p>
+
+<p>
+With <code>transp == 'N'</code> the array holds one <span class="math-inline" data-tex="(x,y,z)"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mo stretchy="false">&#x00028;</mo><mi>x</mi><mo>&#x0002C;</mo><mi>y</mi><mo>&#x0002C;</mo><mi>z</mi><mo stretchy="false">&#x00029;</mo></mrow></math></span> triplet per atom in
+row-major order. With <code>transp == 'T'</code> it holds the same data in column-major
+(Fortran) order: all the <span class="math-inline" data-tex="x"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>x</mi></mrow></math></span> coordinates, then all the <span class="math-inline" data-tex="y"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>y</mi></mrow></math></span>, then all the
+<span class="math-inline" data-tex="z"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>z</mi></mrow></math></span>.
+</p>
+
+<p>
+The new matrix is built before the stored one is released, so a call
+rejected for a null pointer, a buffer that is too small or an unknown
+<code>transp</code> leaves the previous coordinates in place.
+</p>
+</div>
+</div>
+</div>
+<div id="outline-container-orgfb179d7" class="outline-2">
+<h2 id="orgfb179d7"><span class="section-number-2">3.</span> Computation</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+The two computed quantities live in the context so that a caller can read
+them without rebuilding them, but this module does not track their validity:
+each getter below calls its provider, which recomputes from the current
+coordinates and charges and stamps the current context date. Reading the same
+quantity twice computes it twice.
+</p>
+
+<p>
+Both providers first require <code>provided</code>, and return <code>QMCKL_NOT_PROVIDED</code> when
+the three inputs are not all set.
+</p>
+</div>
+<div id="outline-container-org42bc7f7" class="outline-3">
+<h3 id="org42bc7f7"><span class="section-number-3">3.1.</span> Nucleus-nucleus distances</h3>
+<div class="outline-text-3" id="text-3-1">
+</div>
+<div id="outline-container-org27174a7" class="outline-4">
+<h4 id="org27174a7"><span class="section-number-4">3.1.1.</span> Get</h4>
+<div class="outline-text-4" id="text-3-1-1">
+<p>
+<code>qmckl_get_nucleus_nn_distance</code> copies the <code>num</code> × <code>num</code> matrix of
+inter-nuclear distances into <code>distance</code>, which must hold at least
+<code>num * num</code> doubles; a smaller <code>size_max</code> returns <code>QMCKL_INVALID_ARG_3</code>.
+The matrix is symmetric with a zero diagonal, and the buffer receives it in
+column-major order.
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">C</figcaption><pre class="src-c"><code><span class="n">qmckl_exit_code</span>
+<span class="nf">qmckl_get_nucleus_nn_distance</span><span class="p">(</span><span class="n">qmckl_context</span><span class="w"> </span><span class="n">context</span><span class="p">,</span>
+<span class="w">                              </span><span class="kt">double</span><span class="o">*</span><span class="w"> </span><span class="n">distance</span><span class="p">,</span>
+<span class="w">                              </span><span class="k">const</span><span class="w"> </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">size_max</span><span class="p">);</span>
+</code></pre></figure>
+</div>
+</div>
+</div>
+<div id="outline-container-orge069181" class="outline-4">
+<h4 id="orge069181"><span class="section-number-4">3.1.2.</span> Compute</h4>
+<div class="outline-text-4" id="text-3-1-2">
+<p>
+Builds the symmetric matrix from the coordinates stored in the context,
+each entry being the Euclidean distance between two nuclei.
+</p>
+
+<table id="orgf88092c" border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<tbody>
+<tr>
+<th scope="row"><code>qmckl_context</code></td>
+<td class="org-left"><code>context</code></td>
+<td class="org-left">in</td>
+<td class="org-left">Global state</td>
+</tr>
+
+<tr>
+<th scope="row"><code>int64_t</code></td>
+<td class="org-left"><code>nucl_num</code></td>
+<td class="org-left">in</td>
+<td class="org-left">Number of nuclei</td>
+</tr>
+
+<tr>
+<th scope="row"><code>double</code></td>
+<td class="org-left"><code>coord[3][nucl_num]</code></td>
+<td class="org-left">in</td>
+<td class="org-left">Nuclear coordinates (au)</td>
+</tr>
+
+<tr>
+<th scope="row"><code>double</code></td>
+<td class="org-left"><code>nn_distance[nucl_num][nucl_num]</code></td>
+<td class="org-left">out</td>
+<td class="org-left">Nucleus-nucleus distances (au)</td>
+</tr>
+</tbody>
+</table>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">Fortran</figcaption><pre class="src-f90"><code><span class="k">function </span><span class="n">qmckl_compute_nn_distance</span><span class="p">(</span><span class="n">context</span><span class="p">,</span><span class="w"> </span><span class="n">nucl_num</span><span class="p">,</span><span class="w"> </span><span class="n">coord</span><span class="p">,</span><span class="w"> </span><span class="n">nn_distance</span><span class="p">)</span><span class="w"> </span><span class="p">&amp;</span>
+<span class="w">     </span><span class="k">result</span><span class="p">(</span><span class="n">info</span><span class="p">)</span><span class="w"> </span><span class="k">bind</span><span class="p">(</span><span class="n">C</span><span class="p">)</span>
+<span class="w">  </span><span class="k">use </span><span class="n">qmckl_constants</span>
+<span class="w">  </span><span class="k">use </span><span class="n">qmckl</span><span class="p">,</span><span class="w"> </span><span class="k">only</span><span class="p">:</span><span class="w"> </span><span class="n">qmckl_distance</span>
+<span class="w">  </span><span class="k">implicit none</span>
+
+<span class="k">  </span><span class="kt">integer</span><span class="p">(</span><span class="n">qmckl_context</span><span class="p">),</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">in</span><span class="p">),</span><span class="w"> </span><span class="k">value</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">context</span>
+<span class="w">  </span><span class="kt">integer</span><span class="w"> </span><span class="p">(</span><span class="kt">c_int64_t</span><span class="p">)</span><span class="w"> </span><span class="p">,</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">in</span><span class="p">)</span><span class="w">  </span><span class="p">,</span><span class="w"> </span><span class="k">value</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">nucl_num</span>
+<span class="w">  </span><span class="kt">real</span><span class="w">    </span><span class="p">(</span><span class="kt">c_double</span><span class="w"> </span><span class="p">)</span><span class="w"> </span><span class="p">,</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">in</span><span class="p">)</span><span class="w">          </span><span class="kd">::</span><span class="w"> </span><span class="n">coord</span><span class="p">(</span><span class="n">nucl_num</span><span class="p">,</span><span class="mi">3</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">real</span><span class="w">    </span><span class="p">(</span><span class="kt">c_double</span><span class="w"> </span><span class="p">)</span><span class="w"> </span><span class="p">,</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">out</span><span class="p">)</span><span class="w">         </span><span class="kd">::</span><span class="w"> </span><span class="n">nn_distance</span><span class="p">(</span><span class="n">nucl_num</span><span class="p">,</span><span class="n">nucl_num</span><span class="p">)</span>
+
+<span class="w">  </span><span class="kt">integer</span><span class="p">(</span><span class="n">qmckl_exit_code</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">info</span>
+
+<span class="w">  </span><span class="kt">integer</span><span class="o">*</span><span class="mi">8</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">k</span>
+
+<span class="w">  </span><span class="n">info</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">QMCKL_SUCCESS</span>
+
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">context</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">QMCKL_NULL_CONTEXT</span><span class="p">)</span><span class="w"> </span><span class="k">then</span>
+<span class="k">     </span><span class="n">info</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">QMCKL_INVALID_CONTEXT</span>
+<span class="w">     </span><span class="k">return</span>
+<span class="k">  endif</span>
+
+<span class="k">  if</span><span class="w"> </span><span class="p">(</span><span class="n">nucl_num</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="k">then</span>
+<span class="k">     </span><span class="n">info</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">QMCKL_INVALID_ARG_2</span>
+<span class="w">     </span><span class="k">return</span>
+<span class="k">  endif</span>
+
+<span class="k">  </span><span class="n">info</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">qmckl_distance</span><span class="p">(</span><span class="n">context</span><span class="p">,</span><span class="w"> </span><span class="s1">'T'</span><span class="p">,</span><span class="w"> </span><span class="s1">'T'</span><span class="p">,</span><span class="w"> </span><span class="n">nucl_num</span><span class="p">,</span><span class="w"> </span><span class="n">nucl_num</span><span class="p">,</span><span class="w"> </span><span class="p">&amp;</span>
+<span class="w">          </span><span class="n">coord</span><span class="p">,</span><span class="w"> </span><span class="n">nucl_num</span><span class="p">,</span><span class="w"> </span><span class="p">&amp;</span>
+<span class="w">          </span><span class="n">coord</span><span class="p">,</span><span class="w"> </span><span class="n">nucl_num</span><span class="p">,</span><span class="w"> </span><span class="p">&amp;</span>
+<span class="w">          </span><span class="n">nn_distance</span><span class="p">,</span><span class="w"> </span><span class="n">nucl_num</span><span class="p">)</span>
+
+<span class="k">end function </span><span class="n">qmckl_compute_nn_distance</span>
+</code></pre></figure>
+</div>
+</div>
+</div>
+</div>
+<div id="outline-container-org71f0d11" class="outline-3">
+<h3 id="org71f0d11"><span class="section-number-3">3.2.</span> Nuclear repulsion energy</h3>
+<div class="outline-text-3" id="text-3-2">
+<p>
+<div class="math-display" data-tex="
+   E_{nn} = \sum_{i&lt;j} \frac{Z_i Z_j}{r_{ij}}
+   "><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>E</mi><mrow><mi>n</mi><mi>n</mi></mrow></msub><mo>&#x0003D;</mo><msub><mo>&#x02211;</mo><mrow><mi>i</mi><mo>&#x0003C;</mo><mi>j</mi></mrow></msub><mfrac><mrow><msub><mi>Z</mi><mi>i</mi></msub><msub><mi>Z</mi><mi>j</mi></msub></mrow><mrow><msub><mi>r</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub></mrow></mfrac></mrow></math></div>
+</p>
+
+<p>
+Pairs closer than <code>1e-5</code> bohr are skipped instead of producing an infinite
+contribution.
+</p>
+</div>
+<div id="outline-container-orgccda9fa" class="outline-4">
+<h4 id="orgccda9fa"><span class="section-number-4">3.2.1.</span> Get</h4>
+<div class="outline-text-4" id="text-3-2-1">
+<p>
+Writes the repulsion energy into <code>energy</code>, which is not checked for NULL.
+The energy is recomputed through the provider on every call.
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">C</figcaption><pre class="src-c"><code><span class="n">qmckl_exit_code</span><span class="w"> </span><span class="nf">qmckl_get_nucleus_repulsion</span><span class="p">(</span><span class="n">qmckl_context</span><span class="w"> </span><span class="n">context</span><span class="p">,</span><span class="w"> </span><span class="kt">double</span><span class="o">*</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">energy</span><span class="p">);</span>
+</code></pre></figure>
+</div>
+</div>
+</div>
+<div id="outline-container-orgc857e67" class="outline-4">
+<h4 id="orgc857e67"><span class="section-number-4">3.2.2.</span> Compute</h4>
+<div class="outline-text-4" id="text-3-2-2">
+<p>
+Sums <span class="math-inline" data-tex="Z_i Z_j / r_{ij}"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>Z</mi><mi>i</mi></msub><msub><mi>Z</mi><mi>j</mi></msub><mo>&#x0002F;</mo><msub><mi>r</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub></mrow></math></span> over the pairs above the diagonal of the distance
+matrix, skipping the pairs closer than <code>1e-5</code> bohr.
+</p>
+
+<table id="org79ef1ac" border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<tbody>
+<tr>
+<th scope="row"><code>qmckl_context</code></td>
+<td class="org-left"><code>context</code></td>
+<td class="org-left">in</td>
+<td class="org-left">Global state</td>
+</tr>
+
+<tr>
+<th scope="row"><code>int64_t</code></td>
+<td class="org-left"><code>nucl_num</code></td>
+<td class="org-left">in</td>
+<td class="org-left">Number of nuclei</td>
+</tr>
+
+<tr>
+<th scope="row"><code>double</code></td>
+<td class="org-left"><code>charge[nucl_num]</code></td>
+<td class="org-left">in</td>
+<td class="org-left">Nuclear charges (au)</td>
+</tr>
+
+<tr>
+<th scope="row"><code>double</code></td>
+<td class="org-left"><code>nn_distance[nucl_num][nucl_num]</code></td>
+<td class="org-left">in</td>
+<td class="org-left">Nucleus-nucleus distances (au)</td>
+</tr>
+
+<tr>
+<th scope="row"><code>double</code></td>
+<td class="org-left"><code>energy</code></td>
+<td class="org-left">out</td>
+<td class="org-left">Nuclear repulsion energy</td>
+</tr>
+</tbody>
+</table>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">Fortran</figcaption><pre class="src-f90"><code><span class="k">function </span><span class="n">qmckl_compute_nucleus_repulsion</span><span class="p">(</span><span class="n">context</span><span class="p">,</span><span class="w"> </span><span class="n">nucl_num</span><span class="p">,</span><span class="w"> </span><span class="n">charge</span><span class="p">,</span><span class="w"> </span><span class="n">nn_distance</span><span class="p">,</span><span class="w"> </span><span class="n">energy</span><span class="p">)</span><span class="w"> </span><span class="p">&amp;</span>
+<span class="w">     </span><span class="k">result</span><span class="p">(</span><span class="n">info</span><span class="p">)</span><span class="w"> </span><span class="k">bind</span><span class="p">(</span><span class="n">C</span><span class="p">)</span>
+<span class="w">  </span><span class="k">use </span><span class="n">qmckl_constants</span>
+<span class="w">  </span><span class="k">implicit none</span>
+
+<span class="k">  </span><span class="kt">integer</span><span class="p">(</span><span class="n">qmckl_context</span><span class="p">),</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">in</span><span class="p">),</span><span class="w"> </span><span class="k">value</span><span class="w">  </span><span class="kd">::</span><span class="w"> </span><span class="n">context</span>
+<span class="w">  </span><span class="kt">integer</span><span class="w"> </span><span class="p">(</span><span class="kt">c_int64_t</span><span class="p">)</span><span class="w"> </span><span class="p">,</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">in</span><span class="p">)</span><span class="w">  </span><span class="p">,</span><span class="w"> </span><span class="k">value</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">nucl_num</span>
+<span class="w">  </span><span class="kt">real</span><span class="w">    </span><span class="p">(</span><span class="kt">c_double</span><span class="w"> </span><span class="p">)</span><span class="w"> </span><span class="p">,</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">in</span><span class="p">)</span><span class="w">          </span><span class="kd">::</span><span class="w"> </span><span class="n">charge</span><span class="p">(</span><span class="n">nucl_num</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">real</span><span class="w">    </span><span class="p">(</span><span class="kt">c_double</span><span class="w"> </span><span class="p">)</span><span class="w"> </span><span class="p">,</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">in</span><span class="p">)</span><span class="w">          </span><span class="kd">::</span><span class="w"> </span><span class="n">nn_distance</span><span class="p">(</span><span class="n">nucl_num</span><span class="p">,</span><span class="n">nucl_num</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">real</span><span class="w">    </span><span class="p">(</span><span class="kt">c_double</span><span class="w"> </span><span class="p">)</span><span class="w"> </span><span class="p">,</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">out</span><span class="p">)</span><span class="w">         </span><span class="kd">::</span><span class="w"> </span><span class="n">energy</span>
+
+<span class="w">  </span><span class="kt">integer</span><span class="p">(</span><span class="n">qmckl_exit_code</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">info</span>
+
+<span class="w">  </span><span class="kt">integer</span><span class="o">*</span><span class="mi">8</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">i</span><span class="p">,</span><span class="w"> </span><span class="n">j</span>
+
+<span class="w">  </span><span class="n">info</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">QMCKL_SUCCESS</span>
+
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">context</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">QMCKL_NULL_CONTEXT</span><span class="p">)</span><span class="w"> </span><span class="k">then</span>
+<span class="k">     </span><span class="n">info</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">QMCKL_INVALID_CONTEXT</span>
+<span class="w">     </span><span class="k">return</span>
+<span class="k">  endif</span>
+
+<span class="k">  if</span><span class="w"> </span><span class="p">(</span><span class="n">nucl_num</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="k">then</span>
+<span class="k">     </span><span class="n">info</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">QMCKL_INVALID_ARG_2</span>
+<span class="w">     </span><span class="k">return</span>
+<span class="k">  endif</span>
+
+<span class="k">  </span><span class="n">energy</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.d0</span>
+<span class="w">  </span><span class="k">do </span><span class="n">j</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="n">nucl_num</span>
+<span class="w">     </span><span class="k">do </span><span class="n">i</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">j</span><span class="o">-</span><span class="mi">1</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="nb">dabs</span><span class="p">(</span><span class="n">nn_distance</span><span class="p">(</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">))</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mf">1e-5</span><span class="p">)</span><span class="w"> </span><span class="k">then</span>
+<span class="k">          </span><span class="n">energy</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">energy</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">charge</span><span class="p">(</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">charge</span><span class="p">(</span><span class="n">j</span><span class="p">)</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">nn_distance</span><span class="p">(</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">)</span>
+<span class="w">        </span><span class="k">endif</span>
+<span class="k">     end do</span>
+<span class="k">  end do</span>
+
+<span class="k">end function </span><span class="n">qmckl_compute_nucleus_repulsion</span>
+</code></pre></figure>
+</div>
+</div>
+</div>
+</div>
+</div>
+
+</main>
+</div>
+</body>
+</html>

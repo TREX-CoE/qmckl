@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Error handling — QMCkl</title>
+<meta name="description" content="Almost every function of the library returns a <code>qmckl_exit_code</code>: <code>QMCKL_SUCCESS</code>, which is zero, when the call succeeded, and a non-zero code describing the error…">
+<meta name="author" content="TREX CoE">
+<link rel="stylesheet" href="../css/theme.css">
+</head>
+<body>
+<div class="layout">
+<aside class="sidebar">
+  <p class="side-brand"><a href="../index.html">QMCkl</a></p>
+  <nav class="side-nav" aria-label="Documentation">
+    <ul><li><a href="qmckl.html">Introduction</a></li><li><a href="qmckl_context.html">Context</a></li><li><a href="qmckl_error.html" aria-current="page">Error handling</a></li><li><a href="qmckl_blas.html">BLAS functions</a></li><li><a href="qmckl_memory.html">Memory management</a></li><li><a href="qmckl_numprec.html">Numerical precision</a></li><li><a href="qmckl_point.html">Point</a></li><li><a href="qmckl_nucleus.html">Nucleus</a></li><li><a href="qmckl_electron.html">Electrons</a></li><li><a href="qmckl_distance.html">Inter-particle distances</a></li><li><a href="qmckl_ao.html">Atomic Orbitals</a></li><li><a href="qmckl_mo.html">Molecular Orbitals</a></li><li><a href="qmckl_jastrow_champ.html">CHAMP Jastrow Factor</a></li><li><a href="qmckl_jastrow_champ_single.html">CHAMP Jastrow Factor Single</a></li><li><a href="qmckl_forces.html">Forces</a></li><li><a href="qmckl_trexio.html">TREXIO I/O library</a></li><li><a href="qmckl_tests.html">Data for Tests</a></li><li><a href="qmckl_verificarlo.html">Verificarlo CI</a></li><li><a href="qmckl_examples.html">Code examples</a></li></ul>
+  </nav>
+  <nav class="side-toc" aria-label="On this page">
+<h2 class="side-toc-title">On this page</h2>
+
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgd676182">1. Introduction</a></li>
+<li><a href="#org9755cb5">2. Exit codes</a></li>
+<li><a href="#org58f0aa5">3. Decoding errors</a></li>
+<li><a href="#org352fe58">4. Data structure in context</a></li>
+<li><a href="#orgb86c1a9">5. Updating errors in the context</a></li>
+<li><a href="#org9ac3f3d">6. Get the error</a></li>
+<li><a href="#orge8ff024">7. Failing</a></li>
+<li><a href="#org81c4e9f">8. Last error</a></li>
+<li><a href="#org3bad5a4">9. Helper functions for debugging</a></li>
+</ul>
+</div>
+
+  </nav>
+</aside>
+
+<main id="content">
+<header class="doc-head"><h1 class="title">Error handling</h1></header>
+
+<div id="outline-container-orgd676182" class="outline-2">
+<h2 id="orgd676182"><span class="section-number-2">1.</span> Introduction</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+Almost every function of the library returns a <code>qmckl_exit_code</code>:
+<code>QMCKL_SUCCESS</code>, which is zero, when the call succeeded, and a non-zero
+code describing the error otherwise. The exceptions are the functions that
+return a value or nothing: the context functions, the lock, the provided
+predicates, the numerical-precision getters, the two
+<code>qmckl_test_precision</code> helpers and <code>qmckl_string_of_error</code>. An error is
+reported through the return value alone, and the calling code decides what
+it means for it.
+</p>
+
+<p>
+A return code alone does not say which call failed on which argument. For
+that the library records, inside the context, the code, the name of the
+function and a message. This module defines the exit codes and the
+functions that write, read and decode that record.
+</p>
+
+<p>
+The library does not print errors. Assertions catch a misuse in a build
+that keeps them enabled, and <code>qmckl_check</code>, at the end of this page, is the
+only helper that writes to <code>stderr</code>.
+</p>
+</div>
+</div>
+<div id="outline-container-org9755cb5" class="outline-2">
+<h2 id="org9755cb5"><span class="section-number-2">2.</span> Exit codes</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+An exit code is a 32-bit integer:
+</p>
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">C</figcaption><pre class="src-c"><code><span class="k">typedef</span><span class="w"> </span><span class="kt">int32_t</span><span class="w"> </span><span class="n">qmckl_exit_code</span><span class="p">;</span>
+</code></pre></figure>
+</div>
+
+
+<p>
+The codes fall in two blocks. Codes 1 to 20 are <code>QMCKL_INVALID_ARG_1</code> to
+<code>QMCKL_INVALID_ARG_20</code> and name the offending argument by its position in
+the signature, the context being the first, so a function that rejects its
+third argument returns <code>QMCKL_INVALID_ARG_3</code>. Codes 101 to 109 describe
+the conditions that are not an argument: a failed allocation, a value that
+was never provided, a set attempted twice. Four of them are defined and
+decoded but never returned by the library at present, <code>QMCKL_ERRNO</code>,
+<code>QMCKL_DEALLOCATION_FAILED</code>, <code>QMCKL_OUT_OF_BOUNDS</code> and
+<code>QMCKL_INVALID_EXIT_CODE</code>.
+</p>
+
+<p>
+Here is the complete list of exit codes:
+</p>
+
+<table id="org2b76aee" border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-right" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">Macro</th>
+<th scope="col" class="org-right">Code</th>
+<th scope="col" class="org-left">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>QMCKL_SUCCESS</code></td>
+<td class="org-right">0</td>
+<td class="org-left">'Success'</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>QMCKL_INVALID_ARG_1</code></td>
+<td class="org-right">1</td>
+<td class="org-left">'Invalid argument 1'</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>QMCKL_INVALID_ARG_2</code></td>
+<td class="org-right">2</td>
+<td class="org-left">'Invalid argument 2'</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>QMCKL_INVALID_ARG_3</code></td>
+<td class="org-right">3</td>
+<td class="org-left">'Invalid argument 3'</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>QMCKL_INVALID_ARG_4</code></td>
+<td class="org-right">4</td>
+<td class="org-left">'Invalid argument 4'</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>QMCKL_INVALID_ARG_5</code></td>
+<td class="org-right">5</td>
+<td class="org-left">'Invalid argument 5'</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>QMCKL_INVALID_ARG_6</code></td>
+<td class="org-right">6</td>
+<td class="org-left">'Invalid argument 6'</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>QMCKL_INVALID_ARG_7</code></td>
+<td class="org-right">7</td>
+<td class="org-left">'Invalid argument 7'</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>QMCKL_INVALID_ARG_8</code></td>
+<td class="org-right">8</td>
+<td class="org-left">'Invalid argument 8'</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>QMCKL_INVALID_ARG_9</code></td>
+<td class="org-right">9</td>
+<td class="org-left">'Invalid argument 9'</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>QMCKL_INVALID_ARG_10</code></td>
+<td class="org-right">10</td>
+<td class="org-left">'Invalid argument 10'</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>QMCKL_INVALID_ARG_11</code></td>
+<td class="org-right">11</td>
+<td class="org-left">'Invalid argument 11'</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>QMCKL_INVALID_ARG_12</code></td>
+<td class="org-right">12</td>
+<td class="org-left">'Invalid argument 12'</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>QMCKL_INVALID_ARG_13</code></td>
+<td class="org-right">13</td>
+<td class="org-left">'Invalid argument 13'</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>QMCKL_INVALID_ARG_14</code></td>
+<td class="org-right">14</td>
+<td class="org-left">'Invalid argument 14'</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>QMCKL_INVALID_ARG_15</code></td>
+<td class="org-right">15</td>
+<td class="org-left">'Invalid argument 15'</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>QMCKL_INVALID_ARG_16</code></td>
+<td class="org-right">16</td>
+<td class="org-left">'Invalid argument 16'</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>QMCKL_INVALID_ARG_17</code></td>
+<td class="org-right">17</td>
+<td class="org-left">'Invalid argument 17'</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>QMCKL_INVALID_ARG_18</code></td>
+<td class="org-right">18</td>
+<td class="org-left">'Invalid argument 18'</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>QMCKL_INVALID_ARG_19</code></td>
+<td class="org-right">19</td>
+<td class="org-left">'Invalid argument 19'</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>QMCKL_INVALID_ARG_20</code></td>
+<td class="org-right">20</td>
+<td class="org-left">'Invalid argument 20'</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>QMCKL_FAILURE</code></td>
+<td class="org-right">101</td>
+<td class="org-left">'Failure'</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>QMCKL_ERRNO</code></td>
+<td class="org-right">102</td>
+<td class="org-left">strerror(errno)</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>QMCKL_INVALID_CONTEXT</code></td>
+<td class="org-right">103</td>
+<td class="org-left">'Invalid context'</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>QMCKL_ALLOCATION_FAILED</code></td>
+<td class="org-right">104</td>
+<td class="org-left">'Allocation failed'</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>QMCKL_DEALLOCATION_FAILED</code></td>
+<td class="org-right">105</td>
+<td class="org-left">'De-allocation failed'</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>QMCKL_NOT_PROVIDED</code></td>
+<td class="org-right">106</td>
+<td class="org-left">'Not provided'</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>QMCKL_OUT_OF_BOUNDS</code></td>
+<td class="org-right">107</td>
+<td class="org-left">'Index out of bounds'</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>QMCKL_ALREADY_SET</code></td>
+<td class="org-right">108</td>
+<td class="org-left">'Already set'</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>QMCKL_INVALID_EXIT_CODE</code></td>
+<td class="org-right">109</td>
+<td class="org-left">'Invalid exit code'</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div id="outline-container-org58f0aa5" class="outline-2">
+<h2 id="org58f0aa5"><span class="section-number-2">3.</span> Decoding errors</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+<code>qmckl_string_of_error</code> turns an exit code into a string that an
+application can print or log. The switch covers every code of the table
+and returns <code>"Unknown error"</code> for anything else, so the result is never
+<code>NULL</code>. Only <code>QMCKL_ERRNO</code> gives something else: <code>strerror(errno)</code>, the
+description of the last failing system call, in a buffer that the next
+<code>strerror</code> call may overwrite. The Fortran interface binds to a private
+wrapper, <code>qmckl_string_of_error_f</code>, which copies at most 127 characters
+into the 128-byte buffer it is given and terminates the string.
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">C</figcaption><pre class="src-c"><code><span class="k">const</span><span class="w"> </span><span class="kt">char</span><span class="o">*</span>
+<span class="nf">qmckl_string_of_error</span><span class="w"> </span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">qmckl_exit_code</span><span class="w"> </span><span class="n">error</span><span class="p">);</span>
+</code></pre></figure>
+</div>
+
+<p>
+The strings are generated from the table above by the Python block that
+also produces the C and Fortran constants, so a code and its text cannot
+drift apart.
+</p>
+</div>
+</div>
+<div id="outline-container-org352fe58" class="outline-2">
+<h2 id="org352fe58"><span class="section-number-2">4.</span> Data structure in context</h2>
+<div class="outline-text-2" id="text-4">
+<p>
+The context holds one <code>qmckl_error_struct</code>, with the code, a
+<code>QMCKL_MAX_FUN_LEN</code>-byte function name and a <code>QMCKL_MAX_MSG_LEN</code>-byte
+message. The two strings have a fixed size, so recording an error allocates
+nothing and cannot fail for lack of memory.
+</p>
+
+<p>
+A new context is zeroed by <code>qmckl_context_create</code>: it starts with
+<code>QMCKL_SUCCESS</code> and two empty strings. <code>qmckl_context_copy</code> copies the
+structure with the rest of the context, and nothing clears it afterwards,
+so a successful call leaves the last error in place.
+</p>
+</div>
+</div>
+<div id="outline-container-orgb86c1a9" class="outline-2">
+<h2 id="orgb86c1a9"><span class="section-number-2">5.</span> Updating errors in the context</h2>
+<div class="outline-text-2" id="text-5">
+<p>
+<code>qmckl_set_error</code> overwrites the record with a code, a function name and a
+message, under the context lock. All three are mandatory and the code
+cannot be <code>QMCKL_SUCCESS</code>. The check that the context is valid is an
+assertion, not a return value, because a record that has nowhere to go
+cannot report anything. The function returns <code>QMCKL_SUCCESS</code>, which says
+that the recording succeeded, not the code it stored. A name longer than
+255 characters and a message longer than 1023 are truncated.
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">C</figcaption><pre class="src-c"><code><span class="n">qmckl_exit_code</span>
+<span class="nf">qmckl_set_error</span><span class="p">(</span><span class="n">qmckl_context</span><span class="w"> </span><span class="n">context</span><span class="p">,</span>
+<span class="w">                </span><span class="k">const</span><span class="w"> </span><span class="n">qmckl_exit_code</span><span class="w"> </span><span class="n">exit_code</span><span class="p">,</span>
+<span class="w">                </span><span class="k">const</span><span class="w"> </span><span class="kt">char</span><span class="o">*</span><span class="w"> </span><span class="n">function_name</span><span class="p">,</span>
+<span class="w">                </span><span class="k">const</span><span class="w"> </span><span class="kt">char</span><span class="o">*</span><span class="w"> </span><span class="n">message</span><span class="p">);</span>
+</code></pre></figure>
+</div>
+</div>
+</div>
+<div id="outline-container-org9ac3f3d" class="outline-2">
+<h2 id="org9ac3f3d"><span class="section-number-2">6.</span> Get the error</h2>
+<div class="outline-text-2" id="text-6">
+<p>
+<code>qmckl_get_error</code> reads the record back into three caller-provided
+variables. It has no size arguments: the two buffers must hold
+<code>QMCKL_MAX_FUN_LEN</code> and <code>QMCKL_MAX_MSG_LEN</code> bytes, and neither may be
+<code>NULL</code>. The code is written to <code>exit_code</code>, which is <code>QMCKL_SUCCESS</code> when
+nothing has failed since the context was created. Like the setter, it
+asserts that the context is valid and returns <code>QMCKL_SUCCESS</code>.
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">C</figcaption><pre class="src-c"><code><span class="n">qmckl_exit_code</span>
+<span class="nf">qmckl_get_error</span><span class="p">(</span><span class="n">qmckl_context</span><span class="w"> </span><span class="n">context</span><span class="p">,</span>
+<span class="w">                </span><span class="n">qmckl_exit_code</span><span class="w"> </span><span class="o">*</span><span class="n">exit_code</span><span class="p">,</span>
+<span class="w">                </span><span class="kt">char</span><span class="o">*</span><span class="w"> </span><span class="n">function_name</span><span class="p">,</span>
+<span class="w">                </span><span class="kt">char</span><span class="o">*</span><span class="w"> </span><span class="n">message</span><span class="p">);</span>
+</code></pre></figure>
+</div>
+</div>
+</div>
+<div id="outline-container-orge8ff024" class="outline-2">
+<h2 id="orge8ff024"><span class="section-number-2">7.</span> Failing</h2>
+<div class="outline-text-2" id="text-7">
+<p>
+<code>qmckl_failwith</code> records the failure and returns the code it was given, so
+that a kernel can write <code>return qmckl_failwith(...)</code>. The code, the
+function name and a message are the arguments; a <code>NULL</code> message is
+replaced by the text <code>qmckl_string_of_error</code> gives for that code. It
+asserts that the name and the message fit in 255 and 1023 characters. When
+the context is not valid, nothing can be recorded and the function returns
+<code>QMCKL_INVALID_CONTEXT</code>.
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">C</figcaption><pre class="src-c"><code><span class="n">qmckl_exit_code</span>
+<span class="nf">qmckl_failwith</span><span class="p">(</span><span class="n">qmckl_context</span><span class="w"> </span><span class="n">context</span><span class="p">,</span>
+<span class="w">               </span><span class="k">const</span><span class="w"> </span><span class="n">qmckl_exit_code</span><span class="w"> </span><span class="n">exit_code</span><span class="p">,</span>
+<span class="w">               </span><span class="k">const</span><span class="w"> </span><span class="kt">char</span><span class="o">*</span><span class="w"> </span><span class="n">function</span><span class="p">,</span>
+<span class="w">               </span><span class="k">const</span><span class="w"> </span><span class="kt">char</span><span class="o">*</span><span class="w"> </span><span class="n">message</span><span class="p">)</span><span class="w"> </span><span class="p">;</span>
+</code></pre></figure>
+</div>
+
+<p>
+For example, this function can be used as
+</p>
+<div class="org-src-container">
+
+</div>
+</div>
+</div>
+<div id="outline-container-org81c4e9f" class="outline-2">
+<h2 id="org81c4e9f"><span class="section-number-2">8.</span> Last error</h2>
+<div class="outline-text-2" id="text-8">
+<p>
+<code>qmckl_last_error</code> formats the record into a caller-provided buffer of
+<code>size_max</code> bytes: <code>Error -- &lt;code&gt; -- in &lt;function&gt;</code> on one line, the
+message on the next. The text is truncated to fit and is always terminated.
+A <code>NULL</code> buffer and a non-positive size return <code>QMCKL_INVALID_ARG_2</code> and
+<code>QMCKL_INVALID_ARG_3</code>. With an invalid context the function cannot read the
+record, writes <code>"Null context"</code> and returns <code>QMCKL_FAILURE</code>.
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">C</figcaption><pre class="src-c"><code><span class="n">qmckl_exit_code</span>
+<span class="nf">qmckl_last_error</span><span class="p">(</span><span class="n">qmckl_context</span><span class="w"> </span><span class="n">context</span><span class="p">,</span>
+<span class="w">                 </span><span class="kt">char</span><span class="o">*</span><span class="w"> </span><span class="n">buffer</span><span class="p">,</span>
+<span class="w">                 </span><span class="k">const</span><span class="w"> </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">size_max</span><span class="p">);</span>
+</code></pre></figure>
+</div>
+</div>
+</div>
+<div id="outline-container-org3bad5a4" class="outline-2">
+<h2 id="org3bad5a4"><span class="section-number-2">9.</span> Helper functions for debugging</h2>
+<div class="outline-text-2" id="text-9">
+<p>
+<code>qmckl_check</code> prints to <code>stderr</code> the code it was given and the record of the
+context when that code is not <code>QMCKL_SUCCESS</code>. What it returns is the code
+it reads back from the context, not its argument: a matching context gives
+the same value, an empty one gives <code>QMCKL_SUCCESS</code>, and the assertion that
+usually follows would then pass. The context must be valid; <code>qmckl_get_error</code>
+asserts it.
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">C</figcaption><pre class="src-c"><code><span class="n">qmckl_exit_code</span>
+<span class="nf">qmckl_check</span><span class="p">(</span><span class="n">qmckl_context</span><span class="w"> </span><span class="n">context</span><span class="p">,</span><span class="w"> </span><span class="n">qmckl_exit_code</span><span class="w"> </span><span class="n">rc</span><span class="p">);</span>
+</code></pre></figure>
+</div>
+
+<p>
+It should be used as:
+</p>
+
+<div class="org-src-container">
+<figure class="code"><figcaption class="lang">C</figcaption><pre class="src-c"><code><span class="n">rc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">qmckl_check</span><span class="p">(</span><span class="n">context</span><span class="p">,</span>
+<span class="w">                 </span><span class="n">qmckl_</span><span class="p">...(</span><span class="n">context</span><span class="p">,</span><span class="w"> </span><span class="p">...)</span>
+<span class="w">                 </span><span class="p">);</span>
+<span class="n">assert</span><span class="w"> </span><span class="p">(</span><span class="n">rc</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">QMCKL_SUCCESS</span><span class="p">);</span>
+</code></pre></figure>
+</div>
+</div>
+</div>
+
+</main>
+</div>
+</body>
+</html>
