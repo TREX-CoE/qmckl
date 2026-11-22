@@ -294,6 +294,33 @@ interface
 end interface
    #+end_src
 
+*** Compact storage of the computed AO arrays                        :noexport:
+
+    A compact (CSR-like) copy of the computed ~ao_vgl~ and ~ao_value~
+    arrays. The dense arrays stay the source of truth; the compact copy is
+    rebuilt from them whenever the points move, and the double-precision
+    MO kernels contract the MO coefficients against it.
+
+    For a point ~p~ and an AO ~k~, the entry is stored iff the value
+    component (component 0) is non-zero, the same predicate the MO
+    kernels use on the dense arrays, so both views share one index set.
+    Within a point the AO indices are ascending; the values are stored
+    component-major, ~val[c*nnz + i]~. ~point_num~ is not stored: it is
+    ~ctx->point.num~.
+
+    #+begin_src c :comments org :tangle (eval h_private_type) :noweb yes :exports none
+typedef struct qmckl_ao_compact_struct {
+  int32_t   ncomp;      /* 1 (ao_value) or 5 (ao_vgl)          */
+  int64_t   nnz;        /* stored entries                       */
+  int64_t   nnz_max;    /* capacity of idx/val                  */
+  int64_t   ptr_max;    /* capacity of ptr, in int64_t elements */
+  int64_t * restrict idx;  /* [nnz]     ascending within a point */
+  int64_t * restrict ptr;  /* [point_num+1]                      */
+  double  * restrict val;  /* [ncomp][nnz], component-major      */
+  uint64_t  date;
+} qmckl_ao_compact_struct;
+    #+end_src
+
 *** Data structure                                                 :noexport:
 
     #+begin_src c :comments org :tangle (eval h_private_type) :noweb yes :exports none
@@ -330,6 +357,9 @@ typedef struct qmckl_ao_basis_struct {
   double  * restrict ao_value;
   uint64_t           ao_value_date;
   uint64_t           ao_value_maxsize;
+
+  qmckl_ao_compact_struct ao_vgl_compact;
+  qmckl_ao_compact_struct ao_value_compact;
 
   double * restrict  shell_hessian;
   uint64_t           shell_hessian_date;
@@ -2999,6 +3029,25 @@ qmckl_exit_code qmckl_copy_ao_basis(qmckl_context context, const qmckl_ao_basis_
   dest->shell_hessian_date = 0;
   dest->ao_hessian = NULL;
   dest->ao_hessian_date = 0;
+
+  /* The compact copies are derived from the dense arrays and are rebuilt
+     from scratch by their providers; the copy owns nothing yet. */
+  dest->ao_vgl_compact.ncomp = 0;
+  dest->ao_vgl_compact.nnz = 0;
+  dest->ao_vgl_compact.nnz_max = 0;
+  dest->ao_vgl_compact.ptr_max = 0;
+  dest->ao_vgl_compact.idx = NULL;
+  dest->ao_vgl_compact.ptr = NULL;
+  dest->ao_vgl_compact.val = NULL;
+  dest->ao_vgl_compact.date = 0;
+  dest->ao_value_compact.ncomp = 0;
+  dest->ao_value_compact.nnz = 0;
+  dest->ao_value_compact.nnz_max = 0;
+  dest->ao_value_compact.ptr_max = 0;
+  dest->ao_value_compact.idx = NULL;
+  dest->ao_value_compact.ptr = NULL;
+  dest->ao_value_compact.val = NULL;
+  dest->ao_value_compact.date = 0;
 
 #ifdef HAVE_HPC
   /* Deep copy HPC-specific data structures */
@@ -9580,6 +9629,334 @@ assert( fabs(ao_vgl[26][4][224] - (  3.153244195820293e-08)) < 1.e-14 );
 }
 
       #+end_src
+
+      #+begin_src c :tangle (eval c_test) :exports none
+#ifdef HAVE_HPC
+{
+  /* Compact copies of ao_value and ao_vgl: invariants of the CSR-like
+     storage, element by element against the dense arrays, and stability
+     of a provider call at an unchanged point date. */
+  const qmckl_context_struct* const c_ctx = (qmckl_context_struct*) context;
+
+  /* Note: ao_num is a macro here (chbrclf_ao_num), equal to the AO count
+     of the context basis, so it is used in place of the struct field. */
+  const int64_t c_point_num = c_ctx->point.num;
+  const int64_t c_ao_num    = ao_num;
+
+  double* c_ao_value = (double*) malloc((size_t) c_point_num * c_ao_num * sizeof(double));
+  double* c_ao_vgl   = (double*) malloc((size_t) 5 * c_point_num * c_ao_num * sizeof(double));
+  assert(c_ao_value != NULL);
+  assert(c_ao_vgl   != NULL);
+
+  rc = qmckl_get_ao_basis_ao_value(context, c_ao_value, c_point_num*c_ao_num);
+  assert(rc == QMCKL_SUCCESS);
+  rc = qmckl_get_ao_basis_ao_vgl(context, c_ao_vgl, 5*c_point_num*c_ao_num);
+  assert(rc == QMCKL_SUCCESS);
+
+  /* Force the compact copies to be built at these points */
+  rc = qmckl_provide_ao_basis_ao_value_compact(context);
+  assert(rc == QMCKL_SUCCESS);
+  rc = qmckl_provide_ao_basis_ao_vgl_compact(context);
+  assert(rc == QMCKL_SUCCESS);
+
+  for (int64_t which=0 ; which<2 ; ++which) {
+    const qmckl_ao_compact_struct* const comp = (which == 0) ?
+      &c_ctx->ao_basis.ao_value_compact : &c_ctx->ao_basis.ao_vgl_compact;
+    const int64_t ncomp = (which == 0) ? 1 : 5;
+    const double* const dense = (which == 0) ? c_ao_value : c_ao_vgl;
+
+    assert(comp->ncomp == ncomp);
+    assert(comp->date  == c_ctx->date);
+    assert(comp->nnz   <= comp->nnz_max);
+
+    /* ptr[0] == 0, non-decreasing, ptr[point_num] == nnz */
+    assert(comp->ptr[0] == 0);
+    assert(comp->ptr[c_point_num] == comp->nnz);
+    for (int64_t p=0 ; p<c_point_num ; ++p) {
+      assert(comp->ptr[p+1] >= comp->ptr[p]);
+
+      /* indices strictly ascending within a point */
+      for (int64_t i = comp->ptr[p]+1 ; i < comp->ptr[p+1] ; ++i) {
+        assert(comp->idx[i] > comp->idx[i-1]);
+      }
+
+      /* k stored at p iff the value component of the dense array is
+         non-zero, and the stored values equal the dense entries */
+      for (int64_t k=0 ; k<c_ao_num ; ++k) {
+        bool found = false;
+        for (int64_t i = comp->ptr[p] ; i < comp->ptr[p+1] ; ++i) {
+          if (comp->idx[i] == k) found = true;
+        }
+        assert(found == (dense[p*ncomp*c_ao_num + k] != 0.0));
+      }
+      for (int64_t i = comp->ptr[p] ; i < comp->ptr[p+1] ; ++i) {
+        const int64_t k = comp->idx[i];
+        for (int64_t c2=0 ; c2<ncomp ; ++c2) {
+          assert(comp->val[(size_t) c2*comp->nnz + i] ==
+                 dense[(p*ncomp + c2)*c_ao_num + k]);
+        }
+      }
+    }
+  }
+
+  /* A provider call at an unchanged point date must not change the
+     compact copy: same pointers, same nnz, same date. */
+  const int64_t    c_nnz0  = c_ctx->ao_basis.ao_value_compact.nnz;
+  const uint64_t   c_date0 = c_ctx->ao_basis.ao_value_compact.date;
+  const int64_t*   c_idx0  = c_ctx->ao_basis.ao_value_compact.idx;
+  const int64_t*   c_ptr0  = c_ctx->ao_basis.ao_value_compact.ptr;
+  const double*    c_val0  = c_ctx->ao_basis.ao_value_compact.val;
+  const int64_t    v_nnz0  = c_ctx->ao_basis.ao_vgl_compact.nnz;
+  const uint64_t   v_date0 = c_ctx->ao_basis.ao_vgl_compact.date;
+  const int64_t*   v_idx0  = c_ctx->ao_basis.ao_vgl_compact.idx;
+  const int64_t*   v_ptr0  = c_ctx->ao_basis.ao_vgl_compact.ptr;
+  const double*    v_val0  = c_ctx->ao_basis.ao_vgl_compact.val;
+
+  rc = qmckl_provide_ao_basis_ao_value_compact(context);
+  assert(rc == QMCKL_SUCCESS);
+  rc = qmckl_provide_ao_basis_ao_vgl_compact(context);
+  assert(rc == QMCKL_SUCCESS);
+
+  assert(c_ctx->ao_basis.ao_value_compact.nnz  == c_nnz0);
+  assert(c_ctx->ao_basis.ao_value_compact.date == c_date0);
+  assert(c_ctx->ao_basis.ao_value_compact.idx  == c_idx0);
+  assert(c_ctx->ao_basis.ao_value_compact.ptr  == c_ptr0);
+  assert(c_ctx->ao_basis.ao_value_compact.val  == c_val0);
+  assert(c_ctx->ao_basis.ao_vgl_compact.nnz  == v_nnz0);
+  assert(c_ctx->ao_basis.ao_vgl_compact.date == v_date0);
+  assert(c_ctx->ao_basis.ao_vgl_compact.idx  == v_idx0);
+  assert(c_ctx->ao_basis.ao_vgl_compact.ptr  == v_ptr0);
+  assert(c_ctx->ao_basis.ao_vgl_compact.val  == v_val0);
+  for (int64_t i=0 ; i<c_nnz0 ; i+=97) {
+    assert(c_ctx->ao_basis.ao_value_compact.idx[i] == c_idx0[i]);
+  }
+  for (int64_t i=0 ; i<v_nnz0 ; i+=97) {
+    assert(c_ctx->ao_basis.ao_vgl_compact.idx[i] == v_idx0[i]);
+  }
+
+  free(c_ao_value);
+  free(c_ao_vgl);
+}
+#endif
+      #+end_src
+
+** Compact copies of the computed AO arrays                          :noexport:
+
+   The providers of the compact copies build the CSR-like storage of
+   section [[Compact storage of the computed AO arrays]] from the dense
+   arrays. Both copies share the index set defined by the value
+   component of ~ao_vgl~, so they are rebuilt together whenever the
+   points move.
+
+*** Providers                                                        :noexport:
+
+   #+begin_src c :comments org :tangle (eval h_private_func) :noweb yes :exports none
+#ifdef HAVE_HPC
+qmckl_exit_code qmckl_provide_ao_basis_ao_vgl_compact(qmckl_context context);
+qmckl_exit_code qmckl_provide_ao_basis_ao_value_compact(qmckl_context context);
+#endif
+   #+end_src
+
+   #+begin_src c :comments org :tangle (eval c) :noweb yes :exports none
+#ifdef HAVE_HPC
+/*
+   Build the compact copy ~c~ of the dense array ~dense~
+   ([point_num][ncomp][ao_num]).
+
+   The index set of a point is the set of the AOs whose value component
+   (component 0) is non-zero, the predicate of the MO kernels. The dense
+   array must have been computed at ctx->date, i.e. by the provider of
+   the corresponding dense array, before this function is called.
+*/
+static qmckl_exit_code
+qmckl_ao_compact_build (qmckl_context context,
+                        qmckl_ao_compact_struct* restrict c,
+                        const int64_t ncomp,
+                        const double* restrict dense)
+{
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  const int64_t p_num  = ctx->point.num;
+  const int64_t ao_num = ctx->ao_basis.ao_num;
+
+  /* ptr: grow when the point count grows. There is no qmckl_realloc, so
+     growth is: allocate, copy the live prefix, free the old block. */
+  if (p_num + 1 > c->ptr_max) {
+    qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+    mem_info.size = (size_t) (p_num + 1) * sizeof(int64_t);
+
+    int64_t* const ptr = (int64_t*) qmckl_malloc(context, mem_info);
+
+    if (ptr == NULL) {
+      return qmckl_failwith(context,
+                            QMCKL_ALLOCATION_FAILED,
+                            "qmckl_ao_compact_build",
+                            "ptr");
+    }
+
+    if (c->ptr != NULL) {
+      qmckl_exit_code rc = qmckl_free(context, c->ptr);
+      if (rc != QMCKL_SUCCESS) return rc;
+    }
+
+    c->ptr     = ptr;
+    c->ptr_max = p_num + 1;
+  }
+
+  /* Pass 1: count the non-zero AOs of the value component */
+  int64_t nnz = 0;
+  for (int64_t p=0 ; p<p_num ; ++p) {
+    c->ptr[p] = nnz;
+    const double* const v = dense + (size_t) p * ncomp * ao_num;
+    for (int64_t k=0 ; k<ao_num ; ++k) {
+      if (v[k] != 0.0) ++nnz;
+    }
+  }
+  c->ptr[p_num] = nnz;
+
+  /* Grow idx/val when the stored entries do not fit */
+  if (nnz > c->nnz_max) {
+    const int64_t new_max =
+      (nnz > c->nnz_max + c->nnz_max / 4) ? nnz : c->nnz_max + c->nnz_max / 4;
+
+    qmckl_memory_info_struct mem_info = qmckl_memory_info_struct_zero;
+    mem_info.size = (size_t) new_max * sizeof(int64_t);
+
+    int64_t* const idx = (int64_t*) qmckl_malloc(context, mem_info);
+
+    if (idx == NULL) {
+      return qmckl_failwith(context,
+                            QMCKL_ALLOCATION_FAILED,
+                            "qmckl_ao_compact_build",
+                            "idx");
+    }
+
+    mem_info = qmckl_memory_info_struct_zero;
+    mem_info.size = (size_t) ncomp * new_max * sizeof(double);
+
+    double* const val = (double*) qmckl_malloc(context, mem_info);
+
+    if (val == NULL) {
+      qmckl_exit_code rc = qmckl_free(context, idx);
+      if (rc != QMCKL_SUCCESS) return rc;
+      return qmckl_failwith(context,
+                            QMCKL_ALLOCATION_FAILED,
+                            "qmckl_ao_compact_build",
+                            "val");
+    }
+
+    if (c->nnz > 0) {
+      memcpy(idx, c->idx, (size_t) c->nnz * sizeof(int64_t));
+      memcpy(val, c->val, (size_t) ncomp * c->nnz * sizeof(double));
+    }
+
+    if (c->idx != NULL) {
+      qmckl_exit_code rc = qmckl_free(context, c->idx);
+      if (rc != QMCKL_SUCCESS) return rc;
+    }
+    if (c->val != NULL) {
+      qmckl_exit_code rc = qmckl_free(context, c->val);
+      if (rc != QMCKL_SUCCESS) return rc;
+    }
+
+    c->idx     = idx;
+    c->val     = val;
+    c->nnz_max = new_max;
+  }
+
+  /* Pass 2: fill idx and val. Skipped when nnz is 0. */
+  if (nnz > 0) {
+    int64_t i = 0;
+    for (int64_t p=0 ; p<p_num ; ++p) {
+      const double* const base = dense + (size_t) p * ncomp * ao_num;
+      for (int64_t k=0 ; k<ao_num ; ++k) {
+        if (base[k] != 0.0) {
+          c->idx[i] = k;
+          for (int64_t cc=0 ; cc<ncomp ; ++cc) {
+            c->val[(size_t) cc * nnz + i] = base[cc * ao_num + k];
+          }
+          ++i;
+        }
+      }
+    }
+    assert (i == nnz);
+  }
+
+  c->nnz   = nnz;
+  c->ncomp = (int32_t) ncomp;
+  c->date  = ctx->date;
+
+  return QMCKL_SUCCESS;
+}
+
+qmckl_exit_code qmckl_provide_ao_basis_ao_vgl_compact(qmckl_context context)
+{
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_provide_ao_basis_ao_vgl_compact",
+                           NULL);
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  if (!ctx->ao_basis.provided) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_provide_ao_basis_ao_vgl_compact",
+                           NULL);
+  }
+
+  if (ctx->point.date <= ctx->ao_basis.ao_vgl_compact.date) {
+    return QMCKL_SUCCESS;
+  }
+
+  qmckl_exit_code rc = qmckl_provide_ao_basis_ao_vgl(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  return qmckl_ao_compact_build(context,
+                                &ctx->ao_basis.ao_vgl_compact,
+                                5,
+                                ctx->ao_basis.ao_vgl);
+}
+
+qmckl_exit_code qmckl_provide_ao_basis_ao_value_compact(qmckl_context context)
+{
+
+  if (qmckl_context_check(context) == QMCKL_NULL_CONTEXT) {
+    return qmckl_failwith( context,
+                           QMCKL_INVALID_CONTEXT,
+                           "qmckl_provide_ao_basis_ao_value_compact",
+                           NULL);
+  }
+
+  qmckl_context_struct* const ctx = (qmckl_context_struct*) context;
+  assert (ctx != NULL);
+
+  if (!ctx->ao_basis.provided) {
+    return qmckl_failwith( context,
+                           QMCKL_NOT_PROVIDED,
+                           "qmckl_provide_ao_basis_ao_value_compact",
+                           NULL);
+  }
+
+  if (ctx->point.date <= ctx->ao_basis.ao_value_compact.date) {
+    return QMCKL_SUCCESS;
+  }
+
+  qmckl_exit_code rc = qmckl_provide_ao_basis_ao_value(context);
+  if (rc != QMCKL_SUCCESS) return rc;
+
+  return qmckl_ao_compact_build(context,
+                                &ctx->ao_basis.ao_value_compact,
+                                1,
+                                ctx->ao_basis.ao_value);
+}
+#endif
+   #+end_src
 
 ** AO Hessian
 
