@@ -571,6 +571,7 @@ def main() -> None:
         "broken_links": [x for a in audit.values() for x in a["broken_links"]],
         "residual_body": {k: v for k, v in ((k, a["residual_body"]) for k, a in audit.items()) if v},
     }
+    (SITE / "tools").mkdir(exist_ok=True)
     (SITE / "tools" / "_audit.json").write_text(json.dumps(report, indent=2))
     print(json.dumps({k: v for k, v in report.items() if k != "residual_body"}, indent=2))
     # executable <script> tags must be 0; <script type="application/ld+json"> is data, not JS

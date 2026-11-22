@@ -39,6 +39,7 @@ mkdir -p "$OUT/css" "$OUT/fonts" "$OUT/images"
 copy_if_changed() { [ "$1" -ef "$2" ] || cp -f "$1" "$2"; }
 copy_if_changed "$SITE/css/theme.css" "$OUT/css/theme.css"
 copy_if_changed "$TOOLSDIR/404.html" "$OUT/404.html"
+: > "$OUT/.nojekyll"
 for f in "$SITE/fonts/"*.woff2; do
   copy_if_changed "$f" "$OUT/fonts/$(basename "$f")"
 done
